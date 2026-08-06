@@ -1,0 +1,32 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Backups{% endblock %}
+{% block content %}
+{% call page_header('Control centre', 'Database backups', 'Inventory and read-only integrity verification for local SQLite snapshots.') %}
+  <a class="btn btn-primary btn-sm" href="{{ url_for('dashboard.control_safety_operations') }}"><i class="bi bi-shield-lock"></i> Backup wizard</a>
+{% endcall %}
+{% include "dashboard/control/_nav.html" %}
+
+{% if verification %}
+<div class="control-note {{ 'note-success' if verification.ok else 'note-danger' }}">
+  <i class="bi {{ 'bi-check-circle' if verification.ok else 'bi-x-octagon' }}"></i>
+  <div><b>{{ verification.name }}: {{ 'valid' if verification.ok else 'invalid' }}</b><span>{{ verification.tables }} tables · schema {{ verification.schema_digest }} · quick check: {{ verification.quick_check|join(', ') }}</span></div>
+</div>
+{% endif %}
+
+<section class="control-panel">
+  <div class="panel-head"><div><h2>Local snapshots</h2><p>{{ inventory.directory }}</p></div><span>{{ inventory.total }}</span></div>
+  <div class="control-table-wrap">
+    <table class="control-table">
+      <thead><tr><th>File</th><th>Created</th><th>Size</th><th>Safe action</th></tr></thead>
+      <tbody>{% for item in inventory['items'] %}
+      <tr>
+        <td><b>{{ item.name }}</b></td><td>{{ item.modified_at }}</td><td>{{ (item.size / 1024 / 1024)|round(2) }} MB</td>
+        <td><a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.control_backup_verify', filename=item.name) }}"><i class="bi bi-shield-check"></i> Verify read-only</a></td>
+      </tr>
+      {% else %}<tr><td colspan="4"><div class="empty">No local SQLite snapshots found. Sensitive operations create verified snapshots automatically.</div></td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+<div class="control-note"><i class="bi bi-shield-lock"></i><div><b>Restore is intentionally unavailable</b><span>Restoring a production database remains a manual server operation with application writes stopped and an independent copy of current data.</span></div></div>
+{% endblock %}

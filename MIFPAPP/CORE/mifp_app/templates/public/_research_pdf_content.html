@@ -1,0 +1,16 @@
+{% if research_areas %}
+{% for area in research_areas %}
+<h2>{{ area.title }}</h2>
+{% if area.summary %}
+<p><strong>{{ area.summary }}</strong></p>
+{% endif %}
+{% if area.description and area.description != area.summary %}
+{{ area.description|safe }}
+{% endif %}
+{% if not loop.last %}
+<hr>
+{% endif %}
+{% endfor %}
+{% else %}
+<p>No research areas available.</p>
+{% endif %}

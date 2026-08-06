@@ -1,0 +1,182 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Import / Export{% endblock %}
+{% block content %}
+{% call page_header('Data portability', 'Import / Export', 'Move canonical MIFP JSONL records and asset packages between scrapers, databases and installations.') %}{% endcall %}
+
+<section class="operations-status-strip portability-summary status-strip" aria-label="Canonical dataset summary">
+  <div class="operations-status-lead"><i class="bi bi-database" aria-hidden="true"></i><span><small>Canonical records</small><strong>{{ portable_total }}</strong><em>current database</em></span></div>
+  {% for scope in scopes if scope.primary and counts.get(scope.primary) is not none %}
+  <div><small>{{ scope.label }}</small><strong>{{ counts.get(scope.primary, 0) }}</strong><em>records</em></div>
+  {% endfor %}
+</section>
+
+<ol class="transfer-workflow" aria-label="Import workflow">
+  <li><span>1</span><div><b>Select</b><small>Choose records.jsonl or a MIFP ZIP</small></div></li>
+  <li><span>2</span><div><b>Validate</b><small>Inspect records and packaged assets</small></div></li>
+  <li><span>3</span><div><b>Import</b><small>Back up the database, then apply</small></div></li>
+</ol>
+
+<div class="portability-grid">
+  <section class="modern-card portability-panel">
+    <div class="panel-head">
+      <div>
+        <span class="panel-eyebrow">Inbound</span>
+        <h3><i class="bi bi-box-arrow-in-down"></i> Import canonical data</h3>
+        <p>Import canonical JSONL v2 records or a ZIP package produced by the dashboard or by <code>SCRAPERS/</code>.</p>
+      </div>
+    </div>
+    <div class="portability-safe-note">
+      <i class="bi bi-shield-check" aria-hidden="true"></i>
+      <div><b>Validate before writing</b><span>The default operation checks structure, records and assets without changing the database.</span></div>
+    </div>
+    <form id="transferImportForm" method="post" action="{{ url_for('dashboard.data_portability_import') }}" enctype="multipart/form-data" class="transfer-form">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <label class="transfer-drop" for="transferFiles">
+        <i class="bi bi-cloud-arrow-up"></i>
+        <strong>Add JSONL or ZIP files</strong>
+        <span>Select <code>records.jsonl</code>, per-type JSONL files, or a complete MIFP ZIP package</span>
+        <input id="transferFiles" type="file" name="data_file" accept=".jsonl,.zip,application/x-ndjson,application/zip" multiple required>
+      </label>
+      <div class="transfer-queue-head">
+        <span><b id="transferFileCount">0 files</b> ready</span>
+        <button type="button" class="btn-link transfer-clear-files" id="transferClearFiles" hidden>Clear all</button>
+      </div>
+      <div class="transfer-selection" id="transferSelection" aria-live="polite">
+        <span class="transfer-empty">No files selected yet.</span>
+      </div>
+      <fieldset class="transfer-mode">
+        <legend>Operation</legend>
+        <label><input type="radio" name="dry_run" value="1" checked><span><b>Validate only</b><small>Check the package without changing the database.</small></span></label>
+        <label><input type="radio" name="dry_run" value="0"><span><b>Import data</b><small>Create a database backup, then import valid records and assets.</small></span></label>
+      </fieldset>
+      <div class="transfer-options">
+        <label class="port-check" id="skipAssetsOption" hidden><input type="checkbox" name="skip_assets" value="1"><span>Import records only; skip packaged assets</span></label>
+      </div>
+      <button class="btn btn-primary" id="transferImportButton" type="submit"><i class="bi bi-shield-check"></i> Validate files</button>
+    </form>
+  </section>
+
+  <section class="modern-card portability-panel">
+    <div class="panel-head">
+      <div>
+        <span class="panel-eyebrow">Outbound</span>
+        <h3><i class="bi bi-box-arrow-up"></i> Export canonical data</h3>
+        <p>Create outputs aligned with the current <code>SCRAPERS → OUTPUTS → DATABASE</code> workflow.</p>
+      </div>
+    </div>
+    <div class="portability-export-actions">
+      <button class="btn btn-primary transfer-export-button" data-export="zip" type="button">
+        <i class="bi bi-file-earmark-zip"></i>
+        <span><b>Export ZIP package</b><small>Canonical records, manifest and managed assets. Ready for re-import.</small></span>
+      </button>
+      <button class="btn btn-outline transfer-export-button" data-export="jsonl" type="button">
+        <i class="bi bi-braces"></i>
+        <span><b>Export records.jsonl</b><small>Canonical JSONL v2 records only. Compatible with the database builder.</small></span>
+      </button>
+    </div>
+    <p class="portability-note"><i class="bi bi-info-circle" aria-hidden="true"></i> Exports contain portable content only. Credentials, sessions, metrics, logs and application settings are never included.</p>
+  </section>
+</div>
+
+<section class="modern-card portability-history">
+  <div class="panel-head">
+    <div>
+      <span class="panel-eyebrow">Import activity</span>
+      <h3><i class="bi bi-clock-history"></i> Recent imports</h3>
+      <p>Latest validation and import runs applied to the current database.</p>
+    </div>
+  </div>
+  {% if recent_imports %}
+  <div class="portability-history-list">
+    {% for item in recent_imports %}
+    <article>
+      <span class="portability-history-status is-{{ item.status|replace('_', '-') }}"><i class="bi {{ 'bi-check-circle-fill' if item.status == 'completed' else 'bi-exclamation-circle-fill' if item.status == 'completed_with_errors' else 'bi-arrow-repeat' if item.status == 'running' else 'bi-x-circle-fill' }}"></i></span>
+      <div class="portability-history-copy">
+        <b>{{ item.name }}</b>
+        <small>{{ item.started_at }} · run #{{ item.id }}</small>
+      </div>
+      <div class="portability-history-stats">
+        <span><b>{{ item.inserted }}</b> added</span>
+        <span><b>{{ item.updated }}</b> updated</span>
+        <span class="{{ 'has-errors' if item.errors else '' }}"><b>{{ item.errors }}</b> errors</span>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="portability-history-empty"><i class="bi bi-inbox"></i><span>No completed imports yet.</span></div>
+  {% endif %}
+</section>
+
+<div class="modal fade" id="transferModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content smart-modal transfer-modal">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-arrow-left-right"></i> <span id="transferModalTitle">Data transfer</span></h5>
+      </div>
+      <div class="modal-body">
+        <div id="transferWorking">
+          <div class="transfer-working-grid">
+            <div class="transfer-left">
+              <div class="transfer-status-icon"><span class="spinner-border" role="status"></span></div>
+              <strong id="transferStatus">Preparing…</strong>
+              <p id="transferDetail"></p>
+              <div class="import-progress-bar" role="progressbar"><span id="transferProgress"></span></div>
+              <div class="transfer-progress-meta" aria-live="polite">
+                <span id="transferPercent">4%</span>
+                <span id="transferElapsed">00:00</span>
+              </div>
+              <div class="transfer-metrics" id="transferMetrics">
+                <div><span>Records</span><b id="metricsRecords">0</b><small id="metricsRecordsTotal"></small></div>
+                <div><span>Inserted</span><b id="metricsInserted">0</b></div>
+                <div><span>Updated</span><b id="metricsUpdated">0</b></div>
+                <div><span>Assets</span><b id="metricsAssets">0</b></div>
+                <div><span>Errors</span><b id="metricsErrors">0</b></div>
+                <div id="metricsRecordErrorsRow" hidden><span>Record err</span><b id="metricsRecordErrors">0</b></div>
+                <div id="metricsAssetErrorsRow" hidden><span>Asset err</span><b id="metricsAssetErrors">0</b></div>
+              </div>
+            </div>
+            <div class="transfer-right">
+              <div class="import-progress-files" id="transferFilesProgress"></div>
+              <div class="transfer-activity" id="transferActivity">
+                <span class="transfer-activity-label">Activity</span>
+                <div class="transfer-activity-log" id="transferActivityLog"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="transferResult" hidden>
+          <div class="transfer-result-mark" id="transferResultMark"></div>
+          <h4 id="transferResultTitle"></h4>
+          <p id="transferResultMessage"></p>
+          <div class="import-result-grid" id="transferResultGrid"></div>
+          <div class="import-result-bytype" id="transferResultByType" hidden>
+            <span class="import-result-bytype-label">By type</span>
+            <div class="import-result-bytype-grid" id="transferResultByTypeGrid"></div>
+          </div>
+          <div class="import-error-list" id="transferErrors" hidden></div>
+        </div>
+      </div>
+      <div class="modal-footer" id="transferFooter" hidden>
+        <a class="btn btn-primary" id="transferSmartMerge" href="{{ url_for('dashboard.data_quality_page') }}" hidden><i class="bi bi-clipboard2-pulse"></i> Analyze imported data</a>
+        <button type="button" class="btn btn-outline" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/dashboard/data-portability.js') }}" defer></script>
+<script type="application/json" id="dataPortabilityConfig" nonce="{{ csp_nonce }}">{{ {
+  'importResult': import_result,
+  'csrfToken': csrf_token,
+  'exportJsonlUrl': url_for('dashboard.data_portability_export_post', fmt='jsonl'),
+  'exportZipUrl': url_for('dashboard.data_portability_export_post', fmt='zip'),
+  'exportDlUrl': url_for('dashboard.data_portability_export_dl', token='TOKEN'),
+  'smartMergeUrl': url_for('dashboard.data_quality_page')
+}|tojson }}</script>
+{% endblock %}

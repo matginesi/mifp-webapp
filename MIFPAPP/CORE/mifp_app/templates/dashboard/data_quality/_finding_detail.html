@@ -1,0 +1,227 @@
+{% set plan = finding.plan or {} %}
+{% set records = plan.get('records') or (plan.get('record') and [plan.get('record')]) or (plan.get('source_record') and [plan.get('source_record')]) or [] %}
+{% set is_merge = finding.action_type == 'merge_records' %}
+{% set manually_editable = (
+  (is_merge and records|length >= 2)
+  or plan.get('fields')
+  or plan.get('proposed_records')
+) %}
+{% set primary = records[0] if records else {} %}
+{% set record_label = primary.get('title') or primary.get('display_name') or primary.get('name') or ('Record #' ~ (primary.get('id') or finding.record_ids[0] if finding.record_ids else finding.id)) %}
+
+<div class="dq-review-hero">
+  <div>
+    <span class="dq-review-kicker">{{ finding.entity_type }} · record #{{ primary.get('id') or (finding.record_ids[0] if finding.record_ids else '—') }}</span>
+    <h4>{{ record_label }}</h4>
+    <p>{{ (finding.evidence[0].explanation if finding.evidence else finding.classification)|replace('_', ' ') }}</p>
+  </div>
+  <div class="dq-review-facts">
+    <span class="dq-badge-status dq-badge-status-{{ finding.status or 'new' }}">{{ finding.status or 'new' }}</span>
+    <span>{{ finding.action_type|replace('_', ' ') }}</span>
+    <b>{{ '%.0f'|format((finding.score or 0) * 100) }}% confidence</b>
+    <small>Finding #{{ finding.id }}</small>
+  </div>
+</div>
+
+{% if finding.evidence %}
+<div class="dq-detail-section">
+  <h6>Evidence</h6>
+  <ul class="list-unstyled">
+    {% for ev in finding.evidence %}
+    <li>
+      <span class="dq-badge-evidence dq-badge-evidence-{{ ev.strength }}">{{ ev.strength }}</span>
+      <b>{{ ev.code }}</b> &mdash; {{ ev.explanation or '' }}
+      {% if ev.get('values') %}<small class="dq-evidence-values">{{ ev.get('values')|join(' · ') }}</small>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if records %}
+<div class="dq-detail-section">
+  <h6>{{ 'Records under review' if records|length > 1 else 'Original record' }}</h6>
+  <p class="dq-manual-help">
+    {% if records|length > 1 %}
+    Compare every candidate before choosing the canonical record. Nothing is changed until the reviewed plan is queued and applied.
+    {% else %}
+    Review the original content and the proposed values before accepting this change.
+    {% endif %}
+  </p>
+  <div class="dq-review-records">
+    {% for rec in records %}
+    <article class="dq-review-record {{ 'is-canonical' if rec.id == plan.get('canonical_id') else '' }}">
+      <header>
+        <span>{{ 'Candidate ' ~ loop.index if records|length > 1 else 'Current database value' }}</span>
+        {% if rec.id == plan.get('canonical_id') %}<b>Suggested canonical</b>{% endif %}
+      </header>
+      {% set section = {'member':'members','news':'news','publication':'publications','sponsor':'sponsors','event':'events'}.get(finding.entity_type) %}
+      <a href="{{ url_for('dashboard.events', edit=rec.id) if finding.entity_type == 'event' else url_for('dashboard.content', section=section, edit=rec.id) if section else '#' }}" target="_blank" rel="noopener">
+        {{ rec.get('title') or rec.get('display_name') or rec.get('name') or ('#' ~ rec.id) }}
+      </a>
+      <small class="text-muted">(#{{ rec.id }})</small>
+      <dl>
+        {% set visible_fields = {
+          'member': ['first_name','last_name','display_name','affiliation','country','email','field','bio','review_status'],
+          'event': ['title','start_date','end_date','date_text','location','event_type','description','remote_url','review_status'],
+          'news': ['title','date','summary','body','source_kind','review_status'],
+          'publication': ['title','year','authors','journal','doi','abstract','review_status'],
+          'sponsor': ['name','sponsor_type','tier','description','is_active']
+        }.get(finding.entity_type, ['title','name','description','review_status']) %}
+        {% for key in visible_fields %}
+          {% if rec.get(key) not in (none, '') %}
+          <div><dt>{{ key|replace('_', ' ') }}</dt><dd>{{ rec.get(key) }}</dd></div>
+          {% endif %}
+        {% endfor %}
+      </dl>
+    </article>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if finding.similar_records %}
+<div class="dq-detail-section dq-similar-section">
+  <h6>Possible comparisons</h6>
+  <p class="dq-manual-help">These records have similar titles or names. They are context only and will not be merged by this decision.</p>
+  <div class="dq-similar-records">
+    {% for rec in finding.similar_records %}
+    <article>
+      <header>
+        <b>{{ '%.0f'|format(rec.similarity_score * 100) }}% similar</b>
+        <span>#{{ rec.id }}</span>
+      </header>
+      {% set section = {'member':'members','news':'news','publication':'publications','sponsor':'sponsors','event':'events'}.get(finding.entity_type) %}
+      <a href="{{ url_for('dashboard.events', edit=rec.id) if finding.entity_type == 'event' else url_for('dashboard.content', section=section, edit=rec.id) if section else '#' }}" target="_blank" rel="noopener">
+        {{ rec.get('title') or rec.get('display_name') or rec.get('name') or ('Record #' ~ rec.id) }}
+      </a>
+      <dl>
+        {% for key in ['start_date','end_date','date_text','location','year','authors','affiliation','country','review_status'] %}
+          {% if rec.get(key) not in (none, '') %}
+          <div><dt>{{ key|replace('_', ' ') }}</dt><dd>{{ rec.get(key) }}</dd></div>
+          {% endif %}
+        {% endfor %}
+      </dl>
+    </article>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if plan.get('fields') %}
+<div class="dq-detail-section">
+  <h6>Field-by-field comparison</h6>
+  <div class="dq-comparison-scroll">
+  <table class="table table-sm dq-comparison-table">
+    <thead>
+      <tr>
+        <th>Field</th>
+        {% for rec in records %}<th>Candidate {{ loop.index }} · #{{ rec.id }}</th>{% endfor %}
+        <th>Proposed result</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in plan['fields'] %}
+      <tr>
+        <th>{{ f.field|replace('_', ' ') }}</th>
+        {% for rec in records %}
+          {% set choices = (f.get('values_by_record') or [])|selectattr('record_id', 'equalto', rec.id)|list %}
+          <td>{{ choices[0].get('value') if choices else rec.get(f.field, '—') }}</td>
+        {% endfor %}
+        <td class="text-success"><b>{{ f.proposed_value if f.proposed_value is not none else '—' }}</b></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+
+{% if plan.get('links') %}
+<div class="dq-detail-section">
+  <h6>Links</h6>
+  <ul class="list-unstyled">
+    {% for l in plan['links'] %}
+    <li><a href="{{ l.url }}" target="_blank">{{ l.get('label') or l.url }}</a></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if plan.get('assets') %}
+<div class="dq-detail-section">
+  <h6>Assets</h6>
+  <p>{{ plan['assets']|join(', ') }}</p>
+</div>
+{% endif %}
+
+{% if finding.status == 'open' and manually_editable %}
+<form class="dq-manual-editor" id="dqManualEditor" data-finding-id="{{ finding.id }}">
+  <div class="dq-detail-section">
+    <h6>Manual decision</h6>
+    <p class="dq-manual-help">Only the choices shown here can be changed. Source IDs and the analyzed record set remain locked.</p>
+    {% if is_merge and records|length >= 2 %}
+    <fieldset class="dq-canonical-options">
+      <legend>Canonical record to keep</legend>
+      {% for rec in records %}
+      <label>
+        <input type="radio" name="canonical_id" value="{{ rec.id }}"
+               {{ 'checked' if rec.id == plan.get('canonical_id') else '' }} required>
+        <span>{{ rec.get('title') or rec.get('display_name') or rec.get('name') or ('Record #' ~ rec.id) }}</span>
+        <small>#{{ rec.id }}</small>
+      </label>
+      {% endfor %}
+    </fieldset>
+    {% endif %}
+    {% if plan.get('fields') %}
+    <div class="dq-manual-fields">
+      {% for field in plan.get('fields') or [] %}
+      <label>
+        <span>{{ field.field|replace('_', ' ') }}</span>
+        {% if field.field in ('start_date','end_date','date','effective_date') %}
+        <input type="date" data-plan-field="{{ field.field }}" value="{{ field.proposed_value if field.proposed_value is not none else '' }}">
+        {% else %}
+        <textarea rows="{{ 5 if field.field in ('description','body','summary','abstract','bio') else 2 }}" maxlength="100000" data-plan-field="{{ field.field }}">{{ field.proposed_value if field.proposed_value is not none else '' }}</textarea>
+        {% endif %}
+        {% if field.reason %}<small class="dq-field-reason">{{ field.reason }}</small>{% endif %}
+        <small>
+          Original value:
+          {% for choice in field.get('values_by_record') or [] %}
+            #{{ choice.record_id }}: {{ choice.value if choice.value not in (none, '') else '—' }}{{ '; ' if not loop.last else '' }}
+          {% else %}
+            {{ primary.get(field.field) if primary.get(field.field) not in (none, '') else '—' }}
+          {% endfor %}
+        </small>
+      </label>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if plan.get('proposed_records') %}
+    <div class="dq-manual-fields">
+      {% for proposed in plan.get('proposed_records') %}
+      <label>
+        <span>Split record {{ loop.index }} title</span>
+        <input type="text" maxlength="240" required data-split-index="{{ loop.index0 }}"
+               value="{{ proposed.get('title') or proposed.get('title_hint') or '' }}">
+      </label>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  <button type="submit" class="btn btn-sm btn-primary">
+    <i class="bi bi-check2-square"></i> Queue reviewed change
+  </button>
+</form>
+{% endif %}
+
+<div class="dq-detail-actions mt-3 d-flex gap-2">
+  {% if finding.status not in ('rejected','resolved') and not manually_editable %}
+  <button type="button" class="btn btn-sm btn-dq-accept" data-finding-id="{{ finding.id }}">
+    <i class="bi bi-check-lg"></i> Accept
+  </button>
+  <button type="button" class="btn btn-sm btn-dq-ignore" data-finding-id="{{ finding.id }}">
+    <i class="bi bi-x-lg"></i> Ignore forever
+  </button>
+  {% endif %}
+  <button type="button" class="btn btn-sm btn-outline" data-bs-dismiss="modal">Close</button>
+</div>

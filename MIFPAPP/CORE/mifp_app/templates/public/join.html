@@ -1,0 +1,194 @@
+{% extends "public/base.html" %}
+{% block title %}Join MIFP{% endblock %}
+{% block meta_description %}Request to join the Mediterranean Institute of Fundamental Physics.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="container-wide">
+    <ol class="mifp-breadcrumb">
+      <li><a href="{{ url_for('public.home') }}">Home</a></li>
+      <li aria-current="page">Join MIFP</li>
+    </ol>
+    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+      <span class="num serif italic" style="color:var(--mifp-red-hover);font-size:0.85rem;">—</span>
+      <span class="eyebrow eyebrow-red">Join MIFP</span>
+    </div>
+    <h1>{{ site_copy.join_title }}</h1>
+    <p>{{ site_copy.join_intro }}</p>
+    <div class="accent-bar"></div>
+  </div>
+</section>
+
+<section class="section-sm">
+  <div class="container-wide">
+
+    {% if success %}
+
+    <div class="join-success">
+      <div class="join-success-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <div class="eyebrow eyebrow-red" style="margin-bottom:16px;">{{ site_copy.join_success_title }}</div>
+      <h1>Thank you for your interest in MIFP.</h1>
+      <p>{{ site_copy.join_success_text }}</p>
+      <a href="{{ url_for('public.home') }}" class="btn btn-ghost">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Back to home
+      </a>
+    </div>
+
+    {% else %}
+
+    <div class="join-grid">
+
+      {# ── Info aside ── #}
+      <aside class="join-aside">
+        <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+          <span class="num serif italic" style="color:var(--mifp-red-hover);font-size:0.85rem;">—</span>
+          <span class="eyebrow eyebrow-red">Join MIFP</span>
+        </div>
+        <h1>Membership request</h1>
+        <p>Become part of an international network of researchers advancing fundamental physics across the Mediterranean and beyond.</p>
+
+        <div class="join-perk">
+          <div class="join-perk-icon red">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <div>
+            <h4>Scientific network</h4>
+            <p>Connect with peers working across theoretical, mathematical and applied physics.</p>
+          </div>
+        </div>
+        <div class="join-perk">
+          <div class="join-perk-icon blue">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          </div>
+          <div>
+            <h4>Events &amp; collaboration</h4>
+            <p>Access workshops, conferences and research initiatives organized by MIFP.</p>
+          </div>
+        </div>
+        <div class="join-perk">
+          <div class="join-perk-icon red">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          </div>
+          <div>
+            <h4>Research output</h4>
+            <p>Share and promote your work through the institute's publication channels.</p>
+          </div>
+        </div>
+
+        <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--line-soft);">
+          <p style="font-size:0.78rem;color:var(--paper-faint);line-height:1.6;">
+            Your data is handled according to our <a href="{{ url_for('public.privacy') }}" style="color:var(--paper-dim);text-decoration:underline;text-underline-offset:2px;">privacy policy</a> and will not be shared without your consent.
+          </p>
+        </div>
+      </aside>
+
+      {# ── Form ── #}
+      <main class="join-form-wrap">
+        <h2>Application form</h2>
+        <p class="required-note">Fields marked with <span style="color:var(--mifp-red);">*</span> are required.</p>
+
+        {% set email_err = namespace(text='') %}
+        {% for e in errors or [] %}{% if 'email' in e and not email_err.text %}{% set email_err.text = e %}{% endif %}{% endfor %}
+
+        {% if errors %}
+        <div class="join-error" role="alert">
+          <b>Please correct the following</b>
+          {% for e in errors %}<div>• {{ e }}</div>{% endfor %}
+        </div>
+        {% endif %}
+
+        <form method="post" action="{{ url_for('public.join') }}" novalidate>
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+          <input type="text" name="website" value="" tabindex="-1" autocomplete="off" class="join-hp" aria-hidden="true">
+
+          <div class="join-form-grid">
+            <label>
+              <span>First name <span class="req">*</span></span>
+              <div class="join-input-wrap">
+                <svg class="join-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <input type="text" name="first_name" required value="{{ form.first_name or '' }}" placeholder="Your first name">
+              </div>
+            </label>
+            <label>
+              <span>Last name <span class="req">*</span></span>
+              <div class="join-input-wrap">
+                <svg class="join-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <input type="text" name="last_name" required value="{{ form.last_name or '' }}" placeholder="Your last name">
+              </div>
+            </label>
+          </div>
+
+          <div class="join-form-grid">
+            <label>
+              <span>Email <span class="req">*</span></span>
+              <div class="join-input-wrap">
+                <svg class="join-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                <input type="email" name="email" required value="{{ form.email or '' }}" placeholder="you@institution.org"{% if email_err.text %} aria-invalid="true" aria-describedby="join-email-error" autofocus{% endif %}>
+              </div>
+              {% if email_err.text %}
+              <small id="join-email-error" class="join-field-error" role="alert">{{ email_err.text }}</small>
+              {% endif %}
+            </label>
+            <label>
+              <span>Position / role</span>
+              <div class="join-input-wrap">
+                <svg class="join-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                <input type="text" name="position" value="{{ form.position or '' }}" placeholder="Professor, researcher, PhD…">
+              </div>
+            </label>
+          </div>
+
+          <div class="join-form-grid">
+            <label>
+              <span>Affiliation</span>
+              <div class="join-input-wrap">
+                <svg class="join-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                <input type="text" name="affiliation" value="{{ form.affiliation or '' }}" placeholder="University, institute…">
+              </div>
+            </label>
+            <label>
+              <span>Country</span>
+              <div class="join-input-wrap">
+                <svg class="join-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                <input type="text" name="country" value="{{ form.country or '' }}" placeholder="Your country">
+              </div>
+            </label>
+          </div>
+
+          <div class="join-form-grid">
+            <label>
+              <span>Field of research</span>
+              <div class="join-input-wrap">
+                <svg class="join-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                <input type="text" name="field" value="{{ form.field or '' }}" placeholder="e.g. Theoretical Physics">
+              </div>
+            </label>
+          </div>
+
+          <div class="join-form-grid full">
+            <label>
+              <span>Motivation / note <span style="color:var(--paper-faint);font-size:0.78rem;font-weight:400;letter-spacing:0;text-transform:none;">(max 2500 chars)</span></span>
+              <div class="join-input-wrap" style="padding:0 12px;">
+                <textarea name="motivation" rows="5" maxlength="2500" placeholder="Tell us about your research interests and why you'd like to join MIFP&#10;— your background, ongoing work, and how you see yourself contributing." style="min-height:120px;">{{ form.motivation or '' }}</textarea>
+              </div>
+            </label>
+          </div>
+
+          <button type="submit" class="join-submit auth-action">
+            <span>{{ site_copy.join_submit }}</span>
+            <svg class="auth-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+          </button>
+
+          <p style="color:var(--paper-faint);font-size:0.78rem;line-height:1.6;margin-top:20px;">
+            By submitting this form, you consent to the storage and processing of your data for administrative review. Your information will not be shared with third parties without your explicit consent. See our <a href="{{ url_for('public.privacy') }}" style="color:var(--paper-dim);text-decoration:underline;text-underline-offset:2px;">privacy policy</a>.
+          </p>
+        </form>
+      </main>
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

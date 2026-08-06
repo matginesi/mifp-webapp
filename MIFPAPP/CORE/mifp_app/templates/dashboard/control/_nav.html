@@ -1,0 +1,18 @@
+<nav class="control-tabs" aria-label="Control centre sections">
+  {% set items = [
+    ('dashboard.control_center', 'Overview', 'bi-compass'),
+    ('dashboard.control_processes', 'Processes', 'bi-activity'),
+    ('dashboard.control_quality', 'Content quality', 'bi-clipboard-check'),
+    ('dashboard.control_assets', 'Asset health', 'bi-folder-check'),
+    ('dashboard.control_storage', 'Storage', 'bi-device-ssd'),
+    ('dashboard.control_site', 'Site check', 'bi-globe2'),
+    ('dashboard.control_incidents', 'Incidents', 'bi-exclamation-octagon'),
+    ('dashboard.control_backups', 'Backups', 'bi-database-check'),
+    ('dashboard.control_settings', 'Configuration', 'bi-sliders')
+  ] %}
+  {% for endpoint, label, icon in items %}
+  <a class="control-tab {{ 'is-active' if request.endpoint == endpoint }}" href="{{ url_for(endpoint) }}">
+    <i class="bi {{ icon }}" aria-hidden="true"></i><span>{{ label }}</span>
+  </a>
+  {% endfor %}
+</nav>

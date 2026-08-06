@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="author" content="Matteo Ginesi">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>Sign in · MIFP Admin</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo-mifp.png', v=static_version) }}">
+  <link href="{{ url_for('static', filename='css/vendor/bootstrap-icons.css', v=static_version) }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/homepage.css', v=static_version) }}" rel="stylesheet">
+</head>
+<body class="public-site login-page">
+  <a class="skip-link" href="#login-title">Skip to sign in</a>
+  <div class="login-scientific-field" aria-hidden="true"></div>
+  <main class="login-screen" id="main-content">
+    <section class="login-intro" aria-label="MIFP administration">
+      <a href="{{ url_for('public.home') }}" class="login-brand" aria-label="Return to the MIFP public website">
+        <img src="{{ url_for('static', filename='img/logo-mifp.png', v=static_version) }}" alt="" width="72" height="72">
+        <span><b>MIFP</b><small>Mediterranean Institute<br>of Fundamental Physics</small></span>
+      </a>
+      <h1>Administrator<br><em>sign in.</em></h1>
+      <a href="{{ url_for('public.home') }}" class="login-home-link"><span aria-hidden="true">←</span> Return to the public website</a>
+    </section>
+
+    <section class="login-card" aria-labelledby="login-title">
+      <div class="login-head">
+        <p class="login-eyebrow">Restricted area</p>
+        <h2 id="login-title">Administration</h2>
+        <p>Sign in with the credentials configured for this server.</p>
+      </div>
+
+      {% include "partials/flash.html" %}
+      <form id="loginForm" method="post" action="{{ url_for('auth.login_post', next=request.args.get('next', '')) }}" class="login-form">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <div class="login-field">
+          <label for="login_username" class="login-label">Username</label>
+          <div class="login-input-wrap">
+            <input id="login_username" name="login_username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required class="login-input" value="" placeholder="Enter username…">
+          </div>
+        </div>
+        <div class="login-field">
+          <label for="login_password" class="login-label">Password</label>
+          <div class="login-input-wrap password-field">
+            <input id="login_password" name="login_password" type="password" autocomplete="current-password" required class="login-input" placeholder="Enter password…">
+            <button type="button" class="password-toggle" data-password-toggle aria-controls="login_password" aria-label="Show password">
+              <i class="bi bi-eye" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+        <button class="login-submit auth-action" type="submit">
+          <span>Enter the workspace</span>
+          <svg class="auth-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+        </button>
+      </form>
+      <p class="login-footnote"><i class="bi bi-shield-lock" aria-hidden="true"></i> Secure, rate-limited administrator access</p>
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='js/vendor/bootstrap.bundle.min.js', v=static_version) }}" defer></script>
+  <script src="{{ url_for('static', filename='js/dashboard/login.js', v=static_version) }}" defer></script>
+</body>
+</html>

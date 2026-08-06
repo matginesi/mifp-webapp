@@ -1,0 +1,78 @@
+# =============================================================================
+# REMOTE GITHUB: WEBAPP + RUNTIME + CI/CD ONLY
+# =============================================================================
+#
+# La working tree locale può contenere anche SCRAPERS, IMPORT_DATA, builder DB,
+# tools e documentazione privata. Queste cartelle restano sul disco ma non
+# vengono pubblicate nel repository remoto. zip_it.sh le include invece nello
+# snapshot personale del codebase, escludendo soltanto dati e output generati.
+
+/*
+
+# File root pubblicabili
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/DEPLOYMENT.md
+!/AGENTS.md
+!/comandi.txt
+!/mifp
+!/zip_it.sh
+!/test_all.sh
+!/pytest.ini
+
+# CI/CD
+!/.github/
+!/.github/**
+
+# Webapp deployabile
+!/MIFPAPP/
+/MIFPAPP/*
+!/MIFPAPP/CORE/
+!/MIFPAPP/CORE/**
+
+# Test webapp usati dalla CI
+!/TESTS/
+/TESTS/*
+!/TESTS/conftest.py
+!/TESTS/fixtures/
+!/TESTS/fixtures/**
+!/TESTS/webapp/
+!/TESTS/webapp/**
+
+# =============================================================================
+# SECRET, STATO LOCALE E FILE GENERATI — SEMPRE ESCLUSI
+# =============================================================================
+.env
+.env.*.local
+.mifp/
+**/.env
+**/.venv/
+**/.venv-production/
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.hypothesis/
+**/*.egg-info/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+playwright-report/
+test-results/
+*.py[cod]
+*.log
+*.pid
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+.DS_Store
+.idea/
+.vscode/

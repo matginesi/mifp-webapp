@@ -1,0 +1,906 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+import zipfile
+from io import BytesIO
+from pathlib import Path
+
+import pytest
+import yaml
+
+
+def _conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    schema = Path(__file__).resolve().parents[2] / "MIFPAPP" / "CORE" / "mifp_app" / "db" / "schema.sql"
+    conn.executescript(schema.read_text(encoding="utf-8"))
+    return conn
+
+
+def _insert_news_with_document(conn: sqlite3.Connection, news_id: int = 1, asset_id: int = 1) -> None:
+    conn.execute(
+        "INSERT INTO assets(id, filename, path, kind, checksum) VALUES (?,?,?,?,?)",
+        (asset_id, "paper.pdf", "pdf/paper.pdf", "pdf", "sha"),
+    )
+    conn.execute(
+        "INSERT INTO news(id, title, slug, review_status) VALUES (?,?,?,?)",
+        (news_id, "News", "news", "published"),
+    )
+    conn.execute(
+        "INSERT INTO asset_links(asset_id, entity_type, entity_id, role) VALUES (?,?,?,?)",
+        (asset_id, "news", news_id, "document"),
+    )
+
+
+def test_export_zip_contains_manifest_jsonl_and_asset_file(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip
+
+    conn = _conn()
+    assets_dir = tmp_path / "assets"
+    (assets_dir / "pdf").mkdir(parents=True)
+    (assets_dir / "pdf" / "paper.pdf").write_bytes(b"%PDF-1.4\n")
+    _insert_news_with_document(conn)
+
+    payload = bundle_to_zip(conn, "news", assets_dir)
+    with zipfile.ZipFile(BytesIO(payload), "r") as zf:
+        names = set(zf.namelist())
+        manifest = json.loads(zf.read("manifest.json"))
+        records_raw = zf.read("records.jsonl").decode("utf-8")
+
+    assert {"manifest.json", "records.jsonl", "assets/pdf/paper.pdf"} <= names
+    assert manifest["format"] == "mifp-export"
+    assert manifest["format_version"] == 2
+    assert manifest["schema_version"] >= 1
+    assert len(manifest["records_sha256"]) == 64
+    assert manifest["scope"] == "news"
+    assert manifest["records"] == 1
+    records = [json.loads(line) for line in records_raw.strip().splitlines() if line.strip()]
+    assert len(records) == 1
+    assert records[0]["type"] == "news"
+    assert records[0]["data"]["slug"] == "news"
+    assert records[0]["assets"][0]["path"] == "pdf/paper.pdf"
+    assert manifest["files"][0]["size"] == len(b"%PDF-1.4\n")
+    assert len(manifest["files"][0]["sha256"]) == 64
+
+
+def test_roundtrip_uses_portable_role_and_parent_event_references(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
+
+    source = _conn()
+    source.execute("INSERT INTO roles(id, name, label) VALUES(42, 'board_member', 'Board member')")
+    source.execute(
+        "INSERT INTO members(id, slug, display_name, role_id) VALUES(90, 'alice', 'Alice Example', 42)"
+    )
+    source.execute(
+        "INSERT INTO events(id, slug, title) VALUES(80, 'parent-event', 'Parent event')"
+    )
+    source.execute(
+        "INSERT INTO events(id, slug, title, parent_event_id) VALUES(7, 'child-event', 'Child event', 80)"
+    )
+
+    payload = bundle_to_zip(source, "all", tmp_path / "source-assets")
+    target = _conn()
+    # Deliberately occupy the source IDs to prove that numeric IDs are not reused.
+    target.execute("INSERT INTO roles(id, name, label) VALUES(42, 'other', 'Other')")
+    target.execute("INSERT INTO events(id, slug, title) VALUES(80, 'unrelated', 'Unrelated')")
+    summary = import_zip_payload(target, payload, "all", tmp_path / "target-assets")
+
+    assert summary["errors"] == []
+    member = target.execute(
+        "SELECT r.name FROM members m JOIN roles r ON r.id=m.role_id WHERE m.slug='alice'"
+    ).fetchone()
+    child = target.execute(
+        """
+        SELECT parent.slug
+        FROM events child JOIN events parent ON parent.id=child.parent_event_id
+        WHERE child.slug='child-event'
+        """
+    ).fetchone()
+    assert member["name"] == "board_member"
+    assert child["slug"] == "parent-event"
+
+
+def test_complete_roundtrip_restores_durable_state_and_unlinked_assets(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
+
+    source = _conn()
+    source_assets = tmp_path / "source-assets"
+    (source_assets / "uploads").mkdir(parents=True)
+    (source_assets / "uploads" / "orphan.txt").write_bytes(b"not linked yet")
+    source.execute("INSERT INTO roles(name,label) VALUES('editor','Editorial board')")
+    role_id = source.execute("SELECT id FROM roles WHERE name='editor'").fetchone()[0]
+    source.execute(
+        "INSERT INTO members(slug,display_name,email,role_id) VALUES('alice','Alice','a@example.test',?)",
+        (role_id,),
+    )
+    member_id = source.execute("SELECT id FROM members WHERE slug='alice'").fetchone()[0]
+    source.execute(
+        "INSERT INTO pages(slug,title,type,body,review_status) "
+        "VALUES('privacy','Privacy','privacy','Complete body','published')"
+    )
+    source.execute("INSERT INTO settings(key,value) VALUES('cookie_banner_force_version','7')")
+    source.execute(
+        "INSERT INTO join_requests(first_name,last_name,email,status,member_id,created_at) "
+        "VALUES('Alice','Example','join@example.test','approved',?,'2026-07-28 10:00:00')",
+        (member_id,),
+    )
+    source.execute(
+        "INSERT INTO assets(filename,path,kind,checksum,alt_text) "
+        "VALUES('orphan.txt','uploads/orphan.txt','document','orphan-sha','Pending document')"
+    )
+    source.execute(
+        "INSERT INTO merge_exclusions(entity_type,record_fingerprint,decision,note) "
+        "VALUES('member','stable-record','keep_separate','Reviewed manually')"
+    )
+    source.execute(
+        "INSERT INTO resolved_pairs(entity_type,left_fingerprint,right_fingerprint,action) "
+        "VALUES('member','left','right','rejected')"
+    )
+    run_id = source.execute(
+        "INSERT INTO quality_runs(status,fingerprint,summary_json,completed_at) "
+        "VALUES('completed','run','{}',CURRENT_TIMESTAMP)"
+    ).lastrowid
+    source.execute(
+        "INSERT INTO quality_findings("
+        "run_id,action_type,entity_type,record_ids_json,classification,score,"
+        "evidence_json,contradictions_json,plan_json,fingerprint,status"
+        ") VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            run_id, "clean_record", "member", "[1]", "needs_cleaning", 0.7,
+            "[]", "[]", "{}", "portable-finding", "rejected",
+        ),
+    )
+
+    payload = bundle_to_zip(source, "all", source_assets)
+    with zipfile.ZipFile(BytesIO(payload), "r") as zf:
+        assert "state.json" in zf.namelist()
+        assert "assets/uploads/orphan.txt" in zf.namelist()
+
+    target = _conn()
+    target_assets = tmp_path / "target-assets"
+    first = import_zip_payload(target, payload, "all", target_assets)
+    second = import_zip_payload(target, payload, "all", target_assets)
+
+    assert first["errors"] == second["errors"] == []
+    assert target.execute("SELECT body FROM pages WHERE slug='privacy'").fetchone()[0] == "Complete body"
+    assert target.execute(
+        "SELECT value FROM settings WHERE key='cookie_banner_force_version'"
+    ).fetchone()[0] == "7"
+    assert target.execute("SELECT label FROM roles WHERE name='editor'").fetchone()[0] == "Editorial board"
+    assert target.execute("SELECT COUNT(*) FROM join_requests WHERE email='join@example.test'").fetchone()[0] == 1
+    assert target.execute("SELECT COUNT(*) FROM merge_exclusions").fetchone()[0] == 1
+    assert target.execute("SELECT COUNT(*) FROM resolved_pairs").fetchone()[0] == 1
+    assert target.execute(
+        "SELECT COUNT(*) FROM quality_findings WHERE fingerprint='portable-finding' AND status='rejected'"
+    ).fetchone()[0] == 1
+    assert target.execute("SELECT alt_text FROM assets WHERE path='uploads/orphan.txt'").fetchone()[0] == "Pending document"
+    assert (target_assets / "uploads" / "orphan.txt").read_bytes() == b"not linked yet"
+
+
+def test_data_quality_fingerprint_ignores_database_identity_and_timestamps() -> None:
+    from mifp_app.services.data_quality.normalizers import stable_fingerprint
+
+    before = [{"id": 1, "slug": "same", "title": "Same", "created_at": "yesterday"}]
+    after = [{"id": 999, "slug": "same", "title": "Same", "created_at": "today"}]
+
+    assert stable_fingerprint("news", before, action="clean_record") == stable_fingerprint(
+        "news", after, action="clean_record"
+    )
+
+
+def test_export_upgrades_legacy_quality_decision_fingerprint(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import (
+        _legacy_quality_fingerprint,
+        bundle_to_zip,
+        parse_zip_payload,
+    )
+    from mifp_app.services.data_quality.normalizers import stable_fingerprint
+
+    source = _conn()
+    source.execute(
+        "INSERT INTO news(id,title,slug,review_status,created_at) "
+        "VALUES(81,'News','news','published','2020-01-01')"
+    )
+    record = dict(source.execute("SELECT * FROM news WHERE id=81").fetchone())
+    legacy = _legacy_quality_fingerprint("news", [record], "clean_record")
+    run_id = source.execute(
+        "INSERT INTO quality_runs(status,fingerprint,summary_json,completed_at) "
+        "VALUES('completed','legacy-run','{}',CURRENT_TIMESTAMP)"
+    ).lastrowid
+    source.execute(
+        "INSERT INTO quality_findings("
+        "run_id,action_type,entity_type,record_ids_json,classification,score,"
+        "evidence_json,contradictions_json,plan_json,fingerprint,status"
+        ") VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            run_id, "clean_record", "news", "[81]", "needs_cleaning", 0.7,
+            "[]", "[]", "{}", legacy, "rejected",
+        ),
+    )
+
+    package = parse_zip_payload(bundle_to_zip(source, "all", tmp_path / "assets"))
+
+    assert package["durable_state"]["quality_decisions"][0]["fingerprint"] == stable_fingerprint(
+        "news", [record], action="clean_record"
+    )
+
+
+def test_parse_zip_rejects_tampered_records(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, parse_zip_payload
+
+    source = _conn()
+    source.execute("INSERT INTO news(title, slug) VALUES('Original', 'original')")
+    payload = bundle_to_zip(source, "news", tmp_path / "assets")
+    changed = BytesIO()
+    with zipfile.ZipFile(BytesIO(payload), "r") as src, zipfile.ZipFile(
+        changed, "w", zipfile.ZIP_DEFLATED
+    ) as dst:
+        for info in src.infolist():
+            body = src.read(info.filename)
+            if info.filename == "records.jsonl":
+                body = body.replace(b"Original", b"Tampered")
+            dst.writestr(info.filename, body)
+
+    with pytest.raises(ValueError, match="integrity"):
+        parse_zip_payload(changed.getvalue())
+
+
+def test_parse_zip_rejects_tampered_asset(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, parse_zip_payload
+
+    source = _conn()
+    assets_dir = tmp_path / "assets"
+    (assets_dir / "pdf").mkdir(parents=True)
+    (assets_dir / "pdf" / "paper.pdf").write_bytes(b"%PDF-1.4\n")
+    _insert_news_with_document(source)
+    payload = bundle_to_zip(source, "news", assets_dir)
+    changed = BytesIO()
+    with zipfile.ZipFile(BytesIO(payload), "r") as src, zipfile.ZipFile(
+        changed, "w", zipfile.ZIP_DEFLATED
+    ) as dst:
+        for info in src.infolist():
+            body = src.read(info.filename)
+            if info.filename == "assets/pdf/paper.pdf":
+                body = b"%PDF-tampered"
+            dst.writestr(info.filename, body)
+
+    with pytest.raises(ValueError, match="verification"):
+        parse_zip_payload(changed.getvalue())
+
+
+def test_import_rejects_scope_mismatch(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
+
+    payload = bundle_to_zip(_conn(), "news", tmp_path / "assets")
+    with pytest.raises(ValueError, match="does not match"):
+        import_zip_payload(_conn(), payload, "events", tmp_path / "target-assets")
+
+
+def test_import_zip_dry_run_does_not_write(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
+
+    source = _conn()
+    assets_dir = tmp_path / "assets"
+    (assets_dir / "pdf").mkdir(parents=True)
+    (assets_dir / "pdf" / "paper.pdf").write_bytes(b"%PDF-1.4\n")
+    _insert_news_with_document(source)
+
+    payload = bundle_to_zip(source, "news", assets_dir)
+
+    target = _conn()
+    import_root = tmp_path / "import"
+    target_assets = import_root / "target_assets"
+    summary = import_zip_payload(target, payload, "news", target_assets, dry_run=True)
+    assert summary["dry_run"] is True
+    assert target.execute("SELECT COUNT(*) FROM news").fetchone()[0] == 0
+    assert not (target_assets / "pdf" / "paper.pdf").exists()
+    assert not (import_root / "assets" / "pdf" / "paper.pdf").exists()
+
+
+def test_export_zip_only_contains_assets_referenced_by_scope(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip
+
+    conn = _conn()
+    assets_dir = tmp_path / "assets"
+    (assets_dir / "pdf").mkdir(parents=True)
+    (assets_dir / "pdf" / "paper.pdf").write_bytes(b"%PDF-1.4\n")
+    (assets_dir / "pdf" / "unused.pdf").write_bytes(b"%PDF-1.4\n")
+    _insert_news_with_document(conn)
+    conn.execute(
+        "INSERT INTO assets(id, filename, path, kind, checksum) VALUES (?,?,?,?,?)",
+        (2, "unused.pdf", "pdf/unused.pdf", "pdf", "sha-unused"),
+    )
+
+    payload = bundle_to_zip(conn, "news", assets_dir)
+
+    with zipfile.ZipFile(BytesIO(payload), "r") as zf:
+        names = set(zf.namelist())
+    assert "assets/pdf/paper.pdf" in names
+    assert "assets/pdf/unused.pdf" not in names
+
+
+def test_parse_zip_rejects_unsafe_asset_path(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import parse_zip_payload
+
+    payload = _raw_zip(
+        manifest_files=[{"archive_path": "assets/../evil.txt"}],
+        files={"assets/../evil.txt": b"bad"},
+    )
+
+    with pytest.raises(ValueError, match="unsafe"):
+        parse_zip_payload(payload)
+
+
+def test_parse_zip_rejects_undeclared_asset_file(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import parse_zip_payload
+
+    payload = _raw_zip(files={"assets/pdf/paper.pdf": b"%PDF-1.4\n"})
+
+    with pytest.raises(ValueError, match="not declared"):
+        parse_zip_payload(payload)
+
+
+def test_import_zip_requires_declared_asset_unless_skipped(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import import_zip_payload, parse_zip_payload
+
+    payload = _raw_zip(manifest_files=[{"archive_path": "assets/pdf/missing.pdf"}])
+    package = parse_zip_payload(payload)
+    assert package["missing_assets"] == ["assets/pdf/missing.pdf"]
+
+    with pytest.raises(ValueError, match="missing 1 declared asset"):
+        import_zip_payload(_conn(), payload, "news", tmp_path / "target_assets")
+
+    summary = import_zip_payload(_conn(), payload, "news", tmp_path / "target_assets", skip_assets=True)
+    assert summary["errors"] == []
+
+
+def test_parse_zip_rejects_duplicate_members(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import parse_zip_payload
+
+    manifest = {
+        "scope": "news",
+        "records": 0,
+        "files": [],
+    }
+    out = BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("records.jsonl", "")
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            zf.writestr("records.jsonl", "")
+        zf.writestr("manifest.json", json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="duplicate"):
+        parse_zip_payload(out.getvalue())
+
+
+def test_import_zip_second_import_updates_not_duplicates(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
+
+    source = _conn()
+    assets_dir = tmp_path / "assets"
+    (assets_dir / "pdf").mkdir(parents=True)
+    (assets_dir / "pdf" / "paper.pdf").write_bytes(b"%PDF-1.4\n")
+    _insert_news_with_document(source)
+
+    payload = bundle_to_zip(source, "news", assets_dir)
+
+    target = _conn()
+    target_assets = tmp_path / "target_assets"
+    first = import_zip_payload(target, payload, "news", target_assets, dry_run=False)
+    second = import_zip_payload(target, payload, "news", target_assets, dry_run=False, skip_assets=True)
+    assert first["inserted"].get("news", 0) >= 1
+    assert second["updated"].get("news", 0) >= 1
+    assert target.execute("SELECT COUNT(*) FROM news").fetchone()[0] == 1
+
+
+def test_import_keeps_valid_record_when_packaged_asset_is_invalid(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    source_assets = tmp_path / "package-assets"
+    source_assets.mkdir()
+    (source_assets / "broken.svg").write_text("<html>not an image</html>", encoding="utf-8")
+    records = tmp_path / "records.jsonl"
+    records.write_text(json.dumps({
+        "type": "news",
+        "data": {"title": "Valid news", "slug": "valid-news", "review_status": "published"},
+        "assets": [{"path": "broken.svg", "role": "cover", "kind": "image"}],
+    }) + "\n", encoding="utf-8")
+
+    summary = import_jsonl(
+        conn,
+        records,
+        assets_dir=tmp_path / "stored-assets",
+        asset_source_dir=source_assets,
+    )
+
+    assert summary["errors"] == []
+    assert len(summary["asset_errors"]) == 1
+    assert summary["inserted"]["news"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM news WHERE slug='valid-news'").fetchone()[0] == 1
+
+
+def _legacy_import_jsonl_accepts_standalone_asset_records(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    path = tmp_path / "assets.jsonl"
+    path.write_text(
+        json.dumps({
+            "type": "asset",
+            "data": {
+                "filename": "paper.pdf",
+                "path": "pdf/paper.pdf",
+                "kind": "pdf",
+                "checksum": "asset-sha",
+                "storage_status": "missing",
+            },
+            "meta": {},
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    first = import_jsonl(conn, path, dry_run=False)
+    second = import_jsonl(conn, path, dry_run=False)
+
+    assert first["errors"] == []
+    assert second["errors"] == []
+    assert first["inserted"]["asset"] == 1
+    assert second["updated"]["asset"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 1
+
+
+def _legacy_assets_zip_roundtrip_imports_metadata_and_files(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
+
+    source = _conn()
+    assets_dir = tmp_path / "assets"
+    (assets_dir / "pdf").mkdir(parents=True)
+    (assets_dir / "pdf" / "paper.pdf").write_bytes(b"%PDF-1.4\n")
+    source.execute(
+        "INSERT INTO assets(filename, path, kind, checksum, storage_status) VALUES(?,?,?,?,?)",
+        ("paper.pdf", "pdf/paper.pdf", "pdf", "zip-asset-sha", "local"),
+    )
+    payload = bundle_to_zip(source, "assets", assets_dir)
+
+    target = _conn()
+    target_assets = tmp_path / "target" / "assets"
+    summary = import_zip_payload(target, payload, "assets", target_assets, dry_run=False)
+
+    assert summary["errors"] == []
+    assert summary["inserted"]["asset"] == 1
+    row = target.execute("SELECT filename, path, kind, checksum FROM assets").fetchone()
+    assert dict(row) == {
+        "filename": "paper.pdf",
+        "path": "pdf/paper.pdf",
+        "kind": "pdf",
+        "checksum": "zip-asset-sha",
+    }
+    imported_files = list((target_assets / "pdf").glob("paper-*.pdf"))
+    assert len(imported_files) == 1
+    assert imported_files[0].read_bytes() == b"%PDF-1.4\n"
+
+
+def _raw_zip(*, manifest_files: list[dict] | None = None, files: dict[str, bytes] | None = None) -> bytes:
+    manifest = {
+        "scope": "news",
+        "records": 0,
+        "files": manifest_files or [],
+    }
+    out = BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("records.jsonl", "")
+        for name, payload in (files or {}).items():
+            zf.writestr(name, payload)
+        zf.writestr("manifest.json", json.dumps(manifest))
+    return out.getvalue()
+
+
+def test_import_jsonl_publishes_event_with_review_status(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        json.dumps({
+            "type": "event",
+            "data": {
+                "title": "Past Workshop",
+                "slug": "past-workshop",
+                "start_date": "2020-02-10",
+                "review_status": "published",
+            },
+            "links": [],
+            "assets": [],
+            "meta": {},
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = import_jsonl(conn, path, dry_run=False)
+
+    assert summary["errors"] == []
+    row = conn.execute("SELECT review_status, is_featured FROM events WHERE slug='past-workshop'").fetchone()
+    assert row["review_status"] == "published"
+    assert row["is_featured"] == 0
+
+
+def test_import_jsonl_publication_upserts_by_slug(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO publications(title, slug, year, abstract) VALUES('Old title','same-slug',20,'x')"
+    )
+    path = tmp_path / "upload.jsonl"
+    path.write_text(
+        json.dumps({
+            "type": "publication",
+            "data": {
+                "title": "Updated title",
+                "slug": "same-slug",
+                "year": 2026,
+                "abstract": "new detailed abstract here",
+                "review_status": "published",
+            },
+            "links": [],
+            "assets": [],
+            "meta": {},
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = import_jsonl(conn, path, dry_run=False)
+
+    assert summary["errors"] == []
+    assert conn.execute("SELECT COUNT(*) FROM publications").fetchone()[0] == 1
+    row = conn.execute("SELECT year, abstract FROM publications WHERE slug='same-slug'").fetchone()
+    assert row["year"] == 2026
+    assert row["abstract"] == "new detailed abstract here"
+
+
+def test_import_jsonl_member_update_does_not_steal_existing_slug(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO members(display_name, slug, affiliation) VALUES('Alice Smith','alice-smith','University A')"
+    )
+    conn.execute(
+        "INSERT INTO members(display_name, slug, affiliation) VALUES('Alice S.','alice-s','University A')"
+    )
+    path = tmp_path / "members.jsonl"
+    path.write_text(
+        json.dumps({
+            "type": "member",
+            "data": {
+                "display_name": "Alice Smith",
+                "slug": "alice-s",
+                "affiliation": "University A",
+                "review_status": "published",
+            },
+            "links": [],
+            "assets": [],
+            "meta": {},
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = import_jsonl(conn, path, dry_run=False)
+
+    assert summary["errors"] == []
+    assert conn.execute("SELECT COUNT(*) FROM members").fetchone()[0] == 2
+    rows = conn.execute("SELECT slug FROM members ORDER BY id").fetchall()
+    assert [r["slug"] for r in rows] == ["alice-smith", "alice-s"]
+
+
+def test_import_jsonl_event_url_becomes_link(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        json.dumps({
+            "type": "event",
+            "data": {
+                "title": "Linked Event",
+                "slug": "linked-event",
+                "start_date": "2026-06-01",
+                "review_status": "published",
+                "location": "Online",
+            },
+            "links": [{"url": "https://example.com/event", "role": "primary"}],
+            "assets": [],
+            "meta": {},
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = import_jsonl(conn, path, dry_run=False)
+
+    assert summary["errors"] == []
+    links = conn.execute(
+        "SELECT url, role FROM entity_links WHERE entity_type='event' AND entity_id=1"
+    ).fetchall()
+    assert len(links) == 1
+    assert links[0]["url"] == "https://example.com/event"
+
+
+def test_import_jsonl_enriches_without_replacing_existing_links_and_assets(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    assets_root = tmp_path / "assets-root"
+    (assets_root / "assets" / "pdf").mkdir(parents=True)
+    existing_pdf = assets_root / "assets" / "pdf" / "existing.pdf"
+    imported_pdf = assets_root / "assets" / "pdf" / "imported.pdf"
+    existing_pdf.write_bytes(b"%PDF-1.4 existing\n")
+    imported_pdf.write_bytes(b"%PDF-1.4 imported\n")
+
+    conn.execute(
+        "INSERT INTO assets(id, filename, path, kind, checksum) VALUES (?,?,?,?,?)",
+        (1, "existing.pdf", "pdf/existing.pdf", "pdf", "existing-sha"),
+    )
+    conn.execute(
+        "INSERT INTO news(id, title, slug, summary, review_status) VALUES (?,?,?,?,?)",
+        (1, "Original title", "same-news", "Curated summary", "published"),
+    )
+    conn.execute(
+        "INSERT INTO asset_links(asset_id, entity_type, entity_id, role, is_primary) VALUES (?,?,?,?,?)",
+        (1, "news", 1, "document", 1),
+    )
+    conn.execute(
+        "INSERT INTO entity_links(entity_type, entity_id, url, label, role, is_primary) VALUES (?,?,?,?,?,?)",
+        ("news", 1, "https://existing.example", "Existing", "primary", 1),
+    )
+
+    path = tmp_path / "news.jsonl"
+    path.write_text(
+        json.dumps({
+            "type": "news",
+            "data": {
+                "title": "Imported title should not replace",
+                "slug": "same-news",
+                "summary": "Imported summary should not replace curated one",
+                "body": "New body fills an empty field",
+                "review_status": "published",
+            },
+            "links": [{"url": "https://new.example", "role": "source", "label": "Source"}],
+            "assets": [{"path": "assets/pdf/imported.pdf", "role": "document", "kind": "pdf"}],
+            "meta": {},
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    import os
+    old_assets_dir = os.environ.get("ASSETS_DIR")
+    os.environ["ASSETS_DIR"] = str(assets_root / "assets")
+    try:
+        from mifp_app.config import Config
+        Config.ASSETS_DIR = assets_root / "assets"
+        summary = import_jsonl(conn, path, dry_run=False)
+    finally:
+        if old_assets_dir is None:
+            os.environ.pop("ASSETS_DIR", None)
+        else:
+            os.environ["ASSETS_DIR"] = old_assets_dir
+
+    assert summary["errors"] == []
+    row = conn.execute("SELECT title, summary, body FROM news WHERE slug='same-news'").fetchone()
+    assert row["title"] == "Original title"
+    assert row["summary"] == "Curated summary"
+    assert row["body"] == "New body fills an empty field"
+    assert conn.execute("SELECT COUNT(*) FROM entity_links WHERE entity_type='news' AND entity_id=1").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM asset_links WHERE entity_type='news' AND entity_id=1").fetchone()[0] == 2
+
+
+def test_import_updates_same_event_series_and_year_instead_of_inserting_duplicate(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO events(title,slug,start_date,description,review_status) VALUES(?,?,?,?,?)",
+        ("PLMCN-2023", "plmcn-2023", "2023-01-01", "", "published"),
+    )
+    path = tmp_path / "events.jsonl"
+    path.write_text(json.dumps({
+        "type": "event",
+        "data": {
+            "title": "PLMCN 2023 International Conference on Physics of Light-Matter Coupling in Nanostructures",
+            "slug": "plmcn-2023-international-conference",
+            "start_date": "2023-06-12",
+            "description": "Complete conference description.",
+        },
+    }) + "\n", encoding="utf-8")
+
+    result = import_jsonl(conn, path)
+    assert result["inserted"] == {}
+    assert result["updated"] == {"event": 1}
+    assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
+    assert conn.execute("SELECT description FROM events").fetchone()[0] == "Complete conference description."
+
+
+def test_export_empty_scope(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip
+
+    conn = _conn()
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir(parents=True)
+
+    payload = bundle_to_zip(conn, "members", assets_dir)
+    with zipfile.ZipFile(BytesIO(payload), "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        records = zf.read("records.jsonl").decode("utf-8").strip()
+
+    assert manifest["scope"] == "members"
+    assert manifest["records"] == 0
+    assert records == ""
+
+
+def test_export_scope_all(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip
+
+    conn = _conn()
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir(parents=True)
+
+    conn.execute(
+        "INSERT INTO news(id, title, slug, review_status) VALUES (1, 'News Item', 'news-1', 'published')"
+    )
+    conn.execute(
+        "INSERT INTO events(id, title, slug, start_date, review_status) VALUES (1, 'Event', 'event-1', '2024-01-01', 'published')"
+    )
+
+    payload = bundle_to_zip(conn, "all", assets_dir)
+    with zipfile.ZipFile(BytesIO(payload), "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        raw = zf.read("records.jsonl").decode("utf-8")
+        lines = [json.loads(l) for l in raw.strip().splitlines() if l.strip()]
+        types = {l.get("type") for l in lines}
+
+    assert manifest["records"] >= 2
+    assert "news" in types
+    assert "event" in types
+
+
+def test_parse_zip_rejects_oversized_payload() -> None:
+    from mifp_app.config import Config
+    import os
+
+    orig = Config.IMPORT_MAX_ZIP_BYTES
+    Config.IMPORT_MAX_ZIP_BYTES = 1024
+    try:
+        from mifp_app.services.data_portability import parse_zip_payload
+
+        out = BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("manifest.json", '{"scope":"news","records":0,"files":[]}')
+            zf.writestr("records.jsonl", "")
+            zf.writestr("padding.bin", os.urandom(2048), compress_type=zipfile.ZIP_STORED)
+
+        with pytest.raises(ValueError, match="exceeds maximum size"):
+            parse_zip_payload(out.getvalue())
+    finally:
+        Config.IMPORT_MAX_ZIP_BYTES = orig
+
+
+def test_parse_zip_rejects_malformed_manifest() -> None:
+    from mifp_app.services.data_portability import parse_zip_payload
+
+    out = BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("records.jsonl", "")
+    with pytest.raises(ValueError, match="missing manifest.json"):
+        parse_zip_payload(out.getvalue())
+
+    out = BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", "{corrupt")
+        zf.writestr("records.jsonl", "")
+    with pytest.raises(ValueError, match="manifest"):
+        parse_zip_payload(out.getvalue())
+
+
+def test_import_jsonl_event_upsert_by_slug(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO events(title, slug, start_date, review_status) VALUES('Old event','same-event','2024-01-01','published')"
+    )
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        json.dumps({
+            "type": "event",
+            "data": {
+                "title": "Updated event",
+                "slug": "same-event",
+                "start_date": "2026-06-15",
+                "location": "New Location",
+                "review_status": "published",
+            },
+            "links": [],
+            "assets": [],
+            "meta": {},
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = import_jsonl(conn, path, dry_run=False)
+
+    assert summary["errors"] == []
+    assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
+    row = conn.execute("SELECT title, location, start_date FROM events WHERE slug='same-event'").fetchone()
+    assert row["title"] == "Old event"  # existing non-null preserved by _merge_fields
+    assert row["location"] == "New Location"   # filled (was NULL)
+    assert row["start_date"] == "2024-01-01"   # existing non-null preserved
+
+
+def test_force_import_assigns_a_unique_slug_instead_of_clearing_it(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    path = tmp_path / "sponsors.jsonl"
+    path.write_text(
+        json.dumps({
+            "type": "sponsor",
+            "data": {
+                "name": "Sample Sponsor",
+                "slug": "sample-sponsor",
+                "is_active": 1,
+            },
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    first = import_jsonl(conn, path)
+    forced = import_jsonl(conn, path, force_import=True)
+
+    assert first["errors"] == []
+    assert forced["errors"] == []
+    slugs = [
+        row["slug"]
+        for row in conn.execute("SELECT slug FROM sponsors ORDER BY id").fetchall()
+    ]
+    assert slugs == ["sample-sponsor", "sample-sponsor-2"]
+
+
+def test_import_jsonl_reports_invalid_utf8(tmp_path: Path) -> None:
+    from mifp_app.services.importers import ImportValidationError, import_jsonl
+
+    path = tmp_path / "invalid.jsonl"
+    path.write_bytes(b'{"type":"news","data":{"title":"caf\xe9"}}\n')
+
+    with pytest.raises(ImportValidationError, match="UTF-8"):
+        import_jsonl(_conn(), path)
+
+
+def test_import_jsonl_rolls_back_failed_record(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    conn.execute(
+        """
+        CREATE TRIGGER reject_import_record
+        BEFORE INSERT ON import_records
+        BEGIN
+          SELECT RAISE(ABORT, 'simulated import failure');
+        END
+        """
+    )
+    path = tmp_path / "rollback.jsonl"
+    path.write_text(
+        json.dumps({
+            "type": "news",
+            "data": {"title": "Must roll back", "slug": "must-roll-back"},
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = import_jsonl(conn, path)
+
+    assert summary["inserted"] == {}
+    assert summary["skipped"] == 1
+    assert summary["rolled_back"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM news WHERE slug='must-roll-back'").fetchone()[0] == 0

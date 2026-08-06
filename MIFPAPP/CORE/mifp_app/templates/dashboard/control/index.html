@@ -1,0 +1,41 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Control centre{% endblock %}
+{% block content %}
+{% call page_header('System / Control centre', 'Control centre', 'Start with what needs attention, then open the evidence and the safest corrective workflow.') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.dashboard_search') }}"><i class="bi bi-search"></i> Find a record</a>
+{% endcall %}
+{% include "dashboard/control/_nav.html" %}
+
+<section class="control-ledger" aria-labelledby="attention-title">
+  <div class="panel-head">
+    <div><span class="control-kicker">Operational inbox</span><h2 id="attention-title">Needs attention</h2></div>
+    <strong>{{ attention|length }}</strong>
+  </div>
+  {% for item in attention %}
+  <a class="control-finding finding-{{ item.severity }}" href="{{ item.action_url }}">
+    <span class="finding-marker" aria-hidden="true"></span>
+    <span class="finding-copy"><b>{{ item.label }}</b><small>{{ item.detail }}</small></span>
+    <strong>{{ item.count }}</strong>
+    <span class="finding-action">Review <i class="bi bi-arrow-right"></i></span>
+  </a>
+  {% else %}
+  <div class="control-clear-state">
+    <i class="bi bi-check2-circle" aria-hidden="true"></i>
+    <div><b>No current operational warnings</b><span>Storage, backups, recent jobs and editorial checks have no open warning.</span></div>
+  </div>
+  {% endfor %}
+</section>
+
+<section class="control-snapshot" aria-label="System snapshot">
+  <a href="{{ url_for('dashboard.control_assets') }}"><span>Missing assets</span><b>{{ assets.totals.missing + assets.totals.unsafe }}</b><small>{{ assets.recovery.ready }} ready to retry</small></a>
+  <a href="{{ url_for('dashboard.control_processes') }}"><span>Recent imports</span><b>{{ processes.imports|length }}</b><small>{{ processes.recovery|length }} asset recovery jobs</small></a>
+  <a href="{{ url_for('dashboard.control_storage') }}"><span>Runtime paths</span><b>{{ storage['items']|length }}</b><small>{{ 'Docker' if storage.docker else 'Host process' }}</small></a>
+  <a href="{{ url_for('dashboard.control_backups') }}"><span>Local backups</span><b>{{ backups.total }}</b><small>{% if backups.latest %}Latest {{ backups.latest.age_hours }}h ago{% else %}None found{% endif %}</small></a>
+</section>
+
+<section class="control-note">
+  <i class="bi bi-shield-lock"></i>
+  <div><b>Safe operating boundary</b><span>This centre does not expose a shell, arbitrary SQL, container controls, server restart, destructive restore or unrestricted file access.</span></div>
+</section>
+{% endblock %}

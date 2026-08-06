@@ -1,0 +1,129 @@
+{% extends "public/base.html" %}
+
+{% block title %}Events — MIFP{% endblock %}
+{% block meta_description %}Upcoming and past events organized by the Mediterranean Institute of Fundamental Physics.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="container-wide">
+    <ol class="mifp-breadcrumb">
+      <li><a href="{{ url_for('public.home') }}">Home</a></li>
+      <li aria-current="page">Events</li>
+    </ol>
+    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+      <span class="num serif italic" style="color:var(--mifp-red-hover);font-size:0.85rem;">—</span>
+      <span class="eyebrow eyebrow-red">Calendar</span>
+    </div>
+    <h1>{{ site_copy.events_title }}</h1>
+    <p>{{ site_copy.events_intro }}</p>
+    <div class="accent-bar"></div>
+  </div>
+</section>
+
+<section class="section-sm">
+  <div class="container-wide">
+
+    {% if upcoming %}
+    <div class="section-head" style="margin-bottom:32px;">
+      <div class="section-head-left">
+        <div class="eyebrow-row">
+          <span class="num serif italic">—</span>
+          <span class="eyebrow eyebrow-red">Upcoming</span>
+        </div>
+        <h2 style="font-size:1.6rem;">{{ site_copy.events_upcoming }}</h2>
+      </div>
+    </div>
+
+    <div class="card-grid">
+      {% for event in upcoming %}
+      <article class="card event-card">
+        {% if event.cover_url %}
+        <div class="card-cover">
+          <img src="{{ event.cover_url }}" alt="{{ event.title }}" width="640" height="400" loading="lazy">
+        </div>
+        {% endif %}
+        <div class="event-card-body">
+          {% if event.event_type %}
+          <div class="event-tag {{ 'blue' if loop.index is even }}">
+            <span class="dot"></span>{{ event.event_type|replace('_',' ') }}
+          </div>
+          {% endif %}
+
+          <h3 class="event-title line-clamp-2">{{ event.title }}</h3>
+
+          <div class="event-meta-line">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span>
+              {{ event.start_date[:10] if event.start_date else (event.date_text or '?') }}
+              {%- if event.end_date and event.end_date[:10] != event.start_date[:10] %} &ndash; {{ event.end_date[:10] }}{% endif -%}
+            </span>
+          </div>
+
+          {% if event.location %}
+          <div class="event-meta-line">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            <span class="line-clamp-1">{{ event.location }}</span>
+          </div>
+          {% endif %}
+
+          {% if event.description %}
+          <p class="event-desc line-clamp-2">{{ event.description|striptags|truncate(140) }}</p>
+          {% endif %}
+
+          <div class="event-foot">
+            <a href="{{ url_for('public.event_detail', slug=event.slug) if event.slug else '#' }}" class="btn btn-primary btn-sm">
+              View details
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+            </a>
+          </div>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if past %}
+    <div class="section-head" style="margin-top:64px;margin-bottom:24px;">
+      <div class="section-head-left">
+        <div class="eyebrow-row">
+          <span class="num serif italic">—</span>
+          <span class="eyebrow eyebrow-blue">Archive</span>
+        </div>
+        <h2 style="font-size:1.6rem;">{{ site_copy.events_past }}</h2>
+      </div>
+    </div>
+
+    <div class="past-list">
+      {% for event in past %}
+      <a href="{{ url_for('public.event_detail', slug=event.slug) if event.slug else '#' }}" class="past-row">
+        {% set year = event.start_date[:4] if event.start_date else (event.date_text[:4] if event.date_text and event.date_text[:4]|int > 1990 else '—') %}
+        <span class="past-year">{{ year }}</span>
+        <div class="past-info">
+          <div class="past-title">{{ event.title }}</div>
+          <div class="past-meta">
+            <span>{{ (event.event_type or 'event')|replace('_',' ') }}</span>
+            {% if event.date_text or event.start_date %}
+            <span>{% if event.date_text %}{{ event.date_text }}{% elif event.start_date %}{{ event.start_date[:10] }}{% if event.end_date and event.end_date != event.start_date %} — {{ event.end_date[:10] }}{% endif %}{% endif %}</span>
+            {% endif %}
+            {% if event.location %}<span>{{ event.location }}</span>{% endif %}
+          </div>
+        </div>
+        <span class="past-arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </span>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if not upcoming and not past %}
+    <div class="empty-state">
+      <div class="empty-state-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      </div>
+      <p>{{ site_copy.events_empty }}</p>
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

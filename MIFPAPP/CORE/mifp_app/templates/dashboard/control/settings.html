@@ -1,0 +1,22 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Configuration{% endblock %}
+{% block content %}
+{% call page_header('Control centre', 'Effective configuration', 'Non-secret values, their source and whether a restart is required.') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.server') }}"><i class="bi bi-pencil"></i> Editable site settings</a>
+{% endcall %}
+{% include "dashboard/control/_nav.html" %}
+
+<section class="control-panel">
+  <div class="panel-head"><div><h2>Runtime values</h2><p>Secrets and credentials are never rendered by this inspector.</p></div><span>{{ settings|length }}</span></div>
+  <div class="control-table-wrap">
+    <table class="control-table configuration-table">
+      <thead><tr><th>Setting</th><th>Effective value</th><th>Source</th><th>Change model</th></tr></thead>
+      <tbody>{% for item in settings %}
+      <tr><td><code>{{ item.key }}</code></td><td>{{ item.value }}</td><td><span class="status-chip status-info">{{ item.source }}</span></td><td>{{ 'Server restart required' if item.restart else 'Database-backed' if not item.readonly else 'Read only' }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+<div class="control-note"><i class="bi bi-key"></i><div><b>Secrets stay on the server</b><span>Passwords, tokens, SMTP credentials and secret keys are neither displayed nor exportable from the dashboard.</span></div></div>
+{% endblock %}

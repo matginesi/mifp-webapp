@@ -1,0 +1,44 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Asset health{% endblock %}
+{% block content %}
+{% call page_header('Control centre', 'Asset health', 'Reconcile database records, local files and bounded remote recovery state.') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.assets_page') }}"><i class="bi bi-folder"></i> Asset manager</a>
+{% endcall %}
+{% include "dashboard/control/_nav.html" %}
+
+<section class="control-snapshot">
+  <article><span>Complete</span><b>{{ health.totals.complete }}</b><small>DB record and local file</small></article>
+  <article><span>Missing</span><b>{{ health.totals.missing }}</b><small>{{ health.recovery.ready }} ready to retry</small></article>
+  <article><span>External</span><b>{{ health.totals.external }}</b><small>Remote reference</small></article>
+  <article><span>Orphan files</span><b>{{ health.orphans|length }}</b><small>{{ 'Partial scan' if health.orphan_scan_limited else 'Scan complete' }}</small></article>
+</section>
+
+<section class="control-panel">
+  <div class="panel-head"><div><h2>Missing local files</h2><p>Recovery decisions and retry limits are enforced in Python.</p></div><span>{{ health.missing_total }}</span></div>
+  <div class="control-table-wrap">
+    <table class="control-table">
+      <thead><tr><th>Asset</th><th>Type</th><th>Recovery</th><th>Last error</th></tr></thead>
+      <tbody>{% for item in health.missing %}
+      <tr>
+        <td><b>#{{ item.id }} · {{ item.filename }}</b><small class="table-subline">{{ item.path }}</small></td>
+        <td>{{ item.kind }} · {{ item.mime_type or 'unknown MIME' }}</td>
+        <td><span class="status-chip status-{{ 'danger' if item.terminal else 'warning' }}">{{ 'stopped' if item.terminal else item.attempts ~ ' attempts' }}</span><small class="table-subline">{{ item.next_attempt_at or 'Ready when manually requested' }}</small></td>
+        <td>{{ item.last_error or item.reason }}</td>
+      </tr>
+      {% else %}<tr><td colspan="4"><div class="empty">No missing local files.</div></td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+
+<div class="control-two-column">
+  <section class="control-panel">
+    <div class="panel-head"><div><h2>Unregistered files</h2><p>Read-only inventory; nothing is deleted here.</p></div><span>{{ health.orphans|length }}</span></div>
+    <div class="control-list">{% for item in health.orphans[:30] %}<div class="control-list-row"><span><b>{{ item.path }}</b></span><small>{{ (item.size / 1024)|round(1) }} KB</small></div>{% else %}<div class="empty">No orphan files found.</div>{% endfor %}</div>
+  </section>
+  <section class="control-panel">
+    <div class="panel-head"><div><h2>Duplicate checksums</h2><p>Evidence only; automatic deletion is intentionally unavailable.</p></div><span>{{ health.duplicate_groups|length }}</span></div>
+    <div class="control-list">{% for item in health.duplicate_groups %}<div class="control-list-row"><span><b>{{ item.checksum[:18] }}…</b><small>{{ (item.size / 1024)|round(1) }} KB each</small></span><strong>{{ item.count }}</strong></div>{% else %}<div class="empty">No duplicate checksum groups.</div>{% endfor %}</div>
+  </section>
+</div>
+{% endblock %}

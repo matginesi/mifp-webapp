@@ -1,0 +1,91 @@
+{# ── MIFP Footer — Refined Institutional Dark ── #}
+{% set sname = site_settings.get('site_short', 'MIFP') %}
+{% set sfull = site_settings.get('site_name', 'Mediterranean Institute of Fundamental Physics') %}
+{% set stagline = site_settings.get('site_tagline', 'Promoting scientific research and international collaboration across the Mediterranean') %}
+{% set faddr = site_settings.get('footer_address', 'Via Appia Nuova 31, 00047 Marino (Roma), Italy') %}
+{% set femail = site_settings.get('footer_email', 'info@mifp.eu') %}
+{% set fpemail = site_settings.get('footer_privacy_email', 'privacy@mifp.eu') %}
+{% set fcf = site_settings.get('footer_cf', '90069050582') %}
+
+<footer class="footer">
+  <div class="footer-accent"></div>
+
+  <div class="footer-grid">
+
+    {# ── Brand column ── #}
+    <div class="footer-brand">
+      <div class="logo-row">
+        <img src="{{ url_for('static', filename='img/logo-mifp.png', v=static_version) }}" alt="{{ sname }}"
+             width="34" height="34" class="footer-logo">
+        <span class="name">{{ sname }}</span>
+      </div>
+      <p>{{ stagline }}</p>
+
+      <p class="footer-motto italic">Dubium sapientiae initium. Memento audere semper.</p>
+      <p class="footer-motto-attr">— MIFP</p>
+    </div>
+
+    {# ── Navigate column ── #}
+    <div class="footer-col">
+      <h5>Navigate</h5>
+      <ul>
+        <li><a href="{{ url_for('public.home') }}">{{ site_copy.nav_home }}</a></li>
+        <li><a href="{{ url_for('public.events') }}">{{ site_copy.nav_events }}</a></li>
+        <li><a href="{{ url_for('public.news') }}">{{ site_copy.nav_news }}</a></li>
+        <li><a href="{{ url_for('public.members') }}">{{ site_copy.nav_members }}</a></li>
+        <li><a href="{{ url_for('public.join') }}" class="accent-blue">{{ site_copy.nav_join }}</a></li>
+      </ul>
+    </div>
+
+    {# ── Institutional column ── #}
+    <div class="footer-col">
+      <h5>Institutional</h5>
+      <ul>
+        <li><a href="{{ url_for('public.about') }}">{{ site_copy.nav_about }}</a></li>
+        <li><a href="{{ url_for('public.manifesto') }}">{{ site_copy.nav_manifesto }}</a></li>
+        <li><a href="{{ url_for('public.code_of_conduct') }}">{{ site_copy.nav_code }}</a></li>
+        <li><a href="{{ url_for('public.sponsor_how_to') }}">How to Become a Sponsor</a></li>
+        <li><a href="{{ url_for('public.privacy') }}">{{ site_copy.nav_privacy }}</a></li>
+        <li><a href="{{ url_for('public.cookie_policy') }}">{{ site_copy.nav_cookies }}</a></li>
+      </ul>
+    </div>
+
+    {# ── Contact column ── #}
+    <div class="footer-col">
+      <h5>Contact</h5>
+      <div class="footer-contact">
+        <div class="row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          <span>{{ faddr }}</span>
+        </div>
+        <div class="row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          <a href="mailto:{{ femail }}">{{ femail }}</a>
+        </div>
+        <div class="row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <a href="mailto:{{ fpemail }}">{{ fpemail }}</a>
+        </div>
+        <div class="row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span>C.F. {{ fcf }}</span>
+        </div>
+        <a href="{{ url_for('auth.login') }}" class="footer-admin">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          {{ site_copy.nav_admin }}
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-bottom">
+    <div class="footer-bottom-inner">
+      <p>&copy; {{ now.year if now else 2026 }} {{ sfull }}. Built by <a href="https://github.com/matginesi" target="_blank" rel="noopener noreferrer">Matteo Ginesi</a> for MIFP.</p>
+      <div class="footer-bottom-links">
+        <a href="{{ url_for('public.privacy') }}">{{ site_copy.nav_privacy }}</a>
+        <a href="{{ url_for('public.cookie_policy') }}">{{ site_copy.nav_cookies }}</a>
+        <a href="{{ url_for('public.code_of_conduct') }}">{{ site_copy.nav_code }}</a>
+      </div>
+    </div>
+  </div>
+</footer>

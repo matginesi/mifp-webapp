@@ -1,0 +1,182 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header, empty_state, export_dropdown %}
+{% block page_title %}Logs{% endblock %}
+{% block extra_js %}{{ super() }}<script src="{{ url_for('static', filename='js/dashboard/content.js') }}" defer></script>{% endblock %}
+{% block content %}
+{% call page_header('System', 'Logs', 'Inspect application events, correlate requests and export the current result set.') %}
+  <div class="log-header-actions">
+    {{ export_dropdown([
+      ('CSV', url_for('dashboard.logs_export', fmt='csv', q=q, level=level, file=log_file, event=event, request_id=request_id, since=since, until=until), 'bi bi-filetype-csv'),
+      ('JSON', url_for('dashboard.logs_export', fmt='json', q=q, level=level, file=log_file, event=event, request_id=request_id, since=since, until=until), 'bi bi-filetype-json'),
+      ('TXT', url_for('dashboard.logs_export', fmt='txt', q=q, level=level, file=log_file, event=event, request_id=request_id, since=since, until=until), 'bi bi-filetype-txt'),
+    ]) }}
+    <form method="post" action="{{ url_for('dashboard.logs_cleanup') }}" class="log-cleanup-form"
+          data-confirm="Delete rotated log files older than the selected retention period?">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <select name="days" class="form-select form-select-sm" aria-label="Log retention">
+        {% for days in (7, 14, 30, 60, 90) %}
+        <option value="{{ days }}" {{ 'selected' if days == 30 }}>{{ days }} days</option>
+        {% endfor %}
+      </select>
+      <button class="btn btn-outline btn-sm btn-outline-danger-soft">
+        <i class="bi bi-trash" aria-hidden="true"></i> Cleanup
+      </button>
+    </form>
+  </div>
+{% endcall %}
+
+<section class="log-status-strip status-strip" aria-label="Current log result">
+  <div class="log-status-total">
+    <span>Matching entries</span>
+    <strong>{{ total }}</strong>
+    <small>{{ selected_file.name if selected_file else 'All log sources' }} · {{ scoped_total }} in scope</small>
+  </div>
+  {% for item_level, icon in [('ERROR','bi-x-octagon'),('WARNING','bi-exclamation-triangle'),('INFO','bi-info-circle'),('DEBUG','bi-bug')] %}
+  <a class="log-status-item level-{{ item_level|lower }} {{ 'is-active' if level == item_level }}"
+     href="{{ url_for('dashboard.logs', level=item_level, q=q, file=log_file) }}">
+    <i class="bi {{ icon }}" aria-hidden="true"></i>
+    <span><b>{{ level_counts.get(item_level, 0) }}</b><small>{{ item_level|title }} in current scope</small></span>
+  </a>
+  {% endfor %}
+</section>
+
+<section class="logs-manager log-source-strip">
+  <div class="log-source-label">
+    <i class="bi bi-folder2-open" aria-hidden="true"></i>
+    <span><b>Sources</b><small>Filter by physical log stream</small></span>
+  </div>
+  <div class="log-source-list">
+    <a class="{{ 'is-active' if not log_file }}" href="{{ url_for('dashboard.logs', q=q, level=level) }}">
+      <span>All</span><b>{{ log_files|length }}</b>
+    </a>
+    {% for file in log_files %}
+    <a class="{{ 'is-active' if log_file == file.name }}"
+       href="{{ url_for('dashboard.logs', q=q, level=level, file=file.name) }}"
+       title="{{ file.name }} · {{ file.size_mb }} MB · {{ file.updated }}">
+      <span>{{ file.name }}</span><b>{{ file.size_mb }} MB</b>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+
+<form class="toolbar log-filter-bar" method="get">
+  <input type="hidden" name="file" value="{{ log_file or '' }}">
+  <div class="log-filter-primary">
+    <label class="toolbar-search">
+      <span class="visually-hidden">Search logs</span>
+      <i class="bi bi-search" aria-hidden="true"></i>
+      <input class="form-control form-control-sm" name="q" value="{{ q or '' }}"
+             placeholder="Search message, logger or path…">
+    </label>
+    <select name="level" class="form-select form-select-sm" aria-label="Log level">
+      <option value="ALL" {{ 'selected' if level == 'ALL' or show_all }}>All levels</option>
+      {% for item_level in ['CRITICAL','ERROR','WARNING','INFO','DEBUG','LOG'] %}
+      <option value="{{ item_level }}" {{ 'selected' if level == item_level }}>{{ item_level }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-primary btn-sm"><i class="bi bi-funnel" aria-hidden="true"></i> Apply</button>
+    <label class="btn btn-outline btn-sm toggle-button-label">
+      <input type="checkbox" name="refresh" value="30" {{ 'checked' if refresh == 30 }} data-auto-submit>
+      <i class="bi bi-arrow-clockwise" aria-hidden="true"></i> Auto 30s
+    </label>
+    {% if q or event or request_id or since or until or level not in ['ALL',''] or log_file %}
+    <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.logs') }}">
+      <i class="bi bi-x-lg" aria-hidden="true"></i> Reset
+    </a>
+    {% endif %}
+  </div>
+  <details class="log-filter-advanced" {% if event or request_id or since or until %}open{% endif %}>
+    <summary><i class="bi bi-sliders" aria-hidden="true"></i> Correlation and time range</summary>
+    <div>
+      <label><span>Event</span><input class="form-control form-control-sm" name="event" value="{{ event or '' }}" placeholder="event.name"></label>
+      <label><span>Request ID</span><input class="form-control form-control-sm" name="request_id" value="{{ request_id or '' }}" placeholder="Request identifier"></label>
+      <label><span>From</span><input class="form-control form-control-sm" type="datetime-local" name="since" value="{{ since or '' }}"></label>
+      <label><span>To</span><input class="form-control form-control-sm" type="datetime-local" name="until" value="{{ until or '' }}"></label>
+    </div>
+  </details>
+</form>
+
+{% if level == 'INFO' and not q and not log_file %}
+<div class="notice info log-default-note">
+  INFO and above are shown by default. Select “All levels” to include diagnostic entries.
+</div>
+{% endif %}
+
+<section class="table-card log-results">
+  <header class="panel-head">
+    <div><h2>Event stream</h2><p>{{ total }} matching entries · page {{ page }} of {{ total_pages or 1 }}</p></div>
+    {% if refresh %}<span class="status-badge status-success"><i class="bi bi-arrow-repeat"></i> Refreshing every {{ refresh }}s</span>{% endif %}
+  </header>
+  <div class="data-scroll">
+    <table class="data-table log-table">
+      <thead>
+        <tr>
+          <th class="log-col-level">Level</th>
+          <th class="log-col-time">Time</th>
+          <th>Message</th>
+          <th class="log-col-location">Source</th>
+          <th class="log-col-toggle"><span class="visually-hidden">Details</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        {% set detail_id = 'log-detail-' ~ loop.index %}
+        <tr class="record-row log-row level-{{ row.level|lower }}" data-row-toggle="{{ detail_id }}">
+          <td><a href="{{ url_for('dashboard.logs', level=row.level, q=q, file=log_file) }}" class="log-level log-level-link {{ row.level|lower }}">{{ row.level }}</a></td>
+          <td class="cell-date">{{ row.when or '—' }}</td>
+          <td class="log-message-cell">
+            <b>{{ row.message or '—' }}</b>
+            <small>{{ row.event or row.logger or row.file or 'Unknown logger' }}{% if row.request_id %} · {{ row.request_id }}{% endif %}{% if row.duration_ms %} · {{ row.duration_ms }} ms{% endif %}</small>
+          </td>
+          <td class="log-source-cell">{{ row.location or row.where or row.logger or '—' }}</td>
+          <td class="log-toggle-cell"><i class="bi bi-chevron-down" aria-hidden="true"></i></td>
+        </tr>
+        <tr class="inline-editor-row log-detail-row" id="{{ detail_id }}" data-inline-panel>
+          <td colspan="5">
+            <div class="log-drawer">
+              <div class="log-detail-grid">
+                <div><span>File</span><b>{{ row.file or '—' }}</b></div>
+                <div><span>Process / thread</span><b>{{ row.process or '—' }}</b></div>
+                <div><span>Logger</span><b>{{ row.logger or '—' }}</b></div>
+                <div><span>Request ID</span><b>{{ row.request_id or '—' }}</b></div>
+                <div><span>Source</span><b>{{ row.location or row.where or '—' }}</b></div>
+              </div>
+              <div class="log-detail-block">
+                <span>Full message</span>
+                <pre class="log-pre">{{ row.message or '—' }}</pre>
+              </div>
+              {% if row.trace %}
+              <div class="log-detail-block">
+                <span>Traceback / details</span>
+                <div class="trace-wrap">
+                  <pre class="log-pre trace-pre" id="trace-{{ loop.index }}">{{ row.trace }}</pre>
+                  <button class="btn btn-outline btn-xs copy-btn copy-btn-floating" type="button"
+                          data-copy-trace="trace-{{ loop.index }}" aria-label="Copy stack trace">
+                    <i class="bi bi-clipboard" aria-hidden="true"></i>
+                  </button>
+                </div>
+              </div>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5">{{ empty_state('No matching log entries', 'Change the filters or select another source.', 'bi-journal-x') }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if total_pages > 1 %}
+<nav class="pagination-nav" aria-label="Log pages">
+  <a class="btn btn-outline btn-sm {{ 'disabled' if page <= 1 }}"
+     href="{{ url_for('dashboard.logs', q=q, level=level, file=log_file, event=event, request_id=request_id, since=since, until=until, page=page-1, refresh=refresh if refresh else '', show_all='1' if show_all else '') if page > 1 else '#' }}"
+     aria-label="Previous page"><i class="bi bi-chevron-left"></i></a>
+  <span>Page {{ page }} of {{ total_pages }} · {{ total }} entries</span>
+  <a class="btn btn-outline btn-sm {{ 'disabled' if page >= total_pages }}"
+     href="{{ url_for('dashboard.logs', q=q, level=level, file=log_file, event=event, request_id=request_id, since=since, until=until, page=page+1, refresh=refresh if refresh else '', show_all='1' if show_all else '') if page < total_pages else '#' }}"
+     aria-label="Next page"><i class="bi bi-chevron-right"></i></a>
+</nav>
+{% endif %}
+{% endblock %}

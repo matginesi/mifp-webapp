@@ -1,0 +1,113 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Protected operations{% endblock %}
+{% block content %}
+{% call page_header('Control centre', 'Protected operations', 'Password-gated backup, portable export and conservative storage maintenance.') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.control_storage') }}"><i class="bi bi-device-ssd"></i> Storage status</a>
+{% endcall %}
+{% include "dashboard/control/_nav.html" %}
+
+<section class="safety-intro">
+  <div class="safety-intro-mark"><i class="bi bi-shield-lock"></i></div>
+  <div>
+    <span>Operational safety desk</span>
+    <h2>Choose one controlled operation</h2>
+    <p>Every run is protected by CSRF, a fresh administrator password check, explicit acknowledgement and an audit event.</p>
+  </div>
+  <dl>
+    <div><dt>Database</dt><dd>{{ (preview.database.size / 1024 / 1024)|round(2) }} MB</dd></div>
+    <div><dt>Integrity</dt><dd class="{{ 'is-ok' if preview.database.quick_check == 'ok' else 'is-danger' }}">{{ preview.database.quick_check }}</dd></div>
+    <div><dt>Free storage</dt><dd>{{ (preview.storage.free_bytes / 1024 / 1024 / 1024)|round(2) }} GB</dd></div>
+  </dl>
+</section>
+
+<form class="safety-wizard" method="post" action="{{ url_for('dashboard.control_safety_operations_run') }}" data-safety-wizard>
+  <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+  <ol class="safety-steps" aria-label="Operation progress">
+    <li class="is-current" data-wizard-marker="1"><span>1</span><div><b>Choose</b><small>One operation</small></div></li>
+    <li data-wizard-marker="2"><span>2</span><div><b>Review</b><small>Exact impact</small></div></li>
+    <li data-wizard-marker="3"><span>3</span><div><b>Authorize</b><small>Password check</small></div></li>
+  </ol>
+
+  <section class="safety-panel" data-wizard-panel="1">
+    <header><span>Step 1</span><h2>What do you need to do?</h2><p>The wizard executes only the operation selected here.</p></header>
+    <div class="safety-operation-grid">
+      <label class="safety-operation">
+        <input type="radio" name="operation" value="backup" required>
+        <span class="safety-operation-icon"><i class="bi bi-database-check"></i></span>
+        <span><b>Create recovery snapshot</b><small>Consistent SQLite backup, integrity checked, newest two retained.</small></span>
+        <i class="bi bi-check-circle-fill safety-selected"></i>
+      </label>
+      <label class="safety-operation">
+        <input type="radio" name="operation" value="export" required>
+        <span class="safety-operation-icon"><i class="bi bi-box-arrow-down"></i></span>
+        <span><b>Download portable export</b><small>Import-compatible mifp-export-v1 ZIP with content and managed assets.</small></span>
+        <i class="bi bi-check-circle-fill safety-selected"></i>
+      </label>
+      <label class="safety-operation">
+        <input type="radio" name="operation" value="cleanup" required>
+        <span class="safety-operation-icon is-warning"><i class="bi bi-database-gear"></i></span>
+        <span><b>Clean storage and database</b><small>Creates a backup first, applies retention and compacts SQLite.</small></span>
+        <i class="bi bi-check-circle-fill safety-selected"></i>
+      </label>
+    </div>
+    <div class="safety-actions"><span></span><button class="btn btn-primary" type="button" data-wizard-next>Review operation <i class="bi bi-arrow-right"></i></button></div>
+  </section>
+
+  <section class="safety-panel" data-wizard-panel="2">
+    <header><span>Step 2</span><h2>Review the operation ledger</h2><p>These server-side limits apply even if JavaScript is disabled.</p></header>
+    <div class="safety-review" data-operation-review="backup">
+      <div class="safety-review-title"><i class="bi bi-database-check"></i><div><b>Recovery snapshot</b><small>No content rows or assets are changed.</small></div></div>
+      <ul>
+        <li><span>Source database</span><b>{{ (preview.database.size / 1024 / 1024)|round(2) }} MB</b></li>
+        <li><span>Integrity before completion</span><b>{{ preview.database.quick_check }}</b></li>
+        <li><span>Automatic retention</span><b>Newest 2 snapshots</b></li>
+      </ul>
+    </div>
+    <div class="safety-review" data-operation-review="export">
+      <div class="safety-review-title"><i class="bi bi-box-arrow-down"></i><div><b>Portable recovery export</b><small>The response is private and never browser-cached.</small></div></div>
+      <ul>
+        <li><span>Scope</span><b>All portable content</b></li>
+        <li><span>Format</span><b>{{ preview.export.format }}</b></li>
+        <li><span>Managed asset files</span><b>{{ 'Included' if preview.export.includes_assets else 'Excluded' }}</b></li>
+      </ul>
+    </div>
+    <div class="safety-review" data-operation-review="cleanup">
+      <div class="safety-review-title is-warning"><i class="bi bi-database-gear"></i><div><b>Conservative cleanup</b><small>A verified snapshot is created before database writes.</small></div></div>
+      <ul>
+        <li><span>Generated exports outside retention</span><b>{{ preview.storage.exports_prunable }} · {{ (preview.storage.exports_prunable_bytes / 1024 / 1024)|round(2) }} MB</b></li>
+        <li><span>Automatic backups above limit</span><b>{{ preview.backup.prunable }} · {{ (preview.backup.prunable_bytes / 1024 / 1024)|round(2) }} MB</b></li>
+        <li><span>Expired aggregate metric rows</span><b>{{ preview.database.expired_metrics }}</b></li>
+        <li><span>Estimated reclaimable space</span><b>{{ (preview.storage.reclaimable_bytes / 1024 / 1024)|round(2) }} MB</b></li>
+        <li><span>Editorial assets and unknown files</span><b>Never touched</b></li>
+      </ul>
+    </div>
+    <div class="safety-actions"><button class="btn btn-outline" type="button" data-wizard-back><i class="bi bi-arrow-left"></i> Change operation</button><button class="btn btn-primary" type="button" data-wizard-next>Authorize <i class="bi bi-arrow-right"></i></button></div>
+  </section>
+
+  <section class="safety-panel" data-wizard-panel="3">
+    <header><span>Step 3</span><h2>Authorize this run</h2><p>Your password is checked against the configured administrator hash and is never logged or stored.</p></header>
+    <div class="safety-auth-grid">
+      <label class="field">
+        <span>Administrator password</span>
+        <input class="form-control" type="password" name="password" autocomplete="current-password" required>
+        <small>Required again for every protected operation.</small>
+      </label>
+      <label class="safety-ack">
+        <input type="checkbox" name="acknowledge" value="1" required>
+        <span><b>I reviewed the operation ledger</b><small>Run only the selected action using the limits shown above.</small></span>
+      </label>
+      <label class="field safety-cleanup-confirm" data-cleanup-confirm>
+        <span>Type <code>CLEAN STORAGE</code></span>
+        <input class="form-control" type="text" name="confirmation" autocomplete="off">
+        <small>This additional phrase is required only for cleanup.</small>
+      </label>
+    </div>
+    <div class="control-note note-danger" data-cleanup-warning><i class="bi bi-exclamation-octagon"></i><div><b>Cleanup removes retained generated files</b><span>The database snapshot is created first. Deleted export and old automatic-backup files cannot be recovered from this server.</span></div></div>
+    <div class="safety-actions"><button class="btn btn-outline" type="button" data-wizard-back><i class="bi bi-arrow-left"></i> Back to review</button><button class="btn btn-primary" type="submit" data-wizard-submit><i class="bi bi-shield-check"></i> Run protected operation</button></div>
+  </section>
+</form>
+{% endblock %}
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/dashboard/safety-operations.js', v=static_version) }}" defer></script>
+{% endblock %}

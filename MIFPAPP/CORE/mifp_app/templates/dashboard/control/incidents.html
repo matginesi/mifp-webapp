@@ -1,0 +1,31 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Incidents{% endblock %}
+{% block content %}
+{% call page_header('Control centre', 'Incidents & audit', 'Repeated warnings and errors grouped by a stable signature, with recent administrative actions kept separate.') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.logs') }}"><i class="bi bi-list-check"></i> Full logs</a>
+{% endcall %}
+{% include "dashboard/control/_nav.html" %}
+
+<section class="control-panel">
+  <div class="panel-head"><div><h2>Grouped incidents</h2><p>Volatile IDs and numbers are removed only from the grouping signature; original samples remain unchanged.</p></div><span>{{ groups.incidents|length }}</span></div>
+  <div class="control-list">
+    {% for item in groups.incidents %}
+    <div class="incident-row">
+      <span class="status-chip status-{{ 'danger' if item.highest_level in ['ERROR','CRITICAL'] else 'warning' }}">{{ item.highest_level }}</span>
+      <div><b>{{ item.signature }}</b><small>{{ item.logger }}{% if item.location %} · {{ item.location }}{% endif %}</small><small>Last: {{ item.last_seen or '—' }}{% if item.request_id %} · request {{ item.request_id }}{% endif %}</small></div>
+      <strong>{{ item.count }}×</strong>
+    </div>
+    {% else %}<div class="empty">No warning or error incidents in the current log window.</div>{% endfor %}
+  </div>
+</section>
+
+<section class="control-panel">
+  <div class="panel-head"><div><h2>Recent administrative audit</h2><p>Actor, operation and outcome from the dedicated audit stream.</p></div><span>{{ groups.audit|length }}</span></div>
+  <div class="control-list">
+    {% for item in groups.audit %}
+    <div class="control-list-row"><span><b>{{ item.message or item.event or 'Administrative action' }}</b><small>{{ item.when or '—' }} · {{ item.user or 'unknown user' }}{% if item.path %} · {{ item.path }}{% endif %}</small></span><span class="status-chip status-info">{{ item.method or 'AUDIT' }}</span></div>
+    {% else %}<div class="empty">No audit events in the current log window.</div>{% endfor %}
+  </div>
+</section>
+{% endblock %}

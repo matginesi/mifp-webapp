@@ -1,0 +1,358 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Assets{% endblock %}
+{% block content %}
+{% call page_header('Operations', 'Assets', 'Manage uploaded files, recover missing media and keep metadata ready for publication.') %}
+    <button class="btn btn-primary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#assetCreateModal"><i class="bi bi-upload"></i> Add asset</button>
+    <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.data_portability') }}"><i class="bi bi-arrow-down-up"></i> Data portability</a>
+    {% if recovery.with_url %}
+    <form method="post" action="{{ url_for('dashboard.assets_retry_external') }}" class="inline-action-form">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <button class="btn btn-outline btn-sm"><i class="bi bi-cloud-download"></i> Recover missing</button>
+    </form>
+    {% endif %}
+    <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.data_quality_page') }}#analysis"><i class="bi bi-clipboard2-pulse"></i> Analyze quality</a>
+{% endcall %}
+<section class="operations-status-strip assets-status-strip status-strip" aria-label="Asset library status">
+  <div class="operations-status-lead">
+    <i class="bi bi-folder2-open" aria-hidden="true"></i>
+    <span><small>Library</small><strong>{{ counts.assets }}</strong><em>files · {{ total_mb }} MB</em></span>
+  </div>
+  <a href="{{ url_for('dashboard.assets_page', status='used') }}"><small>Published use</small><strong class="tone-success">{{ used_count }}</strong><em>linked files</em></a>
+  <a href="{{ url_for('dashboard.assets_page', status='unused') }}"><small>Unused</small><strong class="tone-warning">{{ unused_count }}</strong><em>review before cleanup</em></a>
+  <a href="{{ url_for('dashboard.assets_page', status='missing') }}"><small>Missing</small><strong class="{{ 'tone-danger' if missing_count else 'tone-muted' }}">{{ missing_count }}</strong><em>{{ recovery.with_url }} recoverable</em></a>
+  <div><small>File types</small><strong>{{ summary|length }}</strong><em>{% if orphan_count %}{{ orphan_count }} orphan files{% else %}No orphan files{% endif %}</em></div>
+</section>
+
+<section class="asset-triage" aria-label="Asset health shortcuts">
+  <a href="{{ url_for('dashboard.assets_page', status='missing') }}" class="asset-triage-card {{ 'is-active' if status == 'missing' }}">
+    <i class="bi bi-file-earmark-x" aria-hidden="true"></i>
+    <span><b>{{ issue_summary.missing }}</b><small>Missing locally</small></span>
+    <em>{{ issue_summary.recoverable }} recoverable</em>
+  </a>
+  <a href="{{ url_for('dashboard.assets_page', status='errors') }}" class="asset-triage-card is-danger {{ 'is-active' if status == 'errors' }}">
+    <i class="bi bi-exclamation-octagon" aria-hidden="true"></i>
+    <span><b>{{ issue_summary.errors }}</b><small>Need intervention</small></span>
+    <em>No usable source or retries stopped</em>
+  </a>
+  <a href="{{ url_for('dashboard.assets_page', status='unused') }}" class="asset-triage-card {{ 'is-active' if status == 'unused' }}">
+    <i class="bi bi-box-seam" aria-hidden="true"></i>
+    <span><b>{{ issue_summary.unused }}</b><small>Unused</small></span>
+    <em>Archive before cleanup</em>
+  </a>
+  <a href="{{ url_for('dashboard.assets_page', status='metadata') }}" class="asset-triage-card {{ 'is-active' if status == 'metadata' }}">
+    <i class="bi bi-card-checklist" aria-hidden="true"></i>
+    <span><b>{{ issue_summary.metadata }}</b><small>Metadata incomplete</small></span>
+    <em>Checksum, dimensions or alt text</em>
+  </a>
+  <a href="{{ url_for('dashboard.assets_page', status='duplicates') }}" class="asset-triage-card {{ 'is-active' if status == 'duplicates' }}">
+    <i class="bi bi-copy" aria-hidden="true"></i>
+    <span><b>{{ issue_summary.duplicates }}</b><small>Possible duplicates</small></span>
+    <em>Checksum or same filename and size</em>
+  </a>
+</section>
+
+{% if missing_count %}
+<div class="alert {{ 'alert-warning' if recovery.with_url else 'alert-danger' }}">
+  <b>{{ missing_count }} files are absent locally.</b>
+  {% if recovery.with_url %}
+    {{ recovery.with_url }} records have a source URL and are processed in bounded batches.
+    {% if recovery.deferred %}{{ recovery.deferred }} are cooling down before another attempt.{% endif %}
+    {% if recovery.terminal %}{{ recovery.terminal }} reached the retry limit or returned a permanent error.{% endif %}
+  {% else %}
+    No recovery URL is available; import a ZIP containing the files or add a valid source URL.
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="modal fade asset-create-modal" id="assetCreateModal" tabindex="-1" aria-labelledby="assetCreateTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+    <div class="modal-content smart-modal">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title" id="assetCreateTitle"><i class="bi bi-cloud-arrow-up"></i> Add an asset</h2>
+          <p class="modal-subtitle">Upload a local file or register a validated public URL.</p>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="asset-create-tabs" role="tablist" aria-label="Asset source">
+          <button class="is-active" type="button" role="tab" aria-selected="true" aria-controls="assetCreateUploadPanel" data-asset-create-tab="upload"><i class="bi bi-file-earmark-arrow-up"></i> Local file</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="assetCreateUrlPanel" data-asset-create-tab="url"><i class="bi bi-link-45deg"></i> Public URL</button>
+        </div>
+        <form id="assetUploadForm" method="post" enctype="multipart/form-data" class="asset-create-form" data-asset-create-panel="upload">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="action" value="upload">
+      <div class="upload-grid">
+        <label class="upload-file-wrap">
+          <span>File</span>
+          <input type="file" name="file" required class="form-control form-control-sm">
+        </label>
+        <label>
+          <span>Kind</span>
+          <select name="kind" class="form-select form-select-sm">
+            <option value="">Auto-detect</option>
+            <option value="image">Image</option>
+            <option value="document">Document</option>
+            <option value="pdf">PDF</option>
+            <option value="video">Video</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label>
+          <span>Alt text</span>
+          <input type="text" name="alt_text" maxlength="500" class="form-control form-control-sm" placeholder="Describe the image or document">
+        </label>
+        <label>
+          <span>Caption</span>
+          <input type="text" name="caption" maxlength="500" class="form-control form-control-sm" placeholder="Optional public caption">
+        </label>
+      </div>
+        </form>
+        <form id="assetUrlForm" method="post" class="asset-create-form" data-asset-create-panel="url" hidden>
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="action" value="external">
+      <div class="upload-grid">
+        <label class="upload-file-wrap">
+          <span>External URL</span>
+          <input type="url" name="source_url" required maxlength="2048" class="form-control form-control-sm" placeholder="https://example.org/file.pdf">
+        </label>
+        <label>
+          <span>Kind</span>
+          <select name="kind" class="form-select form-select-sm">
+            <option value="other">Other</option>
+            <option value="image">Image</option>
+            <option value="document">Document</option>
+            <option value="pdf">PDF</option>
+            <option value="video">Video</option>
+          </select>
+        </label>
+        <label><span>Alt text</span><input type="text" name="alt_text" maxlength="500" class="form-control form-control-sm"></label>
+        <label><span>Caption</span><input type="text" name="caption" maxlength="500" class="form-control form-control-sm"></label>
+      </div>
+        </form>
+        <div class="asset-create-guidance">
+          <i class="bi bi-shield-check"></i>
+          <span>File type, size, URL host and metadata are validated again by Flask before storage.</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline btn-sm" type="button" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary btn-sm" type="submit" form="assetUploadForm" id="assetCreateSubmit"><i class="bi bi-upload"></i> Upload asset</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<form class="toolbar asset-library-toolbar" method="get" aria-label="Filter asset library">
+  <div class="toolbar-search"><i class="bi bi-search"></i><input class="form-control form-control-sm" name="q" value="{{ q or '' }}" placeholder="Search by filename or caption"></div>
+  <select name="kind" class="form-select form-select-sm slim">
+    <option value="">All kinds</option>
+    {% for k in ['image','pdf','document','video','other'] %}<option value="{{ k }}" {{ 'selected' if kind == k }}>{{ k }}</option>{% endfor %}
+  </select>
+  <select name="status" class="form-select form-select-sm slim" aria-label="Asset status">
+    <option value="">All statuses</option>
+    <option value="used" {{ 'selected' if status == 'used' }}>Used</option>
+    <option value="unused" {{ 'selected' if status == 'unused' }}>Unused</option>
+    <option value="missing" {{ 'selected' if status == 'missing' }}>Missing locally</option>
+    <option value="recoverable" {{ 'selected' if status == 'recoverable' }}>Recoverable</option>
+    <option value="errors" {{ 'selected' if status == 'errors' }}>Needs intervention</option>
+    <option value="metadata" {{ 'selected' if status == 'metadata' }}>Metadata incomplete</option>
+    <option value="duplicates" {{ 'selected' if status == 'duplicates' }}>Possible duplicates</option>
+  </select>
+  <button class="btn btn-primary btn-sm"><i class="bi bi-funnel"></i> Filter</button>
+  {% if q or kind or status %}<a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.assets_page') }}">Clear</a>{% endif %}
+</form>
+
+<div class="table-card">
+  <div class="data-scroll">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th class="asset-col-id">ID</th>
+          <th class="asset-col-preview">Preview</th>
+          <th class="asset-col-file">File</th>
+          <th class="asset-col-kind">Kind</th>
+          <th class="asset-col-size col-num">Size</th>
+          <th class="asset-col-used col-num">Used</th>
+          <th class="asset-col-created">Created</th>
+          <th class="col-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for a in assets %}
+        {% set u = usage.get(a.id, 0) %}
+        <tr class="expandable-row">
+          <td colspan="8" class="asset-detail-cell">
+            <div class="asset-row-inner">
+              <div class="asset-row-cells">
+                <div class="asset-cell-id"><span class="cell-id">#{{ a.id }}</span></div>
+                <div class="asset-cell-thumb">
+                  {% if a.kind == 'image' and a.path %}
+                  {% set img_url = url_for('dashboard.asset_file', filename=a.path.split('/', 1)[1] if '/' in a.path else a.path) %}
+                  <div class="asset-thumb"><img src="{{ img_url }}" alt="{{ a.alt_text or a.filename }}" width="36" height="36" loading="lazy" data-error-fallback="{{ a.source_url or img_url }}"></div>
+                  {% elif a.kind == 'pdf' %}<div class="asset-thumb">{% if a.source_url and a.is_external %}<a href="{{ a.source_url }}" target="_blank" rel="noopener noreferrer"><i class="bi bi-file-earmark-pdf"></i></a>{% else %}<i class="bi bi-file-earmark-pdf"></i>{% endif %}</div>
+                  {% elif a.kind == 'video' %}<div class="asset-thumb"><i class="bi bi-film"></i></div>
+                  {% else %}<div class="asset-thumb">{% if a.source_url and a.is_external %}<a href="{{ a.source_url }}" target="_blank" rel="noopener noreferrer"><i class="bi bi-link-45deg"></i></a>{% else %}<i class="bi bi-file-earmark"></i>{% endif %}</div>
+                  {% endif %}
+                </div>
+                <div class="asset-cell-main">
+                  <b class="asset-file-title">{{ a.original_filename or a.filename }}</b>
+                  {% if a.is_external or not a.path or a.path.startswith('external/') %}<span class="pill pill-warning asset-external-pill">Esterno</span>{% endif %}
+                  {% if a.issue_missing %}<span class="pill pill-danger">Missing</span>{% endif %}
+                  {% if a.issue_unused %}<span class="pill pill-warning">Unused</span>{% endif %}
+                  {% if a.issue_duplicate %}<span class="pill pill-info">Possible duplicate</span>{% endif %}
+                  {% if a.issue_metadata %}<span class="pill">Metadata</span>{% endif %}
+                  <br><span class="tiny muted">{{ a.path }}</span>
+                  {% if a.recovery_state and a.recovery_state.last_error %}
+                  <br><span class="tiny tone-danger">Recovery: {{ a.recovery_state.last_error }}</span>
+                  {% endif %}
+                  {% if a.caption %}<br><span class="tiny">{{ a.caption }}</span>{% endif %}
+                </div>
+                <div class="asset-cell-kind"><span class="pill">{{ a.kind }}</span></div>
+                <div class="asset-cell-size">{{ (a.size/1024)|round(1) if a.size else 0 }} KB</div>
+                <div class="asset-cell-used"><span class="cell-bool asset-used-count {{ 'yes' if u else 'no' }}">{{ u }}</span></div>
+                <div class="asset-cell-date"><span class="cell-date">{{ a.created_at or '—' }}</span></div>
+                <div class="asset-cell-actions">
+                  <div class="dash-row-actions">
+                    {% set asset_url = url_for('dashboard.asset_file', filename=a.path.split('/', 1)[1] if a.path and '/' in a.path else a.path) if a.path else (a.source_url or '') %}
+                    <button class="btn btn-mini btn-outline asset-view-btn" type="button"
+                      data-filename="{{ a.original_filename or a.filename }}"
+                      data-path="{{ a.path or '' }}"
+                      data-source-url="{{ a.source_url or '' }}"
+                      data-kind="{{ a.kind or '' }}"
+                      data-mime="{{ a.mime_type or '' }}"
+                      data-size="{{ (a.size/1024)|round(1) if a.size else 0 }} KB"
+                      data-checksum="{{ a.checksum or '' }}"
+                      data-storage="{{ a.storage_status or '' }}"
+                      data-public-url="{{ asset_url }}"
+                      data-preview="{{ asset_url if a.kind == 'image' else '' }}"
+                      data-links="{% for link in linked_records.get(a.id, []) %}{{ link.entity_type }} #{{ link.entity_id }} {{ link.role }}: {{ link.label or 'record' }}{% if not loop.last %}||{% endif %}{% endfor %}"
+                    >View</button>
+                    <button class="btn btn-mini btn-outline" type="button" data-action="toggle-asset-edit" aria-expanded="false">Edit</button>
+                    <form method="post" action="{{ url_for('dashboard.assets_page') }}" class="d-inline" data-confirm="Archive and remove asset #{{ a.id }}? A recovery ZIP and database backup will be created first.">
+                      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="action" value="delete">
+                      <input type="hidden" name="id" value="{{ a.id }}">
+                      {% if u == 0 %}<input type="hidden" name="force" value="1">{% endif %}
+                      <button class="btn btn-mini btn-outline-danger">Delete</button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+              <div class="asset-row-edit">
+                <form method="post" action="{{ url_for('dashboard.assets_page') }}" class="details-form">
+                  <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="action" value="update">
+                  <input type="hidden" name="id" value="{{ a.id }}">
+                  <div class="details-form-grid">
+                    <label><span>Alt text</span><input type="text" name="alt_text" value="{{ a.alt_text or '' }}" maxlength="500" class="form-control form-control-sm"></label>
+                    <label><span>Caption</span><input type="text" name="caption" value="{{ a.caption or '' }}" maxlength="500" class="form-control form-control-sm" placeholder="Display label"></label>
+                    <label><span>Source URL</span><input type="url" name="source_url" value="{{ a.source_url or '' }}" maxlength="2048" class="form-control form-control-sm" placeholder="https://..."></label>
+                    <label><span>Kind</span>
+                      <select name="kind" class="form-select form-select-sm">
+                        {% for k in ['image','document','pdf','video','other'] %}
+                        <option value="{{ k }}" {{ 'selected' if a.kind == k }}>{{ k }}</option>
+                        {% endfor %}
+                      </select>
+                    </label>
+                    <div class="details-form-actions">
+                      <span class="tiny muted">Created: {{ a.created_at }} · Checksum: {{ (a.checksum or '—')[:16] }}…</span>
+                      <button class="btn btn-primary btn-sm">Save</button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8" class="empty">No assets found.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% set unused_count = unused_count|default(0) %}
+<div class="asset-summary-grid">
+  <div class="modern-card">
+    <h3>Unused assets</h3>
+    <p>Database-tracked assets not linked to any content.</p>
+    <div class="alert-mini">Unused: <b>{{ unused_count }}</b> assets</div>
+    {% if cleanup_plan and cleanup_plan.unused_db_assets %}
+    <div class="bar-list asset-scroll-list">
+      {% for asset in cleanup_plan.unused_db_assets[:20] %}
+      <div class="bar-row">
+        <span title="{{ asset.path }}">{{ asset.filename or asset.original_filename or asset.path }}</span>
+        <strong>#{{ asset.id }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if unused_count %}
+    <div class="asset-action-row">
+      <form method="post" action="{{ url_for('dashboard.assets_page') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="export_unused"><button class="btn btn-primary btn-sm"><i class="bi bi-download"></i> Export unused (.zip)</button>
+      </form>
+      <form method="post" action="{{ url_for('dashboard.cleanup_unused_assets') }}" data-confirm="Archive and remove {{ unused_count }} unused assets? A recovery ZIP and database backup will be created first.">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="apply" value="1">
+        <button class="btn btn-danger btn-sm"><i class="bi bi-archive"></i> Archive &amp; clean unused</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+  <div class="modern-card">
+    <h3>Assets by kind</h3>
+    <div class="kv-grid">
+      {% for s in summary %}
+      <div class="kv"><span>{{ s.kind }}</span><b>{{ s.total }} &middot; {{ (s.bytes/1024/1024)|round(2) }} MB</b></div>
+      {% endfor %}
+      <div class="kv"><span>Total</span><b>{{ counts.assets }} &middot; {{ total_mb }} MB</b></div>
+      {% if cleanup_plan %}
+      <div class="kv"><span>Missing files</span><b>{{ cleanup_plan.missing_file_assets|length }}</b></div>
+      <div class="kv"><span>Files not in DB</span><b>{{ cleanup_plan.orphan_files|length }}</b></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="assetViewModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+    <div class="modal-content smart-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="assetViewTitle">Asset</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="asset-modal-grid">
+          <div class="asset-modal-preview" id="assetViewPreview"></div>
+          <div class="asset-modal-info">
+            <dl class="asset-detail-list">
+              <div><dt>Filename</dt><dd id="assetViewFilename"></dd></div>
+              <div><dt>Local path</dt><dd><code id="assetViewPath"></code> <button class="btn btn-mini btn-outline asset-copy" type="button" data-copy-target="assetViewPath">Copy</button></dd></div>
+              <div><dt>Original URL</dt><dd><code id="assetViewSource"></code> <button class="btn btn-mini btn-outline asset-copy" type="button" data-copy-target="assetViewSource">Copy</button></dd></div>
+              <div><dt>Kind / MIME</dt><dd id="assetViewKind"></dd></div>
+              <div><dt>Size</dt><dd id="assetViewSize"></dd></div>
+              <div><dt>Checksum</dt><dd><code id="assetViewChecksum"></code></dd></div>
+              <div><dt>Storage</dt><dd id="assetViewStorage"></dd></div>
+              <div><dt>Linked records</dt><dd id="assetViewLinks"></dd></div>
+            </dl>
+            <div class="asset-modal-actions">
+              <a class="btn btn-primary btn-sm" id="assetViewOpen" href="#" target="_blank" rel="noopener noreferrer"><i class="bi bi-box-arrow-up-right"></i> Open</a>
+              <a class="btn btn-outline btn-sm" id="assetViewDownload" href="#" download><i class="bi bi-download"></i> Download</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/dashboard/content.js') }}" defer></script>
+{% endblock %}

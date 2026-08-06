@@ -1,0 +1,112 @@
+{% extends "public/base.html" %}
+{% block title %}{{ sponsor.name }} — Sponsor — MIFP{% endblock %}
+{% block meta_description %}{{ sponsor.description|striptags|truncate(160) if sponsor.description else sponsor.name }} — MIFP Sponsor.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="container-wide">
+    <ol class="mifp-breadcrumb">
+      <li><a href="{{ url_for('public.home') }}">Home</a></li>
+      <li><a href="{{ url_for('public.sponsors') }}">Sponsors</a></li>
+      <li aria-current="page">{{ sponsor.name }}</li>
+    </ol>
+
+    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <span class="num serif italic" style="color:#d97706;font-size:0.85rem;">—</span>
+      <span class="eyebrow" style="color:#fcd34d;">Sponsor</span>
+      {% if sponsor.tier %}<span class="tag amber">{{ sponsor.tier }}</span>{% endif %}
+    </div>
+
+    <div style="display:flex;align-items:center;gap:32px;flex-wrap:wrap;">
+      <div style="flex-shrink:0;width:120px;height:120px;border:1px solid var(--line);border-radius:var(--r);background:white;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+        {% if sponsor.logo_url %}
+        <img src="{{ sponsor.logo_url }}" alt="{{ sponsor.name }}" style="max-width:90%;max-height:90%;object-fit:contain;">
+        {% else %}
+        <span class="serif" style="font-size:2.5rem;font-weight:700;color:var(--paper-faint);">{{ sponsor.name[:2]|upper }}</span>
+        {% endif %}
+      </div>
+      <div style="flex:1;min-width:280px;">
+        <h1>{{ sponsor.name }}</h1>
+        {% if sponsor.description %}
+        <p>{{ sponsor.description|striptags|truncate(280) }}</p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="accent-bar" style="background: linear-gradient(90deg, #d97706, var(--mifp-red));"></div>
+  </div>
+</section>
+
+<section class="section-sm">
+  <div class="container-wide">
+
+    {% if sponsor.website_url %}
+    <a href="{{ sponsor.website_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-blue" style="margin-bottom:32px;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      Visit Website
+    </a>
+    {% endif %}
+
+    {# ── Body content ── #}
+    {% if sponsor.body %}
+    <article class="article-body md-body" style="max-width:760px;">
+      {{ sponsor.body|safe }}
+    </article>
+    {% endif %}
+
+    {# ── Linked events ── #}
+    {% if sponsor.linked_events %}
+    <div style="margin-top:64px;">
+      <div class="section-head" style="margin-bottom:24px;">
+        <div class="section-head-left">
+          <div class="eyebrow-row">
+            <span class="num serif italic" style="color:#d97706;">—</span>
+            <span class="eyebrow" style="color:#fcd34d;">Related Events</span>
+          </div>
+          <h2 style="font-size:1.6rem;">Events sponsored by {{ sponsor.name }}</h2>
+        </div>
+      </div>
+      <div class="card-grid">
+        {% for event in sponsor.linked_events %}
+        <a href="{{ url_for('public.event_detail', slug=event.slug) }}" class="card event-card">
+          {% if event.cover_url %}
+          <div class="card-cover">
+            <img src="{{ event.cover_url }}" alt="{{ event.title }}" loading="lazy">
+          </div>
+          {% endif %}
+          {% if event.start_date %}
+          {% set parts = event.start_date[:10].split('-') %}
+          <div class="event-date">
+            <span class="day">{{ parts[2] if parts|length >= 3 else '—' }}</span>
+            <span class="month">{{ parts[1] if parts|length >= 2 else '' }}</span>
+            <span class="year">{{ parts[0] if parts|length >= 1 else '' }}</span>
+          </div>
+          {% endif %}
+          <h3 class="event-title line-clamp-2">{{ event.title }}</h3>
+          {% if event.location %}
+          <div class="event-loc">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            <span class="line-clamp-2">{{ event.location }}</span>
+          </div>
+          {% endif %}
+          <div class="event-foot">
+            <span>{{ event.date_text or event.start_date }}</span>
+            <span class="arrow">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+            </span>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div style="margin-top:48px;text-align:center;">
+      <a href="{{ url_for('public.sponsors') }}" class="btn btn-ghost">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        All Sponsors
+      </a>
+    </div>
+
+  </div>
+</section>
+{% endblock %}

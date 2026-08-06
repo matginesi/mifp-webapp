@@ -1,0 +1,221 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Data quality{% endblock %}
+{% block content %}
+{% call page_header('Data quality', 'Database cleanup', 'Scan, review, and consolidate records. The system never deletes — it quarantines and merges.') %}
+  <button type="button" class="btn btn-primary btn-sm" id="dqAnalyze"><i class="bi bi-stars"></i> Scan database</button>
+{% endcall %}
+
+<div class="dq-app">
+
+  <!-- Phase 1: Scan -->
+  <section class="dq-phase" id="dqPhase1" data-phase="1">
+    <header class="dq-phase-header">
+      <span class="dq-phase-num"><i class="bi bi-search"></i></span>
+      <div>
+        <h2>Scan</h2>
+        <p>Detect records that should be merged, cleaned, enriched, or split. This step never changes content.</p>
+      </div>
+    </header>
+    <div class="dq-progress" id="dqProgress" hidden>
+      <div class="dq-progress-track"><span id="dqProgressFill"></span></div>
+      <b id="dqProgressPercent"></b>
+      <span id="dqProgressText"></span>
+      <time id="dqProgressTime"></time>
+    </div>
+    <div class="dq-summary" id="dqSummary">
+      {% if run %}
+      <div class="dq-summary-cards" id="dqSummaryCards">
+        {% set actions = run.summary.actions if run and run.summary else {} %}
+        {% for value, label, icon in [
+          ('clean_record','Clean records','bi-eraser'),
+          ('split_aggregated_record','Split aggregated','bi-scissors'),
+          ('enrich_record','Enrichments','bi-plus-circle'),
+          ('repair_relations_or_assets','Fix links & assets','bi-link-45deg'),
+          ('merge_records','Merge candidates','bi-intersect'),
+        ] %}
+        <button type="button" class="dq-summary-card" data-action-filter="{{ value }}">
+          <i class="bi {{ icon }}"></i>
+          <b>{{ actions.get(value, 0) }}</b>
+          <span>{{ label }}</span>
+        </button>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="dq-empty-phase">
+        <i class="bi bi-clipboard-data"></i>
+        <b>No scan results</b>
+        <p>Run a scan to discover records that need attention.</p>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <hr class="dq-phase-divider">
+
+  <!-- Phase 2: Review & Apply -->
+  <section class="dq-phase {% if not run %}dq-phase-disabled{% endif %}" id="dqPhase2" data-phase="2">
+    <header class="dq-phase-header">
+      <span class="dq-phase-num"><i class="bi bi-check2-square"></i></span>
+      <div>
+        <h2>Review &amp; Apply</h2>
+        <p>Filter and review open findings. Accepted changes move to the queue; filters never modify the queue.</p>
+      </div>
+    </header>
+    {% if run %}
+    <form class="dq-toolbar" id="dqFilters">
+      <label>
+        <span>Action</span>
+        <select class="form-select form-select-sm" name="action_type">
+          <option value="">All actions</option>
+          <option value="clean_record">Clean record</option>
+          <option value="enrich_record">Enrich record</option>
+          <option value="split_aggregated_record">Split aggregated</option>
+          <option value="repair_relations_or_assets">Fix links or assets</option>
+          <option value="merge_records">Merge candidates</option>
+        </select>
+      </label>
+      <label>
+        <span>Content</span>
+        <select class="form-select form-select-sm" name="entity_type">
+          <option value="">All content</option>
+          <option value="member">Members</option>
+          <option value="event">Events</option>
+          <option value="news">News</option>
+          <option value="publication">Publications</option>
+          <option value="sponsor">Sponsors</option>
+          <option value="asset">Assets</option>
+        </select>
+      </label>
+      <label>
+        <span>Finding</span>
+        <select class="form-select form-select-sm" name="classification">
+          <option value="reviewable" selected>Automatic fixes</option>
+          <option value="">All</option>
+          <option value="exact_duplicate">Exact match</option>
+          <option value="strong_candidate">Strong candidate</option>
+          <option value="needs_cleaning">Needs cleaning</option>
+          <option value="aggregated_record">Aggregated record</option>
+          <option value="invalid_record">Invalid record</option>
+          <option value="ambiguous">Ambiguous</option>
+          <option value="blocked">Blocked</option>
+          <option value="related_not_duplicate">Related, not same</option>
+        </select>
+      </label>
+      <button type="button" class="btn btn-primary btn-sm" id="dqFilterBtn"><i class="bi bi-funnel"></i> Filter</button>
+    </form>
+    <div class="dq-queue-bar">
+      <div class="dq-filter-status" aria-live="polite">
+        <b id="dqFilteredCount">{{ total }}</b>
+        <span>matching the current filters</span>
+      </div>
+      <div class="dq-queue-stats" id="dqQueueStats">
+        {% set items = bundle['items'] if bundle else [] %}
+        {% set labels = {'merge_records':'consolidations','clean_record':'cleanups','repair_relations_or_assets':'repairs','enrich_record':'enrichments','split_aggregated_record':'splits'} %}
+        {% set totals = {} %}
+        {% for item in items %}{% set _ = totals.update({(item.action_type ~ ':' ~ item.entity_type): totals.get((item.action_type ~ ':' ~ item.entity_type), 0) + 1}) %}{% endfor %}
+        <span id="dqQueueCount">{{ items|length }}</span>
+        <span class="dq-queue-label">queued</span>
+        {% for key, count in totals.items() %}
+        {% set parts = key.split(':') %}
+        <span class="dq-queue-badge"><b>{{ count }}</b> {{ parts[1] }} {{ labels.get(parts[0], parts[0]) }}</span>
+        {% endfor %}
+      </div>
+      <div class="dq-queue-actions">
+        <button type="button" class="btn btn-sm btn-dq-accept-all" id="dqAcceptAll" {% if not total %}disabled{% endif %}>
+          <i class="bi bi-check2-all"></i> Accept all
+        </button>
+        <button type="button" class="btn btn-sm btn-dq-apply" id="dqApplyAll" {% if not bundle %}disabled{% endif %}>
+          <i class="bi bi-database-check"></i> Apply changes
+        </button>
+        <button type="button" class="btn btn-sm btn-dq-clear" id="dqClearQueue" {% if not bundle %}disabled{% endif %}>
+          <i class="bi bi-x-circle"></i> Clear
+        </button>
+      </div>
+    </div>
+    <div class="dq-finding-list" id="dqFindings">
+      <div class="dq-empty-list"><i class="bi bi-inboxes"></i><b>No findings loaded</b><p>Run a scan or open the latest result.</p></div>
+    </div>
+    <div class="dq-load-more"><button type="button" class="btn btn-sm btn-outline" id="dqLoadMore" hidden>Load 30 more</button></div>
+    <div class="dq-history">
+      <h3>History</h3>
+      {% if bundle and bundle.report and bundle.report.status == 'applied' %}
+      <div class="dq-history-item">
+        <span class="status-badge status-success">Applied</span>
+        <small>{{ bundle.report.applied_at }}</small>
+        <code>{{ bundle.report.backup_path }}</code>
+      </div>
+      {% else %}
+      <p class="text-3" style="font-size:.7rem">No previous consolidations.</p>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="dq-empty-phase">
+      <i class="bi bi-clipboard-data"></i>
+      <b>No scan results</b>
+      <p>Run a scan first to see findings here.</p>
+    </div>
+    {% endif %}
+  </section>
+
+</div>
+
+<div class="modal fade" id="dqApplyModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content smart-modal">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-database-check"></i> Applying changes</h5>
+      </div>
+      <div class="modal-body">
+        <div class="dq-apply-progress" id="dqApplyProgress">
+          <div class="dq-progress-track"><span id="dqApplyFill"></span></div>
+          <b id="dqApplyStatus">Starting…</b>
+        </div>
+        <div id="dqApplyResult" class="dq-apply-result" hidden>
+          <i class="bi bi-check-circle text-success"></i>
+          <b id="dqApplyResultTitle">Applied successfully</b>
+          <p id="dqApplyResultDetail"></p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline" id="dqApplyClose" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="dqDetailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+    <div class="modal-content smart-modal">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-search"></i> Finding detail</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="dqDetailBody">
+        <div class="dq-detail-placeholder">Loading…</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/dashboard/data-quality.js', v='20260729-07') }}" defer></script>
+<script type="application/json" id="dqConfig" nonce="{{ csp_nonce }}">{{ {
+  'runId': run.id if run else none,
+  'bundleId': bundle.id if bundle else none,
+  'analyzeUrl': url_for('dashboard.data_quality_analyze'),
+  'progressUrl': url_for('dashboard.data_quality_analyze_progress'),
+  'findingsUrl': url_for('dashboard.data_quality_findings'),
+  'stateUrl': url_for('dashboard.data_quality_state'),
+  'findingUrl': url_for('dashboard.data_quality_finding', finding_id=0),
+  'decisionUrl': url_for('dashboard.data_quality_decision', finding_id=0),
+  'bulkDecisionUrl': url_for('dashboard.data_quality_bulk_decision'),
+  'bundlesUrl': url_for('dashboard.data_quality_bundle_create'),
+  'bundleUrl': url_for('dashboard.data_quality_bundle', bundle_id=0),
+}|tojson }}</script>
+{% endblock %}

@@ -1,0 +1,253 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header, empty_state, export_dropdown %}
+{% block page_title %}Statistics{% endblock %}
+{% block vendor_scripts %}
+<script src="{{ url_for('static', filename='js/vendor/chart.umd.js') }}" defer></script>
+{% endblock %}
+{% block extra_js %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/dashboard/stats.js') }}" defer></script>
+{% endblock %}
+{% block content %}
+{% call page_header('System', 'Statistics', 'Public activity, editorial coverage and problems that require attention.') %}
+  <div class="stats-page-actions">
+    <nav class="stats-period" aria-label="Statistics period">
+      {% for days in (7, 30, 90) %}
+      <a href="{{ url_for('dashboard.stats', days=days) }}"
+         class="{{ 'is-active' if selected_days == days }}"
+         aria-current="{{ 'page' if selected_days == days else 'false' }}">{{ days }} days</a>
+      {% endfor %}
+    </nav>
+    {{ export_dropdown([
+      ('Excel', url_for('dashboard.export_stats', fmt='xlsx'), 'bi bi-file-earmark-excel'),
+      ('CSV', url_for('dashboard.export_stats', fmt='csv'), 'bi bi-filetype-csv'),
+      ('JSON', url_for('dashboard.export_stats', fmt='json'), 'bi bi-filetype-json'),
+      ('DOCX', url_for('dashboard.export_stats', fmt='docx'), 'bi bi-file-earmark-word'),
+      ('PDF', url_for('dashboard.export_stats', fmt='pdf'), 'bi bi-file-earmark-pdf'),
+    ]) }}
+  </div>
+{% endcall %}
+
+<section class="stats-summary overview-grid" aria-label="Summary">
+  <article class="stats-metric">
+    <span>Public requests · {{ selected_days }} days</span>
+    <strong>{{ visits.period.total }}</strong>
+    {% if visits.period.delta_percent is none %}
+    <small>No previous-period baseline</small>
+    {% else %}
+    <small class="{{ 'trend-up' if visits.period.delta_percent > 0 else 'trend-down' if visits.period.delta_percent < 0 else '' }}">
+      {{ '+' if visits.period.delta_percent > 0 }}{{ visits.period.delta_percent }}% vs previous {{ selected_days }} days
+    </small>
+    {% endif %}
+  </article>
+  <article class="stats-metric">
+    <span>Published content</span>
+    <strong>{{ published_total }}</strong>
+    <small>{{ draft_total }} awaiting publication</small>
+  </article>
+  <article class="stats-metric">
+    <span>Public downloads · {{ selected_days }} days</span>
+    <strong>{{ download_total }}</strong>
+    <small>{{ visits.downloads|length }} tracked file types</small>
+  </article>
+  <article class="stats-metric {{ 'has-alert' if operational_issues else '' }}">
+    <span>Technical responses to review</span>
+    <strong>{{ operational_issues }}</strong>
+    <small>{{ not_found_total }} not found · {{ visits.errors_5xx }} server errors</small>
+  </article>
+</section>
+
+<div class="stats-grid-primary">
+  <section class="stats-panel stats-traffic">
+    <header class="panel-head">
+      <div>
+        <span class="stats-kicker">Public site</span>
+        <h2>Request trend</h2>
+        <p>Daily server-side totals for the selected period.</p>
+      </div>
+      <span class="status-badge status-neutral">{{ visits.today.total }} today</span>
+    </header>
+    {% if visits.by_day %}
+    <div class="stats-chart-wrap">
+      <canvas id="visitsChart" data-chart="line"
+              data-chart-label="Public requests"
+              data-labels='{{ visits.by_day|map(attribute="day")|list|tojson|forceescape }}'
+              data-values='{{ visits.by_day|map(attribute="hits")|list|tojson|forceescape }}'
+              data-colors='["#a72b31"]'>Daily public requests</canvas>
+    </div>
+    {% else %}
+    {{ empty_state('No traffic data yet', 'Aggregates will appear after public requests are recorded.', 'bi-graph-up') }}
+    {% endif %}
+    <div class="stats-privacy-note">
+      <i class="bi bi-shield-check" aria-hidden="true"></i>
+      <p><b>Privacy-safe statistics.</b> Aggregate server counters only: no analytics cookies, visitor IDs, fingerprints or third-party tracking.</p>
+    </div>
+  </section>
+
+  <section class="stats-panel">
+    <header class="panel-head">
+      <div>
+        <span class="stats-kicker">Action queue</span>
+        <h2>Needs attention</h2>
+        <p>Editorial checks ordered by affected records.</p>
+      </div>
+      <a href="{{ url_for('dashboard.control_quality') }}">All checks</a>
+    </header>
+    <div class="stats-attention-list">
+      {% for item in quality_checks[:7] %}
+      <a href="{{ item.url }}" class="stats-attention-row">
+        <span><i class="bi bi-exclamation-circle" aria-hidden="true"></i>{{ item.label }}</span>
+        <b>{{ item.count }}</b>
+        <i class="bi bi-chevron-right" aria-hidden="true"></i>
+      </a>
+      {% else %}
+      {{ empty_state('No editorial warnings', 'The tracked completeness checks are clear.', 'bi-check-circle') }}
+      {% endfor %}
+    </div>
+  </section>
+</div>
+
+<div class="stats-grid-secondary">
+  <section class="stats-panel">
+    <header class="panel-head">
+      <div>
+        <span class="stats-kicker">Discovery</span>
+        <h2>Most requested pages</h2>
+        <p>Normalized public paths for this period.</p>
+      </div>
+    </header>
+    <ol class="stats-ranking">
+      {% set top_total = visits.top_pages|sum(attribute='hits') %}
+      {% for row in visits.top_pages[:8] %}
+      <li>
+        <span class="stats-rank">{{ loop.index }}</span>
+        <span class="stats-path" title="{{ row.path }}">{{ row.path }}</span>
+        <span class="stats-share">{{ ((row.hits * 100 / top_total)|round(1)) if top_total else 0 }}%</span>
+        <b>{{ row.hits }}</b>
+      </li>
+      {% else %}
+      <li class="empty">No page request data.</li>
+      {% endfor %}
+    </ol>
+  </section>
+
+  <section class="stats-panel">
+    <header class="panel-head">
+      <div>
+        <span class="stats-kicker">Reliability</span>
+        <h2>Paths returning 404</h2>
+        <p>Use this list to find broken links and stale URLs.</p>
+      </div>
+      <a href="{{ url_for('dashboard.logs', level='ERROR') }}">Open logs</a>
+    </header>
+    <div class="stats-simple-list">
+      {% for row in visits.top_404[:8] %}
+      <div><code title="{{ row.path }}">{{ row.path }}</code><b>{{ row.hits }}</b></div>
+      {% else %}
+      {{ empty_state('No 404 responses', 'No missing paths were recorded in this period.', 'bi-check-circle') }}
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="stats-panel">
+    <header class="panel-head">
+      <div>
+        <span class="stats-kicker">Files</span>
+        <h2>Downloads by type</h2>
+        <p>Aggregate download events, without visitor tracking.</p>
+      </div>
+      <a href="{{ url_for('dashboard.assets_page') }}">Assets</a>
+    </header>
+    <div class="stats-downloads">
+      {% set download_max = (visits.downloads|map(attribute='total')|max) if visits.downloads else 1 %}
+      {% for row in visits.downloads %}
+      <div>
+        <span>{{ row.kind|replace('_', ' ')|title }}</span>
+        <i><b style="width:{{ (row.total * 100 / download_max)|round if download_max else 0 }}%"></b></i>
+        <strong>{{ row.total }}</strong>
+      </div>
+      {% else %}
+      {{ empty_state('No downloads yet', 'File download totals will appear here.', 'bi-download') }}
+      {% endfor %}
+    </div>
+  </section>
+</div>
+
+<div class="stats-grid-bottom">
+  <section class="stats-panel">
+    <header class="panel-head">
+      <div>
+        <span class="stats-kicker">Editorial inventory</span>
+        <h2>Publication coverage</h2>
+        <p>Published records compared with drafts and items under review.</p>
+      </div>
+    </header>
+    <div class="stats-coverage">
+      {% for item in content_status %}
+      {% set total = item.published + item.draft %}
+      <div class="stats-coverage-row">
+        <span>{{ item.label }}</span>
+        <div>
+          <i><b style="width:{{ (item.published * 100 / total)|round if total else 0 }}%"></b></i>
+          <small>{{ item.published }} published · {{ item.draft }} pending</small>
+        </div>
+        <strong>{{ total }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="stats-panel">
+    <header class="panel-head">
+      <div>
+        <span class="stats-kicker">Recent work</span>
+        <h2>Latest content changes</h2>
+        <p>The ten most recently updated public records.</p>
+      </div>
+    </header>
+    <div class="stats-activity">
+      {% for row in recent_updates %}
+      <div>
+        <span class="status-badge status-neutral">{{ row.type|replace('_', ' ') }}</span>
+        <b title="{{ row.label }}">{{ row.label }}</b>
+        <time>{{ row.updated_at[:16]|replace('T', ' ') if row.updated_at else '—' }}</time>
+      </div>
+      {% else %}
+      {{ empty_state('No recent changes', 'Content updates will appear here.', 'bi-clock-history') }}
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="stats-panel">
+    <header class="panel-head">
+      <div>
+        <span class="stats-kicker">Data operations</span>
+        <h2>Import outcomes</h2>
+        <p>Recent runs and cumulative record totals.</p>
+      </div>
+      <a href="{{ url_for('dashboard.control_processes') }}">Process history</a>
+    </header>
+    <div class="stats-import-summary">
+      <div><span>Imported</span><b>{{ import_export_summary.records_imported }}</b></div>
+      <div><span>Skipped</span><b>{{ import_export_summary.records_skipped }}</b></div>
+      <div class="{{ 'has-alert' if import_export_summary.import_errors else '' }}"><span>Errors</span><b>{{ import_export_summary.import_errors }}</b></div>
+    </div>
+    <div class="stats-run-list">
+      {% for run in latest_imports %}
+      <div>
+        <span>{{ run.name or run.source_kind or ('Run ' ~ run.id) }}</span>
+        <span class="status-badge status-{{ 'success' if run.status in ('completed', 'success') else 'danger' if run.status == 'failed' else 'warning' }}">{{ run.status|replace('_', ' ') }}</span>
+      </div>
+      {% else %}
+      <p class="empty">No import runs yet.</p>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+
+<footer class="stats-footnote">
+  <span>{{ counts.assets }} assets · {{ asset_total_mb }} MB</span>
+  <span>{{ counts.members }} members</span>
+  <span>{{ missing_file_count }} missing local files</span>
+</footer>
+{% endblock %}

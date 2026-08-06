@@ -1,0 +1,237 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header, empty_state %}
+{% block page_title %}Server{% endblock %}
+{% block extra_js %}{{ super() }}<script src="{{ url_for('static', filename='js/dashboard/content.js') }}" defer></script>{% endblock %}
+{% block content %}
+{% call page_header('System', 'Server', 'Runtime health, security posture, configuration and guarded maintenance tools.') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.control_site') }}"><i class="bi bi-clipboard2-check"></i> Site check</a>
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.logs') }}"><i class="bi bi-list-ul"></i> Logs</a>
+{% endcall %}
+
+<section class="status-strip" aria-label="System summary">
+  <article>
+    <i class="bi bi-database-check" aria-hidden="true"></i>
+    <span><small>Database</small><b class="text-green">{{ db_ok }}</b><em>{{ info["Database size"] }} · {{ tables|length }} tables</em></span>
+  </article>
+  <article>
+    <i class="bi bi-shield-check" aria-hidden="true"></i>
+    <span><small>Security checks</small><b class="{{ 'text-amber' if security_warnings else 'text-green' }}">{{ security_warnings|length }} warning{{ '' if security_warnings|length == 1 else 's' }}</b><em>CSRF and CSP {{ 'active' if security_info.csrf_enabled and security_info.csp_enabled else 'require review' }}</em></span>
+  </article>
+  <article>
+    <i class="bi bi-folder-check" aria-hidden="true"></i>
+    <span><small>Assets</small><b>{{ counts.assets }}</b><em>{{ asset_status|length }} storage state{{ '' if asset_status|length == 1 else 's' }}</em></span>
+  </article>
+  <article>
+    <i class="bi bi-cpu" aria-hidden="true"></i>
+    <span><small>Runtime</small><b>{{ app_env|title }}</b><em>Python {{ python_version }} · debug {{ 'on' if info["Debug"] == "True" else 'off' }}</em></span>
+  </article>
+</section>
+
+<div class="system-primary-grid">
+  <section class="system-panel ops-panel">
+    <header class="panel-head">
+      <div><span>Runtime</span><h2>Application health</h2><p>Effective paths and limits used by this process.</p></div>
+      <span class="status-badge status-success"><i class="bi bi-check-circle"></i> Running</span>
+    </header>
+    <dl class="system-facts">
+      <div><dt>Database</dt><dd><code title="{{ info['Database file'] }}">{{ info["Database file"] }}</code></dd></div>
+      <div><dt>Integrity</dt><dd><b class="text-green">{{ db_ok }}</b> · {{ tables|length }} tables</dd></div>
+      <div><dt>Assets directory</dt><dd><code title="{{ info['Assets directory'] }}">{{ info["Assets directory"] }}</code></dd></div>
+      <div><dt>Logs directory</dt><dd><code title="{{ info['Logs directory'] }}">{{ info["Logs directory"] }}</code></dd></div>
+      <div><dt>Upload limit</dt><dd>{{ info["Max upload"] }}</dd></div>
+      <div><dt>Last database optimisation</dt><dd>{{ settings.last_vacuum[:19] if settings.last_vacuum else 'Not recorded' }}</dd></div>
+    </dl>
+  </section>
+
+  <section class="system-panel ops-panel">
+    <header class="panel-head">
+      <div><span>Protection</span><h2>Security posture</h2><p>Read-only view of effective administrative safeguards.</p></div>
+      <span class="status-badge status-{{ 'warning' if security_warnings else 'success' }}">{{ 'Review' if security_warnings else 'Healthy' }}</span>
+    </header>
+    <div class="security-check-list">
+      {% for label, ok, value in [
+        ('CSRF validation', security_info.csrf_enabled, 'Enabled' if security_info.csrf_enabled else 'Disabled'),
+        ('HttpOnly session', security_info.session_httponly, 'Enabled' if security_info.session_httponly else 'Disabled'),
+        ('Content Security Policy', security_info.csp_enabled, 'Active' if security_info.csp_enabled else 'Inactive'),
+        ('Custom secret key', not security_info.secret_key_default, 'Custom' if not security_info.secret_key_default else 'Default'),
+        ('Secure session cookie', security_info.session_secure, 'Enabled' if security_info.session_secure else 'HTTP mode'),
+      ] %}
+      <div class="{{ 'is-ok' if ok else 'needs-review' }}"><i class="bi {{ 'bi-check-circle' if ok else 'bi-exclamation-triangle' }}"></i><span>{{ label }}</span><b>{{ value }}</b></div>
+      {% endfor %}
+      <div class="is-ok"><i class="bi bi-check-circle"></i><span>SameSite cookie</span><b>{{ security_info.session_samesite }}</b></div>
+      <div class="is-ok"><i class="bi bi-check-circle"></i><span>Login rate limit</span><b>{{ security_info.rate_limit_window }}</b></div>
+      <div class="is-ok"><i class="bi bi-person-lock"></i><span>Admin identity</span><b><code>{{ security_info.admin_user_masked }}</code></b></div>
+    </div>
+    {% if security_warnings %}
+    <div class="system-warning-list">
+      {% for warning in security_warnings %}<p><i class="bi bi-exclamation-triangle"></i>{{ warning }}</p>{% endfor %}
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<div class="system-secondary-grid">
+  <section class="system-panel ops-panel">
+    <header class="panel-head">
+      <div><span>Data quality</span><h2>Model checks</h2><p>Conditions that can affect public content or relationships.</p></div>
+      <a href="{{ url_for('dashboard.control_quality') }}">Editorial checks</a>
+    </header>
+    <div class="system-check-list">
+      {% for item in model_health %}
+      <div class="{{ 'is-clear' if item.count == 0 else 'has-issue' }}">
+        <i class="bi {{ 'bi-check-circle' if item.count == 0 else 'bi-exclamation-circle' }}"></i>
+        <span><b>{{ item.label }}</b><small>{{ item.action }}</small></span>
+        <strong>{{ item.count }}</strong>
+      </div>
+      {% else %}
+      {{ empty_state('No model checks available', '', 'bi-diagram-3') }}
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="system-panel ops-panel">
+    <header class="panel-head">
+      <div><span>Files</span><h2>Asset storage</h2><p>Database assets grouped by their current storage state.</p></div>
+      <a href="{{ url_for('dashboard.control_assets') }}">Asset health</a>
+    </header>
+    <div class="system-storage-list">
+      {% for row in asset_status %}
+      <div><span><i class="bi bi-file-earmark"></i>{{ row.status|replace('_', ' ')|title }}</span><b>{{ row.total }}</b></div>
+      {% else %}
+      {{ empty_state('No asset records', 'Upload or import assets to populate this view.', 'bi-folder') }}
+      {% endfor %}
+    </div>
+    <form method="post" action="{{ url_for('dashboard.assets_retry_external') }}" class="system-inline-action">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <button class="btn btn-outline btn-sm"><i class="bi bi-cloud-download"></i> Recover missing assets</button>
+      <small>Uses the bounded retry and cooldown policy.</small>
+    </form>
+  </section>
+</div>
+
+<section class="system-maintenance ops-panel">
+  <div class="system-maintenance-copy">
+    <span>Guarded operations</span>
+    <h2>Database maintenance</h2>
+    <p>Integrity checks are read-only. VACUUM creates a safety backup before optimising SQLite.</p>
+  </div>
+  <div class="system-maintenance-actions">
+    <a class="btn btn-primary btn-sm" href="{{ url_for('dashboard.control_safety_operations') }}"><i class="bi bi-shield-lock"></i> Protected operations</a>
+    <form method="post" action="{{ url_for('dashboard.server_integrity_check') }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <button class="btn btn-outline btn-sm"><i class="bi bi-shield-check"></i> Check integrity</button>
+    </form>
+    <button class="btn btn-outline btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#databaseDownloadModal"><i class="bi bi-download"></i> Download database</button>
+    {% if allow_db_restore %}
+    <button class="btn btn-outline btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#databaseRestoreModal"><i class="bi bi-database-up"></i> Restore database</button>
+    {% endif %}
+    <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.data_portability') }}"><i class="bi bi-arrow-down-up"></i> Import / Export</a>
+  </div>
+</section>
+
+<section class="system-configuration system-panel ops-panel">
+  <header class="panel-head">
+    <div><span>Configuration</span><h2>Configuration sources</h2><p>Runtime and security options come from the environment. Public interface text is stored in SQLite.</p></div>
+    <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.site_texts') }}"><i class="bi bi-fonts"></i> Site texts</a>
+  </header>
+  <div class="control-note"><i class="bi bi-lock"></i><div><b>Runtime settings are read-only here</b><span>Change environment values in the deployment configuration and restart the process. Use Site texts only for public copy stored in the database.</span></div></div>
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.control_settings') }}">Inspect effective configuration</a>
+</section>
+
+<div class="system-footer-grid">
+  <section class="system-panel ops-panel">
+    <header class="panel-head">
+      <div><span>Audit</span><h2>Recent administrative activity</h2><p>Latest security-relevant actions recorded by the application.</p></div>
+      <a href="{{ url_for('dashboard.logs', file='audit.log') }}">Open audit log</a>
+    </header>
+    <div class="system-audit-list">
+      {% for entry in audit_entries %}
+      <div><time>{{ entry.when[:16] if entry.when else '—' }}</time><b>{{ entry.message }}</b><small>{{ entry.user or 'system' }} · {{ entry.method or '—' }} {{ entry.path or '' }}</small></div>
+      {% else %}
+      {{ empty_state('No recent audit entries', 'Administrative actions will appear here.', 'bi-clock-history') }}
+      {% endfor %}
+    </div>
+  </section>
+
+  <details class="system-panel system-table-inventory ops-panel">
+    <summary class="panel-head">
+      <span><small>Database detail</small><b>Table inventory</b><em>{{ tables|length }} tables</em></span>
+      <i class="bi bi-chevron-down"></i>
+    </summary>
+    <div>
+      {% for table in tables %}<span><code>{{ table.name }}</code><b>{{ table.rows }}</b></span>{% endfor %}
+    </div>
+  </details>
+</div>
+
+<div class="modal fade" id="databaseDownloadModal" tabindex="-1" aria-labelledby="databaseDownloadTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content smart-modal db-download-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="databaseDownloadTitle"><i class="bi bi-database-down"></i> Download database</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="post" action="{{ url_for('dashboard.server_db_dump') }}" data-download-response data-download-name="mifp_backup.sqlite">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <div class="modal-body">
+          <div class="db-download-summary">
+            <div><span>SQLite file</span><b>{{ info["Database size"] }}</b></div>
+            <div><span>Tables</span><b>{{ tables|length }}</b></div>
+          </div>
+          <div class="port-note db-download-warning">
+            <i class="bi bi-shield-lock"></i>
+            <span>This is a verified, consistent SQLite snapshot including committed WAL data. Restore it only with “Restore database”, not through Import / Export.</span>
+          </div>
+          <label class="field">
+            <span>Admin password</span>
+            <input class="form-control form-control-sm" type="password" name="password" autocomplete="current-password" required>
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-download"></i> Download database</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% if allow_db_restore %}
+<div class="modal fade" id="databaseRestoreModal" tabindex="-1" aria-labelledby="databaseRestoreTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content smart-modal db-download-modal">
+      <div class="modal-header">
+        <h5 class="modal-title" id="databaseRestoreTitle"><i class="bi bi-database-up"></i> Restore full database</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="post" action="{{ url_for('dashboard.server_db_restore') }}" enctype="multipart/form-data">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <div class="modal-body">
+          <div class="port-note db-download-warning">
+            <i class="bi bi-exclamation-octagon"></i>
+            <span>This replaces the complete application database. MIFP verifies the snapshot, enables Work in progress, saves the current database and rolls back on failure.</span>
+          </div>
+          <label class="field">
+            <span>Full SQLite snapshot</span>
+            <input class="form-control form-control-sm" type="file" name="database_file" accept=".sqlite,.sqlite3,.db,application/vnd.sqlite3,application/x-sqlite3" required>
+            <small>Use a file downloaded from “Download database”. Portable ZIP/JSONL files belong in Import / Export.</small>
+          </label>
+          <label class="field">
+            <span>Type RESTORE DATABASE</span>
+            <input class="form-control form-control-sm" type="text" name="confirmation" autocomplete="off" required pattern="RESTORE DATABASE">
+          </label>
+          <label class="field">
+            <span>Admin password</span>
+            <input class="form-control form-control-sm" type="password" name="password" autocomplete="current-password" required>
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-danger btn-sm"><i class="bi bi-database-up"></i> Verify and restore</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,106 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Institutional pages{% endblock %}
+{% block content %}
+{% call page_header('Content', 'Institutional pages', 'Edit the markdown source files for About Us, Manifesto, and Code of Conduct. These are the single source of truth — no database storage.') %}
+{% endcall %}
+
+<nav class="dash-tabs" role="tablist" aria-label="Institutional pages">
+  {% for slug, label in slugs.items() %}
+  <button class="dash-tab {{ 'active' if loop.first }}" role="tab"
+          aria-selected="{{ 'true' if loop.first else 'false' }}"
+          aria-controls="tab-{{ slug }}"
+          data-tab="{{ slug }}">{{ label }}</button>
+  {% endfor %}
+</nav>
+
+{% for slug, label in slugs.items() %}
+{% set p = pages.get(slug, {}) %}
+<div class="dash-tab-content {{ 'active' if loop.first else '' }}" id="tab-{{ slug }}" role="tabpanel"
+     {% if not loop.first %}hidden{% endif %}>
+  <form method="post" action="{{ url_for('dashboard.institutional') }}" class="modern-card md-form-card">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="slug" value="{{ slug }}">
+
+    <div class="inline-form-grid">
+      <label class="field wide">
+        <span>Source file: <code>{{ p.filename }}</code></span>
+        <div class="markdown-editor-shell">
+          <div class="markdown-editor-toolbar">
+            <span>Formatting</span>
+            <button type="button" title="Bold" data-md-before="**" data-md-after="**"><b>B</b></button>
+            <button type="button" title="Italic" data-md-before="*" data-md-after="*"><i>I</i></button>
+            <button type="button" title="Link" data-md-before="[" data-md-after="](url)">Link</button>
+            <button type="button" title="Heading" data-md-before="\n## " data-md-after="\n">H2</button>
+            <button type="button" title="List" data-md-before="\n- " data-md-after="">List</button>
+          </div>
+          <div class="markdown-editor-grid">
+            <div class="markdown-editor-source">
+              <textarea name="body" rows="20" class="form-control form-control-sm"
+                        style="font-family:var(--font-family-mono);min-height:24rem;"
+                        placeholder="Write markdown content here…">{{ p.body or '' }}</textarea>
+            </div>
+            <div class="markdown-preview">
+              <div class="markdown-preview-label">Preview</div>
+              <div class="markdown-preview-body" data-md-preview="{{ slug }}"></div>
+            </div>
+          </div>
+        </div>
+      </label>
+    </div>
+    <div class="dash-row-actions md-form-actions">
+      <button class="btn btn-primary btn-sm"><i class="bi bi-check2"></i> Save {{ label }}</button>
+    </div>
+  </form>
+</div>
+{% endfor %}
+
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/vendor/marked.min.js') }}"></script>
+<script nonce="{{ csp_nonce }}">
+(function() {
+  var tabs = document.querySelectorAll('.dash-tabs[role="tablist"] .dash-tab');
+  tabs.forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      tabs.forEach(function(t) { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
+      tab.classList.add('active'); tab.setAttribute('aria-selected', 'true');
+      document.querySelectorAll('.dash-tab-content').forEach(function(p) {
+        p.hidden = p.id !== 'tab-' + tab.getAttribute('data-tab');
+      });
+    });
+  });
+})();
+
+document.querySelectorAll('.markdown-editor-shell').forEach(function(shell) {
+  var toolbar = shell.querySelector('.markdown-editor-toolbar');
+  if (toolbar) toolbar.addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-md-before]');
+    if (!btn) return;
+    var ta = shell.querySelector('textarea');
+    if (!ta) return;
+    var before = btn.getAttribute('data-md-before');
+    var after = btn.getAttribute('data-md-after');
+    var start = ta.selectionStart, end = ta.selectionEnd;
+    var sel = ta.value.substring(start, end);
+    ta.value = ta.value.substring(0, start) + before + sel + after + ta.value.substring(end);
+    ta.selectionStart = start + before.length;
+    ta.selectionEnd = start + before.length + sel.length;
+    ta.focus();
+    updateMdPreview(ta);
+  });
+  var ta = shell.querySelector('textarea');
+  if (ta) {
+    ta.addEventListener('input', function() { updateMdPreview(ta); });
+    updateMdPreview(ta);
+  }
+});
+function updateMdPreview(ta) {
+  var preview = ta.closest('.markdown-editor-shell').querySelector('.markdown-preview-body');
+  if (!preview) return;
+  preview.innerHTML = marked.parse(ta.value || '');
+}
+</script>
+{% endblock %}

@@ -1,0 +1,23 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Find a record{% endblock %}
+{% block content %}
+{{ page_header('Dashboard', 'Find a record', 'Search allowlisted titles, slugs, filenames and source references across managed content.') }}
+<form class="control-search" method="get" action="{{ url_for('dashboard.dashboard_search') }}" role="search">
+  <i class="bi bi-search"></i>
+  <label class="visually-hidden" for="dashboardGlobalSearch">Search managed records</label>
+  <input id="dashboardGlobalSearch" class="form-control" name="q" value="{{ query }}" maxlength="120" minlength="2" autocomplete="off" placeholder="Title, slug, filename or source URL" autofocus>
+  <button class="btn btn-primary">Search</button>
+</form>
+
+{% if query|length >= 2 %}
+<section class="search-results" aria-live="polite">
+  <div class="section-heading"><div><h2>Results</h2><p>{{ results|length }} matches for “{{ query }}”</p></div></div>
+  {% for group in results|groupby('group') %}
+  <section class="search-group"><h3>{{ group.grouper }}</h3>
+    {% for item in group.list %}<a href="{{ item.url }}"><span><b>{{ item.title }}</b><small>{{ item.slug or item.table ~ ' #' ~ item.id }}</small></span><i class="bi bi-arrow-right"></i></a>{% endfor %}
+  </section>
+  {% else %}<div class="empty is-spacious">No managed records match this search.</div>{% endfor %}
+</section>
+{% endif %}
+{% endblock %}

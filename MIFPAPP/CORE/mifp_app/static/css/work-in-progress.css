@@ -1,0 +1,59 @@
+:root {
+  color-scheme: light;
+  --ink: #162338;
+  --muted: #667184;
+  --paper: #f5f7fa;
+  --line: #d9e0e9;
+  --red: #a72b31;
+  --blue: #315f9b;
+}
+* { box-sizing: border-box; }
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--ink);
+  background:
+    linear-gradient(rgba(49,95,155,.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(49,95,155,.045) 1px, transparent 1px),
+    var(--paper);
+  background-size: 32px 32px;
+  font-family: Inter, "Helvetica Neue", Arial, sans-serif;
+}
+.wip-shell { display: grid; min-height: 100vh; grid-template-columns: minmax(0, 1.25fr) minmax(22rem, .75fr); }
+.wip-stage { position: relative; display: flex; justify-content: center; flex-direction: column; overflow: hidden; padding: clamp(2rem, 7vw, 7rem); border-right: 1px solid var(--line); }
+.wip-logo { width: clamp(7rem, 11vw, 10rem); height: auto; margin: 0 0 1.7rem; object-fit: contain; object-position: left center; }
+.wip-mark, .wip-index { margin: 0 0 1.4rem; color: var(--blue); font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.wip-stage h1 { max-width: 12ch; margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp(3.4rem, 8vw, 7.8rem); font-weight: 400; letter-spacing: -.055em; line-height: .88; }
+.wip-copy { max-width: 34rem; margin: 2rem 0; color: var(--muted); font-size: clamp(1rem, 1.5vw, 1.25rem); line-height: 1.65; }
+.wip-status { display: flex; align-items: center; gap: .55rem; font-size: .72rem; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; }
+.wip-status span { width: .6rem; height: .6rem; background: var(--red); border-radius: 50%; box-shadow: 0 0 0 .35rem rgba(167,43,49,.1); animation: pulse 2s ease-in-out infinite; }
+.wip-orbit { position: absolute; top: 7%; right: -8rem; width: min(33vw, 30rem); aspect-ratio: 1; border: 1px solid rgba(49,95,155,.18); border-radius: 50%; }
+.wip-orbit::before, .wip-orbit::after { position: absolute; content: ""; inset: 16%; border: 1px solid rgba(49,95,155,.16); border-radius: 50%; }
+.wip-orbit::after { inset: 35%; background: rgba(49,95,155,.06); }
+.wip-orbit span { position: absolute; top: 49%; left: -4px; width: 8px; height: 8px; background: var(--red); border-radius: 50%; }
+.wip-orbit i { position: absolute; inset: 8%; border-top: 2px solid var(--blue); border-radius: 50%; transform: rotate(28deg); }
+.wip-access { display: flex; justify-content: center; flex-direction: column; padding: clamp(2rem, 5vw, 5rem); background: rgba(255,255,255,.78); backdrop-filter: blur(12px); }
+.wip-access h2 { max-width: 16ch; margin: 0 0 .8rem; font-size: clamp(1.6rem, 3vw, 2.5rem); line-height: 1.05; }
+.wip-access > p:not(.wip-index) { margin: 0 0 1.7rem; color: var(--muted); font-size: .9rem; line-height: 1.6; }
+.wip-access label { display: block; margin-bottom: .45rem; font-size: .7rem; font-weight: 800; }
+.wip-input { width: 100%; margin: 0 0 1rem; padding: .8rem 0; color: var(--ink); background: transparent; border: 0; border-bottom: 2px solid var(--ink); border-radius: 0; outline: 0; font: inherit; }
+.wip-input:focus { border-color: var(--red); }
+.wip-password { display: flex; border-bottom: 2px solid var(--ink); }
+.wip-password input { width: 100%; min-width: 0; padding: .8rem 0; background: transparent; border: 0; outline: 0; font-size: 1rem; }
+.wip-password:focus-within { border-color: var(--red); }
+.wip-password button { padding: .8rem 0 .8rem 1.2rem; color: var(--ink); background: none; border: 0; font-weight: 800; cursor: pointer; white-space: nowrap; }
+.wip-password button:hover { color: var(--red); }
+.wip-dashboard-link { display: flex; align-items: center; justify-content: space-between; gap: 1rem; width: 100%; padding: .9rem 0; color: var(--ink); border-bottom: 2px solid var(--ink); font-weight: 800; text-decoration: none; }
+.wip-dashboard-link:hover { color: var(--red); border-color: var(--red); }
+.wip-error { margin-bottom: 1rem; padding: .65rem .75rem; color: #842029; background: #f8d7da; border-left: 3px solid var(--red); font-size: .78rem; }
+.wip-access small { margin-top: 1.4rem; color: var(--muted); font-size: .68rem; }
+.wip-access a { color: var(--blue); }
+@keyframes pulse { 50% { box-shadow: 0 0 0 .65rem rgba(167,43,49,0); } }
+@media (max-width: 760px) {
+  .wip-shell { grid-template-columns: 1fr; }
+  .wip-stage { min-height: 55vh; border-right: 0; border-bottom: 1px solid var(--line); }
+  .wip-stage h1 { font-size: clamp(3rem, 16vw, 5rem); }
+  .wip-orbit { right: -7rem; width: 19rem; }
+  .wip-access { min-height: 45vh; }
+}
+@media (prefers-reduced-motion: reduce) { .wip-status span { animation: none; } }

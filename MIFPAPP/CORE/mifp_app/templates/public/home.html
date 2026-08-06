@@ -1,0 +1,396 @@
+{% extends "public/base.html" %}
+
+{% block title %}MIFP — Mediterranean Institute of Fundamental Physics{% endblock %}
+{% block meta_description %}Mediterranean Institute of Fundamental Physics — Promoting scientific research and international collaboration across the Mediterranean.{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json" nonce="{{ csp_nonce }}">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": "Mediterranean Institute of Fundamental Physics",
+  "alternateName": "MIFP",
+  "url": "{{ url_for('public.home', _external=True) }}",
+  "logo": "{{ url_for('static', filename='img/logo-mifp.png', v=static_version, _external=True) }}",
+  "description": "Promoting scientific research and international collaboration across the Mediterranean region.",
+  "foundingDate": "2010",
+  "address": {
+    "@type": "PostalAddress",
+    "addressLocality": "Marino",
+    "addressRegion": "Rome",
+    "addressCountry": "IT"
+  },
+  "contactPoint": {
+    "@type": "ContactPoint",
+    "email": "info@mifp.eu",
+    "contactType": "general"
+  },
+  "sameAs": [
+    "https://www.mifp.eu",
+    "https://events.mifp.eu",
+    "https://old.mifp.eu"
+  ]
+}
+</script>
+{% endblock %}
+
+{% block content %}
+{# ════════════════════════════════════════════════════════════════
+     HERO
+     ════════════════════════════════════════════════════════════════ #}
+<section class="hero">
+  <div class="hero-scientific-field" aria-hidden="true">
+    <svg class="hero-worldline" viewBox="0 0 1200 640" preserveAspectRatio="none">
+      <path class="worldline-axis" d="M0 482 H1200"/>
+      <path class="worldline-path" d="M-30 492 C185 492 212 385 382 385 S604 520 777 397 S973 216 1230 248"/>
+      <circle class="worldline-point point-a" cx="382" cy="385" r="5"/>
+      <circle class="worldline-point point-b" cx="777" cy="397" r="7"/>
+      <circle class="worldline-point point-c" cx="1001" cy="236" r="4"/>
+    </svg>
+  </div>
+  <div class="container-wide hero-container">
+    <div class="hero-content">
+      <div class="hero-eyebrow">
+        <span class="label">{{ site_settings.get('hero_eyebrow', 'Mediterranean Institute') }}</span>
+        <span class="meta">Marino, Rome · Est. 2010</span>
+      </div>
+
+      <h1>
+        {{ site_settings.get('site_short', 'MIFP') }}<br>
+        <span class="hero-title-accent">{{ site_settings.get('site_subtitle', 'Mediterranean Institute of Fundamental Physics') }}</span>
+      </h1>
+
+      <p class="hero-lead">
+        {{ site_settings.get('hero_lead', 'MIFP advances fundamental science through research, dialogue and lasting collaboration across the Mediterranean.') }}
+      </p>
+
+      <div class="hero-cta">
+        <a href="{{ url_for('public.events') }}" class="btn btn-primary">
+          {{ site_copy.home_primary_cta }}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </a>
+        <a href="{{ url_for('public.about') }}" class="btn btn-ghost">
+          {{ site_copy.home_secondary_cta }}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+        </a>
+      </div>
+      <a href="#news-section" class="hero-news-link">Read the latest from the institute <span aria-hidden="true">↓</span></a>
+    </div>
+
+    <aside class="hero-identity" aria-label="MIFP identity and motto">
+      <div class="hero-logo-stage">
+        <span class="hero-logo-index" aria-hidden="true">MIFP · 41°46′N</span>
+        <img src="{{ url_for('static', filename='img/logo-mifp.png', v=static_version) }}"
+             alt="Mediterranean Institute of Fundamental Physics — MIFP"
+             width="528" height="301" class="hero-logo">
+      </div>
+      <blockquote class="hero-motto">
+        <p>{{ site_copy.home_motto_latin }}</p>
+        <footer>{{ site_copy.home_motto_translation }}</footer>
+      </blockquote>
+    </aside>
+  </div>
+
+  <div class="hero-foot">
+    <div class="hero-foot-inner">
+      <span>Research · Dialogue · International collaboration</span>
+      <a href="#home-content" class="scroll-cue">
+        Continue
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </a>
+    </div>
+  </div>
+</section>
+
+
+{# ════════════════════════════════════════════════════════════════
+     STATS BAR
+     ════════════════════════════════════════════════════════════════ #}
+<section class="stats" id="home-content">
+  <div class="stats-inner">
+    <div class="stat">
+      <div class="stat-num red">{{ total_events }}</div>
+      <div class="stat-label">{{ site_settings.get('stat1_label', 'Events') }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num blue">{{ total_news }}</div>
+      <div class="stat-label">{{ site_settings.get('stat2_label', 'News') }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num green">{{ country_count }}</div>
+      <div class="stat-label">{{ site_settings.get('stat3_label', 'Countries') }}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num amber">{{ member_count }}</div>
+      <div class="stat-label">{{ site_settings.get('stat4_label', 'Members') }}</div>
+    </div>
+  </div>
+</section>
+
+
+{# ════════════════════════════════════════════════════════════════
+     FORTHCOMING EVENTS
+     ════════════════════════════════════════════════════════════════ #}
+<section class="section">
+  <div class="container-wide">
+
+    <div class="section-head">
+      <div class="section-head-left">
+        <div class="eyebrow-row">
+          <span class="eyebrow eyebrow-red">{{ site_copy.events_section_eyebrow }}</span>
+        </div>
+        <h2>{{ site_copy.events_section_title }}</h2>
+        <p>{{ site_copy.events_section_subtitle }}</p>
+      </div>
+      <a href="{{ url_for('public.events') }}" class="section-link">
+        All events
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </a>
+    </div>
+
+    {% if forthcoming_events %}
+    <div class="card-grid">
+      {% for event in forthcoming_events[:6] %}
+      <article class="card event-card">
+        {% if event.cover_url %}
+        <div class="card-cover">
+          <img src="{{ event.cover_url }}" alt="{{ event.title }}" width="640" height="400" loading="lazy">
+        </div>
+        {% endif %}
+        <div class="event-card-body">
+          {% if event.event_type %}
+          <div class="event-tag {{ 'blue' if loop.index is even }}">
+            <span class="dot"></span>{{ event.event_type|replace('_',' ') }}
+          </div>
+          {% endif %}
+
+          <h3 class="event-title line-clamp-2">{{ event.title }}</h3>
+
+          <div class="event-meta-line">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span>
+              {{ event.start_date[:10] if event.start_date else '?' }}
+              {%- if event.end_date and event.end_date[:10] != event.start_date[:10] %} &ndash; {{ event.end_date[:10] }}{% endif -%}
+            </span>
+          </div>
+
+          {% if event.location %}
+          <div class="event-meta-line">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            <span class="line-clamp-1">{{ event.location }}</span>
+          </div>
+          {% endif %}
+
+          {% if event.description %}
+          <p class="event-desc line-clamp-2">{{ event.description|striptags|truncate(140) }}</p>
+          {% endif %}
+
+          <div class="event-foot">
+            <a href="{{ url_for('public.event_detail', slug=event.slug) if event.slug else '#' }}" class="btn btn-primary btn-sm">
+              View details
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+            </a>
+          </div>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-state-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      </div>
+      <p>No forthcoming events are currently scheduled.</p>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+
+{# ════════════════════════════════════════════════════════════════
+     MANIFESTO BAND — citazione verbatim dal Manifesto.md
+     ════════════════════════════════════════════════════════════════ #}
+<section class="inst-band">
+  <div class="inst-band-inner">
+    <div class="eyebrow eyebrow-red">Manifesto of Solidarity</div>
+    <p class="inst-quote">
+      &ldquo;Solidarity is not merely an aspiration but <span class="em">a concrete practice</span> &mdash;
+      one that requires sustained effort, mutual accountability, and a willingness to place
+      the collective good above individual advantage.&rdquo;
+    </p>
+    <div class="inst-attrib">
+      Adopted by the Members, Affiliates, and Partners of MIFP
+      <span class="place">Marino, Rome, Italy — Since July 2010</span>
+    </div>
+    <div class="inst-actions">
+      {% if manifesto %}
+      <a href="{{ url_for('public.manifesto') }}" class="btn btn-primary">
+        Read the full Manifesto
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </a>
+      {% endif %}
+      <a href="{{ url_for('public.about') }}" class="btn btn-ghost">About the Institute</a>
+    </div>
+  </div>
+</section>
+
+
+{# ════════════════════════════════════════════════════════════════
+     NEWS — featured + side list
+     ════════════════════════════════════════════════════════════════ #}
+<section class="section" id="news-section">
+  <div class="container-wide">
+
+    <div class="section-head">
+      <div class="section-head-left">
+        <div class="eyebrow-row">
+          <span class="eyebrow eyebrow-red">{{ site_copy.news_section_eyebrow }}</span>
+        </div>
+        <h2>{{ site_copy.news_section_title }}</h2>
+        <p>{{ site_copy.news_section_subtitle }}</p>
+      </div>
+      <a href="{{ url_for('public.news') }}" class="section-link">
+        All news
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </a>
+    </div>
+
+    {% if news %}
+    <div class="news-layout">
+      {# Featured #}
+      {% set f = news[0] %}
+      <article class="news-featured">
+        <a class="news-featured-link" href="{{ url_for('public.news_detail', slug=f.slug) if f.slug else '#' }}">
+          <div class="news-featured-img">
+            {% if f.cover_url %}
+            <img src="{{ f.cover_url }}" alt="{{ f.title }}" width="960" height="540" loading="lazy">
+            {% elif f.gallery_images %}
+            <img src="{{ f.gallery_images[0] }}" alt="{{ f.title }}" width="960" height="540" loading="lazy">
+            {% endif %}
+          </div>
+        </a>
+        <div class="news-meta">
+          {% if f.news_type %}<span class="cat">{{ news_type_labels.get(f.news_type, f.news_type|capitalize) }}</span><span class="sep"></span>{% endif %}
+          <span>{% if f.date_text %}{{ f.date_text }}{% elif f.date %}{{ f.date[:10] }}{% endif %}</span>
+        </div>
+        <h3>
+          <a href="{{ url_for('public.news_detail', slug=f.slug) if f.slug else '#' }}">{{ f.title }}</a>
+        </h3>
+        {% if f.summary %}
+        <p>{{ f.summary|truncate(280) }}</p>
+        {% endif %}
+        {% if f.slug %}
+        <a href="{{ url_for('public.news_detail', slug=f.slug) }}" class="btn btn-ghost" aria-label="Read full story: {{ f.title }}">
+          {{ site_copy.home_news_link }}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </a>
+        {% endif %}
+      </article>
+
+      {# Side list #}
+      <div class="news-side">
+        {% for article in news[1:4] %}
+        <article class="news-item">
+          <div class="news-meta">
+            {% if article.news_type %}<span class="cat">{{ news_type_labels.get(article.news_type, article.news_type|capitalize) }}</span><span class="sep"></span>{% endif %}
+            <span>{% if article.date_text %}{{ article.date_text }}{% elif article.date %}{{ article.date[:10] }}{% endif %}</span>
+          </div>
+          <h4>
+            <a href="{{ url_for('public.news_detail', slug=article.slug) if article.slug else '#' }}">{{ article.title }}</a>
+          </h4>
+          {% if article.summary %}
+          <p>{{ article.summary|truncate(160) }}</p>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-state-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+      </div>
+      <p>No news published yet.</p>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+
+{# ════════════════════════════════════════════════════════════════
+     SPONSORS — optional, only if data exists
+     ════════════════════════════════════════════════════════════════ #}
+{% if sponsors %}
+<section class="section">
+  <div class="container-wide">
+
+    <div class="section-head">
+      <div class="section-head-left">
+        <div class="eyebrow-row">
+          <span class="eyebrow eyebrow-red">Partners</span>
+        </div>
+        <h2>Sponsors</h2>
+        <p>Institutions and organizations supporting MIFP's scientific activity.</p>
+      </div>
+      {% if sponsor_how_to %}
+      <a href="{{ url_for('public.sponsor_how_to') }}" class="section-link">
+        Become a sponsor
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </a>
+      {% endif %}
+    </div>
+
+    <div class="sponsor-grid">
+      {% for sponsor in sponsors[:6] %}
+      <div class="sponsor-card">
+        {% if sponsor.website_url %}
+        <a href="{{ sponsor.website_url }}" target="_blank" rel="noopener noreferrer" class="sponsor-external" aria-label="Visit {{ sponsor.name }} website">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </a>
+        {% endif %}
+        <a href="{{ url_for('public.sponsor_detail', slug=sponsor.slug) if sponsor.slug else '#' }}" class="sponsor-card-button js-sponsor-modal" data-sponsor-target="sponsor-modal-{{ sponsor.id }}" aria-label="Open {{ sponsor.name }} profile">
+          <div class="sponsor-logo">
+            {% if sponsor.logo_url %}
+            <img src="{{ sponsor.logo_url }}" alt="{{ sponsor.name }}" width="180" height="80" loading="lazy">
+            {% else %}
+            <span class="placeholder">{{ sponsor.name[:2]|upper }}</span>
+            {% endif %}
+          </div>
+          <h3>{{ sponsor.name }}</h3>
+          {% if sponsor.description %}
+          <p class="line-clamp-2">{{ sponsor.description|striptags|truncate(120) }}</p>
+          {% endif %}
+          {% if sponsor.tier %}
+          <span class="sponsor-tier">{{ sponsor.tier }}</span>
+          {% endif %}
+        </a>
+      </div>
+      {% include "public/_sponsor_modal.html" %}
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+
+{# ════════════════════════════════════════════════════════════════
+     JOIN CTA
+     ════════════════════════════════════════════════════════════════ #}
+<section class="inst-band">
+  <div class="inst-band-inner">
+    <div class="eyebrow eyebrow-blue">Join MIFP</div>
+    <p class="inst-quote">
+      Become part of an international network of researchers<br>
+      advancing <span class="em">fundamental physics</span> across the Mediterranean and beyond.
+    </p>
+    <div class="inst-actions">
+      <a href="{{ url_for('public.join') }}" class="btn btn-blue">
+        Apply for Membership
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </a>
+      <a href="{{ url_for('public.members') }}" class="btn btn-ghost">See our Members</a>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

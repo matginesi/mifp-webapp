@@ -1,0 +1,30 @@
+{# ── Sponsor modal content (used by sponsors page + home sponsors section) ── #}
+<div id="sponsor-modal-{{ sponsor.id }}" class="mifp-sponsor-modal-content" hidden>
+  <div class="sponsor-modal-grid">
+    <div class="sponsor-modal-logo">
+      {% if sponsor.logo_url %}
+      <img src="{{ sponsor.logo_url }}" alt="{{ sponsor.name }}">
+      {% else %}
+      <span>{{ sponsor.name[:2]|upper }}</span>
+      {% endif %}
+    </div>
+    <div class="sponsor-modal-copy">
+      {% if sponsor.tier %}
+      <p class="sponsor-modal-tier">{{ sponsor.tier }}</p>
+      {% endif %}
+      <h2>{{ sponsor.name }}</h2>
+      {% if sponsor.description %}
+      <p class="sponsor-modal-description">{{ sponsor.description|striptags }}</p>
+      {% endif %}
+      {% if sponsor.body %}
+      <div class="sponsor-modal-body md-body">{{ sponsor.body|safe }}</div>
+      {% endif %}
+      <div class="sponsor-modal-actions">
+        {% if sponsor.slug %}<a href="{{ url_for('public.sponsor_detail', slug=sponsor.slug) }}">Full profile</a>{% endif %}
+        {% if sponsor.website_url %}
+        <a href="{{ sponsor.website_url }}" target="_blank" rel="noopener noreferrer">Website</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>

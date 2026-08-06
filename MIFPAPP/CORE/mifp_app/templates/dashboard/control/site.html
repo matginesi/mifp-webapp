@@ -1,0 +1,73 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Site check{% endblock %}
+{% block content %}
+{{ page_header('Control centre', 'Site readiness', 'Internal application readiness and security posture without pretending to be external uptime monitoring.') }}
+{% include "dashboard/control/_nav.html" %}
+
+<div class="control-two-column">
+  <section class="control-panel">
+    <div class="panel-head"><div><h2>Application surface</h2><p>Required routes, static files and SQLite.</p></div><span>{{ checks|selectattr('status','equalto','ok')|list|length }}/{{ checks|length }}</span></div>
+    <div class="control-list">{% for item in checks %}
+      <div class="control-list-row"><span><b>{{ item.label }}</b><small>{{ item.detail }}</small></span><span class="status-chip status-{{ 'success' if item.status == 'ok' else 'danger' }}">{{ item.status }}</span></div>
+    {% endfor %}</div>
+  </section>
+  <section class="control-panel">
+    <div class="panel-head"><div><h2>Security posture</h2><p>Effective non-secret Flask settings.</p></div></div>
+    <div class="control-list">
+      {% for label, value, detail in [
+        ('CSRF protection', security.csrf, 'Required for every mutative dashboard request'),
+        ('Secure session cookie', security.secure_cookie, 'Should be enabled in HTTPS production'),
+        ('Proxy trust', security.proxy_trust, 'Enable only behind the configured trusted proxy'),
+        ('Trusted hosts', security.trusted_hosts, 'Rejects forged Host headers in production'),
+        ('Debug disabled', not security.debug, 'Debug must never be exposed in production'),
+        ('Content Security Policy', security.csp, 'Response policy configured'),
+        ('Audit logging', security.audit_log, 'Administrative actions have a dedicated audit stream'),
+        ('Security logging', security.security_log, 'Authentication and policy failures are retained'),
+        ('IP privacy', security.ip_privacy, 'Raw client addresses are not written to logs'),
+        ('Database dump restricted', security.db_dump_restricted, 'Full downloads are disabled by default')
+      ] %}
+      <div class="control-list-row"><span><b>{{ label }}</b><small>{{ detail }}</small></span><span class="status-chip status-{{ 'success' if value else 'warning' }}">{{ 'ready' if value else 'review' }}</span></div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+<section class="control-panel" id="maintenance-mode">
+  <div class="panel-head">
+    <div><h2>Work in progress mode</h2><p>Replace the public site with one temporary home page. Administrators can sign in from that page.</p></div>
+    <span class="status-chip status-{{ 'warning' if maintenance.get('maintenance_enabled') == '1' else 'success' }}">{{ 'active' if maintenance.get('maintenance_enabled') == '1' else 'off' }}</span>
+  </div>
+  <form method="post" action="{{ url_for('dashboard.control_site_maintenance') }}" class="control-maintenance-form">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <label class="port-check">
+      <input type="checkbox" name="maintenance_enabled" value="1" {{ 'checked' if maintenance.get('maintenance_enabled') == '1' }}>
+      <span>Enable the Work in progress page for public visitors</span>
+    </label>
+    <label class="field">
+      <span>Public message</span>
+      <textarea class="form-control" name="maintenance_message" rows="3" maxlength="300"
+                placeholder="We are refining the website. Please return shortly.">{{ maintenance.get('maintenance_message', '') }}</textarea>
+    </label>
+    <div class="dash-row-actions">
+      <button class="btn btn-primary btn-sm"><i class="bi bi-cone-striped"></i> Save Work in progress mode</button>
+      {% if maintenance.get('maintenance_enabled') == '1' %}
+      <a class="btn btn-outline btn-sm" href="{{ url_for('maintenance.page') }}" target="_blank" rel="noopener"><i class="bi bi-eye"></i> Preview page</a>
+      {% endif %}
+    </div>
+  </form>
+</section>
+<section class="control-panel">
+  <div class="panel-head"><div><h2>Stored URL hygiene</h2><p>Syntax and private-network checks without making outbound requests.</p></div><span>{{ links.counts.warning + links.counts.danger }}</span></div>
+  <div class="control-snapshot control-snapshot-inline">
+    <article><span>Valid HTTPS</span><b>{{ links.counts.ok }}</b><small>Structurally safe</small></article>
+    <article><span>HTTP warnings</span><b>{{ links.counts.warning }}</b><small>Unencrypted links</small></article>
+    <article><span>Unsafe URLs</span><b>{{ links.counts.danger }}</b><small>Invalid or private target</small></article>
+  </div>
+  <div class="control-list">
+    {% for item in links.issues %}
+    <div class="control-list-row"><span><b>{{ item.label }} · #{{ item.record_id }}</b><small>{{ item.reason }} · {{ item.url }}</small></span><span class="status-chip status-{{ item.severity }}">{{ item.source }}</span></div>
+    {% else %}<div class="empty">No stored URL hygiene problems found.</div>{% endfor %}
+  </div>
+</section>
+<div class="control-note"><i class="bi bi-broadcast"></i><div><b>External availability requires an independent monitor</b><span>A server cannot reliably certify its own DNS, TLS certificate, reverse proxy or internet reachability. Configure those checks outside this webapp.</span></div></div>
+{% endblock %}

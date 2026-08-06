@@ -1,0 +1,88 @@
+name: mifp-production
+
+x-web-image: &web-image
+  build:
+    context: .
+    target: runtime
+  image: "mifp-web:${MIFP_IMAGE_TAG:-production}"
+
+services:
+  storage-init:
+    <<: *web-image
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mkdir -p /data/assets /data/backups /data/conferences /data/exports
+        /data/logs /data/config && chown -R 10001:10001 /data && chmod 0750
+        /data /data/assets /data/backups /data/conferences /data/exports
+        /data/logs /data/config
+    volumes:
+      - mifp-data:/data
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  web:
+    <<: *web-image
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      MIFP_LOAD_DOTENV: "0"
+      FLASK_ENV: production
+      FLASK_DEBUG: "0"
+      SESSION_COOKIE_SECURE: "0"
+      SESSION_COOKIE_SAMESITE: Lax
+      CSRF_ENABLED: "1"
+      TRUST_PROXY: "0"
+      TRUSTED_HOSTS: "${TRUSTED_HOSTS:-localhost,127.0.0.1}"
+      ALLOW_DB_DUMP: "0"
+      ALLOW_DB_RESTORE: "0"
+      AUTO_MIGRATE_ON_STARTUP: "0"
+      DATABASE_PATH: /app/data/mifp.db
+      ASSETS_DIR: /app/data/assets
+      EXPORT_DIR: /app/data/exports
+      LOG_DIR: /app/data/logs
+      CONFERENCES_DIR: /app/data/conferences
+      BANNER_SETTINGS_PATH: /app/data/config/banner_settings.json
+      STORAGE_MIN_FREE_MB: "${STORAGE_MIN_FREE_MB:-0}"
+      LOG_OUTPUT: stdout
+      LOG_FORMAT: "${LOG_FORMAT:-json}"
+      GUNICORN_BIND: 0.0.0.0:8000
+      GUNICORN_WORKERS: "${GUNICORN_WORKERS:-1}"
+      GUNICORN_THREADS: "${GUNICORN_THREADS:-4}"
+    ports:
+      - "${MIFP_BIND:-127.0.0.1}:${MIFP_PORT:-8000}:8000"
+    volumes:
+      - mifp-data:/app/data
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=${MIFP_TMP_SIZE:-3g},mode=1777,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: ${MIFP_MEMORY_LIMIT:-1g}
+    cpus: ${MIFP_CPU_LIMIT:-2.0}
+    stop_signal: SIGTERM
+    stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 8
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  mifp-data:

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Work in progress · MIFP</title>
+  <link rel="icon" href="{{ url_for('static', filename='img/logo-mifp.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/work-in-progress.css', v='20260729-03') }}">
+</head>
+<body>
+  <main class="wip-shell">
+    <section class="wip-stage" aria-labelledby="wip-title">
+      <div class="wip-orbit" aria-hidden="true"><span></span><i></i></div>
+      <img class="wip-logo" src="{{ url_for('static', filename='img/logo-mifp.png') }}"
+           alt="MIFP — Mediterranean Institute of Fundamental Physics" width="528" height="301">
+      <p class="wip-mark">MIFP · Mediterranean Institute of Fundamental Physics</p>
+      <h1 id="wip-title">A new state<br>is taking shape.</h1>
+      <p class="wip-copy">{{ message or 'We are refining the website. Please return shortly.' }}</p>
+      <div class="wip-status"><span></span> Work in progress</div>
+    </section>
+    <section class="wip-access" aria-labelledby="access-title">
+      {% if session.get('admin_logged_in') %}
+      <p class="wip-index">Administration</p>
+      <h2 id="access-title">Work in progress is active</h2>
+      <p>You are already signed in. The public website is currently replaced by this page.</p>
+      <a class="wip-dashboard-link" href="{{ url_for('dashboard.index') }}">
+        Open dashboard <span aria-hidden="true">→</span>
+      </a>
+      <small>Disable this mode from Control centre → Site check when the website is ready.</small>
+      {% else %}
+      <p class="wip-index">Administration</p>
+      <h2 id="access-title">Administrator login</h2>
+      <p>Sign in securely to continue to the dashboard. Public visitors can return when the site is ready.</p>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, text in messages %}
+        <div class="wip-error" role="alert">{{ text }}</div>
+        {% endfor %}
+      {% endwith %}
+      <form method="post" action="{{ url_for('auth.login_post', next=url_for('dashboard.index'), source='maintenance') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <label for="maintenance-username">Username</label>
+        <input class="wip-input" id="maintenance-username" name="login_username" type="text"
+               autocomplete="username" required autofocus>
+        <label for="maintenance-password">Password</label>
+        <div class="wip-password">
+          <input id="maintenance-password" name="login_password" type="password"
+                 autocomplete="current-password" required>
+          <button type="submit">Sign in <span aria-hidden="true">→</span></button>
+        </div>
+      </form>
+      <small>This form uses the same protected administrator authentication as the dashboard.</small>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

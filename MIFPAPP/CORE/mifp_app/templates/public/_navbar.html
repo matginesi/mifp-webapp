@@ -1,0 +1,163 @@
+{# ── MIFP Navbar — Refined Institutional Dark ── #}
+<nav class="nav" id="mainNav">
+  <div class="nav-inner">
+
+    {# ── Brand ── #}
+    <a class="nav-brand" href="{{ url_for('public.home') }}">
+      <span class="nav-brand-mark" aria-hidden="true">
+        <img src="{{ url_for('static', filename='img/logo-mifp.png', v=static_version) }}" alt="">
+      </span>
+      <span class="nav-brand-text">
+        <span class="nav-brand-name">MIFP</span>
+        <span class="nav-brand-sub">Mediterranean Institute of Fundamental Physics</span>
+      </span>
+    </a>
+
+    {# ── Desktop nav links ── #}
+    <div class="nav-links" aria-label="Primary navigation">
+      <a href="{{ url_for('public.home') }}" class="nav-link {{ 'active' if request.endpoint == 'public.home' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10l9-7 9 7v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><polyline points="9 21 9 13 15 13 15 21"/></svg>
+        {{ site_copy.nav_home }}
+      </a>
+      <a href="{{ url_for('public.events') }}" class="nav-link {{ 'active' if request.endpoint in ('public.events', 'public.event_detail') }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="7"/><line x1="8" y1="2" x2="8" y2="7"/><line x1="3" y1="11" x2="21" y2="11"/></svg>
+        {{ site_copy.nav_events }}
+      </a>
+      <a href="{{ url_for('public.news') }}" class="nav-link {{ 'active' if request.endpoint in ('public.news', 'public.news_detail') }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-4 2V6z"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="12" y2="12"/></svg>
+        {{ site_copy.nav_news }}
+      </a>
+      <a href="{{ url_for('public.members') }}" class="nav-link {{ 'active' if request.endpoint == 'public.members' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        {{ site_copy.nav_members }}
+      </a>
+      <a href="{{ url_for('public.join') }}" class="nav-link {{ 'active' if request.endpoint == 'public.join' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
+        {{ site_copy.nav_join }}
+      </a>
+
+      {# ── Institutional dropdown ── #}
+      <div class="nav-institution" id="instWrap">
+        <button class="nav-link {{ 'active' if request.endpoint in ('public.about', 'public.manifesto', 'public.code_of_conduct', 'public.sponsor_how_to', 'public.research', 'public.publications', 'public.privacy', 'public.cookie_policy') }}" type="button" id="instToggle" aria-expanded="false" aria-controls="instMenu" aria-haspopup="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="9" width="16" height="13" rx="1.5"/><path d="M12 2L3 9h18z"/><line x1="9" y1="14" x2="9" y2="22"/><line x1="15" y1="14" x2="15" y2="22"/></svg>
+          {{ site_copy.nav_institutional }}
+          <svg class="nav-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="nav-dropdown" id="instMenu" aria-label="Institutional navigation">
+          <a href="{{ url_for('public.about') }}" class="{{ 'active' if request.endpoint == 'public.about' }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            {{ site_copy.nav_about }}
+          </a>
+          <a href="{{ url_for('public.manifesto') }}" class="{{ 'active' if request.endpoint == 'public.manifesto' }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            {{ site_copy.nav_manifesto }}
+          </a>
+          <a href="{{ url_for('public.code_of_conduct') }}" class="{{ 'active' if request.endpoint == 'public.code_of_conduct' }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            {{ site_copy.nav_code }}
+          </a>
+          <a href="{{ url_for('public.sponsor_how_to') }}" class="{{ 'active' if request.endpoint == 'public.sponsor_how_to' }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            {{ site_copy.nav_sponsors }}
+          </a>
+          <div class="sep"></div>
+          <a href="{{ url_for('public.research') }}" class="{{ 'active' if request.endpoint == 'public.research' }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            {{ site_copy.nav_research }}
+          </a>
+          <a href="{{ url_for('public.publications') }}" class="{{ 'active' if request.endpoint == 'public.publications' }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5A2.5 2.5 0 0 1 4 19.5z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+            {{ site_copy.nav_publications }}
+          </a>
+          <div class="sep"></div>
+          <a href="{{ url_for('public.privacy') }}" class="{{ 'active' if request.endpoint == 'public.privacy' }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            {{ site_copy.nav_privacy }}
+          </a>
+          <a href="{{ url_for('public.cookie_policy') }}" class="{{ 'active' if request.endpoint == 'public.cookie_policy' }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5"/><circle cx="8.5" cy="8.5" r="1" fill="currentColor"/><circle cx="15.5" cy="12.5" r="1" fill="currentColor"/><circle cx="11" cy="15" r="1" fill="currentColor"/></svg>
+            {{ site_copy.nav_cookies }}
+          </a>
+        </div>
+      </div>
+    </div>
+
+    {# ── Right side ── #}
+    <div class="nav-right">
+      <a href="{{ url_for('auth.login') }}" class="nav-admin">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        {{ site_copy.nav_admin }}
+      </a>
+      <button class="nav-toggle" id="navToggle" type="button" aria-label="Open navigation menu" aria-expanded="false" aria-controls="mobileMenu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+
+  {# ── Mobile menu ── #}
+  <div class="nav-mobile" id="mobileMenu" aria-label="Mobile navigation">
+    <div class="nav-mobile-inner">
+      <a href="{{ url_for('public.home') }}" class="nav-mobile-link {{ 'active' if request.endpoint == 'public.home' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10l9-7 9 7v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><polyline points="9 21 9 13 15 13 15 21"/></svg>
+        {{ site_copy.nav_home }}
+      </a>
+      <a href="{{ url_for('public.events') }}" class="nav-mobile-link {{ 'active' if request.endpoint in ('public.events', 'public.event_detail') }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="7"/><line x1="8" y1="2" x2="8" y2="7"/><line x1="3" y1="11" x2="21" y2="11"/></svg>
+        {{ site_copy.nav_events }}
+      </a>
+      <a href="{{ url_for('public.news') }}" class="nav-mobile-link {{ 'active' if request.endpoint in ('public.news', 'public.news_detail') }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-4 2V6z"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="12" y2="12"/></svg>
+        {{ site_copy.nav_news }}
+      </a>
+      <a href="{{ url_for('public.members') }}" class="nav-mobile-link {{ 'active' if request.endpoint == 'public.members' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        {{ site_copy.nav_members }}
+      </a>
+      <a href="{{ url_for('public.join') }}" class="nav-mobile-link {{ 'active' if request.endpoint == 'public.join' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>
+        {{ site_copy.nav_join }}
+      </a>
+      <div class="nav-mobile-sep"></div>
+      <a href="{{ url_for('public.about') }}" class="nav-mobile-link {{ 'active' if request.endpoint == 'public.about' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        {{ site_copy.nav_about }}
+      </a>
+      <a href="{{ url_for('public.manifesto') }}" class="nav-mobile-link {{ 'active' if request.endpoint == 'public.manifesto' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        {{ site_copy.nav_manifesto }}
+      </a>
+      <a href="{{ url_for('public.code_of_conduct') }}" class="nav-mobile-link {{ 'active' if request.endpoint == 'public.code_of_conduct' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        {{ site_copy.nav_code }}
+      </a>
+      <a href="{{ url_for('public.sponsor_how_to') }}" class="nav-mobile-link {{ 'active' if request.endpoint == 'public.sponsor_how_to' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        {{ site_copy.nav_sponsors }}
+      </a>
+      <a href="{{ url_for('public.research') }}" class="nav-mobile-link {{ 'active' if request.endpoint == 'public.research' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        {{ site_copy.nav_research }}
+      </a>
+      <a href="{{ url_for('public.publications') }}" class="nav-mobile-link {{ 'active' if request.endpoint == 'public.publications' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5A2.5 2.5 0 0 1 4 19.5z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        {{ site_copy.nav_publications }}
+      </a>
+      <div class="nav-mobile-sep"></div>
+      <a href="{{ url_for('public.privacy') }}" class="nav-mobile-link {{ 'active' if request.endpoint == 'public.privacy' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        {{ site_copy.nav_privacy }}
+      </a>
+      <a href="{{ url_for('public.cookie_policy') }}" class="nav-mobile-link {{ 'active' if request.endpoint == 'public.cookie_policy' }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5"/><circle cx="8.5" cy="8.5" r="1" fill="currentColor"/><circle cx="15.5" cy="12.5" r="1" fill="currentColor"/><circle cx="11" cy="15" r="1" fill="currentColor"/></svg>
+        {{ site_copy.nav_cookies }}
+      </a>
+      <div class="nav-mobile-sep"></div>
+      <a href="{{ url_for('auth.login') }}" class="nav-mobile-link">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        {{ site_copy.nav_admin }}
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="nav-spacer"></div>

@@ -1,0 +1,92 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Site texts{% endblock %}
+{% block extra_js %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/dashboard/site-copy.js') }}" defer></script>
+{% endblock %}
+{% block content %}
+{% call page_header('Content', 'Site texts', 'Edit recurring interface text without changing templates or code.') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('public.home') }}" target="_blank" rel="noopener">
+    <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i> Preview site
+  </a>
+{% endcall %}
+
+<div class="copy-notice" role="note">
+  <i class="bi bi-shield-check" aria-hidden="true"></i>
+  <div>
+    <b>Plain text only</b>
+    <p>Only the fields listed here can be changed. HTML, templates, routes and page content remain protected. Leave a field empty to use its default.</p>
+  </div>
+</div>
+
+<form method="post" action="{{ url_for('dashboard.settings_save') }}" class="copy-workspace" data-site-copy>
+  <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="_redirect" value="{{ url_for('dashboard.site_texts') }}">
+
+  <div class="copy-toolbar">
+    <label class="copy-search">
+      <span class="visually-hidden">Search editable texts</span>
+      <i class="bi bi-search" aria-hidden="true"></i>
+      <input type="search" placeholder="Find a text or page…" data-copy-search autocomplete="off">
+    </label>
+    <span data-copy-count>{{ copy_total }} fields</span>
+  </div>
+
+  <nav class="copy-jump-links" aria-label="Text groups">
+    {% for group in copy_groups %}
+    <a href="#copy-{{ group.key }}">{{ group.title }}</a>
+    {% endfor %}
+  </nav>
+
+  <div class="copy-sections">
+    {% for group in copy_groups %}
+    <section class="copy-section" id="copy-{{ group.key }}" data-copy-group>
+      <header class="panel-head">
+        <div>
+          <h2>{{ group.title }}</h2>
+          <p>{{ group.description }}</p>
+        </div>
+        <span>{{ group.fields|length }} fields</span>
+      </header>
+      <div class="copy-field-list">
+        {% for field in group.fields %}
+        <div class="copy-field" data-copy-field data-search-text="{{ (field.label ~ ' ' ~ field.context ~ ' ' ~ group.title)|lower }}">
+          <div class="copy-field-label">
+            <label for="copy-{{ field.key }}">{{ field.label }}</label>
+            <p>{{ field.context }}</p>
+            <span class="copy-state {{ 'is-custom' if field.is_custom else '' }}" data-copy-state>
+              {{ 'Custom' if field.is_custom else 'Default' }}
+            </span>
+          </div>
+          <div>
+            {% if field.multiline %}
+            <textarea id="copy-{{ field.key }}" name="{{ field.storage_key }}" rows="3"
+                      maxlength="{{ field.max_length }}" data-copy-input
+                      data-default="{{ field.default }}">{{ field.value }}</textarea>
+            {% else %}
+            <input id="copy-{{ field.key }}" name="{{ field.storage_key }}" type="text"
+                   maxlength="{{ field.max_length }}" value="{{ field.value }}"
+                   placeholder="{{ field.default }}" data-copy-input
+                   data-default="{{ field.default }}">
+            {% endif %}
+            <div class="copy-field-meta">
+              <span>Default: “{{ field.default }}”</span>
+              <span><b data-copy-length>{{ field.value|length }}</b>/{{ field.max_length }}</span>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+  </div>
+
+  <div class="copy-actions">
+    <p><i class="bi bi-info-circle" aria-hidden="true"></i> Changes are applied to the public site after saving.</p>
+    <button class="btn btn-primary" type="submit" data-submit-button>
+      <i class="bi bi-check2" aria-hidden="true"></i> Save site texts
+    </button>
+  </div>
+</form>
+{% endblock %}

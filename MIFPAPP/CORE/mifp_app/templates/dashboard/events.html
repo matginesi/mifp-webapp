@@ -1,0 +1,231 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header, empty_state, export_dropdown %}
+{% block page_title %}Events{% endblock %}
+{% block extra_js %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/dashboard/events.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/dashboard/content.js') }}" defer></script>
+{% endblock %}
+{% block content %}
+{% set long_fields = ['body','description','abstract','bio','summary'] %}
+{% set json_fields = [] %}
+{% set date_fields = ['created_at','updated_at','date','start_date','end_date','birth_date','death_date','effective_date'] %}
+{% set numeric_fields = ['id','year','sort_order','role_id','menu_order','parent_event_id','source_priority','source_order','display_order'] %}
+{% set bool_fields = ['is_active','is_featured'] %}
+{% set labels = {'is_featured': 'show in homepage forthcoming block', 'event_type': 'event type', 'date_text': 'date shown publicly'} %}
+{% set hints = {'is_featured': 'If Yes, shown in the homepage forthcoming block when the event dates are forthcoming'} %}
+{% set empty_value %}<span class="cell-text">&mdash;</span>{% endset %}
+
+{% call page_header('Content', 'Events', 'Manage event records. Click a row to edit inline.') %}
+    <button class="btn btn-primary btn-sm" type="button" data-event-wizard="new"><i class="bi bi-plus-lg"></i> New Event</button>
+    <a href="{{ url_for('dashboard.data_portability') }}" class="btn btn-outline btn-sm"><i class="bi bi-box-arrow-in-down"></i> Import bundle</a>
+{% endcall %}
+
+<form class="toolbar" method="get" action="{{ url_for('dashboard.events') }}">
+  <div class="toolbar-search"><i class="bi bi-search" aria-hidden="true"></i><input type="search" class="form-control form-control-sm" name="q" value="{{ q or '' }}" placeholder="Search events…" aria-label="Search events"></div>
+  <button class="btn btn-primary btn-sm"><i class="bi bi-funnel"></i> Filter</button>
+  {% if q %}<a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.events') }}">Reset</a>{% endif %}
+  {{ export_dropdown([
+    ('Excel (.xlsx)', url_for('dashboard.export_table', table=table, fmt='xlsx'), 'bi bi-file-earmark-excel'),
+    ('Document (.docx)', url_for('dashboard.export_table', table=table, fmt='docx'), 'bi bi-file-earmark-word'),
+    ('PDF', url_for('dashboard.export_table', table=table, fmt='pdf'), 'bi bi-file-earmark-pdf'),
+    ('CSV', url_for('dashboard.export_table', table=table, fmt='csv'), 'bi bi-filetype-csv'),
+    ('JSON', url_for('dashboard.export_table', table=table, fmt='json'), 'bi bi-filetype-json'),
+    ('JSONL', url_for('dashboard.export_table', table=table, fmt='jsonl'), 'bi bi-braces'),
+  ], section='events') }}
+</form>
+
+<div class="event-list-sections">
+  <section class="modern-card">
+    <div class="panel-head"><div><h2>Current and upcoming events</h2><p>Use “show in homepage forthcoming block” on each row to control homepage visibility.</p></div><span class="pill">{{ forthcoming|length }}</span></div>
+    <div class="table-card compact-table-card">
+      <div class="data-scroll">
+        <table class="data-table">
+          <thead><tr>{% for c in columns %}<th>{{ c|replace('_',' ') }}</th>{% endfor %}<th class="col-actions">Actions</th></tr></thead>
+          <tbody>
+          {% for r in forthcoming %}
+            <tr class="record-row" data-row-toggle="record-{{ r.id }}">
+              {% for c in columns %}
+                {% set v = r.get(c) %}
+                {% set col_class = 'col-text' if c in long_fields else 'col-id' if c == 'id' else 'col-bool' if c in bool_fields or c.startswith('is_') else 'col-date' if c in date_fields else 'col-num' if c in numeric_fields or c.endswith('_asset_id') else 'col-title' if c in ['title','name','display_name'] else '' %}
+                <td class="{{ col_class }}" title="{{ v if v not in [None,''] else '' }}">
+                  {% if c in long_fields %}{% if v %}<span class="cell-text">{{ v }}</span>{% else %}{{ empty_value }}{% endif %}
+                  {% elif c in json_fields %}{% if v %}<button class="json-details-toggle" type="button" data-toggle-next aria-expanded="false">JSON &#9662;</button><div class="json-details-content">{{ v }}</div>{% else %}<span class="cell-text">&#8212;</span>{% endif %}
+                  {% elif c in bool_fields or c.startswith('is_') %}<span class="cell-bool {{ 'yes' if v else 'no' }}">{{ 'yes' if v else 'no' }}</span>
+                  {% elif c == 'id' %}<span class="cell-id">#{{ v }}</span>
+                  {% elif c == 'role_id' and role_names %}<span class="pill">{{ role_names.get(v, v) }}</span>
+                  {% elif c in date_fields %}{% if v %}<span class="cell-date">{{ v }}</span>{% else %}{{ empty_value }}{% endif %}
+                  {% elif c.endswith('_asset_id') %}{% if v %}<span class="cell-asset-link" data-asset-id="{{ v }}"><i class="bi bi-paperclip"></i> #{{ v }}</span>{% else %}<span class="cell-text">&#8212;</span>{% endif %}
+                  {% else %}{{ v if v not in [None,''] else empty_value }}{% endif %}
+                </td>
+              {% endfor %}
+              <td class="col-actions"><div class="dash-row-actions"><button class="btn btn-mini btn-outline" type="button" data-row-toggle="record-{{ r.id }}">Edit</button><form method="post" action="{{ url_for('dashboard.content_delete', section='events', record_id=r.id) }}" data-confirm="Delete this event?" class="d-inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button class="btn btn-mini btn-outline-danger">Delete</button></form></div></td>
+            </tr>
+            <tr class="inline-editor-row" id="record-{{ r.id }}" data-inline-panel>
+              <td colspan="{{ columns|length + 1 }}">
+                <form method="post" class="inline-form">
+                  <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="id" value="{{ r.id }}">
+                  <div class="inline-form-head"><div><b>Edit #{{ r.id }} &middot; {{ r.title or r.display_name or r.name or 'event' }}</b><small>Edit inline. Save before closing.</small></div><div class="inline-actions"><button class="btn btn-primary btn-sm">Save</button><button class="btn btn-outline btn-sm" type="button" data-row-toggle="record-{{ r.id }}">Close</button></div></div>
+                  <div class="inline-form-grid">
+                  {% for f in editable %}
+                    {% set val = r.get(f) %}
+                    <label class="field {{ 'wide' if f in long_fields else '' }}">
+                      <span>{{ labels.get(f, f|replace('_',' ')) }}{% if hints.get(f) %}<i class="bi bi-info-circle" title="{{ hints[f] }}" class="help-icon"></i>{% endif %}</span>
+                      {% if f in long_fields %}
+                        <textarea name="{{ f }}" rows="{{ 8 if f in ['body','description','abstract','bio'] else 3 }}" class="form-control form-control-sm">{{ val or '' }}</textarea>
+                      {% elif f in bool_fields or f.startswith('is_') %}
+                        <select name="{{ f }}" class="form-select form-select-sm"><option value="1" {{ 'selected' if val==1 }}>Yes</option><option value="0" {{ 'selected' if val!=1 }}>No</option></select>
+                      {% elif f in date_fields %}
+                        <input type="date" name="{{ f }}" value="{{ val or '' }}" class="form-control form-control-sm">
+                      {% elif f in numeric_fields or f.endswith('_asset_id') %}
+                        <div class="asset-id-control"><input id="r{{ r.id }}-{{ f }}" name="{{ f }}" value="{{ val or '' }}" type="number" class="form-control form-control-sm">{% if f.endswith('_asset_id') %}<button class="btn btn-outline btn-sm" type="button" data-picker="r{{ r.id }}-{{ f }}" data-picker-kind="{{ 'image' if 'image' in f or 'cover' in f or 'logo' in f else 'document' }}">Pick</button>{% endif %}</div>
+                      {% else %}
+                        <input name="{{ f }}" value="{{ val or '' }}" class="form-control form-control-sm">
+                      {% endif %}
+                    </label>
+                  {% endfor %}
+                  </div>
+                  <div class="record-assets-section" data-section="event" data-record-id="{{ r.id }}">
+                    {% if linked_assets.get(r.id) %}
+                    <div class="linked-assets-strip">
+                      {% for a in linked_assets.get(r.id, []) %}
+                      <span class="linked-asset-card">
+                        {% if a.kind == 'image' and a.path and a.preview_available %}<img src="{{ url_for('dashboard.asset_file', filename=a.path.split('/', 1)[1] if '/' in a.path else a.path) }}" alt="" width="22" height="22" class="linked-asset-thumb" loading="lazy">{% else %}<i class="bi {{ 'bi-image-fill text-warning' if a.kind == 'image' and not a.preview_available else ('bi-file-earmark-pdf' if a.kind == 'pdf' else 'bi-file-earmark-text') }}" title="{{ 'Local file missing' if a.kind == 'image' and not a.preview_available else '' }}"></i>{% endif %}
+                        <span class="linked-asset-name">{{ a.original_filename or a.filename }}</span>
+                        <small class="linked-asset-role">{{ a.role }}</small>
+                        <button class="btn btn-mini btn-outline-danger asset-unlink-btn" data-asset-id="{{ a.id }}" data-section="event" data-record-id="{{ r.id }}" title="Unlink asset">&times;</button>
+                      </span>
+                      {% endfor %}
+                    </div>
+                    {% endif %}
+                    <div class="record-asset-actions">
+                      <button class="btn btn-mini btn-outline asset-upload-btn" data-section="event" data-record-id="{{ r.id }}"><i class="bi bi-upload"></i> Upload file</button>
+                      <button class="btn btn-mini btn-outline asset-link-btn" data-section="event" data-record-id="{{ r.id }}" data-asset-role="cover" data-picker-kind="image"><i class="bi bi-image"></i> Set cover</button>
+                      <button class="btn btn-mini btn-outline asset-link-btn" data-section="event" data-record-id="{{ r.id }}" data-asset-role="document" data-picker-kind="document"><i class="bi bi-file-earmark-plus"></i> Add document</button>
+                      <button class="btn btn-mini btn-outline entity-link-add-btn" data-section="event" data-record-id="{{ r.id }}"><i class="bi bi-link-45deg"></i> Link</button>
+                      <input type="file" class="d-none asset-upload-input" data-section="event" data-record-id="{{ r.id }}" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.mp4,.mov,.txt,.csv">
+                    </div>
+                    {% if linked_links.get(r.id) %}
+                    <div class="linked-assets-strip">
+                      {% for link in linked_links.get(r.id, []) %}
+                      <span class="linked-asset-card">
+                        <i class="bi bi-link-45deg"></i>
+                        <span class="linked-asset-name">{{ link.label or link.url }}</span>
+                        <small class="linked-asset-role">{{ link.role }}</small>
+                        <button class="btn btn-mini btn-outline-danger entity-link-delete-btn" data-link-id="{{ link.id }}" data-section="event" data-record-id="{{ r.id }}" title="Remove link">&times;</button>
+                      </span>
+                      {% endfor %}
+                    </div>
+                    {% endif %}
+                  </div>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="{{ columns|length + 1 }}" class="empty">No forthcoming events.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="modern-card">
+    <div class="panel-head"><div><h2>Past events</h2></div><span class="pill">{{ past|length }}</span></div>
+    <div class="table-card compact-table-card">
+      <div class="data-scroll">
+        <table class="data-table">
+          <thead><tr>{% for c in columns %}<th>{{ c|replace('_',' ') }}</th>{% endfor %}<th class="col-actions">Actions</th></tr></thead>
+          <tbody>
+          {% for r in past %}
+            <tr class="record-row" data-row-toggle="record-past-{{ r.id }}">
+              {% for c in columns %}
+                {% set v = r.get(c) %}
+                {% set col_class = 'col-text' if c in long_fields else 'col-id' if c == 'id' else 'col-bool' if c in bool_fields or c.startswith('is_') else 'col-date' if c in date_fields else 'col-num' if c in numeric_fields or c.endswith('_asset_id') else 'col-title' if c in ['title','name','display_name'] else '' %}
+                <td class="{{ col_class }}" title="{{ v if v not in [None,''] else '' }}">
+                  {% if c in long_fields %}{% if v %}<span class="cell-text">{{ v }}</span>{% else %}{{ empty_value }}{% endif %}
+                  {% elif c in json_fields %}{% if v %}<button class="json-details-toggle" type="button" data-toggle-next aria-expanded="false">JSON &#9662;</button><div class="json-details-content">{{ v }}</div>{% else %}<span class="cell-text">&#8212;</span>{% endif %}
+                  {% elif c in bool_fields or c.startswith('is_') %}<span class="cell-bool {{ 'yes' if v else 'no' }}">{{ 'yes' if v else 'no' }}</span>
+                  {% elif c == 'id' %}<span class="cell-id">#{{ v }}</span>
+                  {% elif c == 'role_id' and role_names %}<span class="pill">{{ role_names.get(v, v) }}</span>
+                  {% elif c in date_fields %}{% if v %}<span class="cell-date">{{ v }}</span>{% else %}{{ empty_value }}{% endif %}
+                  {% elif c.endswith('_asset_id') %}{% if v %}<span class="cell-asset-link" data-asset-id="{{ v }}"><i class="bi bi-paperclip"></i> #{{ v }}</span>{% else %}<span class="cell-text">&#8212;</span>{% endif %}
+                  {% else %}{{ v if v not in [None,''] else empty_value }}{% endif %}
+                </td>
+              {% endfor %}
+              <td class="col-actions"><div class="dash-row-actions"><button class="btn btn-mini btn-outline" type="button" data-row-toggle="record-past-{{ r.id }}">Edit</button><form method="post" action="{{ url_for('dashboard.content_delete', section='events', record_id=r.id) }}" data-confirm="Delete this event?" class="d-inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button class="btn btn-mini btn-outline-danger">Delete</button></form></div></td>
+            </tr>
+            <tr class="inline-editor-row" id="record-past-{{ r.id }}" data-inline-panel>
+              <td colspan="{{ columns|length + 1 }}">
+                <form method="post" class="inline-form">
+                  <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="id" value="{{ r.id }}">
+                  <div class="inline-form-head"><div><b>Edit #{{ r.id }} &middot; {{ r.title or r.display_name or r.name or 'event' }}</b><small>Edit inline. Save before closing.</small></div><div class="inline-actions"><button class="btn btn-primary btn-sm">Save</button><button class="btn btn-outline btn-sm" type="button" data-row-toggle="record-past-{{ r.id }}">Close</button></div></div>
+                  <div class="inline-form-grid">
+                  {% for f in editable %}
+                    {% set val = r.get(f) %}
+                    <label class="field {{ 'wide' if f in long_fields else '' }}">
+                      <span>{{ labels.get(f, f|replace('_',' ')) }}{% if hints.get(f) %}<i class="bi bi-info-circle" title="{{ hints[f] }}" class="help-icon"></i>{% endif %}</span>
+                      {% if f in long_fields %}
+                        <textarea name="{{ f }}" rows="{{ 8 if f in ['body','description','abstract','bio'] else 3 }}" class="form-control form-control-sm">{{ val or '' }}</textarea>
+                      {% elif f in bool_fields or f.startswith('is_') %}
+                        <select name="{{ f }}" class="form-select form-select-sm"><option value="1" {{ 'selected' if val==1 }}>Yes</option><option value="0" {{ 'selected' if val!=1 }}>No</option></select>
+                      {% elif f in date_fields %}
+                        <input type="date" name="{{ f }}" value="{{ val or '' }}" class="form-control form-control-sm">
+                      {% elif f in numeric_fields or f.endswith('_asset_id') %}
+                        <div class="asset-id-control"><input id="r{{ r.id }}-{{ f }}" name="{{ f }}" value="{{ val or '' }}" type="number" class="form-control form-control-sm">{% if f.endswith('_asset_id') %}<button class="btn btn-outline btn-sm" type="button" data-picker="r{{ r.id }}-{{ f }}" data-picker-kind="{{ 'image' if 'image' in f or 'cover' in f or 'logo' in f else 'document' }}">Pick</button>{% endif %}</div>
+                      {% else %}
+                        <input name="{{ f }}" value="{{ val or '' }}" class="form-control form-control-sm">
+                      {% endif %}
+                    </label>
+                  {% endfor %}
+                  </div>
+                  <div class="record-assets-section" data-section="event" data-record-id="{{ r.id }}">
+                    {% if linked_assets.get(r.id) %}
+                    <div class="linked-assets-strip">
+                      {% for a in linked_assets.get(r.id, []) %}
+                      <span class="linked-asset-card">
+                        {% if a.kind == 'image' and a.path and a.preview_available %}<img src="{{ url_for('dashboard.asset_file', filename=a.path.split('/', 1)[1] if '/' in a.path else a.path) }}" alt="" width="22" height="22" class="linked-asset-thumb" loading="lazy">{% else %}<i class="bi {{ 'bi-image-fill text-warning' if a.kind == 'image' and not a.preview_available else ('bi-file-earmark-pdf' if a.kind == 'pdf' else 'bi-file-earmark-text') }}" title="{{ 'Local file missing' if a.kind == 'image' and not a.preview_available else '' }}"></i>{% endif %}
+                        <span class="linked-asset-name">{{ a.original_filename or a.filename }}</span>
+                        <small class="linked-asset-role">{{ a.role }}</small>
+                        <button class="btn btn-mini btn-outline-danger asset-unlink-btn" data-asset-id="{{ a.id }}" data-section="event" data-record-id="{{ r.id }}" title="Unlink asset">&times;</button>
+                      </span>
+                      {% endfor %}
+                    </div>
+                    {% endif %}
+                    <div class="record-asset-actions">
+                      <button class="btn btn-mini btn-outline asset-upload-btn" data-section="event" data-record-id="{{ r.id }}"><i class="bi bi-upload"></i> Upload file</button>
+                      <button class="btn btn-mini btn-outline asset-link-btn" data-section="event" data-record-id="{{ r.id }}" data-asset-role="cover" data-picker-kind="image"><i class="bi bi-image"></i> Set cover</button>
+                      <button class="btn btn-mini btn-outline asset-link-btn" data-section="event" data-record-id="{{ r.id }}" data-asset-role="document" data-picker-kind="document"><i class="bi bi-file-earmark-plus"></i> Add document</button>
+                      <button class="btn btn-mini btn-outline entity-link-add-btn" data-section="event" data-record-id="{{ r.id }}"><i class="bi bi-link-45deg"></i> Link</button>
+                      <input type="file" class="d-none asset-upload-input" data-section="event" data-record-id="{{ r.id }}" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.mp4,.mov,.txt,.csv">
+                    </div>
+                    {% if linked_links.get(r.id) %}
+                    <div class="linked-assets-strip">
+                      {% for link in linked_links.get(r.id, []) %}
+                      <span class="linked-asset-card">
+                        <i class="bi bi-link-45deg"></i>
+                        <span class="linked-asset-name">{{ link.label or link.url }}</span>
+                        <small class="linked-asset-role">{{ link.role }}</small>
+                        <button class="btn btn-mini btn-outline-danger entity-link-delete-btn" data-link-id="{{ link.id }}" data-section="event" data-record-id="{{ r.id }}" title="Remove link">&times;</button>
+                      </span>
+                      {% endfor %}
+                    </div>
+                    {% endif %}
+                  </div>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="{{ columns|length + 1 }}" class="empty">No past events.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+
+{% include "dashboard/_event_wizard.html" %}
+{% endblock %}

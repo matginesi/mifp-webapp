@@ -1,0 +1,62 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Content quality{% endblock %}
+{% block content %}
+{{ page_header('Control centre', 'Content quality', 'Editorial completeness and the current Data Quality workflow in one place.') }}
+{% include "dashboard/control/_nav.html" %}
+
+<section class="control-quality-workflow">
+  <div class="control-quality-workflow-copy">
+    <span>Data Quality workflow</span>
+    <h2>
+      {% if workflow.run %}
+        Latest scan #{{ workflow.run.id }}
+      {% else %}
+        No Data Quality scan yet
+      {% endif %}
+    </h2>
+    <p>
+      {% if workflow.run %}
+        {{ workflow.open }} awaiting review, {{ workflow.queued }} queued for application,
+        {{ workflow.completed }} completed decisions.
+      {% else %}
+        Run a scan to detect duplicates, cleanup opportunities, broken relationships and enrichment candidates.
+      {% endif %}
+    </p>
+  </div>
+  <div class="control-quality-workflow-stats" aria-label="Latest Data Quality state">
+    <span><b>{{ workflow.open }}</b><small>Open</small></span>
+    <span><b>{{ workflow.queued }}</b><small>Queued</small></span>
+    <span><b>{{ workflow.completed }}</b><small>Completed</small></span>
+  </div>
+  <a class="btn btn-primary btn-sm" href="{{ url_for('dashboard.data_quality_page') }}">
+    <i class="bi bi-stars"></i>
+    {{ 'Continue Data Quality' if workflow.run else 'Open Data Quality' }}
+  </a>
+</section>
+
+<div class="panel-head control-section-intro">
+  <div>
+    <span>Editorial completeness</span>
+    <h2>Field-level checks</h2>
+    <p>These checks read current database fields directly. Open the affected editorial list to correct missing content.</p>
+  </div>
+  <strong>{{ checks|selectattr('count', 'gt', 0)|list|length }} checks need attention</strong>
+</div>
+
+<section class="quality-ledger">
+  {% for check in checks %}
+  <article class="quality-row {{ 'has-issues' if check.count else 'is-clear' }}">
+    <span class="quality-state"><i class="bi {{ 'bi-exclamation-triangle-fill' if check.count else 'bi-check-circle-fill' }}"></i></span>
+    <div class="quality-copy">
+      <h2>{{ check.label }}</h2>
+      {% if check.samples %}
+      <p>{% for sample in check.samples %}{{ sample.title }}{% if not loop.last %} · {% endif %}{% endfor %}{% if check.count > check.samples|length %} · and {{ check.count - check.samples|length }} more{% endif %}</p>
+      {% else %}<p>{{ 'Open the relevant editorial list to review these records.' if check.count else 'No affected records.' }}</p>{% endif %}
+    </div>
+    <strong>{{ check.count }}</strong>
+    {% if check.count %}<a class="btn btn-outline btn-sm" href="{{ check.action_url }}">Open records</a>{% endif %}
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}

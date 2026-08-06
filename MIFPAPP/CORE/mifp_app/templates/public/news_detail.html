@@ -1,0 +1,149 @@
+{% extends "public/base.html" %}
+
+{% block title %}{{ article.title }} — MIFP News{% endblock %}
+{% block meta_description %}{{ article.summary[:160] if article.summary else article.title }}{% endblock %}
+{% block og_title %}{{ article.title }}{% endblock %}
+{% block og_description %}{{ article.summary[:200] if article.summary else 'MIFP News' }}{% endblock %}
+{% if article.cover_url %}
+{% block og_tags %}
+<meta property="og:title" content="{{ article.title }}">
+<meta property="og:description" content="{{ article.summary[:200] if article.summary else 'MIFP News' }}">
+<meta property="og:type" content="article">
+<meta property="og:url" content="{{ request.url }}">
+<meta property="og:image" content="{{ article.cover_url }}">
+{% endblock %}
+{% endif %}
+
+{% block json_ld %}
+<script type="application/ld+json" nonce="{{ csp_nonce }}">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": {{ article.title|tojson }},
+  {% if article.date %}"datePublished": "{{ article.date[:10] }}",{% endif %}
+  {% if article.updated_at %}"dateModified": "{{ article.updated_at[:10] }}",{% endif %}
+  {% if article.summary %}"description": {{ article.summary|tojson }},{% endif %}
+  {% if article.cover_url %}"image": "{{ article.cover_url }}",{% endif %}
+  "url": "{{ request.url }}",
+  "publisher": {
+    "@type": "Organization",
+    "name": "Mediterranean Institute of Fundamental Physics",
+    "url": "{{ url_for('public.home', _external=True) }}"
+  }
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="container-wide">
+    <ol class="mifp-breadcrumb">
+      <li><a href="{{ url_for('public.home') }}">Home</a></li>
+      <li><a href="{{ url_for('public.news') }}">News</a></li>
+      <li aria-current="page">{{ article.title[:50] }}{% if article.title|length > 50 %}…{% endif %}</li>
+    </ol>
+
+    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <span class="num serif italic" style="color:var(--mifp-blue-soft);font-size:0.85rem;">—</span>
+      <span class="eyebrow eyebrow-blue">News</span>
+      {% if article.news_type %}
+      <span class="tag blue">{{ article.news_type|capitalize }}</span>
+      {% endif %}
+    </div>
+
+    <h1>{{ article.title }}</h1>
+    {% if article.date or article.date_text %}
+    <p style="font-family:var(--f-mono);font-size:0.78rem;color:var(--paper-faint);letter-spacing:0.05em;margin-top:8px;">
+      Published: {% if article.date_text %}{{ article.date_text }}{% elif article.date %}{{ article.date[:10] }}{% endif %}
+    </p>
+    {% endif %}
+    <div class="accent-bar" style="background: linear-gradient(90deg, var(--mifp-blue), var(--mifp-red));"></div>
+  </div>
+</section>
+
+<section class="section-sm">
+  <div class="container">
+
+    {# ── Cover image ── #}
+    {% if article.cover_url %}
+    <div class="detail-media" style="margin-bottom:32px;">
+      <button type="button" class="js-lightbox" data-lightbox-src="{{ article.cover_url }}" data-lightbox-caption="{{ article.title }}" style="padding:0;border:none;background:none;cursor:zoom-in;width:100%;">
+        <img src="{{ article.cover_url }}" alt="{{ article.title }}">
+      </button>
+    </div>
+    {% endif %}
+
+    {# ── Summary blockquote ── #}
+    {% if article.show_summary_block and article.summary %}
+    <blockquote style="border-left:3px solid var(--mifp-blue);padding:14px 20px;margin:0 0 28px;font-family:var(--f-serif);font-style:italic;font-size:1.1rem;color:var(--paper-mute);background:var(--ink-850);border-radius:0 var(--r) var(--r) 0;">
+      {{ article.summary }}
+    </blockquote>
+    {% endif %}
+
+    {# ── Body ── #}
+    {% if article.body_html or article.body %}
+    <article class="article-body">
+      {{ (article.body_html or article.body)|safe }}
+    </article>
+    {% endif %}
+
+    {# ── Gallery ── #}
+    {% if article.gallery_images and article.gallery_images|length > 0 %}
+    <div style="margin-top:40px;">
+      <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
+        <span class="num serif italic" style="color:var(--mifp-blue-soft);font-size:0.85rem;">—</span>
+        <span class="eyebrow eyebrow-blue">Gallery ({{ article.gallery_images|length }} images)</span>
+      </div>
+      <div class="news-gallery-grid">
+        {% for img_url in article.gallery_images %}
+        <button type="button" class="news-gallery-item js-lightbox" data-lightbox-src="{{ img_url }}" data-lightbox-caption="{{ article.title }} — image {{ loop.index }}" aria-label="Open gallery image {{ loop.index }}">
+          <img src="{{ img_url }}" alt="Image {{ loop.index }}" loading="lazy">
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Documents ── #}
+    {% if article.documents and article.documents|length > 0 %}
+    <div style="margin-top:40px;">
+      <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
+        <span class="num serif italic" style="color:var(--mifp-blue-soft);font-size:0.85rem;">—</span>
+        <span class="eyebrow eyebrow-blue">Documents</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;">
+        {% for doc in article.documents %}
+        <div class="news-document-item">
+          <a href="{{ doc.url }}{% if doc.url.startswith('/media/') %}{{ '&' if '?' in doc.url else '?' }}v={{ (doc.checksum or doc.asset_id|string)[:16] }}{% endif %}" class="pdf-button" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:9px;padding:10px 14px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            {{ doc.filename[:40] }}{% if doc.filename|length > 40 %}…{% endif %}
+            {% if doc.kind %}<span class="tag" style="margin-left:6px;">{{ doc.kind }}</span>{% endif %}
+          </a>
+          {% for publication in doc.related_publications %}
+          <a class="news-related-publication" href="{{ url_for('public.publications') }}#publication-{{ publication.slug }}">
+            Related publication: {{ publication.title }}{% if publication.year %} ({{ publication.year }}){% endif %}
+          </a>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Action buttons ── #}
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:36px;">
+      {% if article.external_links %}
+      <a href="{{ article.external_links[0].url }}" class="btn btn-blue" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        {{ article.external_links[0].label or "External Link" }}
+      </a>
+      {% endif %}
+      <a href="{{ url_for('public.news') }}" class="back-button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        All News
+      </a>
+    </div>
+
+  </div>
+</section>
+{% endblock %}

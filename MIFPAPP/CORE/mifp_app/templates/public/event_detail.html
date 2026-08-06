@@ -1,0 +1,199 @@
+{% extends "public/base.html" %}
+
+{% block title %}{{ event.title }} — MIFP Events{% endblock %}
+{% block meta_description %}{{ event.description[:160] if event.description else event.title }}{% endblock %}
+{% block og_title %}{{ event.title }}{% endblock %}
+{% block og_description %}{{ event.description[:200] if event.description else 'MIFP Event' }}{% endblock %}
+{% block og_image %}{{ event.cover_url if event.cover_url }}{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json" nonce="{{ csp_nonce }}">
+{
+  "@context": "https://schema.org",
+  "@type": "Event",
+  "name": {{ event.title|tojson }},
+  {% if event.start_date %}"startDate": "{{ event.start_date[:10] }}",{% endif %}
+  {% if event.end_date %}"endDate": "{{ event.end_date[:10] }}",{% endif %}
+  {% if event.location %}"location": {"@type": "Place", "name": {{ event.location|tojson }}},{% endif %}
+  {% if event.description %}"description": {{ event.description|tojson }},{% endif %}
+  {% if event.cover_url %}"image": "{{ event.cover_url }}",{% endif %}
+  "url": "{{ request.url }}",
+  "organizer": {
+    "@type": "Organization",
+    "name": "Mediterranean Institute of Fundamental Physics",
+    "url": "{{ url_for('public.home', _external=True) }}"
+  }
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="container-wide">
+    <ol class="mifp-breadcrumb">
+      <li><a href="{{ url_for('public.home') }}">Home</a></li>
+      <li><a href="{{ url_for('public.events') }}">Events</a></li>
+      <li aria-current="page">{{ event.title[:50] }}{% if event.title|length > 50 %}…{% endif %}</li>
+    </ol>
+
+    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+      <span class="num serif italic" style="color:var(--mifp-red-hover);font-size:0.85rem;">—</span>
+      <span class="eyebrow eyebrow-red">Event</span>
+      {% if event.event_type %}
+      <span class="tag red">{{ event.event_type|replace('_',' ') }}</span>
+      {% endif %}
+    </div>
+
+    <h1>{{ event.title }}</h1>
+    <div class="accent-bar"></div>
+  </div>
+</section>
+
+<section class="section-sm">
+  <div class="container-wide">
+
+    <div class="detail-grid">
+
+      {# ── Left: info cards ── #}
+      <aside style="display:flex;flex-direction:column;gap:10px;">
+
+        <div class="detail-info-card">
+          <div class="detail-info-row">
+            <div class="detail-info-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </div>
+            <div>
+              <div class="detail-info-label">Starting Date</div>
+              <div class="detail-info-value">{% if event.start_date %}{{ event.start_date[:10] }}{% else %}—{% endif %}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-info-card">
+          <div class="detail-info-row">
+            <div class="detail-info-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </div>
+            <div>
+              <div class="detail-info-label">Ending Date</div>
+              <div class="detail-info-value">
+                {% if event.end_date and event.end_date != event.start_date %}
+                  {{ event.end_date[:10] }}
+                {% elif event.date_text and not event.start_date %}
+                  {{ event.date_text }}
+                {% else %}
+                  —
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-info-card">
+          <div class="detail-info-row">
+            <div class="detail-info-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            </div>
+            <div>
+              <div class="detail-info-label">Place</div>
+              <div class="detail-info-value">{% if event.location %}{{ event.location }}{% else %}—{% endif %}</div>
+            </div>
+          </div>
+        </div>
+
+        {% if event.event_type %}
+        <div class="detail-info-card">
+          <div class="detail-info-label">Category</div>
+          <div class="detail-info-value" style="margin-top:6px;">{{ event.event_type|replace('_',' ')|capitalize }}</div>
+        </div>
+        {% endif %}
+
+        {% if event.documents and event.documents|length > 0 %}
+        <div class="detail-info-card">
+          <div class="detail-info-label" style="margin-bottom:10px;">Documents</div>
+          {% set doc_groups = {} %}
+          {% for doc in event.documents %}
+            {% set dt = doc.doc_type or '_untagged' %}
+            {% if dt not in doc_groups %}{% set _ = doc_groups.update({dt: []}) %}{% endif %}
+            {% set _ = doc_groups[dt].append(doc) %}
+          {% endfor %}
+          {% for group_type, group_docs in doc_groups.items() %}
+          {% set icon, label = ('bi-file-earmark-pdf', 'Documents') if group_type == '_untagged' else ('bi-calendar3', group_type) if group_type == 'Program' else ('bi-journal-text', group_type) if group_type == 'Proceedings' else ('bi-file-earmark-image', group_type) if group_type == 'Brochure' else ('bi-file-earmark-text', 'Poster') if group_type == 'Poster' else ('bi-file-earmark', group_type) %}
+          <div style="margin-bottom:8px;">
+            <div style="font-size:.65rem;font-weight:750;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:4px;display:flex;align-items:center;gap:4px;"><i class="bi {{ icon }}"></i> {{ label }}</div>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+            {% for doc in group_docs %}
+              <a href="{{ doc.url }}" target="_blank" rel="noopener noreferrer" class="news-card-action" style="display:inline-flex;align-items:center;gap:6px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                {{ doc.filename }}
+              </a>
+            {% endfor %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if event.conference_website_url %}
+        <div class="detail-info-card" style="border-color: rgba(180,35,24,0.3); background: rgba(180,35,24,0.06);">
+          <a href="{{ event.conference_website_url }}" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;gap:12px;color:inherit;">
+            <div class="detail-info-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            </div>
+            <div>
+              <div class="detail-info-label">Conference Website</div>
+              <div class="detail-info-value" style="color:var(--mifp-red-hover);">Visit the conference site →</div>
+            </div>
+          </a>
+        </div>
+        {% endif %}
+
+        {% if event.entity_links %}
+        <div class="detail-info-card" style="border-color: rgba(23,92,211,0.3); background: rgba(23,92,211,0.06);">
+          <a href="{{ event.entity_links[0].url }}" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;gap:12px;color:inherit;">
+            <div class="detail-info-icon blue">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            </div>
+            <div>
+              <div class="detail-info-label">Link</div>
+              <div class="detail-info-value" style="color:var(--mifp-blue-soft);">{{ event.entity_links[0].label or "Visit the event site" }} →</div>
+            </div>
+          </a>
+        </div>
+        {% endif %}
+
+      </aside>
+
+      {# ── Right: image + description ── #}
+      <div>
+        <div class="detail-media">
+          {% if event.cover_url %}
+          <button type="button" class="js-lightbox" data-lightbox-src="{{ event.cover_url }}" data-lightbox-caption="{{ event.title }}" style="padding:0;border:none;background:none;cursor:zoom-in;width:100%;">
+            <img src="{{ event.cover_url }}" alt="{{ event.title }}" width="1280" height="720">
+          </button>
+          {% else %}
+          <div class="detail-media-empty">
+            <p>No image available</p>
+          </div>
+          {% endif %}
+        </div>
+
+        {% if event.description_html or event.description %}
+        <div class="article-body" style="margin-top:32px;">
+          {% if event.description_html %}{{ event.description_html|safe }}{% else %}{{ event.description }}{% endif %}
+        </div>
+        {% endif %}
+      </div>
+
+    </div>
+
+    <div style="margin-top:36px;">
+      <a href="{{ url_for('public.events') }}" class="back-button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        All Events
+      </a>
+    </div>
+
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,97 @@
+{% for finding in findings %}
+{% set plan = finding.plan or {} %}
+{% set records = plan.get('records') or (plan.get('record') and [plan.get('record')]) or [] %}
+{% set is_merge = finding.action_type == 'merge_records' %}
+{% set evidence = (finding.evidence or [])[0] or {} %}
+{% set status_class = finding.status if finding.status in ('new','bundled','accepted','rejected') else 'new' %}
+{% set canonical_records = records|selectattr('id', 'equalto', plan.get('canonical_id'))|list if is_merge else [] %}
+{% set canonical = canonical_records[0] if canonical_records else none %}
+{% set executable = (
+  (not is_merge or (records|length >= 2 and canonical))
+  and (
+    finding.action_type != 'repair_relations_or_assets'
+    or plan.get('operation') in ('deduplicate_primary_links', 'deduplicate_primary_assets')
+  )
+) %}
+{% set manually_editable = (
+  (is_merge and records|length >= 2)
+  or plan.get('fields')
+  or plan.get('proposed_records')
+) %}
+<div class="dq-finding-card" data-finding-id="{{ finding.id }}" data-status="{{ finding.status }}">
+  <div class="dq-finding-type {{ finding.action_type }}">
+    <i class="bi {{ {
+      'clean_record': 'bi-eraser',
+      'enrich_record': 'bi-plus-circle',
+      'merge_records': 'bi-intersect',
+      'split_aggregated_record': 'bi-scissors',
+      'repair_relations_or_assets': 'bi-link-45deg',
+    }.get(finding.action_type, 'bi-gear') }}"></i>
+  </div>
+  <div class="dq-finding-body">
+    <div class="dq-finding-evidence">{{ evidence.get('explanation') or finding.classification }}</div>
+    <div class="dq-finding-solution">
+      {% if is_merge %}
+        {% set labels = records|map(attribute='title')|map('default', '')|list %}
+        {% set signals = (finding.evidence or [])|map(attribute='explanation')|list %}
+        <div class="dq-merge-records">
+          {% for record in records %}
+          <span>{{ record.get('title') or record.get('display_name') or record.get('name') or ('#' ~ record.id) }}</span>
+          {% endfor %}
+        </div>
+        <div class="dq-merge-outcome">
+          {% if canonical %}
+            <b>Result:</b> {{ canonical.get('title') or canonical.get('display_name') or canonical.get('name') or ('record #' ~ plan.get('canonical_id')) }}
+            <small>{{ (plan.get('assets') or [])|length }} assets, {{ (plan.get('links') or [])|length }} links</small>
+          {% else %}
+            <b>Manual review:</b> choose a parent or canonical record before this finding can be applied.
+          {% endif %}
+        </div>
+        {% if signals %}
+        <div class="dq-merge-signals">{% for signal in signals %}<span>{{ signal }}</span>{% endfor %}</div>
+        {% endif %}
+      {% elif finding.action_type == 'split_aggregated_record' %}
+        {% set segs = plan.get('proposed_records') or [] %}
+        Split into {{ segs|length }} records: {{ segs|map(attribute='title_hint')|join(', ') }}
+      {% elif plan.get('fields') %}
+        {% for f in plan['fields'] %}
+          {{ f.field }}: {{ f.proposed_value or '—' }}{% if not loop.last %} | {% endif %}
+        {% endfor %}
+      {% else %}
+        Auto-fix available
+      {% endif %}
+    </div>
+  </div>
+  <div class="dq-finding-meta">
+    <span class="dq-badge dq-badge-type-{{ finding.action_type }}">{{ finding.action_type }}</span>
+    <span class="dq-badge-entity">{{ finding.entity_type }}</span>
+    <span class="dq-badge-status dq-badge-status-{{ status_class }}">{{ finding.status or 'new' }}</span>
+  </div>
+  <div class="dq-finding-actions">
+    {% if finding.status not in ('rejected','resolved') %}
+    {% if manually_editable %}
+    <button type="button" class="btn btn-sm btn-dq-manual" data-finding-id="{{ finding.id }}">
+      <i class="bi bi-eye"></i> Review &amp; edit
+    </button>
+    {% elif executable %}
+    <button type="button" class="btn btn-sm btn-dq-accept" data-finding-id="{{ finding.id }}">
+      <i class="bi bi-check-lg"></i> Accept
+    </button>
+    {% else %}
+    <button type="button" class="btn btn-sm btn-dq-review btn-dq-accept" data-finding-id="{{ finding.id }}">
+      <i class="bi bi-person-check"></i> Mark reviewed
+    </button>
+    {% endif %}
+    <button type="button" class="btn btn-sm btn-dq-ignore" data-finding-id="{{ finding.id }}">
+      <i class="bi bi-x-lg"></i> Ignore
+    </button>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div class="dq-empty-list">
+  <i class="bi bi-inboxes"></i>
+  <b>No findings</b>
+  <p>No matching findings for the current filter.</p>
+</div>
+{% endfor %}

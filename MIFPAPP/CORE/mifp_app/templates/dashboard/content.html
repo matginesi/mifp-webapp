@@ -1,0 +1,243 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header, empty_state, export_dropdown %}
+{% block page_title %}{{ meta.title }}{% endblock %}
+{% block extra_js %}{{ super() }}<script src="{{ url_for('static', filename='js/dashboard/content.js') }}" defer></script>{% endblock %}
+{% block content %}
+{% set long_fields = ['body','description','abstract','bio','summary'] %}
+{% set json_fields = [] %}
+{% set date_fields = ['created_at','updated_at','date','start_date','end_date','birth_date','death_date','effective_date'] %}
+{% set numeric_fields = ['id','year','sort_order','role_id','menu_order','parent_event_id','source_priority','source_order','display_order'] %}
+{% set bool_fields = ['is_active','is_featured'] %}
+{% set labels = {'is_featured': 'show in homepage forthcoming block' if section == 'events' else 'featured', 'event_type': 'event type', 'date_text': 'date shown publicly'} %}
+{% set hints = {'is_featured': 'If Yes, shown in the homepage forthcoming block when the event dates are forthcoming'} if section == 'events' else {'is_featured': 'If Yes, highlighted on the site'} %}
+{% set empty_value %}<span class="cell-text">&mdash;</span>{% endset %}
+
+{% call page_header('Content', meta.title, 'Manage ' ~ meta.title|lower ~ ' records. Click a row to edit inline.') %}
+    <button class="btn btn-primary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#newRecordModal" data-create-record-open data-section="{{ section }}"><i class="bi bi-plus-lg"></i> New {{ meta.title|lower }}</button>
+{% endcall %}
+
+{% if section == 'news' and news_templates %}
+<div class="template-strip">
+  {% for key, tpl in news_templates.items() %}
+  <a class="template-chip" href="{{ url_for('dashboard.content', section='news', template=key) }}">{{ tpl.label }}</a>
+  {% endfor %}
+  <span>Quick templates for featured news, publications, agreements, and events.</span>
+</div>
+{% endif %}
+
+<div class="modal fade create-record-modal" id="newRecordModal" tabindex="-1" aria-labelledby="newRecordTitle" aria-hidden="true" {% if request.args.get('template') or request.args.get('new') %}data-open-on-load{% endif %}>
+  <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+    <form method="post" enctype="multipart/form-data" class="modal-content smart-modal" data-create-record-form data-section="{{ section }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="id" value="">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title" id="newRecordTitle"><i class="bi bi-plus-square"></i> New {{ meta.title|lower }}</h2>
+          <p class="modal-subtitle">Complete the public information and add the primary asset now. New editorial records start safely as draft or inactive.</p>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="inline-form-grid create-record-grid">
+      {% for f in editable %}
+        {% set suggested = news_templates.get(request.args.get('template'), {}).get(f, '') if section == 'news' and news_templates else '' %}
+        {% set val = suggested %}
+        <label class="field {{ 'wide' if f in long_fields else '' }}">
+          <span>{{ labels.get(f, f|replace('_',' ')) }}{% if f in required_fields %} <b aria-hidden="true">*</b>{% endif %}{% if hints.get(f) %}<i class="bi bi-info-circle" title="{{ hints[f] }}" class="help-icon"></i>{% endif %}</span>
+          {% if f in long_fields %}
+            <textarea name="{{ f }}" rows="{{ 8 if f in ['body','description','abstract','bio'] else 3 }}" class="form-control form-control-sm" {{ 'required' if f in required_fields }}>{{ val or '' }}</textarea>
+          {% elif f in bool_fields %}
+            <select name="{{ f }}" class="form-select form-select-sm"><option value="0" selected>No</option><option value="1">Yes</option></select>
+          {% elif f == 'status' %}
+            <select name="status" class="form-select form-select-sm"><option value="draft">draft</option><option value="upcoming">upcoming</option><option value="past">past</option></select>
+          {% elif f == 'news_type' %}
+            <select name="news_type" class="form-select form-select-sm">
+              {% for opt in ['general','announcement','publication_highlight','agreement','award','event_highlight','institutional','sponsor','memorial','science_commentary'] %}<option value="{{ opt }}" {{ 'selected' if val == opt }}>{{ opt }}</option>{% endfor %}
+            </select>
+          {% elif f == 'review_status' %}
+            <select name="review_status" class="form-select form-select-sm">
+              {% for opt in ['draft','review','published'] %}<option value="{{ opt }}">{{ opt }}</option>{% endfor %}
+            </select>
+          {% elif f == 'sponsor_type' %}
+            <select name="sponsor_type" class="form-select form-select-sm">
+              {% for opt in ['sponsor','partner','supporter','institution'] %}<option value="{{ opt }}">{{ opt }}</option>{% endfor %}
+            </select>
+          {% elif f == 'card_layout' %}
+            <select name="card_layout" class="form-select form-select-sm">
+              <option value="" {{ 'selected' if not val }}>Auto (default)</option>
+              <option value="text" {{ 'selected' if val == 'text' }}>Text only</option>
+              <option value="text_image" {{ 'selected' if val == 'text_image' }}>Text + Image</option>
+              <option value="text_gallery" {{ 'selected' if val == 'text_gallery' }}>Text + Gallery</option>
+            </select>
+          {% elif f == 'role_id' and roles is defined %}
+            <select name="role_id" class="form-select form-select-sm">
+              <option value="">No role</option>
+              {% for role in roles %}
+              <option value="{{ role.id }}" {{ 'selected' if val|string == role.id|string }}>{{ role.label or role.name }}</option>
+              {% endfor %}
+            </select>
+          {% elif f.endswith('_date') or f == 'date' %}
+            <input type="date" name="{{ f }}" value="{{ val or '' }}" class="form-control form-control-sm">
+          {% elif f in numeric_fields or f.endswith('_asset_id') %}
+            <div class="asset-id-control"><input id="new-{{ f }}" name="{{ f }}" value="{{ val or '' }}" type="number" class="form-control form-control-sm">{% if f.endswith('_asset_id') %}<button class="btn btn-outline btn-sm" type="button" data-picker="new-{{ f }}">Pick</button>{% endif %}</div>
+          {% else %}
+            <input name="{{ f }}" value="{{ val or '' }}" class="form-control form-control-sm" {{ 'required' if f in required_fields }} {{ 'type=email' if f == 'email' }}>
+          {% endif %}
+        </label>
+      {% endfor %}
+        {% if create_primary_asset %}
+        <label class="field wide create-primary-asset">
+          <span>{{ create_primary_asset[1] }}</span>
+          <input type="file" name="primary_asset" accept="{{ create_primary_asset[2] }}" class="form-control form-control-sm">
+          <small>Optional now. The file is saved and linked atomically with the new record.</small>
+        </label>
+        {% endif %}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span class="modal-footer-note"><i class="bi bi-shield-check"></i> Required fields and relationships are validated by the server.</span>
+        <button class="btn btn-outline btn-sm" type="button" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-plus-lg"></i> Create {{ meta.title|lower }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<form class="toolbar" method="get">
+  <div class="toolbar-search"><i class="bi bi-search" aria-hidden="true"></i><input type="search" class="form-control form-control-sm" name="q" value="{{ q or '' }}" placeholder="Search {{ meta.title }}" aria-label="Search {{ meta.title }}"></div>
+  <button class="btn btn-primary btn-sm"><i class="bi bi-funnel"></i> Filter</button>
+  {% if q %}<a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.content', section=section) }}">Reset</a>{% endif %}
+  {{ export_dropdown([
+    ('Excel (.xlsx)', url_for('dashboard.export_table', table=table, fmt='xlsx'), 'bi bi-file-earmark-excel'),
+    ('Document (.docx)', url_for('dashboard.export_table', table=table, fmt='docx'), 'bi bi-file-earmark-word'),
+    ('PDF', url_for('dashboard.export_table', table=table, fmt='pdf'), 'bi bi-file-earmark-pdf'),
+    ('CSV', url_for('dashboard.export_table', table=table, fmt='csv'), 'bi bi-filetype-csv'),
+    ('JSON', url_for('dashboard.export_table', table=table, fmt='json'), 'bi bi-filetype-json'),
+    ('JSONL', url_for('dashboard.export_table', table=table, fmt='jsonl'), 'bi bi-braces'),
+  ], section=section) }}
+</form>
+
+<div class="table-card compact-table-card">
+  <div class="data-scroll">
+    <table class="data-table">
+      <thead><tr>{% for c in columns %}<th>{{ c|replace('_',' ') }}</th>{% endfor %}<th class="col-actions">Actions</th></tr></thead>
+      <tbody>
+      {% for r in records %}
+        <tr class="record-row {{ 'is-selected' if edit_record and edit_record.id == r.id }}" data-row-toggle="record-{{ r.id }}">
+          {% for c in columns %}
+            {% set v = r.get(c) %}
+            {% set col_class = 'col-text' if c in long_fields else 'col-id' if c == 'id' else 'col-bool' if c in bool_fields or c.startswith('is_') else 'col-date' if c in date_fields else 'col-num' if c in numeric_fields or c.endswith('_asset_id') else 'col-title' if c in ['title','name','display_name'] else '' %}
+            <td class="{{ col_class }}" title="{{ v if v not in [None,''] else '' }}">
+              {% if c in long_fields %}{% if v %}<span class="cell-text">{{ v }}</span>{% else %}{{ empty_value }}{% endif %}
+              {% elif c in json_fields %}{% if v %}<button class="json-details-toggle" type="button" data-toggle-next aria-expanded="false">JSON &#9662;</button><div class="json-details-content">{{ v }}</div>{% else %}<span class="cell-text">&#8212;</span>{% endif %}
+              {% elif c in bool_fields or c.startswith('is_') %}<span class="cell-bool {{ 'yes' if v else 'no' }}">{{ 'yes' if v else 'no' }}</span>
+              {% elif c == 'id' %}<span class="cell-id">#{{ v }}</span>
+              {% elif c == 'role_id' and role_names %}<span class="pill">{{ role_names.get(v, v) }}</span>
+              {% elif c in date_fields %}{% if v %}<span class="cell-date">{{ v }}</span>{% else %}{{ empty_value }}{% endif %}
+              {% elif c.endswith('_asset_id') %}{% if v %}<span class="cell-asset-link" data-asset-id="{{ v }}"><i class="bi bi-paperclip"></i> #{{ v }}</span>{% else %}<span class="cell-text">&#8212;</span>{% endif %}
+              {% else %}{{ v if v not in [None,''] else empty_value }}{% endif %}
+            </td>
+          {% endfor %}
+          <td class="col-actions"><div class="dash-row-actions"><button class="btn btn-mini btn-outline" type="button" data-row-toggle="record-{{ r.id }}">Edit</button><form method="post" action="{{ url_for('dashboard.content_delete', section=section, record_id=r.id) }}" data-confirm="Delete this record?" class="d-inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button class="btn btn-mini btn-outline-danger">Delete</button></form></div></td>
+        </tr>
+        <tr class="inline-editor-row {{ 'is-open' if edit_record and edit_record.id == r.id }}" id="record-{{ r.id }}" data-inline-panel>
+          <td colspan="{{ columns|length + 1 }}">
+            <form method="post" class="inline-form">
+              <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="id" value="{{ r.id }}">
+              <div class="inline-form-head"><div><b>Edit #{{ r.id }} &middot; {{ r.title or r.display_name or r.name or 'record' }}</b><small>Edit inline.</small></div><div class="inline-actions"><button class="btn btn-primary btn-sm">Save</button><button class="btn btn-outline btn-sm" type="button" data-row-toggle="record-{{ r.id }}">Close</button></div></div>
+              <div class="inline-form-grid">
+              {% for f in editable %}
+                {% set val = r.get(f) %}
+                <label class="field {{ 'wide' if f in long_fields else '' }}">
+                  <span>{{ labels.get(f, f|replace('_',' ')) }}{% if hints.get(f) %}<i class="bi bi-info-circle" title="{{ hints[f] }}" class="help-icon"></i>{% endif %}</span>
+                  {% if f in long_fields %}
+                    <textarea name="{{ f }}" rows="{{ 8 if f in ['body','description','abstract','bio'] else 3 }}" class="form-control form-control-sm">{{ val or '' }}</textarea>
+                  {% elif f in bool_fields or f.startswith('is_') %}
+                    <select name="{{ f }}" class="form-select form-select-sm"><option value="1" {{ 'selected' if val==1 }}>Yes</option><option value="0" {{ 'selected' if val!=1 }}>No</option></select>
+                  {% elif f == 'status' %}
+                    <select name="status" class="form-select form-select-sm">{% for opt in ['draft','upcoming','past'] %}<option value="{{ opt }}" {{ 'selected' if val==opt }}>{{ opt }}</option>{% endfor %}</select>
+                  {% elif f == 'news_type' %}
+                    <select name="news_type" class="form-select form-select-sm">{% for opt in ['general','announcement','publication_highlight','agreement','award','event_highlight','institutional','sponsor','memorial','science_commentary'] %}<option value="{{ opt }}" {{ 'selected' if val==opt }}>{{ opt }}</option>{% endfor %}</select>
+                  {% elif f == 'role_id' and roles is defined %}
+                    <select name="role_id" class="form-select form-select-sm">
+                      <option value="">No role</option>
+                      {% for role in roles %}
+                      <option value="{{ role.id }}" {{ 'selected' if val|string == role.id|string }}>{{ role.label or role.name }}</option>
+                      {% endfor %}
+                    </select>
+                  {% elif f.endswith('_date') or f == 'date' %}
+                    <input type="date" name="{{ f }}" value="{{ val or '' }}" class="form-control form-control-sm">
+                  {% elif f in numeric_fields or f.endswith('_asset_id') %}
+                    <div class="asset-id-control"><input id="r{{ r.id }}-{{ f }}" name="{{ f }}" value="{{ val or '' }}" type="number" class="form-control form-control-sm">{% if f.endswith('_asset_id') %}<button class="btn btn-outline btn-sm" type="button" data-picker="r{{ r.id }}-{{ f }}" data-picker-kind="{{ 'image' if 'image' in f or 'cover' in f or 'logo' in f else 'document' }}">Pick</button>{% endif %}</div>
+                  {% else %}
+                    <input name="{{ f }}" value="{{ val or '' }}" class="form-control form-control-sm">
+                  {% endif %}
+                </label>
+              {% endfor %}
+              </div>
+              {# Asset management strip for this record #}
+              <div class="record-assets-section" data-section="{{ section }}" data-record-id="{{ r.id }}">
+                {% if linked_assets.get(r.id) %}
+                <div class="linked-assets-strip">
+                  {% for a in linked_assets.get(r.id, []) %}
+                  <span class="linked-asset-card">
+                    {% if a.kind == 'image' and a.path and a.preview_available %}<img src="{{ url_for('dashboard.asset_file', filename=a.path.split('/', 1)[1] if '/' in a.path else a.path) }}" alt="" width="22" height="22" class="linked-asset-thumb" loading="lazy">{% else %}<i class="bi {{ 'bi-image-fill text-warning' if a.kind == 'image' and not a.preview_available else ('bi-file-earmark-pdf' if a.kind == 'pdf' else 'bi-file-earmark-text') }}" title="{{ 'Local file missing' if a.kind == 'image' and not a.preview_available else '' }}"></i>{% endif %}
+                    <span class="linked-asset-name">{{ a.original_filename or a.filename }}</span>
+                    <small class="linked-asset-role">{{ a.role }}</small>
+                    <button class="btn btn-mini btn-outline-danger asset-unlink-btn" data-asset-id="{{ a.id }}" data-section="{{ section }}" data-record-id="{{ r.id }}" title="Unlink asset">&times;</button>
+                  </span>
+                  {% endfor %}
+                </div>
+                {% endif %}
+                <div class="record-asset-actions">
+                  <button class="btn btn-mini btn-outline asset-upload-btn" data-section="{{ section }}" data-record-id="{{ r.id }}"><i class="bi bi-upload"></i> Upload</button>
+                  <button class="btn btn-mini btn-outline asset-link-btn" data-section="{{ section }}" data-record-id="{{ r.id }}"><i class="bi bi-folder"></i> Asset</button>
+                  <button class="btn btn-mini btn-outline entity-link-add-btn" data-section="{{ section }}" data-record-id="{{ r.id }}"><i class="bi bi-link-45deg"></i> Link</button>
+                  <input type="file" class="d-none asset-upload-input" data-section="{{ section }}" data-record-id="{{ r.id }}" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.mp4,.mov,.txt,.csv">
+                </div>
+                {% if linked_links.get(r.id) %}
+                <div class="linked-assets-strip">
+                  {% for link in linked_links.get(r.id, []) %}
+                  <span class="linked-asset-card">
+                    <i class="bi bi-link-45deg"></i>
+                    <span class="linked-asset-name">{{ link.label or link.url }}</span>
+                    <small class="linked-asset-role">{{ link.role }}</small>
+                    <button class="btn btn-mini btn-outline-danger entity-link-delete-btn" data-link-id="{{ link.id }}" data-section="{{ section }}" data-record-id="{{ r.id }}" title="Remove link">&times;</button>
+                  </span>
+                  {% endfor %}
+                </div>
+                {% endif %}
+              </div>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="{{ columns|length + 1 }}" class="empty">No records. Use "New" above.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if pagination and pagination.total_pages > 1 %}
+{% set page_qs = '&q=' + q|urlencode if q else '' %}
+<nav class="pagination-nav">
+  {% set base_url = url_for('dashboard.content', section=section) %}
+  <a class="btn btn-outline btn-sm {{ 'disabled' if pagination.page <= 1 }}"
+     href="{{ base_url + '?page=' + (pagination.page - 1)|string + page_qs if pagination.page > 1 else '#' }}"
+     aria-label="Previous page">
+    <i class="bi bi-chevron-left" aria-hidden="true"></i>
+  </a>
+  <span class="pagination-count">
+    Page {{ pagination.page }} of {{ pagination.total_pages }}
+    ({{ pagination.total_filtered }} record{{ 's' if pagination.total_filtered != 1 }})
+  </span>
+  <a class="btn btn-outline btn-sm {{ 'disabled' if pagination.page >= pagination.total_pages }}"
+     href="{{ base_url + '?page=' + (pagination.page + 1)|string + page_qs if pagination.page < pagination.total_pages else '#' }}"
+     aria-label="Next page">
+    <i class="bi bi-chevron-right" aria-hidden="true"></i>
+  </a>
+</nav>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,101 @@
+{% extends "public/base.html" %}
+
+{% block title %}Publications — MIFP{% endblock %}
+{% block meta_description %}Scientific publications from the Mediterranean Institute of Fundamental Physics.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="container-wide">
+    <ol class="mifp-breadcrumb">
+      <li><a href="{{ url_for('public.home') }}">Home</a></li>
+      <li aria-current="page">Publications</li>
+    </ol>
+    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+      <span class="num serif italic" style="color:var(--mifp-blue-soft);font-size:0.85rem;">—</span>
+      <span class="eyebrow eyebrow-blue">Publications</span>
+    </div>
+    <h1>{{ site_copy.publications_title }}</h1>
+    <p>{{ site_copy.publications_intro }}</p>
+    <div class="accent-bar" style="background: linear-gradient(90deg, var(--mifp-blue), var(--mifp-red));"></div>
+  </div>
+</section>
+
+<section class="section-sm">
+  <div class="container">
+
+    {# ── Search ── #}
+    <div style="max-width:320px;margin-bottom:32px;">
+      <div class="filter-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="pubSearch" placeholder="{{ site_copy.publications_search }}" autocomplete="off" aria-label="Search publications">
+      </div>
+      <div id="pubSearchStatus" class="visually-hidden" role="status" aria-live="polite"></div>
+    </div>
+
+    {# ── Publications list ── #}
+    {% if publications %}
+    <div id="pubList">
+      {% set current_year = namespace(value=9999) %}
+      {% for pub in publications %}
+      {% if pub.year and pub.year != current_year.value %}
+      {% set current_year.value = pub.year %}
+      {% set year_count = publications|selectattr('year', 'equalto', pub.year)|list|length %}
+      <div class="pub-year-section">
+        <h2>{{ pub.year }}</h2>
+        <div class="pub-year-line"></div>
+        <span class="pub-year-count">{{ year_count }} {{ 'paper' if year_count == 1 else 'papers' }}</span>
+      </div>
+      {% endif %}
+      <div class="pub-card" id="publication-{{ pub.slug }}" data-search="{{ ([pub.title, pub.authors, pub.journal]|select('string')|join(' '))|lower }}">
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-start;justify-content:space-between;">
+          <h3>
+            {% if pub.download_url %}
+            <a href="{{ pub.download_url }}" target="_blank" rel="noopener noreferrer">{{ pub.title }}</a>
+            {% elif pub.doi %}
+            <a href="https://doi.org/{{ pub.doi }}" target="_blank" rel="noopener noreferrer">{{ pub.title }}</a>
+            {% else %}
+            {{ pub.title }}
+            {% endif %}
+          </h3>
+          {% if pub.download_url %}
+          <a href="{{ pub.download_url }}" class="pub-pdf-badge" {% if pub.download_label == 'PDF' %}download{% else %}target="_blank" rel="noopener noreferrer"{% endif %}>
+            {% if pub.download_label == 'PDF' %}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            {% else %}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            {% endif %}
+            {{ pub.download_label }}
+          </a>
+          {% endif %}
+        </div>
+        {% if pub.authors_list %}
+        <p class="authors">{{ pub.authors_list|join(', ') }}</p>
+        {% endif %}
+        {% if pub.doi %}
+        <p class="doi">DOI: <a href="https://doi.org/{{ pub.doi }}" target="_blank" rel="noopener noreferrer">{{ pub.doi }}</a></p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div id="pubEmpty" class="empty-state" style="display:none;margin-top:32px;">
+      <div class="empty-state-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      </div>
+      <p>No publications match your search.</p>
+      <p style="font-size:0.82rem;margin-top:6px;">Try a different title, author, or journal.</p>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-state-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      </div>
+      <p>{{ site_copy.publications_empty }}</p>
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+{% endblock %}

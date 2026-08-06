@@ -1,0 +1,19 @@
+{% set items = bundle.get('items') or [] %}
+{% set labels = {
+  'merge_records': 'consolidations',
+  'clean_record': 'cleanups',
+  'repair_relations_or_assets': 'repairs',
+  'enrich_record': 'enrichments',
+  'split_aggregated_record': 'splits',
+} %}
+{% set totals = {} %}
+{% for item in items %}
+  {% set key = item.action_type ~ ':' ~ item.entity_type %}
+  {% set _ = totals.update({key: totals.get(key, 0) + 1}) %}
+{% endfor %}
+<span id="dqQueueCount">{{ items|length }}</span>
+<span class="dq-queue-label">queued</span>
+{% for key, count in totals.items() %}
+{% set parts = key.split(':') %}
+<span><b>{{ count }}</b> {{ parts[1] }} {{ labels.get(parts[0], parts[0]) }}</span>
+{% endfor %}

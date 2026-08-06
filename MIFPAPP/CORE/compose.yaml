@@ -1,0 +1,83 @@
+name: mifp-local
+
+services:
+  web:
+    build:
+      context: .
+      target: runtime
+    image: "mifp-web:${MIFP_IMAGE_TAG:-local}"
+    env_file:
+      - .env
+    environment:
+      MIFP_LOAD_DOTENV: "0"
+      FLASK_ENV: development
+      FLASK_DEBUG: "1"
+      SESSION_COOKIE_SECURE: "0"
+      TRUST_PROXY: "0"
+      TRUSTED_HOSTS: "localhost,127.0.0.1"
+      ALLOW_DB_DUMP: "1"
+      ALLOW_DB_RESTORE: "1"
+      AUTO_MIGRATE_ON_STARTUP: "0"
+      STORAGE_MIN_FREE_MB: "0"
+      DATABASE_PATH: /app/data/mifp.db
+      ASSETS_DIR: /app/data/assets
+      EXPORT_DIR: /app/data/exports
+      LOG_DIR: /app/data/logs
+      CONFERENCES_DIR: /app/data/conferences
+      BANNER_SETTINGS_PATH: /app/data/config/banner_settings.json
+      LOG_OUTPUT: stdout
+      LOG_FORMAT: text
+    user: "${MIFP_UID:-1000}:${MIFP_GID:-1000}"
+    command:
+      - python
+      - -m
+      - flask
+      - --app
+      - wsgi:app
+      - run
+      - --host=0.0.0.0
+      - --port=8000
+      - --debug
+    ports:
+      - "${MIFP_BIND:-127.0.0.1}:${MIFP_PORT:-8000}:8000"
+    volumes:
+      - type: bind
+        source: ../DATABASE
+        target: /app/data
+      - type: bind
+        source: ./app.py
+        target: /app/app.py
+        read_only: true
+      - type: bind
+        source: ./wsgi.py
+        target: /app/wsgi.py
+        read_only: true
+      - type: bind
+        source: ./gunicorn_conf.py
+        target: /app/gunicorn_conf.py
+        read_only: true
+      - type: bind
+        source: ./config
+        target: /app/config
+        read_only: true
+      - type: bind
+        source: ./mifp_app
+        target: /app/mifp_app
+        read_only: true
+      - type: bind
+        source: ./mifp_archive
+        target: /app/mifp_archive
+        read_only: true
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 8
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

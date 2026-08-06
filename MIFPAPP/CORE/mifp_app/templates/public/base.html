@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}MIFP — Mediterranean Institute of Fundamental Physics{% endblock %}</title>
+  <meta name="description" content="{% block meta_description %}Mediterranean Institute of Fundamental Physics — Promoting scientific research and collaboration across the Mediterranean.{% endblock %}">
+  <meta name="author" content="Matteo Ginesi">
+  <meta name="theme-color" content="#0a0e1a">
+  <meta name="color-scheme" content="dark">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo-mifp.png', v=static_version) }}">
+  <link rel="canonical" href="{{ request.url }}">
+  {% block og_tags %}
+  <meta property="og:title" content="{% block og_title %}MIFP{% endblock %}">
+  <meta property="og:description" content="{% block og_description %}Mediterranean Institute of Fundamental Physics{% endblock %}">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="{{ request.url }}">
+  <meta property="og:image" content="{{ url_for('static', filename='img/background.png', v=static_version, _external=True) }}">
+  {% endblock %}
+
+  {# Self-hosted Inter; headings use a system serif stack. #}
+  <link rel="preload" href="{{ url_for('static', filename='fonts/Inter.woff2', v=static_version) }}" as="font" type="font/woff2">
+
+  <link href="{{ url_for('static', filename='css/homepage.css', v=static_version) }}" rel="stylesheet">
+  {% block extra_css %}{% endblock %}
+
+  <script type="application/ld+json" nonce="{{ csp_nonce }}">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Mediterranean Institute of Fundamental Physics",
+    "url": "{{ url_for('public.home', _external=True) }}",
+    "description": "Promoting scientific research and international collaboration across the Mediterranean region.",
+    "creator": {
+      "@type": "Person",
+      "name": "Matteo Ginesi",
+      "url": "https://github.com/matginesi"
+    }
+  }
+  </script>
+  {% block json_ld %}{% endblock %}
+</head>
+<body class="public-site">
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  {% if site_settings.get('cookie_banner_enabled') == '1' %}
+  {% set banner_text = site_settings.get('cookie_banner_text', '') %}
+  {% set dismiss_label = site_settings.get('cookie_banner_dismiss_label', '') or 'Dismiss' %}
+  {% if not banner_text %}
+  {% set banner_text = 'This site uses a session cookie for admin authentication. No tracking or analytics cookies are used.' %}
+  {% endif %}
+  <aside class="cookie-banner cookie-banner-{{ site_settings.get('cookie_banner_theme', 'brand') }}" id="cookie-banner" role="region" aria-labelledby="cookie-banner-title" aria-describedby="cookie-banner-message" data-force-show="{{ site_settings.get('banner_force_show', '0') }}">
+    <div class="cookie-banner-body">
+      <span class="cookie-banner-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9.5 12 1.7 1.7 3.5-4"/></svg>
+      </span>
+      <div class="cookie-banner-copy">
+        <span class="cookie-banner-kicker" id="cookie-banner-title">Privacy notice</span>
+        <p id="cookie-banner-message">{{ banner_text }}</p>
+      </div>
+      <div class="cookie-banner-actions">
+        {% if site_settings.get('cookie_banner_link_enabled', '1') == '1' %}
+        <a class="cookie-banner-policy" href="{{ url_for('public.cookie_policy') }}">
+          <span>Cookie policy</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+        </a>
+        {% endif %}
+        <button class="cookie-banner-close" id="cookie-banner-close" type="button" aria-label="{{ dismiss_label }}">
+          <span>{{ dismiss_label }}</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+  {% endif %}
+
+  {% include "public/_navbar.html" %}
+
+  <main class="mifp-fade-in" id="main-content" tabindex="-1">
+    {% block content %}{% endblock %}
+  </main>
+
+  {% include "public/_footer.html" %}
+  {% block extra_js %}{% endblock %}
+  <script src="{{ url_for('static', filename='js/homepage.js', v=static_version) }}" defer></script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header, export_dropdown, empty_state %}
+{% block page_title %}{{ site.acronym or site.title }}{% endblock %}
+{% block extra_js %}{{ super() }}<script src="{{ url_for('static', filename='js/dashboard/conferences.js') }}" defer></script>{% endblock %}
+{% block content %}
+<div class="conference-workspace" data-entity="conferences">
+{% call page_header('Conference site', site.title, 'Complete the website in order, then build one self-contained ZIP for deployment.', entity_type='conferences') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.conference_sites') }}"><i class="bi bi-arrow-left"></i> All conferences</a>
+  <a class="btn btn-primary btn-sm" href="{{ url_for('dashboard.conference_build', site_id=site.id) }}" data-conference-build><i class="bi bi-file-earmark-zip"></i> Build deploy ZIP</a>
+{% endcall %}
+
+<nav class="conference-steps" aria-label="Conference editor sections">
+  <a href="#identity"><b>1</b><span>Identity & URL</span></a>
+  <a href="#configuration"><b>2</b><span>YAML settings</span></a>
+  <a href="#people"><b>3</b><span>People</span></a>
+  <a href="#assets"><b>4</b><span>Assets</span></a>
+  <a href="#deploy"><b>5</b><span>Build</span></a>
+</nav>
+
+<section class="table-card conference-panel" id="identity">
+  <div class="panel-head"><div><span>Website settings</span><h2><i class="bi bi-link-45deg"></i> Identity and public URL</h2><p>The canonical URL is the final public address. Deploy path controls links when publishing inside a subdirectory.</p></div><span class="status-badge status-{{ 'success' if site.status == 'ready' else 'warning' if site.status == 'draft' else 'neutral' }}">{{ site.status|title }}</span></div>
+  <form method="post" class="inline-form"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <div class="inline-form-grid">
+      <label class="field wide"><span>Conference title</span><input class="form-control" name="title" value="{{ site.title }}" required maxlength="200"></label>
+      <label class="field"><span>Acronym</span><input class="form-control" name="acronym" value="{{ site.acronym or '' }}" maxlength="40"></label>
+      <label class="field"><span>Year</span><input class="form-control" name="year" type="number" value="{{ site.year or '' }}"></label>
+      <label class="field"><span>Status</span><select class="form-select" name="status">{% for value in ['draft','ready','archived'] %}<option value="{{ value }}" {{ 'selected' if site.status == value }}>{{ value|title }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Start date</span><input class="form-control" type="date" name="start_date" value="{{ site.start_date or '' }}"></label>
+      <label class="field"><span>End date</span><input class="form-control" type="date" name="end_date" value="{{ site.end_date or '' }}"></label>
+      <label class="field"><span>Venue</span><input class="form-control" name="venue" value="{{ site.venue or '' }}"></label>
+      <label class="field"><span>City</span><input class="form-control" name="city" value="{{ site.city or '' }}"></label>
+      <label class="field"><span>Country</span><input class="form-control" name="country" value="{{ site.country or '' }}"></label>
+      <label class="field wide"><span>Canonical public URL</span><input class="form-control" type="url" name="canonical_url" value="{{ site.canonical_url or '' }}" placeholder="https://conference.example.org/"><small>The address search engines and social previews should consider authoritative.</small></label>
+      <label class="field"><span>Deploy base path</span><input class="form-control" name="deploy_base_path" value="{{ site.deploy_base_path or '/' }}" placeholder="/conference/"></label>
+      <label class="field"><span>Registration URL</span><input class="form-control" type="url" name="registration_url" value="{{ site.registration_url or '' }}"></label>
+      <label class="field"><span>Contact email</span><input class="form-control" type="email" name="contact_email" value="{{ site.contact_email or '' }}"></label>
+      <label class="field wide"><span>Description</span><textarea class="form-control" name="description" rows="5">{{ site.description or '' }}</textarea></label>
+    </div>
+    <div class="dash-row-actions conference-form-actions"><button class="btn btn-primary btn-sm"><i class="bi bi-check2"></i> Save conference details</button></div>
+  </form>
+</section>
+
+<section class="table-card conference-panel" id="configuration">
+  <div class="panel-head"><div><span>config.yaml</span><h2><i class="bi bi-sliders"></i> Complete website configuration</h2><p>Every setting written to the deploy package is managed here. No manual YAML editing is required.</p></div><span class="storage-badge">6 sections</span></div>
+  <form class="toolbar conference-import" method="post" action="{{ url_for('dashboard.conference_import', site_id=site.id) }}" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <div class="toolbar-search"><i class="bi bi-filetype-yml"></i><input class="form-control form-control-sm" type="file" name="config_file" accept=".yaml,.yml" aria-label="Import config YAML"></div>
+    <span class="toolbar-divider">or</span>
+    <div class="toolbar-search"><i class="bi bi-file-earmark-zip"></i><input class="form-control form-control-sm" type="file" name="package_file" accept=".zip" aria-label="Import YAML and assets ZIP"></div>
+    <button class="btn btn-outline btn-sm"><i class="bi bi-upload"></i> Import configuration</button>
+  </form>
+  <form method="post" action="{{ url_for('dashboard.conference_config_save', site_id=site.id) }}" class="conference-config-form">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    {% set cfg = conference_config %}
+    <div class="conference-config-grid">
+      <fieldset><legend>Deployment</legend>
+        <label class="field"><span>Environment</span><select class="form-select form-select-sm" name="config__deployment__environment"><option value="nginx" {{ 'selected' if cfg.deployment.environment == 'nginx' }}>Nginx / production</option><option value="localhost" {{ 'selected' if cfg.deployment.environment == 'localhost' }}>Local preview</option></select></label>
+        <label class="field"><span>Local base path</span><input class="form-control form-control-sm" name="config__deployment__localhost_base_path" value="{{ cfg.deployment.localhost_base_path }}"></label>
+        <label class="field"><span>Nginx base path</span><input class="form-control form-control-sm" name="config__deployment__nginx_base_path" value="{{ cfg.deployment.nginx_base_path }}"></label>
+      </fieldset>
+      <fieldset><legend>Runtime & logging</legend>
+        <label class="toggle-row"><input type="checkbox" name="config__runtime__debug" value="1" {{ 'checked' if cfg.runtime.debug }}><span><b>Debug controls</b><small>Expose theme diagnostics in the generated site.</small></span></label>
+        <label class="field"><span>Console log level</span><select class="form-select form-select-sm" name="config__runtime__console_log_level">{% for value in ['debug','info','warn','error','silent'] %}<option value="{{ value }}" {{ 'selected' if cfg.runtime.console_log_level == value }}>{{ value|title }}</option>{% endfor %}</select></label>
+      </fieldset>
+      <fieldset><legend>Appearance</legend>
+        <label class="field"><span>Default mode</span><select class="form-select form-select-sm" name="config__appearance__default_mode"><option value="dark" {{ 'selected' if cfg.appearance.default_mode == 'dark' }}>Dark</option><option value="light" {{ 'selected' if cfg.appearance.default_mode == 'light' }}>Light</option></select></label>
+        <label class="field"><span>Default palette</span><input class="form-control form-control-sm" type="number" min="0" name="config__appearance__default_palette" value="{{ cfg.appearance.default_palette }}"></label>
+        <label class="toggle-row"><input type="checkbox" name="config__appearance__remember_theme" value="1" {{ 'checked' if cfg.appearance.remember_theme }}><span><b>Remember theme</b><small>Keep the visitor's appearance preference.</small></span></label>
+      </fieldset>
+      <fieldset><legend>Privacy notice</legend>
+        <label class="toggle-row"><input type="checkbox" name="config__privacy__show_notice" value="1" {{ 'checked' if cfg.privacy.show_notice }}><span><b>Show notice</b><small>Display the conference privacy notice.</small></span></label>
+        <label class="field"><span>Storage key</span><input class="form-control form-control-sm" name="config__privacy__notice_storage_key" value="{{ cfg.privacy.notice_storage_key }}"></label>
+      </fieldset>
+      <fieldset class="conference-config-wide"><legend>Registration</legend>
+        <div class="inline-form-grid">
+          <label class="toggle-row"><input type="checkbox" name="config__registration__enabled" value="1" {{ 'checked' if cfg.registration.enabled }}><span><b>Registration enabled</b><small>Show registration actions in the generated site.</small></span></label>
+          <label class="toggle-row"><input type="checkbox" name="config__registration__open_in_new_tab" value="1" {{ 'checked' if cfg.registration.open_in_new_tab }}><span><b>Open externally</b><small>Open registration links in a new tab.</small></span></label>
+          {% for key, label in [('section_anchor','Section anchor'),('nav_label','Navigation label'),('topbar_label','Topbar label'),('button_label','Primary button label'),('plan_button_label','Plan button label'),('participant_url','Participant URL'),('student_url','Student URL'),('accompanying_url','Accompanying URL')] %}
+          <label class="field {{ 'wide' if key.endswith('_url') }}"><span>{{ label }}</span><input class="form-control form-control-sm" type="{{ 'url' if key.endswith('_url') else 'text' }}" name="config__registration__{{ key }}" value="{{ cfg.registration[key] }}"></label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      <fieldset class="conference-config-wide"><legend>Countdown and important dates</legend>
+        <div class="conference-countdown-settings">
+          <label class="toggle-row"><input type="checkbox" name="config__countdown__enabled" value="1" {{ 'checked' if cfg.countdown.enabled }}><span><b>Enable countdown</b></span></label>
+          <label class="toggle-row"><input type="checkbox" name="config__countdown__show_in_sidebar" value="1" {{ 'checked' if cfg.countdown.show_in_sidebar }}><span><b>Show in sidebar</b></span></label>
+          <label class="toggle-row"><input type="checkbox" name="config__countdown__show_on_home" value="1" {{ 'checked' if cfg.countdown.show_on_home }}><span><b>Show on homepage</b></span></label>
+          <label class="field"><span>Refresh interval (seconds)</span><input class="form-control form-control-sm" type="number" min="10" name="config__countdown__update_interval_seconds" value="{{ cfg.countdown.update_interval_seconds }}"></label>
+        </div>
+        <div class="conference-countdown-list" data-countdown-list>
+          {% for item in cfg.countdown['items'] %}
+          <div class="conference-countdown-row">
+            <input class="form-control form-control-sm" name="countdown_label" value="{{ item.label }}" placeholder="Important date label" required>
+            <input class="form-control form-control-sm" name="countdown_date" value="{{ item.date }}" placeholder="2027-05-10T09:00:00+02:00" required>
+            <input class="form-control form-control-sm" name="countdown_end_date" value="{{ item.end_date or '' }}" placeholder="Optional end date">
+            <select class="form-select form-select-sm" name="countdown_type"><option value="deadline" {{ 'selected' if item.type == 'deadline' }}>Deadline</option><option value="event" {{ 'selected' if item.type == 'event' }}>Event</option></select>
+            <button class="btn btn-mini btn-outline-danger" type="button" data-countdown-remove aria-label="Remove date"><i class="bi bi-trash"></i></button>
+          </div>
+          {% endfor %}
+        </div>
+        <button class="btn btn-outline btn-sm" type="button" data-countdown-add><i class="bi bi-plus-lg"></i> Add important date</button>
+      </fieldset>
+    </div>
+    <div class="dash-row-actions conference-form-actions"><button class="btn btn-primary btn-sm"><i class="bi bi-file-earmark-code"></i> Save config.yaml settings</button></div>
+  </form>
+</section>
+
+<section class="table-card conference-panel" id="people">
+  <div class="panel-head"><div><span>Participants</span><h2><i class="bi bi-people"></i> People</h2><p>Speakers, organizers, chairs and participants. Import adds rows; enable replace only when the file is authoritative.</p></div>
+    {{ export_dropdown([
+      ('Excel (.xlsx)', url_for('dashboard.conference_people_export', site_id=site.id, fmt='xlsx'), 'bi bi-file-earmark-excel'),
+      ('PDF', url_for('dashboard.conference_people_export', site_id=site.id, fmt='pdf'), 'bi bi-file-earmark-pdf'),
+      ('JSON', url_for('dashboard.conference_people_export', site_id=site.id, fmt='json'), 'bi bi-filetype-json')
+    ]) }}
+  </div>
+  <form class="toolbar conference-import" method="post" action="{{ url_for('dashboard.conference_people_import', site_id=site.id) }}" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><input class="form-control form-control-sm" type="file" name="people_file" accept=".csv,.xlsx" required>
+    <label><input type="checkbox" name="replace" value="1"> Replace current people</label><button class="btn btn-outline btn-sm"><i class="bi bi-upload"></i> Import CSV / Excel</button>
+  </form>
+  <form method="post" action="{{ url_for('dashboard.conference_person_save', site_id=site.id) }}" class="inline-form conference-person-form">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><input type="hidden" name="person_id">
+    <div class="inline-form-grid">
+      <label class="field"><span>Name</span><input class="form-control form-control-sm" name="name" required></label>
+      <label class="field"><span>Role</span><select class="form-select form-select-sm" name="role">{% for role in ['speaker','organizer','chair','participant','committee'] %}<option>{{ role }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Email</span><input class="form-control form-control-sm" type="email" name="email"></label>
+      <label class="field"><span>Affiliation</span><input class="form-control form-control-sm" name="affiliation"></label>
+      <label class="field"><span>Country</span><input class="form-control form-control-sm" name="country"></label>
+      <label class="field"><span>Website</span><input class="form-control form-control-sm" type="url" name="website_url"></label>
+      <label class="field wide"><span>Contribution title</span><input class="form-control form-control-sm" name="contribution_title"></label>
+      <label class="field wide"><span>Bio / note</span><textarea class="form-control form-control-sm" name="bio" rows="2"></textarea></label>
+      <label class="field"><span>Sort order</span><input class="form-control form-control-sm" type="number" name="sort_order" value="0"></label>
+    </div><div class="dash-row-actions conference-form-actions"><button class="btn btn-primary btn-sm"><i class="bi bi-person-plus"></i> Add person</button></div>
+  </form>
+  <div class="data-scroll"><table class="data-table"><thead><tr><th>Person</th><th>Role</th><th>Affiliation</th><th>Contribution</th><th></th></tr></thead><tbody>
+    {% for person in people %}<tr><td><b>{{ person.name }}</b><small class="d-block">{{ person.email or '' }}</small></td><td>{{ person.role }}</td><td>{{ person.affiliation or '—' }}</td><td>{{ person.contribution_title or '—' }}</td><td><form method="post" action="{{ url_for('dashboard.conference_person_delete', site_id=site.id, person_id=person.id) }}" data-confirm="Remove this person?"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button class="btn btn-mini btn-outline-danger">Remove</button></form></td></tr>
+    {% else %}<tr><td colspan="5">No people yet. Add one or import a spreadsheet.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+<section class="table-card conference-panel" id="assets">
+  <div class="panel-head"><div><span>Media library</span><h2><i class="bi bi-folder2-open"></i> Conference assets</h2><p>Preview and manage logos, speaker photos, documents and programme files included in the site.</p></div><span class="storage-badge">{{ assets|length }} files</span></div>
+  <form class="conference-asset-upload" method="post" action="{{ url_for('dashboard.conference_asset_upload', site_id=site.id) }}" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <label class="conference-upload-picker">
+      <i class="bi bi-cloud-arrow-up" aria-hidden="true"></i>
+      <span><b>Choose conference files</b><small>Images, PDF, Word and programme CSV · up to 64 MB each</small></span>
+      <input type="file" name="assets" accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.doc,.docx,.csv" multiple required>
+    </label>
+    <label class="field conference-upload-role"><span>Use as</span><select class="form-select form-select-sm" name="asset_role">{% for role in asset_roles %}<option value="{{ role }}">{{ role|replace('_',' ')|title }}</option>{% endfor %}</select></label>
+    <button class="btn btn-primary btn-sm"><i class="bi bi-upload"></i> Upload selected files</button>
+  </form>
+  <div class="conference-assets">
+    {% for asset in assets %}
+    <article class="conference-asset-card">
+      <a class="conference-asset-preview" href="{{ asset.url }}" target="_blank" rel="noopener">
+        {% if asset.is_image %}
+        <img src="{{ asset.url }}" alt="" loading="lazy">
+        {% else %}
+        <i class="bi {{ 'bi-file-earmark-pdf' if asset.extension == 'pdf' else 'bi-file-earmark-word' if asset.extension in ['doc','docx'] else 'bi-file-earmark-spreadsheet' if asset.extension == 'csv' else 'bi-file-earmark' }}" aria-hidden="true"></i>
+        <span>{{ asset.extension|upper }}</span>
+        {% endif %}
+      </a>
+      <div class="conference-asset-info"><b title="{{ asset.name }}">{{ asset.name }}</b><small>{{ asset.extension|upper }} · {{ asset.size_label }} · {{ asset.role|replace('_',' ') }}</small></div>
+      <div class="conference-asset-actions">
+        <a class="btn btn-mini btn-outline" href="{{ asset.url }}" target="_blank" rel="noopener" title="Open asset"><i class="bi bi-eye"></i></a>
+        <a class="btn btn-mini btn-outline" href="{{ asset.download_url }}" title="Download asset"><i class="bi bi-download"></i></a>
+        <form method="post" action="{{ url_for('dashboard.conference_asset_delete', site_id=site.id, filename=asset.name) }}" data-confirm="Delete this conference asset?">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+          <button class="btn btn-mini btn-outline-danger" title="Delete asset"><i class="bi bi-trash"></i></button>
+        </form>
+      </div>
+      <form class="conference-asset-metadata" method="post" action="{{ url_for('dashboard.conference_asset_metadata', site_id=site.id, filename=asset.name) }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <label><span>Role</span><select class="form-select form-select-sm" name="role">{% for role in asset_roles %}<option value="{{ role }}" {{ 'selected' if asset.role == role }}>{{ role|replace('_',' ')|title }}</option>{% endfor %}</select></label>
+        <label><span>Label</span><input class="form-control form-control-sm" name="label" value="{{ asset.label }}" placeholder="Public label"></label>
+        <label><span>Speaker</span><select class="form-select form-select-sm" name="person_id"><option value="">Not linked</option>{% for person in people %}<option value="{{ person.id }}" {{ 'selected' if asset.person_id == person.id }}>{{ person.name }}</option>{% endfor %}</select></label>
+        <button class="btn btn-mini btn-outline"><i class="bi bi-check2"></i> Save assignment</button>
+      </form>
+    </article>
+    {% else %}
+    <div class="conference-assets-empty"><i class="bi bi-folder2-open"></i><b>No conference assets</b><p>Upload the logo, speaker images and programme documents for this site.</p></div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="table-card conference-panel" id="deploy">
+  <div class="panel-head"><div><span>Static release</span><h2><i class="bi bi-box-seam"></i> Deployment package</h2><p>The ZIP contains the complete static site, all publishable assets and structured JSON data. CSV source files are converted but never distributed.</p></div></div>
+  <dl class="conference-deploy-summary"><div><dt>Public URL</dt><dd>{{ site.canonical_url or 'Not set' }}</dd></div><div><dt>Base path</dt><dd><code>{{ site.deploy_base_path }}</code></dd></div><div><dt>People</dt><dd>{{ people|length }}</dd></div><div><dt>Assets</dt><dd>{{ assets|length }}</dd></div></dl>
+  <div class="conference-deploy-actions"><a class="btn btn-primary" href="{{ url_for('dashboard.conference_build', site_id=site.id) }}" data-conference-build><i class="bi bi-download"></i> Build and download ZIP</a></div>
+</section>
+</div>
+{% endblock %}

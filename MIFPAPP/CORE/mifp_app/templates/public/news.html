@@ -1,0 +1,149 @@
+{% extends "public/base.html" %}
+
+{% block title %}News — MIFP{% endblock %}
+{% block meta_description %}Latest news and announcements from the Mediterranean Institute of Fundamental Physics.{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="container-wide">
+    <ol class="mifp-breadcrumb">
+      <li><a href="{{ url_for('public.home') }}">Home</a></li>
+      <li aria-current="page">News</li>
+    </ol>
+    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+      <span class="num serif italic" style="color:var(--mifp-blue-soft);font-size:0.85rem;">—</span>
+      <span class="eyebrow eyebrow-blue">Newsroom</span>
+    </div>
+    <h1>{{ site_copy.news_title }}</h1>
+    <p>{{ site_copy.news_intro }}</p>
+    <div class="accent-bar" style="background: linear-gradient(90deg, var(--mifp-blue), var(--mifp-red));"></div>
+  </div>
+</section>
+
+<section class="section-sm">
+  <div class="container-wide">
+
+    {# ── Filter panel ── #}
+    <form method="get" action="{{ url_for('public.news') }}" class="filter-panel">
+      <label class="filter-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="search" name="q" placeholder="{{ site_copy.news_search }}" value="{{ search or '' }}">
+      </label>
+
+      <select name="year" aria-label="Filter by year">
+        <option value="">All years</option>
+        {% for y in years %}
+        <option value="{{ y }}" {{ 'selected' if current_year == y }}>{{ y }}</option>
+        {% endfor %}
+      </select>
+
+      <select name="type" aria-label="Filter by category">
+        <option value="">All categories</option>
+        {% for t in types %}
+        <option value="{{ t }}" {{ 'selected' if current_type == t }}>{{ news_type_labels.get(t, t|capitalize) }}</option>
+        {% endfor %}
+      </select>
+
+      <select name="content" aria-label="Filter by content">
+        <option value="">All content</option>
+        <option value="pdf" {{ 'selected' if current_content == 'pdf' }}>With PDF</option>
+        <option value="image" {{ 'selected' if current_content == 'image' }}>With images</option>
+        <option value="link" {{ 'selected' if current_content == 'link' }}>With links</option>
+        <option value="event" {{ 'selected' if current_content == 'event' }}>Events</option>
+      </select>
+
+      <button type="submit" class="filter-submit">Apply</button>
+      {% if search or current_type or current_year or current_content %}
+      <a href="{{ url_for('public.news') }}" class="filter-clear">Clear</a>
+      {% endif %}
+    </form>
+
+    <p style="font-size:0.78rem;color:var(--paper-faint);margin-bottom:24px;font-family:var(--f-mono);">
+      {{ total }} news item{{ 's' if total != 1 }}{% if search %} for "{{ search }}"{% endif %}
+    </p>
+
+    {% if news %}
+    <div class="news-list-grid">
+      {% for article in news %}
+      <article class="news-list-card">
+        <a href="{{ url_for('public.news_detail', slug=article.slug) if article.slug else '#' }}" class="news-list-card-main">
+          <div class="news-card-media">
+            {% if article.primary_image %}
+            <img src="{{ article.primary_image }}" alt="{{ article.title }}" loading="lazy">
+            {% else %}
+            <div class="news-card-media-fallback">
+              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+            </div>
+            {% endif %}
+          </div>
+
+          <div class="news-card-body">
+            <div class="news-meta">
+              <span>{% if article.date_text %}{{ article.date_text }}{% elif article.date %}{{ article.date[:10] }}{% else %}Published{% endif %}</span>
+              {% if article.badges %}<span class="sep"></span><span>{{ article.badges[0] }}</span>{% endif %}
+            </div>
+            <h2>{{ article.title }}</h2>
+            {% if article.excerpt %}
+            <p class="line-clamp-2">{{ article.excerpt }}</p>
+            {% endif %}
+          </div>
+        </a>
+
+        <div class="news-card-footer">
+          <div class="news-card-badges">
+            {% for badge in article.badges[1:] %}
+            <span>{{ badge }}</span>
+            {% endfor %}
+            {% if article.documents|length > 1 or article.gallery_images|length > 1 %}
+            <span>+{{ (article.documents|length + article.gallery_images|length) - 1 }} files</span>
+            {% endif %}
+          </div>
+          <div class="news-card-actions">
+            {% if article.documents %}
+            <a href="{{ article.documents[0].url }}" class="news-card-action" target="_blank" rel="noopener noreferrer">{{ article.documents[0].filename }}</a>
+            {% endif %}
+            {% if article.external_links %}
+            <a href="{{ article.external_links[0].url }}" class="news-card-action" target="_blank" rel="noopener noreferrer">Open</a>
+            {% endif %}
+            {% if article.slug %}
+            <a href="{{ url_for('public.news_detail', slug=article.slug) }}" class="news-card-read" aria-label="Read more: {{ article.title }}">Read more</a>
+            {% endif %}
+          </div>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+
+    {# ── Pagination ── #}
+    {% if total_pages > 1 %}
+    <div class="pagination">
+      {% if page > 1 %}
+      <a href="{{ url_for('public.news', page=page-1, type=current_type or '', year=current_year or '', content=current_content or '', q=search or '') }}" aria-label="Previous page">‹</a>
+      {% endif %}
+      {% for p in range(1, total_pages + 1) %}
+        {% if p == page %}
+        <span class="active">{{ p }}</span>
+        {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+        <a href="{{ url_for('public.news', page=p, type=current_type or '', year=current_year or '', content=current_content or '', q=search or '') }}">{{ p }}</a>
+        {% elif p == page - 3 or p == page + 3 %}
+        <span class="ellipsis">…</span>
+        {% endif %}
+      {% endfor %}
+      {% if page < total_pages %}
+      <a href="{{ url_for('public.news', page=page+1, type=current_type or '', year=current_year or '', content=current_content or '', q=search or '') }}" aria-label="Next page">›</a>
+      {% endif %}
+      <span class="info">Page {{ page }} of {{ total_pages }}</span>
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-state-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+      </div>
+      <p>{{ site_copy.news_empty }}</p>
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

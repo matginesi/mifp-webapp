@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block extra_css %}{% endblock %}
+
+{% block vendor_scripts %}{% endblock %}
+
+{% block extra_js %}{% endblock %}
+{% block body %}
+{% set current_endpoint = request.endpoint or '' %}
+{% set current_section = request.view_args.get('section', '') if request.view_args else '' %}
+<a class="dashboard-skip-link" href="#dashboardMain">Skip to main content</a>
+<div class="dashboard-document dash-page" data-dashboard-shell data-dashboard-view="{{ current_endpoint }}">
+  <div id="pageLoader" class="page-loader"><div class="loader-spinner"></div></div>
+  <header class="dashboard-topbar">
+    <button class="shell-toggle" type="button" data-shell-toggle aria-controls="dashboardSidebar" aria-expanded="true" aria-label="Toggle navigation">
+      <i class="bi bi-list" aria-hidden="true"></i>
+    </button>
+    <a class="topbar-brand" href="{{ url_for('dashboard.index') }}" aria-label="MIFP dashboard">
+      <img src="{{ url_for('static', filename='img/logo-mifp.png') }}" alt="" width="25" height="25">
+      <span><b>MIFP</b><small>Administration</small></span>
+    </a>
+    <span class="topbar-page">{% block page_title %}Dashboard{% endblock %}</span>
+    <div class="topbar-actions">
+      <a class="topbar-action" href="{{ url_for('dashboard.dashboard_search') }}" aria-label="Find a managed record" title="Find a record">
+        <i class="bi bi-search" aria-hidden="true"></i><span>Find</span>
+      </a>
+      <a class="topbar-action" href="{{ url_for('public.home') }}" target="_blank" rel="noopener noreferrer" aria-label="Open public site" title="Public site">
+        <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i><span>Public site</span>
+      </a>
+      <form method="post" action="{{ url_for('auth.logout') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <button class="topbar-action" type="submit" title="Logout">
+          <i class="bi bi-box-arrow-right" aria-hidden="true"></i><span>Logout</span>
+        </button>
+      </form>
+    </div>
+  </header>
+
+  <aside class="dashboard-sidebar" id="dashboardSidebar" aria-label="Dashboard navigation">
+    <nav class="sidebar-nav">
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.index' }}" href="{{ url_for('dashboard.index') }}" title="Dashboard">
+        <i class="bi bi-grid" aria-hidden="true"></i><span>Dashboard</span>
+      </a>
+      <p class="sidebar-label">Content</p>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.content' and current_section == 'members' }}" href="{{ url_for('dashboard.content', section='members') }}" title="Members"><i class="bi bi-people" aria-hidden="true"></i><span>Members</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.content' and current_section == 'news' }}" href="{{ url_for('dashboard.content', section='news') }}" title="News"><i class="bi bi-newspaper" aria-hidden="true"></i><span>News</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.events' }}" href="{{ url_for('dashboard.events') }}" title="Events"><i class="bi bi-calendar-event" aria-hidden="true"></i><span>Events</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint.startswith('dashboard.conference_') }}" href="{{ url_for('dashboard.conference_sites') }}" title="Conference websites"><i class="bi bi-globe2" aria-hidden="true"></i><span>Conference sites</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.content' and current_section == 'publications' }}" href="{{ url_for('dashboard.content', section='publications') }}" title="Publications"><i class="bi bi-journal-text" aria-hidden="true"></i><span>Publications</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.content' and current_section == 'sponsors' }}" href="{{ url_for('dashboard.content', section='sponsors') }}" title="Sponsors"><i class="bi bi-building" aria-hidden="true"></i><span>Sponsors</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.content' and current_section == 'research' }}" href="{{ url_for('dashboard.content', section='research') }}" title="Research areas"><i class="bi bi-lightbulb" aria-hidden="true"></i><span>Research areas</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.institutional' }}" href="{{ url_for('dashboard.institutional') }}" title="Institutional pages"><i class="bi bi-file-text" aria-hidden="true"></i><span>Institutional</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.institutional_privacy' }}" href="{{ url_for('dashboard.institutional_privacy') }}" title="Privacy and Cookies"><i class="bi bi-shield-check" aria-hidden="true"></i><span>Privacy &amp; Cookies</span></a>
+      <p class="sidebar-label">Operations</p>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.assets_page' }}" href="{{ url_for('dashboard.assets_page') }}" title="Assets"><i class="bi bi-folder" aria-hidden="true"></i><span>Assets</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.data_portability' }}" href="{{ url_for('dashboard.data_portability') }}" title="Import and export"><i class="bi bi-arrow-down-up" aria-hidden="true"></i><span>Import / Export</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint.startswith('dashboard.data_quality') }}" href="{{ url_for('dashboard.data_quality_page') }}" title="Review database quality and cleanup plans"><i class="bi bi-clipboard2-pulse" aria-hidden="true"></i><span>Data quality</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.join_requests' }}" href="{{ url_for('dashboard.join_requests') }}" title="Join requests"><i class="bi bi-person-plus" aria-hidden="true"></i><span>Join requests</span></a>
+
+      <p class="sidebar-label">System</p>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint.startswith('dashboard.control_') or current_endpoint == 'dashboard.dashboard_search' }}" href="{{ url_for('dashboard.control_center') }}" title="Control centre"><i class="bi bi-compass" aria-hidden="true"></i><span>Control centre</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.site_texts' }}" href="{{ url_for('dashboard.site_texts') }}" title="Site texts"><i class="bi bi-fonts" aria-hidden="true"></i><span>Site texts</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.stats' }}" href="{{ url_for('dashboard.stats') }}" title="Statistics"><i class="bi bi-bar-chart" aria-hidden="true"></i><span>Statistics</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.logs' }}" href="{{ url_for('dashboard.logs') }}" title="Logs"><i class="bi bi-list-check" aria-hidden="true"></i><span>Logs</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint in ['dashboard.server', 'dashboard.settings'] }}" href="{{ url_for('dashboard.server') }}" title="Server and maintenance"><i class="bi bi-hdd-network" aria-hidden="true"></i><span>Server</span></a>
+    </nav>
+    <footer class="sidebar-footer">
+      <span class="sidebar-status-dot" aria-hidden="true"></span>
+      <span><b>{{ session.get('admin_username', 'Administrator') }}</b><small>Secure session</small></span>
+    </footer>
+  </aside>
+  <button class="sidebar-backdrop" type="button" data-shell-close aria-label="Close navigation"></button>
+
+  <main class="dashboard-main" id="dashboardMain">
+    <section class="content-wrap">
+      {% include "partials/flash.html" %}
+      {% block content %}{% endblock %}
+    </section>
+  </main>
+</div>
+{% include "dashboard/_asset_picker.html" %}
+<div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
+<div class="modal fade confirm-dialog" id="confirmDialog" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content smart-modal">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title"><i class="bi bi-question-circle"></i> Confirm action</h5>
+          <span class="modal-subtitle">Review the action before continuing.</span>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-confirm-message" id="confirmMessage"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline btn-sm" data-bs-dismiss="modal" id="confirmCancel">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" id="confirmOk">Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

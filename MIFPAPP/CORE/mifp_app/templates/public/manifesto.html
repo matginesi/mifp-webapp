@@ -1,0 +1,44 @@
+{% extends "public/base.html" %}
+{% block title %}Manifesto of Solidarity — MIFP{% endblock %}
+{% block meta_description %}Manifesto of Solidarity — Mediterranean Institute of Fundamental Physics.{% endblock %}
+{% block content %}
+<section class="page-hero">
+  <div class="container-wide">
+    <ol class="mifp-breadcrumb">
+      <li><a href="{{ url_for('public.home') }}">Home</a></li>
+      <li aria-current="page">Manifesto of Solidarity</li>
+    </ol>
+    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+      <span class="num serif italic" style="color:var(--mifp-red-hover);font-size:0.85rem;">—</span>
+      <span class="eyebrow eyebrow-red">Institutional document</span>
+    </div>
+    <h1>Manifesto of Solidarity</h1>
+    <p>Adopted by the Members, Affiliates, and Partners of MIFP — Marino, Rome, Italy, July 2010.</p>
+    <div class="accent-bar"></div>
+  </div>
+</section>
+
+<section class="section-sm">
+  <div class="container-wide">
+    <div class="no-pdf" style="display:flex;justify-content:flex-end;margin-bottom:24px;">
+      <a href="{{ url_for('public.pdf_page', page_name='manifesto') }}" target="_blank" rel="noopener noreferrer" class="pdf-button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        Open PDF
+      </a>
+    </div>
+
+    <article id="institutional-pdf-content" class="institutional-document">
+      {% if md_html %}
+        <div class="doc-block md-body">{{ md_html|safe }}</div>
+      {% else %}
+        <div class="empty-state">
+          <div class="empty-state-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <p>The Manifesto of Solidarity is being prepared. Please check back later.</p>
+        </div>
+      {% endif %}
+    </article>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,32 @@
+{% macro render_blocks(page, color='red') -%}
+  {% set body = page.body if page and page.body else '' %}
+  {% set blocks = body.split('\n\n') if body else [] %}
+  {% if page and page.summary %}
+    <section class="doc-summary">
+      <p>{{ page.summary }}</p>
+    </section>
+  {% endif %}
+  {% if blocks %}
+    <div class="doc-blocks">
+    {% for raw in blocks %}
+      {% set block = raw.strip() %}
+      {% if block %}
+        {% set first = block.split('\n')[0].strip() %}
+        {% set rest = block.split('\n')[1:] %}
+        {% if first|length < 90 and (':' not in first or first|length < 45) and rest %}
+          <section class="doc-block">
+            <h2>{{ first }}</h2>
+            {% for line in rest %}{% if line.strip() %}<p>{{ line.strip() }}</p>{% endif %}{% endfor %}
+          </section>
+        {% else %}
+          <section class="doc-block">
+            {% for line in block.split('\n') %}{% if line.strip() %}<p>{{ line.strip() }}</p>{% endif %}{% endfor %}
+          </section>
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+    </div>
+  {% else %}
+    {{ caller() if caller else '' }}
+  {% endif %}
+{%- endmacro %}

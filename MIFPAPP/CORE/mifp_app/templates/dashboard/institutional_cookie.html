@@ -1,0 +1,113 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Cookie Policy{% endblock %}
+{% block content %}
+{% call page_header('Content', 'Cookie Policy', 'Edit the cookie policy and configure the cookie banner shown on the public site.') %}
+{% endcall %}
+
+<div class="portability-grid" style="grid-template-columns: 1.4fr 1fr;">
+  <section class="modern-card">
+    <div class="panel-head">
+      <div><h3><i class="bi bi-file-text"></i> Cookie policy content</h3><p>The full text displayed on the cookie policy page. Supports markdown.</p></div>
+    </div>
+    <form method="post" action="{{ url_for('dashboard.institutional_cookie') }}" class="md-form-card">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="_action" value="save_page">
+      <input type="hidden" name="review_status" value="published">
+
+      <label class="field">
+        <span>Source file: <code>cookie-policy.md</code></span>
+        <div class="markdown-editor-shell">
+          <div class="markdown-editor-toolbar">
+            <span>Formatting</span>
+            <button type="button" title="Bold" data-md-before="**" data-md-after="**"><b>B</b></button>
+            <button type="button" title="Italic" data-md-before="*" data-md-after="*"><i>I</i></button>
+            <button type="button" title="Link" data-md-before="[" data-md-after="](url)">Link</button>
+            <button type="button" title="Heading" data-md-before="\n## " data-md-after="\n">H2</button>
+            <button type="button" title="List" data-md-before="\n- " data-md-after="">List</button>
+          </div>
+          <div class="markdown-editor-grid">
+            <div class="markdown-editor-source">
+              <textarea name="body" rows="20" class="form-control form-control-sm"
+                        placeholder="Write markdown content here…">{{ cookie_body or '' }}</textarea>
+            </div>
+            <div class="markdown-preview">
+              <div class="markdown-preview-label">Preview</div>
+              <div class="markdown-preview-body" data-md-preview="cookie"></div>
+            </div>
+          </div>
+        </div>
+      </label>
+
+      <div class="dash-row-actions md-form-actions">
+        <button class="btn btn-primary btn-sm"><i class="bi bi-check2"></i> Save cookie policy</button>
+        <a class="btn btn-outline btn-sm" href="{{ url_for('public.cookie_policy') }}" target="_blank" rel="noopener">
+          <i class="bi bi-box-arrow-up-right"></i> View on site
+        </a>
+      </div>
+    </form>
+  </section>
+
+  <section class="modern-card">
+    <div class="panel-head">
+      <div><h3><i class="bi bi-sliders"></i> Cookie banner</h3><p>The dismissible info notice shown on the public site about cookie usage.</p></div>
+    </div>
+    <form method="post" action="{{ url_for('dashboard.institutional_cookie') }}" class="md-form-card">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="_action" value="save_settings">
+
+      <label class="port-check md-form-actions">
+        <input type="checkbox" name="cookie_banner_enabled" value="1" {{ 'checked' if settings.get('cookie_banner_enabled') == '1' }}>
+        <span>Show cookie banner on public site</span>
+      </label>
+
+      <label class="field">
+        <span>Banner text</span>
+        <textarea name="cookie_banner_text" rows="4" class="form-control form-control-sm" maxlength="500"
+                  placeholder="This site uses a session cookie for admin authentication. No tracking or analytics cookies are used.">{{ settings.get('cookie_banner_text', '') }}</textarea>
+        <small>Shown in the banner. Max 500 characters.</small>
+      </label>
+
+      <div class="dash-row-actions md-form-actions">
+        <button class="btn btn-primary btn-sm"><i class="bi bi-check2"></i> Save settings</button>
+      </div>
+    </form>
+  </section>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/vendor/marked.min.js') }}"></script>
+<script nonce="{{ csp_nonce }}">
+document.querySelectorAll('.markdown-editor-shell').forEach(function(shell) {
+  var toolbar = shell.querySelector('.markdown-editor-toolbar');
+  if (toolbar) toolbar.addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-md-before]');
+    if (!btn) return;
+    var ta = shell.querySelector('textarea');
+    if (!ta) return;
+    var before = btn.getAttribute('data-md-before');
+    var after = btn.getAttribute('data-md-after');
+    var start = ta.selectionStart, end = ta.selectionEnd;
+    var sel = ta.value.substring(start, end);
+    ta.value = ta.value.substring(0, start) + before + sel + after + ta.value.substring(end);
+    ta.selectionStart = start + before.length;
+    ta.selectionEnd = start + before.length + sel.length;
+    ta.focus();
+    updateMdPreview(ta);
+  });
+  var ta = shell.querySelector('textarea');
+  if (ta) {
+    ta.addEventListener('input', function() { updateMdPreview(ta); });
+    updateMdPreview(ta);
+  }
+});
+function updateMdPreview(ta) {
+  var preview = ta.closest('.markdown-editor-shell').querySelector('.markdown-preview-body');
+  if (!preview) return;
+  preview.innerHTML = marked.parse(ta.value || '');
+}
+</script>
+{% endblock %}

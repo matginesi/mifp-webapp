@@ -1,0 +1,104 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Dashboard{% endblock %}
+{% block content %}
+{% call page_header('Administration', 'Dashboard', 'Choose a section to manage content, data or system operations.', true) %}
+{% endcall %}
+
+{% if alerts %}
+<section class="dashboard-alerts" aria-labelledby="dashboard-alerts-title">
+  <div class="section-heading">
+    <h2 id="dashboard-alerts-title">Needs attention</h2>
+    <span>{{ alerts|length }}</span>
+  </div>
+  <div class="alert-stack">
+    {% for a in alerts %}
+    <div class="alert-row alert-{{ a.type }}">
+      <i class="bi {{ 'bi-x-circle-fill' if a.type == 'error' else 'bi-exclamation-triangle-fill' if a.type == 'warning' else 'bi-info-circle-fill' }}" aria-hidden="true"></i>
+      <div><b>{{ a.label }}</b><span>{{ a.message }}</span></div>
+      {% if a.action_url %}<a href="{{ a.action_url }}" class="btn btn-mini btn-outline">Review</a>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="dashboard-directory" aria-labelledby="content-directory-title">
+  <div class="section-heading" data-entity="news">
+    <div><h2 id="content-directory-title">Content</h2><p>Public records and editorial pages.</p></div>
+  </div>
+  <div class="directory-grid">
+    {% set content_items = [
+      ('members', 'Members', 'Profiles, roles and affiliations', 'bi-people', counts.members),
+      ('news', 'News', 'Articles and announcements', 'bi-newspaper', counts.news),
+      ('events', 'Events', 'Dates, documents and galleries', 'bi-calendar-event', counts.events),
+      ('publications', 'Publications', 'Metadata, DOI and documents', 'bi-journal-text', counts.publications),
+      ('sponsors', 'Sponsors', 'Organisations, logos and links', 'bi-building', counts.sponsors),
+      ('research', 'Research areas', 'Topics and public descriptions', 'bi-lightbulb', counts.research_areas)
+    ] %}
+    {% for section, label, description, icon, count in content_items %}
+    <a class="directory-item" data-entity="{{ section }}" href="{{ url_for('dashboard.events') if section == 'events' else url_for('dashboard.content', section=section) }}">
+      <i class="bi {{ icon }}" aria-hidden="true"></i>
+      <span><b>{{ label }}</b><small>{{ description }}</small></span>
+      <strong>{{ count }}</strong>
+      <i class="bi bi-chevron-right directory-arrow" aria-hidden="true"></i>
+    </a>
+    {% endfor %}
+    <a class="directory-item" data-entity="conferences" href="{{ url_for('dashboard.conference_sites') }}">
+      <i class="bi bi-globe2" aria-hidden="true"></i>
+      <span><b>Conference sites</b><small>Static websites and deploy packages</small></span>
+      <i class="bi bi-chevron-right directory-arrow" aria-hidden="true"></i>
+    </a>
+  </div>
+</section>
+
+<section class="dashboard-directory" aria-labelledby="operations-directory-title">
+  <div class="section-heading">
+    <div><h2 id="operations-directory-title">Operations</h2><p>Files, data quality and community workflow.</p></div>
+  </div>
+  <div class="directory-grid">
+    <a class="directory-item" href="{{ url_for('dashboard.assets_page') }}">
+      <i class="bi bi-folder" aria-hidden="true"></i>
+      <span><b>Assets</b><small>Upload, search and metadata</small></span>
+      <strong>{{ counts.assets }}</strong>
+      {% if unused_count %}<em>{{ unused_count }} unused</em>{% endif %}
+      <i class="bi bi-chevron-right directory-arrow" aria-hidden="true"></i>
+    </a>
+    <a class="directory-item" href="{{ url_for('dashboard.data_portability') }}">
+      <i class="bi bi-arrow-down-up" aria-hidden="true"></i>
+      <span><b>Import / Export</b><small>JSONL and ZIP transfers</small></span>
+      <i class="bi bi-chevron-right directory-arrow" aria-hidden="true"></i>
+    </a>
+    <a class="directory-item" href="{{ url_for('dashboard.data_quality_page') }}">
+      <i class="bi bi-intersect" aria-hidden="true"></i>
+      <span><b>Data quality</b><small>Cleanup, enrichment, duplicate and relation review</small></span>
+      <i class="bi bi-chevron-right directory-arrow" aria-hidden="true"></i>
+    </a>
+    <a class="directory-item" href="{{ url_for('dashboard.join_requests') }}">
+      <i class="bi bi-person-plus" aria-hidden="true"></i>
+      <span><b>Join requests</b><small>Review and approve applications</small></span>
+      <i class="bi bi-chevron-right directory-arrow" aria-hidden="true"></i>
+    </a>
+  </div>
+</section>
+
+<section class="dashboard-directory" aria-labelledby="system-directory-title">
+  <div class="section-heading">
+    <div><h2 id="system-directory-title">System</h2><p>Monitoring, audit and maintenance.</p></div>
+  </div>
+  <div class="directory-grid directory-grid-system">
+    <a class="directory-item" href="{{ url_for('dashboard.control_center') }}"><i class="bi bi-compass" aria-hidden="true"></i><span><b>Control centre</b><small>Attention queue, processes and health checks</small></span>{% if alerts %}<strong>{{ alerts|length }}</strong>{% endif %}<i class="bi bi-chevron-right directory-arrow" aria-hidden="true"></i></a>
+    <a class="directory-item" href="{{ url_for('dashboard.site_texts') }}"><i class="bi bi-fonts" aria-hidden="true"></i><span><b>Site texts</b><small>Edit public labels, introductions and empty states safely</small></span><i class="bi bi-chevron-right directory-arrow" aria-hidden="true"></i></a>
+    <a class="directory-item" href="{{ url_for('dashboard.stats') }}"><i class="bi bi-bar-chart" aria-hidden="true"></i><span><b>Statistics</b><small>Content and visit summaries</small></span><i class="bi bi-chevron-right directory-arrow" aria-hidden="true"></i></a>
+    <a class="directory-item" href="{{ url_for('dashboard.logs') }}"><i class="bi bi-list-check" aria-hidden="true"></i><span><b>Logs</b><small>Errors and recent activity</small></span><i class="bi bi-chevron-right directory-arrow" aria-hidden="true"></i></a>
+    <a class="directory-item" href="{{ url_for('dashboard.server') }}"><i class="bi bi-hdd-network" aria-hidden="true"></i><span><b>Server & maintenance</b><small>Health, settings and database tools</small></span><i class="bi bi-chevron-right directory-arrow" aria-hidden="true"></i></a>
+  </div>
+</section>
+
+<section class="dashboard-summary-strip" aria-label="Dashboard summary">
+  <span><b>{{ counts.news + counts.events + counts.publications + counts.research_areas }}</b> content records</span>
+  <span><b>{{ counts.members }}</b> members</span>
+  <span><b>{{ asset_total_mb }} MB</b> assets</span>
+  <a href="{{ url_for('dashboard.stats') }}">View statistics <i class="bi bi-arrow-right"></i></a>
+</section>
+{% endblock %}

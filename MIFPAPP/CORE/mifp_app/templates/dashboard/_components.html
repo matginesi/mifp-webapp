@@ -1,0 +1,72 @@
+{% macro page_header(kicker, title, subtitle='', compact=true, entity_type='') -%}
+<section class="dash-hero {{ 'compact-hero' if compact else '' }}" {% if entity_type %}data-entity="{{ entity_type }}"{% endif %}>
+  <div>
+    {% if request.endpoint != 'dashboard.index' %}
+    <nav class="page-breadcrumb" aria-label="Breadcrumb">
+      <a href="{{ url_for('dashboard.index') }}"><i class="bi bi-arrow-left" aria-hidden="true"></i> Dashboard</a>
+      <span aria-hidden="true">/</span>
+      <span>{{ kicker }}</span>
+    </nav>
+    {% else %}
+    <div class="dashboard-identity">
+      <img src="{{ url_for('static', filename='img/logo-mifp.png') }}" alt="" width="22" height="22">
+      <span>MIFP administration</span>
+    </div>
+    {% endif %}
+    <h1>{{ title }}</h1>
+    {% if subtitle %}<p>{{ subtitle }}</p>{% endif %}
+  </div>
+  {% if caller %}
+  <div class="hero-actions">{{ caller() }}</div>
+  {% endif %}
+</section>
+{%- endmacro %}
+
+{% macro section_header(title, help_text='', icon='') -%}
+<div class="panel-head">
+  <div>
+    <h2>{% if icon %}<i class="bi {{ icon }}"></i> {% endif %}{{ title }}</h2>
+    {% if help_text %}<p>{{ help_text }}</p>{% endif %}
+  </div>
+  {% if caller %}<div class="panel-actions">{{ caller() }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro empty_state(title, help_text='', icon='bi-inbox', action_url='', action_label='') -%}
+<div class="dash-empty-state">
+  <i class="bi {{ icon }}"></i>
+  <b>{{ title }}</b>
+  {% if help_text %}<p>{{ help_text }}</p>{% endif %}
+  {% if action_url and action_label %}<a class="btn btn-outline btn-sm" href="{{ action_url }}">{{ action_label }}</a>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro status_badge(value, tone='neutral', label='') -%}
+<span class="status-badge status-{{ tone }}">{{ label or value }}</span>
+{%- endmacro %}
+
+{% macro export_dropdown(formats, section='') -%}
+<div class="export-dropdown">
+  <button class="btn btn-outline btn-sm" type="button" data-export-toggle>
+    <i class="bi bi-download"></i> Export <span class="export-caret">&#9662;</span>
+  </button>
+  <div class="dropdown-menu">
+    {% for label, url, icon in formats %}
+    <a href="{{ url }}"><i class="{{ icon }}"></i> {{ label }}</a>
+    {% endfor %}
+    {% if section in ['members','news','events'] %}
+    <a href="{{ url_for('dashboard.data_portability') }}"><i class="bi bi-box-arrow-in-down"></i> Import bundle</a>
+    {% endif %}
+  </div>
+</div>
+{%- endmacro %}
+
+{% macro form_section(title, help_text='', icon='') -%}
+<section class="editor-section">
+  <header class="editor-section-head">
+    {% if icon %}<i class="bi {{ icon }}"></i>{% endif %}
+    <div><h3>{{ title }}</h3>{% if help_text %}<p>{{ help_text }}</p>{% endif %}</div>
+  </header>
+  <div class="editor-section-body">{{ caller() }}</div>
+</section>
+{%- endmacro %}

@@ -1,0 +1,27 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Storage{% endblock %}
+{% block content %}
+{% call page_header('Control centre', 'Storage & volumes', 'Actual runtime paths, permissions, free space and container mount evidence.') %}
+  <a class="btn btn-primary btn-sm" href="{{ url_for('dashboard.control_safety_operations') }}"><i class="bi bi-shield-lock"></i> Protected operations</a>
+{% endcall %}
+{% include "dashboard/control/_nav.html" %}
+
+{% if health.docker %}
+<div class="control-note"><i class="bi bi-box"></i><div><b>Running in a container</b><span>A “separate mount” is observable evidence, not a guarantee that host backup and retention are configured correctly.</span></div></div>
+{% endif %}
+<section class="storage-ledger">
+  {% for item in health['items'] %}
+  <article class="storage-row {{ 'has-problem' if not item.exists or not item.readable or not item.writable or item.free_percent < 10 }}">
+    <span class="storage-icon"><i class="bi {{ 'bi-database' if item.kind == 'file' else 'bi-folder2-open' }}"></i></span>
+    <div class="storage-copy"><h2>{{ item.label }}</h2><code>{{ item.path }}</code><p>{{ item.persistence }}{% if item.files %} · {{ item.files }} files{% endif %}{% if item.scan_limited %} · size scan limited{% endif %}</p></div>
+    <div class="storage-capacity"><b>{{ (item.size / 1024 / 1024)|round(1) }} MB</b><span>{{ item.free_percent }}% free</span></div>
+    <div class="storage-flags">
+      <span class="status-chip status-{{ 'success' if item.exists else 'danger' }}">{{ 'present' if item.exists else 'missing' }}</span>
+      <span class="status-chip status-{{ 'success' if item.writable else 'danger' }}">{{ 'writable' if item.writable else 'read only' }}</span>
+    </div>
+  </article>
+  {% endfor %}
+</section>
+<div class="control-note"><i class="bi bi-info-circle"></i><div><b>No storage mutation</b><span>This page does not mount volumes, change permissions, create symlinks or alter container configuration. Use Protected operations for password-gated cleanup.</span></div></div>
+{% endblock %}

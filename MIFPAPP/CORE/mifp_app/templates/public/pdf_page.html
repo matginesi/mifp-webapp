@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="author" content="Matteo Ginesi">
+<title>{{ title }} — MIFP</title>
+<style nonce="{{ csp_nonce }}">
+  @page {
+    size: A4;
+    margin: 2.2cm 2.8cm 2.5cm;
+    @bottom-center {
+      content: counter(page);
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 8pt;
+      color: #9ca3af;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Georgia, "Times New Roman", Times, serif;
+    font-size: 10.5pt;
+    line-height: 1.65;
+    color: #1f2937;
+    margin: 0;
+    padding: 0;
+  }
+  /* ── Letterhead ── */
+  .pdf-header {
+    border-bottom: 2.5pt solid #b42318;
+    padding-bottom: 10pt;
+    margin-bottom: 20pt;
+  }
+  .pdf-header .institute {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 13pt;
+    font-weight: 800;
+    color: #b42318;
+    letter-spacing: 1.5px;
+    margin: 0;
+  }
+  .pdf-header .subtitle {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 6.5pt;
+    color: #9ca3af;
+    letter-spacing: 1px;
+    margin: 1pt 0 0 0;
+  }
+  .pdf-header .doc-title {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 16pt;
+    font-weight: 700;
+    color: #0a0e1a;
+    margin: 8pt 0 0 0;
+  }
+  .pdf-header .doc-meta {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 7pt;
+    color: #9ca3af;
+    margin: 4pt 0 0 0;
+  }
+  /* ── Content ── */
+  .pdf-content h1 {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 16pt;
+    font-weight: 700;
+    color: #0a0e1a;
+    margin: 22pt 0 10pt 0;
+    padding-bottom: 3pt;
+    border-bottom: 1pt solid #e5e7eb;
+  }
+  .pdf-content h2 {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 13pt;
+    font-weight: 700;
+    color: #0a0e1a;
+    margin: 16pt 0 8pt 0;
+  }
+  .pdf-content h3 {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 11pt;
+    font-weight: 700;
+    color: #0a0e1a;
+    margin: 12pt 0 6pt 0;
+  }
+  .pdf-content p {
+    margin: 0 0 8pt 0;
+    orphans: 3;
+    widows: 3;
+  }
+  .pdf-content a { color: #175cd3; text-decoration: underline; }
+  .pdf-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12pt 0;
+    font-size: 9.5pt;
+  }
+  .pdf-content th, .pdf-content td {
+    border: 1pt solid #d1d5db;
+    padding: 5pt 7pt;
+    text-align: left;
+    vertical-align: top;
+  }
+  .pdf-content th {
+    background: #f3f4f6;
+    font-weight: 700;
+  }
+  .pdf-content blockquote {
+    border-left: 3pt solid #b42318;
+    padding-left: 12pt;
+    margin: 12pt 0;
+    color: #6b7280;
+    font-style: italic;
+  }
+  .pdf-content ul, .pdf-content ol {
+    margin: 0 0 8pt 0;
+    padding-left: 20pt;
+  }
+  .pdf-content li { margin-bottom: 2pt; }
+  .pdf-content img {
+    max-width: 100%;
+    height: auto;
+    margin: 10pt 0;
+  }
+  .pdf-content hr {
+    border: none;
+    border-top: 1pt solid #e5e7eb;
+    margin: 16pt 0;
+  }
+  .pdf-content strong { color: #0a0e1a; }
+  /* ── Footer ── */
+  .pdf-footer {
+    margin-top: 30pt;
+    padding-top: 8pt;
+    border-top: 1pt solid #e5e7eb;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 6.5pt;
+    color: #9ca3af;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="pdf-header">
+  <p class="institute">MIFP</p>
+  <p class="subtitle">MEDITERRANEAN INSTITUTE OF FUNDAMENTAL PHYSICS</p>
+  <h1 class="doc-title">{{ title }}</h1>
+  <p class="doc-meta">Exported: {{ today }} &middot; Source: {{ source_url }}</p>
+</div>
+
+<div class="pdf-content">
+{{ content_html|safe }}
+</div>
+
+<div class="pdf-footer">
+Mediterranean Institute of Fundamental Physics &mdash; {{ source_url }}
+</div>
+
+</body>
+</html>

@@ -1,0 +1,82 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.hypothesis/
+.tox/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+secrets/
+*.key
+*.pem
+secrets.*
+credentials.*
+config.local.*
+
+# Runtime data
+data/
+logs/
+backups/
+exports/
+uploads/
+instance/
+*.log
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+*.sqlite3-shm
+*.sqlite3-wal
+*.sqlite3-journal
+:memory:
+
+# Node/local build
+node_modules/
+npm-debug.log*
+
+# Archives and generated output
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.bak
+dist/
+build/
+.cache/
+*.egg-info/
+
+# Generated review documents
+AUDIT_REPORT*.md
+SECURITY_AUDIT*.md
+
+# OS/IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# Agents
+.superpowers/

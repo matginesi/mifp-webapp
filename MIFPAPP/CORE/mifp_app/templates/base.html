@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" data-dashboard-prefix="{{ url_for('dashboard.index').rstrip('/') }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="author" content="Matteo Ginesi">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{% block title %}MIFP · Admin{% endblock %}</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo-mifp.png', v=static_version) }}">
+  <link href="{{ url_for('static', filename='css/vendor/bootstrap.min.css', v=static_version) }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/vendor/bootstrap-icons.css', v=static_version) }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/dashboard.css', v=static_version) }}" rel="stylesheet">
+  {% block extra_css %}{% endblock %}
+</head>
+<body class="{% block body_class %}dashboard-shell{% endblock %}">
+{% block body %}{% endblock %}
+<script src="{{ url_for('static', filename='js/vendor/bootstrap.bundle.min.js', v=static_version) }}" defer></script>
+{% block vendor_scripts %}{% endblock %}
+{% block common_js %}
+<script src="{{ url_for('static', filename='js/dashboard/api.js', v=static_version) }}" defer></script>
+<script src="{{ url_for('static', filename='js/dashboard/core.js', v=static_version) }}" defer></script>
+{% endblock %}
+{% block extra_js %}{% endblock %}
+</body>
+</html>

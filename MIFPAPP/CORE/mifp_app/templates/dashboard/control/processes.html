@@ -1,0 +1,59 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Processes{% endblock %}
+{% block content %}
+{{ page_header('Control centre', 'Processes', 'Read-only history for imports and asset recovery.') }}
+{% include "dashboard/control/_nav.html" %}
+
+<section class="control-panel">
+  <div class="panel-head">
+    <div><h2>Background jobs</h2><p>Bounded tasks handled by this Gunicorn worker. Durable scan state remains in SQLite.</p></div>
+    <span>{{ jobs.active }}/{{ jobs.max_pending }}</span>
+  </div>
+  <div class="control-snapshot control-snapshot-inline">
+    <article><span>Worker PID</span><b>{{ jobs.pid }}</b><small>Current process</small></article>
+    <article><span>Thread capacity</span><b>{{ jobs.max_workers }}</b><small>Concurrent jobs</small></article>
+    <article><span>Queue capacity</span><b>{{ jobs.max_pending }}</b><small>Running + waiting</small></article>
+  </div>
+  <div class="control-list">
+    {% for job in jobs.jobs %}
+    <div class="control-list-row">
+      <span><b>{{ job.name }}</b><small>{{ job.id[:12] }} · submitted {{ job.submitted_at|int }}</small></span>
+      <span class="status-chip status-{{ 'success' if job.status == 'completed' else 'danger' if job.status == 'failed' else 'warning' }}">{{ job.status }}</span>
+    </div>
+    {% else %}<div class="empty">No background jobs have run in this worker.</div>{% endfor %}
+  </div>
+</section>
+
+<section class="control-panel">
+  <div class="panel-head"><div><h2>Imports</h2><p>Source, outcome and server-produced counters.</p></div><span>{{ activity.imports|length }}</span></div>
+  <div class="control-table-wrap">
+    <table class="control-table">
+      <thead><tr><th>Run</th><th>Source</th><th>Status</th><th>Started</th><th>Result</th></tr></thead>
+      <tbody>
+      {% for item in activity.imports %}
+      <tr>
+        <td><b>#{{ item.id }} · {{ item.name }}</b></td>
+        <td>{{ item.source_kind or 'unknown' }}</td>
+        <td><span class="status-chip status-{{ 'success' if item.status == 'completed' else 'danger' if item.status == 'failed' else 'warning' }}">{{ item.status|replace('_',' ') }}</span></td>
+        <td>{{ item.started_at or '—' }}</td>
+        <td class="control-result">{% if item.stats %}{% for key, value in item.stats.items() %}<span>{{ key|replace('_',' ') }}: <b>{{ value }}</b></span>{% endfor %}{% else %}No counters recorded{% endif %}</td>
+      </tr>
+      {% else %}<tr><td colspan="5"><div class="empty">No import runs recorded.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="control-panel">
+    <div class="panel-head"><div><h2>Asset recovery</h2><p>Bounded attempts and cooldown state.</p></div><span>{{ activity.recovery|length }}</span></div>
+    <div class="control-list">
+      {% for item in activity.recovery %}
+      <div class="control-list-row">
+        <span><b>{{ item.filename }}</b><small>{{ item.last_error or 'No error recorded' }}</small></span>
+        <span class="control-row-meta"><b>{{ item.attempts }} attempt{{ '' if item.attempts == 1 else 's' }}</b><small>{{ 'Stopped' if item.terminal else item.next_attempt_at or 'Ready' }}</small></span>
+      </div>
+      {% else %}<div class="empty">No recovery attempts recorded.</div>{% endfor %}
+    </div>
+</section>
+{% endblock %}
