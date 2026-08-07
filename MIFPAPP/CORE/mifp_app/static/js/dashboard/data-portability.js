@@ -229,7 +229,9 @@
       refreshAfterImport = true;
     }
     transferLog[payload.icon_modifier === 'is-error' ? 'error' : payload.icon_modifier === 'is-warning' ? 'warn' : 'info'](
-      payload.download_token ? 'export.ready' : 'import.completed',
+      payload.download_token ? 'export.ready'
+        : payload.event === 'error' ? 'export.failed'
+        : 'import.completed',
       {
         ok: Boolean(payload.ok),
         dry_run: Boolean(payload.dry_run),
@@ -567,6 +569,20 @@
           transferLog.info('export.download_started', { format: fmt });
           exportDlToken = null;
           exportDlFilename = null;
+        } else if (xhr.status >= 400) {
+          var serverMessage = null;
+          var lines = streamBuffer.split('\n').filter(Boolean);
+          try {
+            var lastMsg = JSON.parse(lines[lines.length - 1] || '{}');
+            if (lastMsg && lastMsg.ok === false && lastMsg.message) serverMessage = lastMsg.message;
+          } catch (_) {}
+          showResult({
+            event: 'error', ok: false,
+            title_text: 'Export failed',
+            message: serverMessage || ('The export could not be generated (HTTP ' + (xhr.status || 0) + ').'),
+            icon_class: 'bi-x-lg', icon_modifier: 'is-error',
+          });
+          transferLog.error('export.failed', { format: fmt, status: xhr.status || 0 });
         }
       });
       xhr.addEventListener('error', function () {

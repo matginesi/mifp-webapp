@@ -45,9 +45,8 @@ def test_container_entrypoint_migrates_before_startup() -> None:
     entrypoint = (root / "MIFPAPP/CORE/docker-entrypoint.sh").read_text(encoding="utf-8")
     dockerfile = (root / "MIFPAPP/CORE/Dockerfile").read_text(encoding="utf-8")
 
-    assert "mifp_archive.cli migrate" in entrypoint
-    assert "mifp_archive.cli health" in entrypoint
-    assert 'COPY --chown=10001:10001 mifp_archive ./mifp_archive' in dockerfile
+    assert "flask db-upgrade" in entrypoint
+    assert 'COPY --chown=10001:10001 mifp_archive ./mifp_archive' not in dockerfile
     assert 'ENTRYPOINT ["/app/docker-entrypoint.sh"]' in dockerfile
 
 

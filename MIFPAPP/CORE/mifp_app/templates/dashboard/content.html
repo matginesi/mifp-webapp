@@ -145,7 +145,7 @@
             <form method="post" class="inline-form">
               <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
               <input type="hidden" name="id" value="{{ r.id }}">
-              <div class="inline-form-head"><div><b>Edit #{{ r.id }} &middot; {{ r.title or r.display_name or r.name or 'record' }}</b><small>Edit inline.</small></div><div class="inline-actions"><button class="btn btn-primary btn-sm">Save</button><button class="btn btn-outline btn-sm" type="button" data-row-toggle="record-{{ r.id }}">Close</button></div></div>
+              <div class="inline-form-head"><div><b>Edit #{{ r.id }} &middot; {{ r.title or r.display_name or r.name or 'record' }}</b><small>Edit inline.</small></div><div class="inline-actions"><button class="btn btn-primary btn-sm" type="submit">Save</button><button class="btn btn-outline btn-sm" type="button" data-row-toggle="record-{{ r.id }}">Close</button></div></div>
               <div class="inline-form-grid">
               {% for f in editable %}
                 {% set val = r.get(f) %}

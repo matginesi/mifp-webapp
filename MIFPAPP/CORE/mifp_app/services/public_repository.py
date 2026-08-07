@@ -22,7 +22,6 @@ MediaUrl = Callable[[str], str]
 
 PUBLIC_REVIEW_FILTER = "COALESCE(review_status,'draft') = 'published'"
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 
 NEWS_TYPE_LABELS = {
     "general": "General",

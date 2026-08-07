@@ -18,15 +18,6 @@ _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{
 _LONG_NUMBER_RE = re.compile(r"\d{5,}")
 
 _IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "svg", "avif"}
-_DOC_EXTS = {"doc", "docx", "xls", "xlsx", "csv", "json", "txt"}
-_PAGE_EXTS = {"", "html", "htm"}
-
-
-def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
-    return conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (table,),
-    ).fetchone() is not None
 
 
 def _safe_scalar(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()) -> int:
@@ -114,42 +105,7 @@ def increment_daily(conn: sqlite3.Connection, scope: str, metric_name: str, metr
             updated_at = CURRENT_TIMESTAMP
         """,
         (scope, metric_name, metric_key or "", int(amount)),
-    )
-
-
-def set_daily(conn: sqlite3.Connection, scope: str, metric_name: str, metric_key: str, value: int) -> None:
-    conn.execute(
-        """
-        INSERT INTO metrics_daily(date, scope, metric_name, metric_key, metric_value)
-        VALUES(date('now'), ?, ?, ?, ?)
-        ON CONFLICT(date, scope, metric_name, metric_key)
-        DO UPDATE SET
-            metric_value = excluded.metric_value,
-            updated_at = CURRENT_TIMESTAMP
-        """,
-        (scope, metric_name, metric_key or "", int(value)),
-    )
-
-
-def get_metric_range(conn: sqlite3.Connection, days: int = 30, scope: str | None = None) -> dict[str, Any]:
-    days = max(1, min(int(days or 30), 3660))
-    since = _metric_date(days - 1)
-    params: list[Any] = [since]
-    where = "date >= ?"
-    if scope:
-        where += " AND scope = ?"
-        params.append(scope)
-    rows = _safe_rows(
-        conn,
-        f"""
-        SELECT date, scope, metric_name, metric_key, metric_value
-        FROM metrics_daily
-        WHERE {where}
-        ORDER BY date, scope, metric_name, metric_key
-        """,
-        tuple(params),
-    )
-    return {"days": days, "since": since, "rows": rows}
+)
 
 
 def get_public_traffic_summary(conn: sqlite3.Connection, days: int = 30) -> dict[str, Any]:
@@ -362,11 +318,3 @@ def sanitize_unknown_question(text: str) -> str:
     clean = _LONG_NUMBER_RE.sub("[number]", clean)
     clean = re.sub(r"\s+", " ", clean).strip()
     return clean[:160]
-
-
-def safe_extra_json(data: dict[str, Any] | None) -> str | None:
-    if not data:
-        return None
-    forbidden = {"ip", "client_ip", "user_agent", "user_agent_hash", "referrer", "email", "phone", "session", "csrf"}
-    clean = {k: v for k, v in data.items() if str(k).lower() not in forbidden}
-    return json.dumps(clean, ensure_ascii=False, default=str) if clean else None

@@ -17,15 +17,8 @@ from urllib.parse import unquote, urlparse
 from urllib.request import Request
 
 from ..config import Config
+from ..db.connection import sha256_file
 from ..utils.text_utils import slugify
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def infer_kind(path: Path, mime_type: str | None = None) -> str:
@@ -219,7 +212,9 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     def __init__(self, host, context=None, check_hostname=None, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None, mifp_pinned_ip=None):
-        super().__init__(host, context=context, check_hostname=check_hostname, timeout=timeout, source_address=source_address)
+        if check_hostname is not None and context is not None:
+            context.check_hostname = check_hostname
+        super().__init__(host, context=context, timeout=timeout, source_address=source_address)
         self._mifp_pinned_ip = mifp_pinned_ip
 
     def _create_connection(self, timeout, source_address=None):
@@ -239,7 +234,7 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
             _PinnedHTTPSConnection,
             req,
             context=self._context,
-            check_hostname=self._check_hostname,
+            check_hostname=self._context.check_hostname,
             mifp_pinned_ip=getattr(req, "_mifp_pinned_ip", None),
         )
 

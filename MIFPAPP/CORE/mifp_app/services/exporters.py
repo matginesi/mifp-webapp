@@ -412,9 +412,6 @@ def rows_to_pdf(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
         fontSize=7, textColor=colors.HexColor("#1F2937"),
         fontName="Helvetica",
     )
-    cell_style_alt = ParagraphStyle(
-        "MifpCellAlt", parent=cell_style,
-    )
 
     elements = []
 

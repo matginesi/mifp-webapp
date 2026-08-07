@@ -363,8 +363,7 @@ def test_data_portability_page_links_import_to_duplicate_cleanup(client):
 
     assert response.status_code == 200
     assert "Validate only" in body
-    assert "Export records.jsonl" in body
-    assert "Export ZIP package" in body
+    assert "Export database (ZIP)" in body
     assert "Content Archive" not in body
     assert "legacy" not in body.lower()
     assert "Analyze imported data" in body

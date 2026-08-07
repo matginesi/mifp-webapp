@@ -62,11 +62,5 @@ def configured_count(name: str, *, automatic: int, minimum: int = 1, maximum: in
     return min(value, maximum) if maximum is not None else value
 
 
-def automatic_web_workers() -> int:
-    # SQLite remains the primary store: use multiple processes, but cap write
-    # contention and memory amplification on larger hosts.
-    return max(1, min(available_cpu_count(), 4))
-
-
 def automatic_background_workers() -> int:
     return max(1, min(available_cpu_count(), 2))

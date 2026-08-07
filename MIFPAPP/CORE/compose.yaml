@@ -64,10 +64,6 @@ services:
         source: ./mifp_app
         target: /app/mifp_app
         read_only: true
-      - type: bind
-        source: ./mifp_archive
-        target: /app/mifp_archive
-        read_only: true
     init: true
     restart: unless-stopped
     healthcheck:

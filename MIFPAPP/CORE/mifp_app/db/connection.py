@@ -1,13 +1,29 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import sqlite3
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def utc_now() -> str:
+    """Return current UTC time as ISO string with Z suffix."""
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def sha256_file(path: Path) -> str:
+    """Return SHA-256 hash of a file's contents."""
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def connect(db_path: Path) -> sqlite3.Connection:

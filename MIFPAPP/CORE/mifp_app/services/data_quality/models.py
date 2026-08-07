@@ -7,7 +7,6 @@ from typing import Any
 
 class ActionType(StrEnum):
     CLEAN = "clean_record"
-    ENRICH = "enrich_record"
     MERGE = "merge_records"
     SPLIT = "split_aggregated_record"
     REPAIR = "repair_relations_or_assets"
@@ -46,9 +45,6 @@ class Finding:
     plan: dict[str, Any]
     fingerprint: str
     score: float = 0.0
-
-    def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 def require_payload(value: Any) -> dict[str, Any]:

@@ -167,8 +167,6 @@ FIELDS = (
               "participation", "Message after a successful request.", 240, True),
 )
 
-
-_BY_KEY = {field.key: field for field in FIELDS}
 _BY_STORAGE_KEY = {field.storage_key: field for field in FIELDS}
 
 

@@ -59,20 +59,10 @@ PUBLIC_TABLES = {
         "pk": "id",
         "fields": ["title", "slug", "type", "summary", "body", "version", "effective_date", "nav_group", "menu_order", "review_status", "sort_order"],
         "search": ["title", "slug", "type", "summary", "body"],
-        "order": "type ASC, title ASC",
+"order": "type ASC, title ASC",
     },
 }
 
-PAGE_TYPES = {
-    "home": ["legacy_home", "custom", "news", "sponsor"],
-    "manifesto": ["manifesto"],
-    "code_of_conduct": ["code_of_conduct"],
-    "info": ["about", "contact", "custom"],
-    "sponsors_how_to": ["custom"],
-    "privacy": ["privacy"],
-    "cookie_policy": ["cookie_policy"],
-    "research": ["research", "custom"],
-}
 
 def _where_clause(meta: dict[str, Any], q: str | None) -> tuple[str, list[Any]]:
     if not q:

@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from ..config import Config
-from ..db.connection import table_exists
+from ..db.connection import table_exists, utc_now, sha256_file
 from ..db.migrations import SCHEMA_VERSION
 from .assets import resolve_db_asset_path
 from .data_quality.normalizers import stable_fingerprint
@@ -60,7 +60,6 @@ ZIP_MAX_COMPRESSION_RATIO = 1000
 PORTABLE_FORMAT = "mifp-export"  # accepted for backward-compatible imports only
 PORTABLE_FORMAT_VERSION = 2
 CANONICAL_FORMAT = "mifp-jsonl-v2"
-CANONICAL_FORMAT_VERSION = 1
 SUPPORTED_FORMAT_VERSIONS = {1, 2}
 QUALITY_FINGERPRINT_ACTIONS = {
     "", "aggregated_event", "clean_record", "date_placeholder", "invalid_record",
@@ -68,10 +67,6 @@ QUALITY_FINGERPRINT_ACTIONS = {
     "missing_date", "multiple_primary_links", "name_inversion", "page_fragment",
     "placeholder_title", "split_aggregated_record",
 }
-
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def scope_options() -> list[dict[str, Any]]:
@@ -93,7 +88,7 @@ def build_export_bundle(conn: sqlite3.Connection, scope: str) -> dict[str, Any]:
     return {
         "meta": {
             "scope": scope,
-            "exported_at": _utc_now(),
+            "exported_at": utc_now(),
             "format": PORTABLE_FORMAT,
             "format_version": PORTABLE_FORMAT_VERSION,
             "schema_version": SCHEMA_VERSION,
@@ -102,72 +97,6 @@ def build_export_bundle(conn: sqlite3.Connection, scope: str) -> dict[str, Any]:
     }
 
 
-def canonical_bundle_to_zip(
-    conn: sqlite3.Connection,
-    assets_dir: Path,
-    *,
-    app_version: str = "",
-) -> bytes:
-    """Build the canonical JSONL v2 package used by SCRAPERS/ and DATABASE/.
-
-    The package intentionally contains only portable records, a manifest and
-    managed asset files. Runtime settings, metrics, sessions and operational
-    state are not exported.
-    """
-    records = _records_for_scope(conn, "all")
-    records_payload = _records_to_jsonl(records)
-    referenced_paths = {
-        str(asset.get("path") or "").strip()
-        for record in records
-        for asset in (record.get("assets") or [])
-        if isinstance(asset, dict) and str(asset.get("path") or "").strip()
-    }
-    asset_rows = [
-        row for row in _asset_rows(conn)
-        if str(row.get("path") or "").strip() in referenced_paths
-    ]
-    manifest: dict[str, Any] = {
-        "format": CANONICAL_FORMAT,
-        "format_version": CANONICAL_FORMAT_VERSION,
-        "generated_at": _utc_now(),
-        "scope": "all",
-        "records": len(records),
-        "counts": _record_counts(records),
-        "records_sha256": hashlib.sha256(records_payload).hexdigest(),
-        "app_version": app_version,
-        "files": [],
-    }
-    output = BytesIO()
-    seen: set[str] = set()
-    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
-        archive.writestr(ZIP_RECORDS_NAME, records_payload)
-        for asset in asset_rows:
-            db_path = str(asset.get("path") or "").strip()
-            if not db_path:
-                continue
-            source = resolve_db_asset_path(assets_dir, db_path)
-            if not source.is_file():
-                continue
-            relative = db_path.removeprefix("assets/")
-            archive_path = _validate_asset_archive_path(f"assets/{relative}")
-            if archive_path in seen:
-                continue
-            seen.add(archive_path)
-            size = source.stat().st_size
-            checksum = _file_sha256(source)
-            archive.write(source, archive_path)
-            manifest["files"].append({
-                "path": relative,
-                "archive_path": archive_path,
-                "bytes": size,
-                "size": size,
-                "sha256": checksum,
-            })
-        archive.writestr(
-            ZIP_MANIFEST_NAME,
-            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True, default=str),
-        )
-    return output.getvalue()
 
 
 def bundle_to_zip(conn: sqlite3.Connection, scope: str, assets_dir: Path, *, app_version: str = "") -> bytes:
@@ -185,7 +114,7 @@ def bundle_to_zip(conn: sqlite3.Connection, scope: str, assets_dir: Path, *, app
         "format": PORTABLE_FORMAT,
         "format_version": PORTABLE_FORMAT_VERSION,
         "schema_version": SCHEMA_VERSION,
-        "generated_at": _utc_now(),
+        "generated_at": utc_now(),
         "exported_at": bundle["meta"]["exported_at"],
         "app_version": app_version,
         "scope": scope,
@@ -222,7 +151,7 @@ def bundle_to_zip(conn: sqlite3.Connection, scope: str, assets_dir: Path, *, app
                 "path": db_path,
                 "archive_path": archive_path,
                 "size": path.stat().st_size,
-                "sha256": _file_sha256(path),
+                "sha256": sha256_file(path),
             })
         zf.writestr(ZIP_MANIFEST_NAME, json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
     return out.getvalue()
@@ -478,6 +407,93 @@ def _durable_state(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
             "SELECT entity_type,old_slug,canonical_slug FROM content_aliases ORDER BY id"
         )
     ] if table_exists(conn, "content_aliases") else []
+    state.update(_provenance_state(conn))
+    return state
+
+
+def _provenance_state(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
+    """Portable representation of scraper lineage tables.
+
+    References between source_systems, source_runs and source_records are
+    exported as stable uids so they survive an id remap on restore.
+    """
+    state: dict[str, list[dict[str, Any]]] = {
+        "source_systems": [],
+        "source_runs": [],
+        "source_records": [],
+        "canonical_mappings": [],
+    }
+    if not table_exists(conn, "source_systems"):
+        return state
+    system_ids: dict[int, str] = {}
+    for row in conn.execute(
+        "SELECT id,uid,name,kind,base_url,description FROM source_systems ORDER BY id"
+    ):
+        state["source_systems"].append({
+            "uid": row["uid"],
+            "name": row["name"],
+            "kind": row["kind"],
+            "base_url": row["base_url"],
+            "description": row["description"],
+        })
+        system_ids[int(row["id"])] = row["uid"]
+    if table_exists(conn, "source_runs"):
+        run_ids: dict[int, str] = {}
+        for row in conn.execute(
+            "SELECT id,uid,source_system_id,scraper_version,parser_version,started_at,"
+            "completed_at,status,source_snapshot_sha256,stats_json,notes "
+            "FROM source_runs ORDER BY id"
+        ):
+            state["source_runs"].append({
+                "uid": row["uid"],
+                "source_system_uid": system_ids.get(int(row["source_system_id"])),
+                "scraper_version": row["scraper_version"],
+                "parser_version": row["parser_version"],
+                "started_at": row["started_at"],
+                "completed_at": row["completed_at"],
+                "status": row["status"],
+                "source_snapshot_sha256": row["source_snapshot_sha256"],
+                "stats_json": row["stats_json"],
+                "notes": row["notes"],
+            })
+            run_ids[int(row["id"])] = row["uid"]
+    if table_exists(conn, "source_records"):
+        for row in conn.execute(
+            "SELECT id,uid,source_run_id,source_system_id,external_id,source_url,"
+            "source_path,fetched_at,raw_sha256,raw_payload,record_type,mapping_status "
+            "FROM source_records ORDER BY id"
+        ):
+            state["source_records"].append({
+                "uid": row["uid"],
+                "source_run_uid": run_ids.get(int(row["source_run_id"])) if row["source_run_id"] else None,
+                "source_system_uid": system_ids.get(int(row["source_system_id"])) if row["source_system_id"] else None,
+                "external_id": row["external_id"],
+                "source_url": row["source_url"],
+                "source_path": row["source_path"],
+                "fetched_at": row["fetched_at"],
+                "raw_sha256": row["raw_sha256"],
+                "raw_payload": row["raw_payload"],
+                "record_type": row["record_type"],
+                "mapping_status": row["mapping_status"],
+            })
+    if table_exists(conn, "canonical_mappings"):
+        record_uids: dict[int, str] = {
+            int(row["id"]): row["uid"] for row in conn.execute(
+                "SELECT id,uid FROM source_records WHERE uid IS NOT NULL"
+            )
+        }
+        for row in conn.execute(
+            "SELECT source_record_id,entity_type,entity_uid,mapping_kind,confidence,decision_note "
+            "FROM canonical_mappings ORDER BY id"
+        ):
+            state["canonical_mappings"].append({
+                "source_record_uid": record_uids.get(int(row["source_record_id"])),
+                "entity_type": row["entity_type"],
+                "entity_uid": row["entity_uid"],
+                "mapping_kind": row["mapping_kind"],
+                "confidence": row["confidence"],
+                "decision_note": row["decision_note"],
+            })
     return state
 
 
@@ -700,9 +716,101 @@ def _restore_durable_state(
             ),
         )
         restored["content_aliases"] = restored.get("content_aliases", 0) + 1
+    _restore_provenance(conn, state, restored)
     _restore_unlinked_assets(conn, state.get("assets") or [], assets_dir, packaged_assets_dir, restored)
     conn.commit()
     return restored
+
+
+def _restore_provenance(
+    conn: sqlite3.Connection,
+    state: dict[str, Any],
+    restored: dict[str, int],
+) -> None:
+    """Restore scraper lineage (source_systems/runs/records + canonical_mappings)."""
+    if not table_exists(conn, "source_systems"):
+        return
+    system_uid_to_id: dict[str, int] = {}
+    for system in state.get("source_systems") or []:
+        if not isinstance(system, dict) or not system.get("uid"):
+            continue
+        conn.execute(
+            "INSERT INTO source_systems(uid,name,kind,base_url,description) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(uid) DO UPDATE SET name=excluded.name,kind=excluded.kind,"
+            "base_url=excluded.base_url,description=excluded.description,updated_at=CURRENT_TIMESTAMP",
+            (system["uid"], system.get("name"), system.get("kind"),
+             system.get("base_url"), system.get("description")),
+        )
+        row = conn.execute("SELECT id FROM source_systems WHERE uid=?", (system["uid"],)).fetchone()
+        system_uid_to_id[system["uid"]] = int(row["id"])
+        restored["source_systems"] = restored.get("source_systems", 0) + 1
+    run_uid_to_id: dict[str, int] = {}
+    if table_exists(conn, "source_runs"):
+        for run in state.get("source_runs") or []:
+            if not isinstance(run, dict) or not run.get("uid"):
+                continue
+            system_id = system_uid_to_id.get(str(run.get("source_system_uid") or ""))
+            conn.execute(
+                "INSERT INTO source_runs(uid,source_system_id,scraper_version,parser_version,"
+                "started_at,completed_at,status,source_snapshot_sha256,stats_json,notes) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(uid) DO UPDATE SET source_system_id=excluded.source_system_id,"
+                "scraper_version=excluded.scraper_version,parser_version=excluded.parser_version,"
+                "started_at=excluded.started_at,completed_at=excluded.completed_at,status=excluded.status,"
+                "source_snapshot_sha256=excluded.source_snapshot_sha256,stats_json=excluded.stats_json,"
+                "notes=excluded.notes",
+                (run["uid"], system_id, run.get("scraper_version"), run.get("parser_version"),
+                 run.get("started_at"), run.get("completed_at"), run.get("status"),
+                 run.get("source_snapshot_sha256"), run.get("stats_json"), run.get("notes")),
+            )
+            row = conn.execute("SELECT id FROM source_runs WHERE uid=?", (run["uid"],)).fetchone()
+            run_uid_to_id[run["uid"]] = int(row["id"])
+            restored["source_runs"] = restored.get("source_runs", 0) + 1
+    record_uid_to_id: dict[str, int] = {}
+    if table_exists(conn, "source_records"):
+        for record in state.get("source_records") or []:
+            if not isinstance(record, dict) or not record.get("uid"):
+                continue
+            run_id = run_uid_to_id.get(str(record.get("source_run_uid") or ""))
+            system_id = system_uid_to_id.get(str(record.get("source_system_uid") or ""))
+            conn.execute(
+                "INSERT INTO source_records(uid,source_run_id,source_system_id,external_id,source_url,"
+                "source_path,fetched_at,raw_sha256,raw_payload,record_type,mapping_status) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(uid) DO UPDATE SET source_run_id=excluded.source_run_id,"
+                "source_system_id=excluded.source_system_id,external_id=excluded.external_id,"
+                "source_url=excluded.source_url,source_path=excluded.source_path,fetched_at=excluded.fetched_at,"
+                "raw_sha256=excluded.raw_sha256,raw_payload=excluded.raw_payload,"
+                "record_type=excluded.record_type,mapping_status=excluded.mapping_status",
+                (record["uid"], run_id, system_id, record.get("external_id"), record.get("source_url"),
+                 record.get("source_path"), record.get("fetched_at"), record.get("raw_sha256"),
+                 record.get("raw_payload"), record.get("record_type"), record.get("mapping_status")),
+            )
+            row = conn.execute("SELECT id FROM source_records WHERE uid=?", (record["uid"],)).fetchone()
+            record_uid_to_id[record["uid"]] = int(row["id"])
+            restored["source_records"] = restored.get("source_records", 0) + 1
+    if table_exists(conn, "canonical_mappings"):
+        mappings = [
+            item for item in state.get("canonical_mappings") or []
+            if isinstance(item, dict) and item.get("source_record_uid") in record_uid_to_id
+        ]
+        if mappings:
+            record_ids = {record_uid_to_id[str(item["source_record_uid"])] for item in mappings}
+            placeholders = ",".join("?" for _ in record_ids)
+            conn.execute(
+                f"DELETE FROM canonical_mappings WHERE source_record_id IN ({placeholders})",
+                tuple(record_ids),
+            )
+            for mapping in mappings:
+                record_id = record_uid_to_id[str(mapping["source_record_uid"])]
+                conn.execute(
+                    "INSERT INTO canonical_mappings("
+                    "source_record_id,entity_type,entity_uid,mapping_kind,confidence,decision_note"
+                    ") VALUES(?,?,?,?,?,?)",
+                    (record_id, mapping.get("entity_type"), mapping.get("entity_uid"),
+                     mapping.get("mapping_kind"), mapping.get("confidence"), mapping.get("decision_note")),
+                )
+                restored["canonical_mappings"] = restored.get("canonical_mappings", 0) + 1
 
 
 def _restore_unlinked_assets(
@@ -785,7 +893,10 @@ def _assets_for_types(
     rows = conn.execute(
         f"""
         SELECT al.entity_type, al.entity_id, a.path, a.source_url AS url,
-               al.role, a.kind, a.caption, a.alt_text, al.is_primary, al.sort_order
+               al.role, a.kind, a.caption, a.alt_text, al.is_primary, al.sort_order,
+               a.uid, a.checksum, a.content_sha256, a.source_url_sha256,
+               a.filename, a.original_filename, a.mime_type, a.size,
+               a.storage_status, a.is_external, a.width, a.height, a.duration_seconds
         FROM asset_links al
         JOIN assets a ON a.id = al.asset_id
         WHERE al.entity_type IN ({placeholders})
@@ -856,14 +967,6 @@ def _records_to_jsonl(records: list[dict[str, Any]]) -> bytes:
         for record in records
     ]
     return ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8")
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _extract_zip_assets(raw: bytes | Path, assets_dir: Path, *, asset_files: list[str] | None = None) -> None:
@@ -992,7 +1095,8 @@ def _read_durable_state(
     allowed = {
         "roles", "settings", "assets", "metrics_daily", "merge_exclusions",
         "resolved_pairs", "quality_decisions", "entity_relations",
-        "join_requests", "content_aliases",
+        "join_requests", "content_aliases", "source_systems", "source_runs",
+        "source_records", "canonical_mappings",
     }
     unexpected = sorted(set(state) - allowed)
     if unexpected:

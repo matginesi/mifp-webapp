@@ -13,7 +13,6 @@ L'entry point operativo resta nella root del progetto:
 
 - `app.py`, `wsgi.py`: applicazione Flask.
 - `mifp_app/`: codice della webapp.
-- `mifp_archive/`: migrazioni, health e archivi portabili.
 - `Dockerfile`: immagine comune per Docker locale e production.
 - `compose.yaml`: Docker locale.
 - `compose.production.yaml`: Gunicorn production.

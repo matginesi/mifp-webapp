@@ -117,7 +117,20 @@ document.querySelectorAll('[data-create-record-form]').forEach(function(form) {
       }).length,
     });
   });
-});
+  });
+
+  /* Inline edit form: show loading state, prevent double-submit */
+  document.querySelectorAll('form.inline-form').forEach(function(form) {
+    form.addEventListener('submit', function(event) {
+      var btn = form.querySelector('button[type="submit"]');
+      if (btn) {
+        btn.disabled = true;
+        var originalHtml = btn.innerHTML;
+        btn.dataset.originalHtml = originalHtml;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Saving…';
+      }
+    });
+  });
 
 function requestForm(url, formData) {
   return window.MIFP.request(url, {

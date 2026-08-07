@@ -83,9 +83,10 @@ class TestDataPortabilityHTTP:
                 names = zf.namelist()
                 assert "manifest.json" in names
                 assert "records.jsonl" in names
-                assert "state.json" not in names
+                # Full portable export carries durable state for lossless re-import.
+                assert "state.json" in names
                 manifest = json.loads(zf.read("manifest.json"))
-                assert manifest["format"] == "mifp-jsonl-v2"
+                assert manifest["format"] == "mifp-export"
                 assert manifest["scope"] == "all"
 
     def test_export_dl_invalid_token(self, app_with_admin):
@@ -231,3 +232,50 @@ class TestDataPortabilityHTTP:
             by_type = result.get("by_type", {})
             assert isinstance(by_type, dict), f"by_type should be dict, got {type(by_type)}"
             assert "events" in by_type or "news" in by_type or len(by_type) > 0
+
+    def test_export_jsonl_import_roundtrip_faithful(self, app_with_admin):
+        with app_with_admin.test_client() as client:
+            _login(client)
+            events, token, result = self._export_post(client, "jsonl")
+            assert token is not None
+            dl = client.get(f"/dashboard/data-portability/export-dl/{token}")
+            assert dl.status_code == 200
+            jsonl_bytes = dl.data
+            exported = [json.loads(l) for l in jsonl_bytes.decode("utf-8").strip().splitlines() if l.strip()]
+            exported_types = {}
+            for rec in exported:
+                exported_types[rec["type"]] = exported_types.get(rec["type"], 0) + 1
+
+            resp = client.post(
+                "/dashboard/data-portability/import",
+                data={
+                    "data_file": (io.BytesIO(jsonl_bytes), "roundtrip.jsonl"),
+                    "dry_run": "0",
+                },
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+            assert resp.status_code == 200
+            assert resp.content_type == "application/x-ndjson"
+            text = resp.data.decode("utf-8")
+            events = [json.loads(l) for l in text.strip().splitlines() if l.strip()]
+            res = next(e for e in events if e.get("event") == "result")
+            assert res["ok"] is True
+            assert res["errors"] == 0
+
+    def test_export_http_error_streams_ndjson_error(self, app_with_admin, monkeypatch):
+        import mifp_app.routes.dashboard as dashboard_routes
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("simulated export failure")
+
+        monkeypatch.setattr(dashboard_routes, "bundle_to_zip", boom)
+        with app_with_admin.test_client() as client:
+            _login(client)
+            resp = client.post("/dashboard/data-portability/export/zip", data={"_csrf_token": "x"})
+            assert resp.status_code == 500
+            assert resp.content_type == "application/x-ndjson"
+            lines = [l for l in resp.data.decode("utf-8").strip().splitlines() if l.strip()]
+            events = [json.loads(l) for l in lines]
+            errors = [e for e in events if e.get("event") == "error"]
+            assert errors, "expected at least one 'error' NDJSON event"
+            assert errors[0]["ok"] is False

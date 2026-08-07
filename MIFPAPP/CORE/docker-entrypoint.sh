@@ -17,7 +17,7 @@ if [ ! -f "$BANNER_SETTINGS_PATH" ] && [ -f /app/config/banner_settings.json ]; 
   cp /app/config/banner_settings.json "$BANNER_SETTINGS_PATH"
 fi
 
-python -m mifp_archive.cli migrate --db "$DATABASE_PATH" >/tmp/mifp-migrate.json
-python -m mifp_archive.cli health --db "$DATABASE_PATH" --assets "$ASSETS_DIR" >/tmp/mifp-health.json
+# Run database migration using the app's built-in command
+FLASK_APP=mifp_app flask db-upgrade >/tmp/mifp-migrate.json
 
 exec "$@"

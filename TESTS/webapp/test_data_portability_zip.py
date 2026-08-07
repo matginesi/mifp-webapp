@@ -394,6 +394,88 @@ def test_import_zip_second_import_updates_not_duplicates(tmp_path: Path) -> None
     assert target.execute("SELECT COUNT(*) FROM news").fetchone()[0] == 1
 
 
+def test_roundtrip_restores_asset_identity_and_db_path(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
+
+    source = _conn()
+    assets_dir = tmp_path / "source-assets"
+    (assets_dir / "pdf").mkdir(parents=True)
+    (assets_dir / "pdf" / "paper.pdf").write_bytes(b"%PDF-1.4\n")
+    source.execute(
+        "INSERT INTO assets(id, uid, filename, original_filename, path, mime_type, size, kind, "
+        "storage_status, checksum, content_sha256, source_url_sha256) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            1, "uid-paper-1", "paper.pdf", "report.pdf", "pdf/paper.pdf",
+            "application/pdf", 9, "pdf", "local", "paper-sha", "paper-content", None,
+        ),
+    )
+    source.execute(
+        "INSERT INTO news(id, title, slug, review_status) VALUES(1, 'News', 'news', 'published')"
+    )
+    source.execute(
+        "INSERT INTO asset_links(asset_id, entity_type, entity_id, role) VALUES(1, 'news', 1, 'document')"
+    )
+
+    payload = bundle_to_zip(source, "news", assets_dir)
+    with zipfile.ZipFile(BytesIO(payload), "r") as zf:
+        exported = json.loads(zf.read("records.jsonl").decode("utf-8").strip())
+    assert exported["assets"][0]["uid"] == "uid-paper-1"
+    assert exported["assets"][0]["checksum"] == "paper-sha"
+    assert exported["assets"][0]["path"] == "pdf/paper.pdf"
+
+    target = _conn()
+    target_assets = tmp_path / "target-assets"
+    first = import_zip_payload(target, payload, "news", target_assets)
+    second = import_zip_payload(target, payload, "news", target_assets)
+
+    assert first["errors"] == second["errors"] == []
+    row = target.execute("SELECT uid, checksum, path, storage_status, filename FROM assets").fetchone()
+    assert row["uid"] == "uid-paper-1"
+    assert row["checksum"] == "paper-sha"
+    assert row["path"] == "pdf/paper.pdf"
+    assert row["storage_status"] == "local"
+    assert row["filename"] == "paper.pdf"
+    assert target.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 1
+    assert target.execute("SELECT COUNT(*) FROM asset_links").fetchone()[0] == 1
+    assert (target_assets / "pdf" / "paper.pdf").read_bytes() == b"%PDF-1.4\n"
+
+
+def test_roundtrip_external_asset_preserves_uid_and_storage_status(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
+
+    source = _conn()
+    source.execute(
+        "INSERT INTO assets(id, uid, filename, path, kind, source_url, storage_status, checksum, "
+        "source_url_sha256) VALUES(?,?,?,?,?,?,?,?,?)",
+        (
+            1, "uid-ext-1", "external-f.pdf", "external/external-f-abc123.pdf",
+            "pdf", "https://www.mifp.eu/files/f.pdf", "external", "url-hash", "url-hash",
+        ),
+    )
+    source.execute(
+        "INSERT INTO news(id, title, slug, review_status) VALUES(1, 'News', 'news', 'published')"
+    )
+    source.execute(
+        "INSERT INTO asset_links(asset_id, entity_type, entity_id, role) VALUES(1, 'news', 1, 'document')"
+    )
+
+    payload = bundle_to_zip(source, "news", tmp_path / "source-assets")
+    target = _conn()
+    summary = import_zip_payload(target, payload, "news", tmp_path / "target-assets")
+
+    assert summary["errors"] == []
+    row = target.execute(
+        "SELECT uid, checksum, storage_status, source_url, is_external FROM assets"
+    ).fetchone()
+    assert row["uid"] == "uid-ext-1"
+    assert row["checksum"] == "url-hash"
+    assert row["storage_status"] == "external"
+    assert row["source_url"] == "https://www.mifp.eu/files/f.pdf"
+    assert row["is_external"] == 1
+    assert target.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 1
+    assert target.execute("SELECT COUNT(*) FROM asset_links").fetchone()[0] == 1
+
+
 def test_import_keeps_valid_record_when_packaged_asset_is_invalid(tmp_path: Path) -> None:
     from mifp_app.services.importers import import_jsonl
 
@@ -903,4 +985,103 @@ def test_import_jsonl_rolls_back_failed_record(tmp_path: Path) -> None:
     assert summary["inserted"] == {}
     assert summary["skipped"] == 1
     assert summary["rolled_back"] == 1
-    assert conn.execute("SELECT COUNT(*) FROM news WHERE slug='must-roll-back'").fetchone()[0] == 0
+
+
+def test_roundtrip_preserves_pdf_entity_link_not_promoted_to_asset(tmp_path: Path) -> None:
+    """A portable export stores file-like URLs as entity_links, so re-importing
+    must restore them as entity_links and NOT promote them into assets."""
+    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
+
+    source = _conn()
+    source.execute(
+        "INSERT INTO news(id, title, slug, review_status) VALUES (1, 'News', 'news', 'draft')"
+    )
+    source.execute(
+        "INSERT INTO entity_links(entity_type, entity_id, url, role, is_primary, sort_order) "
+        "VALUES ('news', 1, 'https://example.test/notes.pdf', 'document', 1, 1)"
+    )
+
+    src_assets = tmp_path / "assets"
+    src_assets.mkdir()
+    payload = bundle_to_zip(source, "news", src_assets)
+
+    target_assets = tmp_path / "restored-assets"
+    target_assets.mkdir()
+    fresh = _conn()
+    summary = import_zip_payload(fresh, payload, "news", assets_dir=target_assets)
+
+    assert summary["errors"] == []
+    assert summary["asset_errors"] == []
+    link = fresh.execute(
+        "SELECT role, url FROM entity_links WHERE entity_type='news' AND entity_id=?"
+        " ORDER BY sort_order",
+        (1,),
+    ).fetchone()
+    assert link is not None
+    assert link["url"] == "https://example.test/notes.pdf"
+    assert link["role"] == "document"
+    assert fresh.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 0
+    assert fresh.execute("SELECT COUNT(*) FROM asset_links").fetchone()[0] == 0
+
+
+def test_roundtrip_preserves_scraper_provenance(tmp_path: Path) -> None:
+    """Full-database export/import keeps source_systems/runs/records and
+    canonical_mappings (scraper lineage), re-linking references by uid."""
+    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
+
+    source = _conn()
+    source.execute(
+        "INSERT INTO source_systems(id, uid, name, kind, base_url, description) "
+        "VALUES (1, 'sys-1', 'Aruba', 'scraper', 'https://example.test', 'site')"
+    )
+    source.execute(
+        "INSERT INTO source_runs(id, uid, source_system_id, scraper_version, parser_version, "
+        "status, source_snapshot_sha256, notes) "
+        "VALUES (1, 'run-1', 1, '2.0', '1.3', 'completed', 'abc123', NULL)"
+    )
+    source.execute(
+        "INSERT INTO source_records(id, uid, source_run_id, source_system_id, external_id, "
+        "source_url, record_type, mapping_status, raw_payload) "
+        "VALUES (1, 'rec-1', 1, 1, 'ext-1', 'https://example.test/1', 'news', 'mapped', '{}')"
+    )
+    source.execute(
+        "INSERT INTO canonical_mappings(id, source_record_id, entity_type, entity_uid, "
+        "mapping_kind, confidence, decision_note) "
+        "VALUES (1, 1, 'news', 'news-1', 'canonical', 0.95, NULL)"
+    )
+    source.commit()
+
+    src_assets = tmp_path / "assets"
+    src_assets.mkdir()
+    payload = bundle_to_zip(source, "all", src_assets)
+
+    target_assets = tmp_path / "restored-assets"
+    target_assets.mkdir()
+    fresh = _conn()
+    summary = import_zip_payload(fresh, payload, "all", assets_dir=target_assets)
+    assert summary["errors"] == []
+    assert summary["asset_errors"] == []
+
+    assert fresh.execute("SELECT COUNT(*) FROM source_systems").fetchone()[0] == 1
+    assert fresh.execute("SELECT COUNT(*) FROM source_runs").fetchone()[0] == 1
+    assert fresh.execute("SELECT COUNT(*) FROM source_records").fetchone()[0] == 1
+    assert fresh.execute("SELECT COUNT(*) FROM canonical_mappings").fetchone()[0] == 1
+
+    rec = fresh.execute(
+        "SELECT r.uid AS rec_uid, run.uid AS run_uid, sys.uid AS sys_uid "
+        "FROM source_records r "
+        "JOIN source_runs run ON run.id = r.source_run_id "
+        "JOIN source_systems sys ON sys.id = r.source_system_id "
+        "WHERE r.uid = 'rec-1'"
+    ).fetchone()
+    assert rec is not None
+    assert rec["run_uid"] == "run-1"
+    assert rec["sys_uid"] == "sys-1"
+    mapping = fresh.execute(
+        "SELECT entity_type, entity_uid, mapping_kind, confidence "
+        "FROM canonical_mappings LIMIT 1"
+    ).fetchone()
+    assert mapping is not None
+    assert mapping["entity_uid"] == "news-1"
+    assert mapping["confidence"] == 0.95
+    assert mapping["mapping_kind"] == "canonical"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import sqlite3
 import unicodedata
 from collections.abc import Callable
@@ -13,7 +14,14 @@ from urllib.parse import unquote, urlparse
 from ..config import Config
 from ..db.connection import table_columns
 from ..utils.text_utils import normalize_url, slugify
-from .assets import download_asset, infer_kind_from_url, store_asset, store_external_asset
+from .assets import (
+    download_asset,
+    infer_kind_from_url,
+    resolve_db_asset_path,
+    sha256_file,
+    store_asset,
+    store_external_asset,
+)
 from .data_quality.normalizers import clean_boilerplate
 
 TYPE_TO_TABLE = {
@@ -39,6 +47,14 @@ ASSET_DATA_FIELDS = {
     "filename", "original_filename", "path", "mime_type", "size", "kind",
     "alt_text", "caption", "source_url", "storage_status", "is_external",
     "width", "height", "duration_seconds", "checksum",
+}
+# Identity/metadata carried by dashboard-produced exports so a re-import can
+# restore the same asset row (uid/checksum/path) instead of minting a new one.
+ASSET_LINK_FIELDS = {
+    "path", "url", "role", "kind", "caption", "alt_text", "is_primary", "sort_order",
+    "uid", "checksum", "content_sha256", "source_url_sha256", "storage_status",
+    "is_external", "filename", "original_filename", "mime_type", "size",
+    "width", "height", "duration_seconds",
 }
 
 DATA_FIELDS = {
@@ -204,7 +220,12 @@ def import_jsonl(
             conn.execute(f"SAVEPOINT {savepoint}")
         try:
             typ, data, links, assets, meta = _validate_record(record, idx)
-            if links:
+            # A portable export captured assets/links exactly as they live in the
+            # database (meta.exported_from_id). Re-import must restore them
+            # verbatim; the `.pdf`/`.docx` link-to-asset promotion below is only
+            # meant for raw scraper JSONL feeds, not for round-tripping.
+            portable_restore = bool(meta.get("exported_from_id"))
+            if links and not portable_restore:
                 promoted: list[dict[str, Any]] = []
                 remaining: list[dict[str, Any]] = []
                 for li, link in enumerate(links, start=1):
@@ -232,7 +253,7 @@ def import_jsonl(
                 data,
                 links,
                 force_import=force_import,
-                portable_restore="exported_from_id" in meta,
+                portable_restore=portable_restore,
             )
             summary[action][typ] = summary[action].get(typ, 0) + 1
             summary["linked_links"] += _replace_links(conn, typ, entity_id, links)
@@ -282,25 +303,6 @@ def import_jsonl(
     if not dry_run:
         conn.commit()
     return summary
-
-
-def detect_duplicates(path: str | Path) -> dict[str, Any]:
-    records = _read_records(Path(path))
-    seen: dict[tuple[str, str], int] = {}
-    duplicates: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
-    for idx, record in enumerate(records, start=1):
-        try:
-            typ, data, _links, _assets, _meta = _validate_record(record, idx)
-            key = str(data.get("slug") or data.get("title") or data.get("name") or data.get("display_name") or "").lower()
-            compound = (typ, key)
-            if compound in seen:
-                duplicates.append({"line": idx, "first_line": seen[compound], "type": typ, "key": key})
-            else:
-                seen[compound] = idx
-        except (ImportValidationError, ValueError, TypeError) as exc:
-            errors.append({"line": idx, "error": str(exc)})
-    return {"read": len(records), "duplicates": duplicates, "errors": errors}
 
 
 def _read_records(path: Path) -> list[dict[str, Any]]:
@@ -369,47 +371,6 @@ def _validate_record(record: dict[str, Any], line_no: int) -> tuple[str, dict[st
     links = _validate_links(record.get("links", []), line_no)
     assets = _validate_assets(record.get("assets", []), line_no)
     return typ, clean, links, assets, meta
-
-
-def _normalize_asset_data(data: dict[str, Any], line_no: int) -> dict[str, Any]:
-    path = str(data.get("path") or "").strip()
-    source_url = normalize_url(data.get("source_url")) if data.get("source_url") else ""
-    if not path and not source_url:
-        raise ImportValidationError(f"Line {line_no}: asset records require path or source_url")
-    if path:
-        _validate_asset_db_path(path, line_no)
-    filename = str(data.get("filename") or data.get("original_filename") or Path(path).name or "asset").strip()
-    if not filename:
-        raise ImportValidationError(f"Line {line_no}: asset filename is empty")
-    kind = str(data.get("kind") or "other").strip().lower()
-    if kind not in ASSET_KINDS:
-        raise ImportValidationError(f"Line {line_no}: invalid asset kind: {kind}")
-    storage_status = str(data.get("storage_status") or ("external" if data.get("is_external") else "missing")).strip().lower()
-    if storage_status not in ASSET_STORAGE_STATUSES:
-        raise ImportValidationError(f"Line {line_no}: invalid asset storage_status: {storage_status}")
-    data["filename"] = filename
-    data["original_filename"] = data.get("original_filename") or filename
-    data["path"] = path or f"external/{slugify(filename) or 'asset'}"
-    data["kind"] = kind
-    data["source_url"] = source_url
-    data["storage_status"] = storage_status
-    data["is_external"] = int(bool(data.get("is_external")) or storage_status == "external")
-    for key in ("size", "width", "height"):
-        if key in data and data[key] not in (None, ""):
-            data[key] = int(data[key])
-    if "duration_seconds" in data and data["duration_seconds"] not in (None, ""):
-        data["duration_seconds"] = float(data["duration_seconds"])
-    checksum = str(data.get("checksum") or "").strip()
-    data["checksum"] = checksum or None
-    uid = str(data.get("uid") or "").strip()
-    data["uid"] = uid or None
-    content_sha256 = str(data.get("content_sha256") or "").strip()
-    source_url_sha256 = str(data.get("source_url_sha256") or "").strip()
-    data["content_sha256"] = content_sha256 or (checksum if storage_status == "local" else None)
-    data["source_url_sha256"] = source_url_sha256 or (
-        hashlib.sha256(source_url.encode("utf-8")).hexdigest() if source_url else None
-    )
-    return data
 
 
 def _validate_asset_db_path(path: str, line_no: int) -> None:
@@ -541,7 +502,7 @@ def _validate_assets(raw: Any, line_no: int) -> list[dict[str, Any]]:
     for idx, item in enumerate(raw, start=1):
         if not isinstance(item, dict):
             raise ImportValidationError(f"Line {line_no}: assets[{idx}] must be an object")
-        unknown = set(item) - {"path", "url", "role", "kind", "caption", "alt_text", "is_primary", "sort_order"}
+        unknown = set(item) - ASSET_LINK_FIELDS
         if unknown:
             raise ImportValidationError(f"Line {line_no}: assets[{idx}] unknown keys: {', '.join(sorted(unknown))}")
         if not item.get("path") and not item.get("url"):
@@ -549,7 +510,7 @@ def _validate_assets(raw: Any, line_no: int) -> list[dict[str, Any]]:
         role = str(item.get("role") or "attachment").strip().lower()
         if role not in ASSET_ROLES:
             raise ImportValidationError(f"Line {line_no}: assets[{idx}] invalid role: {role}")
-        assets.append({
+        spec = {
             "path": item.get("path"),
             "url": item.get("url"),
             "role": role,
@@ -558,7 +519,11 @@ def _validate_assets(raw: Any, line_no: int) -> list[dict[str, Any]]:
             "alt_text": item.get("alt_text"),
             "is_primary": int(bool(item.get("is_primary", idx == 1))),
             "sort_order": int(item.get("sort_order") or idx),
-        })
+        }
+        for key in ASSET_LINK_FIELDS - {"path", "url", "role", "kind", "caption", "alt_text", "is_primary", "sort_order"}:
+            if key in item and item[key] not in (None, ""):
+                spec[key] = item[key]
+        assets.append(spec)
     return assets
 
 
@@ -848,8 +813,16 @@ def _materialize_asset(
     asset_source_dir: Path | None = None,
 ) -> int:
     kind = spec.get("kind")
-    if spec.get("path"):
-        path = Path(str(spec["path"]))
+    db_path = str(spec.get("path") or "").strip()
+    has_identity = bool(
+        str(spec.get("uid") or "").strip()
+        or str(spec.get("checksum") or "").strip()
+        or str(spec.get("content_sha256") or "").strip()
+    )
+    if has_identity and db_path:
+        return _restore_identity_asset(conn, spec, assets_dir, asset_source_dir=asset_source_dir)
+    if db_path:
+        path = Path(db_path)
         if not path.is_absolute():
             source_dir = asset_source_dir or assets_dir
             path = source_dir.parent / path if path.parts[:1] == ("assets",) else source_dir / path
@@ -869,6 +842,74 @@ def _materialize_asset(
     url = str(spec.get("url") or "").strip()
     final_kind = kind or infer_kind_from_url(url)
     return _download_or_defer_asset(conn, url, assets_dir, spec, final_kind)
+
+
+def _restore_identity_asset(
+    conn: sqlite3.Connection,
+    spec: dict[str, Any],
+    assets_dir: Path,
+    *,
+    asset_source_dir: Path | None = None,
+) -> int:
+    """Restore an exported asset faithfully, preserving uid/checksum and DB path.
+
+    Dashboard exports now carry the asset identity. When one is present the
+    authoritative row is matched by uid/checksum/source_url/path and the
+    packaged file is placed at its original DB-tracked path, instead of being
+    re-stored under a fresh hash-suffixed name.
+    """
+    db_path = str(spec.get("path") or "").strip()
+    _validate_asset_db_path(db_path, 0)
+    target = resolve_db_asset_path(assets_dir, db_path)
+    source_dir = asset_source_dir or assets_dir
+    source = (
+        source_dir.parent / Path(*Path(db_path).parts[1:])
+        if Path(db_path).parts[:1] == ("assets",)
+        else source_dir / Path(db_path)
+    )
+    local_file: Path | None = None
+    if source.is_file():
+        local_file = source
+    elif target.is_file():
+        local_file = target
+    if local_file is not None and local_file.resolve() != target.resolve():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(local_file, target)
+    storage_status = str(spec.get("storage_status") or "").strip().lower()
+    if storage_status not in ASSET_STORAGE_STATUSES:
+        storage_status = "local" if local_file is not None else "external" if spec.get("is_external") else "missing"
+    if local_file is None and storage_status == "local":
+        storage_status = "missing"
+    if local_file is not None and storage_status == "missing":
+        storage_status = "local"
+    file_checksum = sha256_file(local_file) if local_file is not None else None
+    checksum = str(spec.get("checksum") or "").strip() or file_checksum or None
+    source_url = str(spec.get("url") or "").strip() or None
+    payload = {
+        "uid": str(spec.get("uid") or "").strip() or None,
+        "filename": str(spec.get("filename") or "").strip() or target.name or "asset",
+        "original_filename": str(spec.get("original_filename") or "").strip() or None,
+        "path": db_path,
+        "mime_type": str(spec.get("mime_type") or "").strip() or None,
+        "size": spec.get("size") if isinstance(spec.get("size"), int) else None,
+        "kind": str(spec.get("kind") or "other").strip().lower() or "other",
+        "alt_text": spec.get("alt_text"),
+        "caption": spec.get("caption"),
+        "source_url": source_url,
+        "storage_status": storage_status,
+        "is_external": int(bool(spec.get("is_external")) or storage_status == "external"),
+        "width": spec.get("width") if isinstance(spec.get("width"), int) else None,
+        "height": spec.get("height") if isinstance(spec.get("height"), int) else None,
+        "duration_seconds": spec.get("duration_seconds") if isinstance(spec.get("duration_seconds"), (int, float)) else None,
+        "checksum": checksum,
+        "content_sha256": str(spec.get("content_sha256") or "").strip()
+        or (file_checksum if storage_status == "local" else checksum)
+        or None,
+        "source_url_sha256": str(spec.get("source_url_sha256") or "").strip()
+        or (hashlib.sha256(source_url.encode("utf-8")).hexdigest() if source_url else None),
+    }
+    asset_id, _status = _upsert_asset_record(conn, payload)
+    return asset_id
 
 
 def _download_or_defer_asset(

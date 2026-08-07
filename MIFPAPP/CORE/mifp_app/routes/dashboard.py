@@ -47,7 +47,7 @@ from ..services.dashboard_repository import (
 )
 from ..services.data_portability import (
     build_export_bundle,
-    canonical_bundle_to_zip,
+    bundle_to_zip,
     import_zip_payload,
     scope_options,
     table_counts,
@@ -666,7 +666,7 @@ def data_portability_export_direct(fmt: str):
     ):
         with connect(current_app.config["DATABASE_PATH"]) as conn:
             if fmt == "zip":
-                payload = canonical_bundle_to_zip(conn, current_app.config["ASSETS_DIR"], app_version=str(current_app.config.get("APP_VERSION", "")))
+                payload = bundle_to_zip(conn, "all", current_app.config["ASSETS_DIR"], app_version=str(current_app.config.get("APP_VERSION", "")))
             else:
                 records = build_export_bundle(conn, "all")["records"]
                 payload = ("\n".join(
@@ -706,18 +706,39 @@ def data_portability_export_post(fmt: str):
         "data portability export started format=%s scope=%s", fmt, scope
     )
 
-    with operation_maintenance(
-        current_app.config["DATABASE_PATH"], f"data export: {fmt}", logger=current_app.logger
-    ):
-        with connect(current_app.config["DATABASE_PATH"]) as conn:
-            if fmt == "zip":
-                payload = canonical_bundle_to_zip(conn, current_app.config["ASSETS_DIR"], app_version=str(current_app.config.get("APP_VERSION", "")))
-            else:
-                records = build_export_bundle(conn, scope)["records"]
-                payload = ("\n".join(
-                    json.dumps(record, ensure_ascii=False, default=str, sort_keys=True, separators=(",", ":"))
-                    for record in records
-                ) + ("\n" if records else "")).encode("utf-8")
+    record_counts: dict[str, int] = {}
+    try:
+        with operation_maintenance(
+            current_app.config["DATABASE_PATH"], f"data export: {fmt}", logger=current_app.logger
+        ):
+            with connect(current_app.config["DATABASE_PATH"]) as conn:
+                if fmt == "zip":
+                    payload = bundle_to_zip(conn, scope, current_app.config["ASSETS_DIR"], app_version=str(current_app.config.get("APP_VERSION", "")))
+                else:
+                    records = build_export_bundle(conn, scope)["records"]
+                    for record in records:
+                        typ = str(record.get("type") or "")
+                        if typ:
+                            record_counts[typ] = record_counts.get(typ, 0) + 1
+                    payload = ("\n".join(
+                        json.dumps(record, ensure_ascii=False, default=str, sort_keys=True, separators=(",", ":"))
+                        for record in records
+                    ) + ("\n" if records else "")).encode("utf-8")
+    except Exception:
+        current_app.logger.exception("data portability export failed format=%s scope=%s", fmt, scope)
+        audit_log("export.data_portability", "data portability export", category="admin", outcome="failure",
+                  scope=scope, format=fmt)
+        error_payload = json.dumps({
+            "event": "error", "ok": False,
+            "title_text": "Export failed",
+            "message": "The export could not be generated. Check the server logs and try again.",
+            "icon_class": "bi-x-lg", "icon_modifier": "is-error",
+        })
+        return Response(error_payload + "\n", mimetype="application/x-ndjson", status=500, headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+        })
 
     mimetype = "application/zip" if fmt == "zip" else "application/x-ndjson"
     filename = f"MIFP_EXPORT_{date.today().isoformat()}.zip" if fmt == "zip" else "records.jsonl"
@@ -735,11 +756,12 @@ def data_portability_export_post(fmt: str):
     }
 
     current_app.logger.info(
-        "data portability export ready format=%s bytes=%d duration_ms=%d expired_tokens=%d cached_exports=%d",
-        fmt, total_bytes, duration_ms, expired, len(_export_cache),
+        "data portability export ready format=%s bytes=%d duration_ms=%d expired_tokens=%d cached_exports=%d counts=%s",
+        fmt, total_bytes, duration_ms, expired, len(_export_cache), record_counts,
     )
     audit_log("export.data_portability", "data portability export", category="admin", outcome="success",
-              scope=scope, format=fmt, bytes=total_bytes, duration_ms=duration_ms)
+              scope=scope, format=fmt, bytes=total_bytes, duration_ms=duration_ms,
+              counts=json.dumps(record_counts, separators=(",", ":")) if record_counts else None)
 
     def generate() -> Generator[str, None, None]:
         yield json.dumps({"event": "phase", "phase": "bundle", "label": "Building export bundle…", "percent": 0}) + "\n"
@@ -942,10 +964,6 @@ def _safe_import_error(exc: Exception) -> str:
     if isinstance(exc, ValueError):
         return str(exc)[:500]
     return "The import could not be completed. Check the server log for details."
-
-
-def _sse_event(event: str, payload: dict[str, Any]) -> str:
-    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
 
 def _perform_import(
