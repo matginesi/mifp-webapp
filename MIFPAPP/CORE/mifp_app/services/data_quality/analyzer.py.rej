@@ -1,0 +1,63 @@
+--- MIFPAPP/CORE/mifp_app/services/data_quality/analyzer.py
++++ MIFPAPP/CORE/mifp_app/services/data_quality/analyzer.py
+@@ -11,6 +11,7 @@
+ from pathlib import Path
+ from typing import Any
+ 
++from ..assets import resolve_db_asset_path
+ from .cluster import cluster_is_safe
+ from .models import ActionType, Classification, Evidence, Finding
+ from .normalizers import (
+@@ -165,9 +166,17 @@
+     last = str(row.get("last_name") or "").strip()
+     if not first or not last:
+         return None
+-    first_lower, last_lower = first.casefold(), last.casefold()
+-    if first_lower != last_lower and (last_lower in first_lower or first_lower in last_lower):
+-        evidence = [Evidence("name_inversion", "strong", "One name field contains the other; likely first/last name are swapped", [first, last])]
++    # Only flag an inversion when display_name actually agrees with the reversed
++    # field order. Substring checks break legitimate surnames such as D'Andrea.
++    display = comparison_text(row.get("display_name"))
++    normal_order = comparison_text(f"{first} {last}")
++    reversed_order = comparison_text(f"{last} {first}")
++    if display and reversed_order != normal_order and display == reversed_order:
++        evidence = [Evidence(
++            "name_inversion", "strong",
++            "display_name matches last-name/first-name order",
++            [first, last, row.get("display_name")],
++        )]
+         plan: dict[str, Any] = {
+             "action_type": "clean_record", "entity_type": "member", "record_ids": [row["id"]],
+             "operation": "swap_name_fields", "requires_review": True,
+@@ -306,7 +315,10 @@
+     title = str(row.get("title") or "")
+     if re.search(r"\s*\|\s*[A-Z]", title):
+         parts = [part.strip() for part in title.split("|")]
+-        if len(parts) >= 2:
++        informative = [part for part in parts if len(tokens(part)) >= 3 and len(part) >= 18]
++        # A pipe before/after an acronym (e.g. "... | ICP2DC5") is a title
++        # separator, not evidence that multiple event records were aggregated.
++        if len(parts) >= 2 and len(informative) >= 2:
+             evidence = [Evidence("pipe_separated_title", "strong", "Title contains pipe-delimited segments suggesting multiple entries", parts)]
+             plan: dict[str, Any] = {
+                 "action_type": "split_aggregated_record", "entity_type": "event", "record_ids": [row["id"]],
+@@ -779,9 +791,16 @@
+         root = Path(assets_dir)
+         for asset_row in conn.execute("SELECT * FROM assets WHERE COALESCE(path,'')<>'' ORDER BY id"):
+             asset = dict(asset_row)
+-            stored_path = Path(str(asset["path"]))
+-            file_path = stored_path if stored_path.is_absolute() else root / stored_path
+-            if file_path.is_file():
++            # Only locally-managed assets are expected to exist below ASSETS_DIR.
++            # Rows intentionally marked external/missing are handled by the asset
++            # recovery workflow and must not become Data Quality human decisions.
++            if bool(asset.get("is_external")) or str(asset.get("storage_status") or "local") != "local":
++                continue
++            try:
++                file_path = resolve_db_asset_path(root, str(asset["path"]))
++            except ValueError:
++                file_path = None
++            if file_path is not None and file_path.is_file():
+                 continue
+             fingerprint = stable_fingerprint("asset", [asset], action="missing_asset_file")
+             plan = {

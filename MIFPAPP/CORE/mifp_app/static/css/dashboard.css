@@ -4424,3 +4424,198 @@ textarea:focus-visible { outline: 3px solid var(--accent-alpha); outline-offset:
   .join-admin-card > .join-actions form .btn { width: 100%; }
   .join-admin-card > .join-actions form:last-child { margin-left: 0; }
 }
+
+/* Responsive overlay contract -------------------------------------------------
+   Keep dialogs and dashboard notifications inside the live viewport even when
+   the window is resized while an overlay is already open. Bootstrap's default
+   breakpoints are preserved, but sizing is continuous between breakpoints. */
+.dashboard-document .modal-dialog {
+  --dashboard-modal-gutter: clamp(.55rem, 1.6vw, 1rem);
+  width: min(var(--bs-modal-width, 31.25rem), calc(100vw - var(--dashboard-modal-gutter) - var(--dashboard-modal-gutter)));
+  max-width: var(--bs-modal-width, 31.25rem);
+  max-height: calc(100dvh - var(--dashboard-modal-gutter) - var(--dashboard-modal-gutter));
+  margin: var(--dashboard-modal-gutter) auto;
+}
+.dashboard-document .modal-content {
+  width: 100%;
+  max-width: 100%;
+  max-height: calc(100dvh - var(--dashboard-modal-gutter, 1rem) - var(--dashboard-modal-gutter, 1rem));
+}
+.dashboard-document .modal-header,
+.dashboard-document .modal-footer {
+  padding-inline: clamp(.65rem, 2vw, 1rem);
+}
+.dashboard-document .modal-body {
+  padding-inline: clamp(.65rem, 2vw, 1rem);
+}
+
+#toastContainer.toast-container {
+  --toast-edge: clamp(.5rem, 1.4vw, .9rem);
+  top: calc(var(--shell-topbar-height) + var(--toast-edge));
+  right: var(--toast-edge);
+  width: clamp(16rem, 30vw, 23rem);
+  max-width: calc(100vw - var(--toast-edge) - var(--toast-edge));
+  max-height: calc(100dvh - var(--shell-topbar-height) - var(--toast-edge) - var(--toast-edge));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.toast-notification {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-height: 600px) and (min-width: 577px) {
+  .dashboard-document .modal-dialog {
+    --dashboard-modal-gutter: .5rem;
+  }
+}
+
+@media (max-width: 576px) {
+  .dashboard-document .modal:not(.confirm-dialog) .modal-dialog {
+    --dashboard-modal-gutter: 0rem;
+    width: 100%;
+    max-width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+  }
+  .dashboard-document .modal:not(.confirm-dialog) .modal-content {
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+  .dashboard-document .confirm-dialog .modal-dialog {
+    --dashboard-modal-gutter: .5rem;
+    width: calc(100vw - 1rem);
+    max-width: min(var(--bs-modal-width, 31.25rem), calc(100vw - 1rem));
+    margin: .5rem auto;
+  }
+  #toastContainer.toast-container {
+    --toast-edge: .5rem;
+    left: var(--toast-edge);
+    right: var(--toast-edge);
+    width: auto;
+    max-width: none;
+  }
+}
+
+/* Data Quality workflow clarity ------------------------------------------------ */
+.dq-manual-callout {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .7rem;
+  margin: 0 .7rem .7rem;
+  padding: .7rem .8rem;
+  border: 1px solid color-mix(in srgb, var(--orange) 30%, var(--border-soft));
+  border-left: 3px solid var(--orange);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--orange) 6%, var(--surface));
+}
+.dq-manual-callout-icon {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 99px;
+  color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 12%, var(--surface));
+}
+.dq-manual-callout-copy { display: grid; gap: .08rem; min-width: 0; }
+.dq-manual-callout-copy b { color: var(--text-bright); font-size: .7rem; }
+.dq-manual-callout-copy span { color: var(--text-3); font-size: .6rem; line-height: 1.4; }
+.dq-manual-callout .btn { white-space: nowrap; }
+.dq-manual-callout.is-empty {
+  border-color: var(--border-soft);
+  border-left-color: var(--text-4);
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--surface));
+}
+.dq-manual-callout.is-empty .dq-manual-callout-icon {
+  color: var(--text-4);
+  background: color-mix(in srgb, var(--text-4) 7%, var(--surface));
+}
+.dq-manual-callout .btn:disabled,
+.btn-dq-review-manual:disabled {
+  opacity: .55;
+  cursor: default;
+  pointer-events: none;
+}
+.dq-manual-callout .btn span,
+.btn-dq-review-manual b {
+  display: inline-grid;
+  min-width: 1.25rem;
+  min-height: 1.25rem;
+  margin-left: .18rem;
+  place-items: center;
+  padding: 0 .25rem;
+  border-radius: 99px;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  font-size: .55rem;
+}
+.dq-summary-card[data-workflow-filter="manual"] {
+  border-color: color-mix(in srgb, var(--orange) 28%, var(--border-soft));
+  background: color-mix(in srgb, var(--orange) 4%, var(--surface));
+}
+.dq-summary-card[data-workflow-filter="manual"] i { color: var(--orange); }
+.dq-summary-card[data-workflow-filter="automatic"] i { color: var(--green); }
+.btn-dq-review-manual,
+.btn-dq-manual-jump,
+.btn-dq-manual {
+  color: var(--orange) !important;
+  border-color: color-mix(in srgb, var(--orange) 35%, var(--border)) !important;
+  background: color-mix(in srgb, var(--orange) 8%, var(--surface)) !important;
+}
+.btn-dq-review-manual:hover,
+.btn-dq-manual-jump:hover,
+.btn-dq-manual:hover {
+  border-color: var(--orange) !important;
+  background: color-mix(in srgb, var(--orange) 14%, var(--surface)) !important;
+}
+.dq-finding-card.dq-finding-manual {
+  border-left: 3px solid color-mix(in srgb, var(--orange) 72%, var(--border));
+}
+.dq-finding-card.dq-finding-automatic {
+  border-left: 3px solid color-mix(in srgb, var(--green) 55%, var(--border));
+}
+.dq-workflow-explanation {
+  display: flex;
+  align-items: flex-start;
+  gap: .28rem;
+  margin-top: .25rem;
+  padding: .28rem .38rem;
+  border-radius: var(--radius-sm);
+  font-size: .57rem;
+  line-height: 1.4;
+}
+.dq-workflow-explanation i { margin-top: .03rem; flex-shrink: 0; }
+.dq-workflow-explanation-automatic {
+  color: color-mix(in srgb, var(--green) 75%, var(--text));
+  background: color-mix(in srgb, var(--green) 7%, var(--surface));
+}
+.dq-workflow-explanation-manual {
+  color: color-mix(in srgb, var(--orange) 78%, var(--text));
+  background: color-mix(in srgb, var(--orange) 8%, var(--surface));
+}
+.dq-workflow-explanation-informational {
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+
+@media (max-width: 760px) {
+  .dq-manual-callout { grid-template-columns: auto minmax(0, 1fr); }
+  .dq-manual-callout .btn { grid-column: 1 / -1; width: 100%; justify-content: center; }
+  .dq-queue-actions { justify-content: stretch; }
+  .dq-queue-actions .btn { flex: 1 1 auto; justify-content: center; }
+}
+
+@media (max-width: 480px) {
+  .dq-summary-cards { grid-template-columns: 1fr; }
+  .dq-manual-callout { margin-inline: .5rem; padding: .6rem; }
+  .dq-finding-list { padding-inline: .5rem; }
+  .dq-finding-actions { width: 100%; flex-wrap: wrap; }
+  .dq-finding-actions .btn { flex: 1 1 auto; justify-content: center; }
+}

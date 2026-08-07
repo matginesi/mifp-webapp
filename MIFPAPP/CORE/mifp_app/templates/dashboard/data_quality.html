@@ -27,8 +27,8 @@
       {% if run %}
       <div class="dq-summary-cards" id="dqSummaryCards">
         {% for value, label, icon, help in [
-          ('automatic','Safe automatic','bi-lightning-charge','High-confidence changes that can be queued in bulk.'),
-          ('manual','Needs a decision','bi-person-check','Ambiguous merges, splits or edits that need human input.'),
+          ('automatic','Automatic fixes','bi-lightning-charge','Deterministic and very-high-confidence changes that can be queued in bulk.'),
+          ('manual','Manual review','bi-person-check','Only changes that genuinely need your decision.'),
           ('informational','Informational','bi-info-circle','Related/blocked findings that do not need a database change.'),
         ] %}
         <button type="button" class="dq-summary-card" data-workflow-filter="{{ value }}" title="{{ help }}">
@@ -37,6 +37,22 @@
           <span>{{ label }}</span>
         </button>
         {% endfor %}
+      </div>
+      {% set manual_count = workflow_counts.get('manual', 0) %}
+      <div class="dq-manual-callout{% if not manual_count %} is-empty{% endif %}">
+        <div class="dq-manual-callout-icon"><i class="bi bi-person-check"></i></div>
+        <div class="dq-manual-callout-copy">
+          {% if manual_count %}
+          <b>{{ manual_count }} items need a human decision</b>
+          <span>These are the only findings the analyzer cannot resolve safely by itself.</span>
+          {% else %}
+          <b>No manual decisions required</b>
+          <span>Manual review stays available here whenever a scan finds genuinely ambiguous items.</span>
+          {% endif %}
+        </div>
+        <button type="button" class="btn btn-sm btn-dq-manual-jump" data-workflow-filter="manual" {% if not manual_count %}disabled aria-disabled="true"{% endif %}>
+          Review manually <span>{{ manual_count }}</span>
+        </button>
       </div>
       {% else %}
       <div class="dq-empty-phase">
@@ -56,7 +72,7 @@
       <span class="dq-phase-num"><i class="bi bi-check2-square"></i></span>
       <div>
         <h2>Review &amp; Apply</h2>
-        <p>Start with safe automatic fixes, then review only the genuinely ambiguous items. Informational findings never block cleanup.</p>
+        <p>Queue deterministic fixes in one click. Manual review is reserved for changes that truly need your judgment.</p>
       </div>
     </header>
     {% if run %}
@@ -87,8 +103,8 @@
       <label>
         <span>Finding</span>
         <select class="form-select form-select-sm" name="classification">
-          <option value="automatic" selected>Safe automatic</option>
-          <option value="manual">Needs manual decision</option>
+          <option value="automatic" selected>Automatic fixes</option>
+          <option value="manual">Manual review</option>
           <option value="informational">Informational / non-blocking</option>
           <option value="">All</option>
           <option value="exact_duplicate">Exact match</option>
@@ -105,7 +121,7 @@
     </form>
     <div class="dq-queue-bar">
       <div class="dq-filter-status" aria-live="polite">
-        <b id="dqFilteredCount">{{ total }}</b>
+        <b id="dqFilteredCount">{{ workflow_counts.get('automatic', 0) }}</b>
         <span>matching the current filters</span>
       </div>
       <div class="dq-queue-stats" id="dqQueueStats">
@@ -122,7 +138,10 @@
       </div>
       <div class="dq-queue-actions">
         <button type="button" class="btn btn-sm btn-dq-accept-all" id="dqAcceptAll" {% if not workflow_counts.get('automatic') %}disabled{% endif %}>
-          <i class="bi bi-check2-all"></i> Queue matching automatic fixes
+          <i class="bi bi-check2-all"></i> Queue all automatic fixes
+        </button>
+        <button type="button" class="btn btn-sm btn-dq-review-manual" data-workflow-filter="manual" {% if not workflow_counts.get('manual', 0) %}disabled aria-disabled="true"{% endif %}>
+          <i class="bi bi-person-check"></i> Review manual <b>{{ workflow_counts.get('manual', 0) }}</b>
         </button>
         <button type="button" class="btn btn-sm btn-dq-apply" id="dqApplyAll" {% if not bundle %}disabled{% endif %}>
           <i class="bi bi-database-check"></i> Apply changes
@@ -203,7 +222,7 @@
 
 {% block extra_js %}
 {{ super() }}
-<script src="{{ url_for('static', filename='js/dashboard/data-quality.js', v='20260729-07') }}" defer></script>
+<script src="{{ url_for('static', filename='js/dashboard/data-quality.js', v=static_version) }}" defer></script>
 <script type="application/json" id="dqConfig" nonce="{{ csp_nonce }}">{{ {
   'runId': run.id if run else none,
   'bundleId': bundle.id if bundle else none,

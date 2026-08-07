@@ -21,7 +21,7 @@ from ..services.data_quality import (
     list_findings,
     remove_from_bundle,
 )
-from ..services.data_quality.analyzer import database_fingerprint, finding_workflow
+from ..services.data_quality.analyzer import database_fingerprint, finding_review_only, finding_workflow
 from ..services.data_quality.planner import LABELS, TABLES, records_for
 from ..services.data_quality.policies import similarity
 from ..services.job_manager import JobQueueFull, get_job_manager
@@ -301,22 +301,11 @@ def data_quality_decision(finding_id: int):
                 if str(value).isdigit()
             ]
 
-            # Some manual findings are intentionally review-only.  The main
-            # example is an event page fragment: analysis can identify that a
-            # row looks like a sub-page, but with no second record there is no
-            # safe merge target to execute.  An administrator must be able to
-            # close that finding after reviewing it instead of being trapped in
-            # an impossible bundle action.  This changes only Data Quality
-            # state; it never mutates the content record.
-            review_only_manual = (
-                workflow == "manual"
-                and finding.get("action_type") == "merge_records"
-                and (
-                    str(plan.get("operation") or "") == "absorb_fragment"
-                    or str(finding.get("classification") or "") == "page_fragment_attached"
-                )
-                and len(set(record_ids)) < 2
-            )
+            # Every manual finding must have a real path to completion.
+            # If the plan exposes no editable choice (no merge target, no field
+            # values, no split titles), it is review-only and can be closed
+            # without mutating content or creating an empty bundle item.
+            review_only_manual = finding_review_only(finding)
             if review_only_manual:
                 conn.execute(
                     "UPDATE quality_findings SET status='resolved',updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -433,32 +422,45 @@ def data_quality_bulk_decision():
     bundle_id = 0
 
     with connect(Path(current_app.config["DATABASE_PATH"])) as conn:
+        # Bulk acceptance has one invariant: it only queues findings that the
+        # server itself currently classifies as safe automatic. Never trust a
+        # stale browser filter or an old ``all_run`` client to define that set.
+        automatic_only = decision == "accept"
+        requested_workflow = str(data.get("workflow") or "")
+        if automatic_only and requested_workflow not in {"", "automatic"}:
+            return jsonify({"ok": False, "message": "Bulk accept is only available for safe automatic findings"}), 400
+
         if all_run:
             if not run_id:
                 return jsonify({"ok": False, "message": "A scan run is required"}), 400
             entities = []
             offset = 0
+            workflow_filter = "automatic" if automatic_only else ""
             while True:
-                batch = list_findings(conn, run_id, limit=500, offset=offset)
+                batch = list_findings(
+                    conn, run_id, classification=workflow_filter, limit=500, offset=offset
+                )
                 entities.extend(batch)
                 if len(batch) < 500:
                     break
                 offset += len(batch)
         elif finding_ids:
-            placeholders = ",".join("?" for _ in finding_ids)
-            rows = conn.execute(
-                f"SELECT id, action_type, entity_type, classification, score, contradictions_json, fingerprint, plan_json FROM quality_findings WHERE id IN ({placeholders}) AND status='open'",
-                finding_ids,
-            ).fetchall()
-            entities = [dict(r) for r in rows]
-            for item in entities:
-                item["contradictions"] = json.loads(item.pop("contradictions_json") or "[]")
-                item["plan"] = json.loads(item.pop("plan_json") or "{}")
+            entities = []
+            for finding_id in finding_ids:
+                finding = get_finding(conn, finding_id)
+                if not finding or finding.get("status") != "open":
+                    continue
+                if automatic_only and finding.get("workflow") != "automatic":
+                    skipped_review += 1
+                    continue
+                entities.append(finding)
         else:
             filter_args = {
                 "action_type": str(filters.get("action_type") or ""),
                 "entity_type": str(filters.get("entity_type") or ""),
-                "classification": str(filters.get("classification") or ""),
+                # A bulk accept always uses the canonical server-side workflow
+                # filter, regardless of what an older cached client submitted.
+                "classification": "automatic" if automatic_only else str(filters.get("classification") or ""),
             }
             total = count_findings(conn, run_id, **filter_args) if run_id else 0
             if total > _MAX_BULK_LIMIT and not bool(data.get("acknowledge_overlimit")):
@@ -471,23 +473,27 @@ def data_quality_bulk_decision():
                 }), 400
             entities = list_findings(conn, run_id, limit=_MAX_BULK_LIMIT, **filter_args)
 
+        matched = len(entities)
         if decision == "accept":
-            bundle_row = conn.execute(
-                "SELECT id FROM quality_bundles WHERE status IN ('draft','validated') ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-            if bundle_row:
-                bundle_id = int(bundle_row["id"])
-            else:
-                bundle_id = create_bundle(conn, str(session.get("admin_username") or "admin"))
+            if entities:
+                bundle_row = conn.execute(
+                    "SELECT id FROM quality_bundles WHERE status IN ('draft','validated') ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                if bundle_row:
+                    bundle_id = int(bundle_row["id"])
+                else:
+                    bundle_id = create_bundle(conn, str(session.get("admin_username") or "admin"))
 
             for finding in entities:
                 try:
                     action_type = str(finding.get("action_type") or "")
                     workflow = finding.get("workflow") or finding_workflow(finding)
                     if workflow != "automatic":
+                        # This should now be unreachable because selection is
+                        # server-side. Keep the guard and make it visible in logs.
                         skipped_review += 1
-                        current_app.logger.debug(
-                            "bulk accept skipped finding=%s workflow=%s classification=%s",
+                        current_app.logger.error(
+                            "bulk_accept selection mismatch finding=%s workflow=%s classification=%s",
                             finding.get("id"), workflow, finding.get("classification"),
                         )
                         continue
@@ -498,8 +504,8 @@ def data_quality_bulk_decision():
                     failed += 1
                     failures.append({"finding_id": finding["id"], "message": str(exc)})
             current_app.logger.info(
-                "bulk_accept done findings=%d applied=%d skipped_manual=%d failed=%d bundle_id=%s",
-                len(entities), applied, skipped_review, failed, bundle_id,
+                "bulk_accept done run_id=%s matched=%d applied=%d requires_manual=%d failed=%d bundle_id=%s filters=%s",
+                run_id, matched, applied, skipped_review, failed, bundle_id, filters,
             )
             if failures:
                 current_app.logger.info("bulk_accept failures: %s", failures[:20])
@@ -542,6 +548,7 @@ def data_quality_bulk_decision():
             "ok": True,
             "result": {
                 "applied": applied,
+                "matched": matched,
                 "failed": failed,
                 "failures": failures,
                 "skipped_review": skipped_review,

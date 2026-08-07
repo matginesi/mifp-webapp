@@ -194,7 +194,18 @@ def create_app():
 
     import os as _os
     _static_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "static")
-    _static_ver = str(int(_os.path.getmtime(_os.path.join(_static_dir, "css", "dashboard.css"))))
+    # One startup-time cache version for all local frontend assets. The old
+    # implementation only watched dashboard.css, so JS-only deployments could
+    # keep serving stale dashboard logic from the browser cache.
+    _static_mtimes = []
+    for _root, _dirs, _files in _os.walk(_static_dir):
+        for _name in _files:
+            if _name.endswith((".css", ".js")):
+                try:
+                    _static_mtimes.append(_os.path.getmtime(_os.path.join(_root, _name)))
+                except OSError:
+                    pass
+    _static_ver = str(int(max(_static_mtimes, default=_os.path.getmtime(_static_dir))))
 
     @app.context_processor
     def inject_security_context():

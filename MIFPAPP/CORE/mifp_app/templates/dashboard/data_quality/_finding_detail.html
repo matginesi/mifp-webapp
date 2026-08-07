@@ -2,7 +2,7 @@
 {% set records = plan.get('records') or (plan.get('record') and [plan.get('record')]) or (plan.get('source_record') and [plan.get('source_record')]) or [] %}
 {% set is_merge = finding.action_type == 'merge_records' %}
 {% set manually_editable = finding.workflow == 'manual' %}
-{% set review_only = manually_editable and finding.action_type == 'merge_records' and (plan.get('operation') == 'absorb_fragment' or finding.classification == 'page_fragment_attached') and (finding.record_ids or [])|length < 2 %}
+{% set review_only = finding.review_only %}
 {% set primary = records[0] if records else {} %}
 {% set record_label = primary.get('title') or primary.get('display_name') or primary.get('name') or ('Record #' ~ (primary.get('id') or finding.record_ids[0] if finding.record_ids else finding.id)) %}
 
@@ -206,7 +206,7 @@
     {% endif %}
   </div>
   <button type="submit" class="btn btn-sm btn-primary">
-    <i class="bi bi-check2-square"></i> Queue reviewed change
+    <i class="bi bi-check2-square"></i> Queue reviewed fix
   </button>
 </form>
 {% endif %}

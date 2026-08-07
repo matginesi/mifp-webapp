@@ -1,4 +1,4 @@
-from .analyzer import analyze, count_findings, count_workflows, get_finding, latest_run, list_findings
+from .analyzer import analyze, count_findings, count_workflows, finding_review_only, get_finding, latest_run, list_findings, manual_plan_actionable
 from .cluster import cluster_is_safe
 from .executor import (
     add_to_bundle,
@@ -22,11 +22,13 @@ __all__ = [
     "cluster_is_safe",
     "count_findings",
     "count_workflows",
+    "finding_review_only",
     "create_bundle",
     "delete_draft",
     "get_finding",
     "latest_run",
     "list_findings",
+    "manual_plan_actionable",
     "remove_from_bundle",
     "validate_bundle",
 ]

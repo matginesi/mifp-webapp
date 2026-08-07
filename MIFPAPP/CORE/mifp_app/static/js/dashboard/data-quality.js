@@ -59,8 +59,8 @@
         var workflow = String((f.elements.classification && f.elements.classification.value) || 'automatic');
         var safeAutomatic = workflow === 'automatic';
         bulk.disabled = !safeAutomatic || Number(d.total || 0) === 0;
-        bulk.textContent = safeAutomatic ? 'Queue matching automatic fixes' : 'Bulk apply is only available for safe automatic fixes';
-        bulk.title = safeAutomatic ? 'Queue all currently filtered safe automatic fixes' : 'Review manual or informational findings individually';
+        bulk.textContent = safeAutomatic ? 'Queue all automatic fixes' : 'Automatic bulk queue is available only in the Automatic fixes view';
+        bulk.title = safeAutomatic ? 'Queue every currently filtered deterministic/high-confidence fix' : 'Switch to Automatic fixes, or review these items manually';
       }
       return d;
     } catch (error) {
@@ -179,27 +179,55 @@
 
   async function acceptAll() {
     if (!S.runId) { toast('Run a scan first.', 'warning'); return; }
+    var filtersForm = $('dqFilters');
+    if (!(filtersForm instanceof HTMLFormElement)) { toast('The filters are not available. Reload the page.', 'error'); return; }
+    var filters = Object.fromEntries(new FormData(filtersForm).entries());
+    // Bulk acceptance is intentionally restricted to the server-side automatic workflow.
+    // This explicit marker also protects against stale browser code and ambiguous pseudo-filters.
+    filters.classification = 'automatic';
     var btn = $('dqAcceptAll');
     if (btn) btn.disabled = true;
+    if (window.MIFPLog && window.MIFPLog.info) {
+      window.MIFPLog.info('data-quality.bulk-accept.started', { runId: S.runId, filters: filters });
+    }
     try {
       var r = await window.MIFP.request(C.bulkDecisionUrl, {
         method: 'POST',
-        json: { decision: 'accept', run_id: S.runId, filters: Object.fromEntries(new FormData($('dqFilters')).entries()) }
+        json: { decision: 'accept', workflow: 'automatic', run_id: S.runId, filters: filters }
       });
       if (r.data.ok) {
         if (r.data.result.bundle_id) S.bundleId = Number(r.data.result.bundle_id);
         var skippedReview = Number(r.data.result.skipped_review || 0);
-        var reviewed = Number(r.data.result.reviewed_without_change || 0);
         var failed = Number(r.data.result.failed || 0);
-        var summary = r.data.result.applied + ' findings accepted';
-        if (reviewed) summary += ', ' + reviewed + ' manual reviews completed';
-        if (skippedReview) summary += ', ' + skippedReview + ' deferred';
-        if (failed) summary += ', ' + failed + ' failed';
-        toast(summary + '.', failed || skippedReview ? 'warning' : 'success');
+        var applied = Number(r.data.result.applied || 0);
+        var matched = Number(r.data.result.matched || 0);
+        var summary;
+        var tone = 'success';
+        if (!matched) {
+          summary = 'No automatic fixes match the current filters';
+          tone = 'info';
+        } else {
+          summary = applied + ' automatic fixes queued';
+          if (skippedReview) {
+            summary += ', ' + skippedReview + ' require manual review';
+            tone = 'warning';
+          }
+          if (failed) {
+            summary += ', ' + failed + ' failed';
+            tone = 'warning';
+          }
+        }
+        toast(summary + '.', tone);
+        if (window.MIFPLog && window.MIFPLog.info) {
+          window.MIFPLog.info('data-quality.bulk-accept.finished', r.data.result);
+        }
         await renderQueue();
         await reloadFindings();
       }
-    } catch (e) { toast(e.message, 'error'); }
+    } catch (e) {
+      if (window.MIFPLog && window.MIFPLog.error) window.MIFPLog.error('data-quality.bulk-accept.failed', { message: e.message });
+      toast(e.message, 'error');
+    }
     if (btn) btn.disabled = false;
   }
 
@@ -361,7 +389,7 @@
       if (target.classList.contains('btn-dq-accept')) { e.stopPropagation(); acceptFinding(fid).catch(function (err) { toast(err.message, 'error'); }); return; }
       if (target.classList.contains('btn-dq-ignore')) { e.stopPropagation(); ignoreFinding(fid).catch(function (err) { toast(err.message, 'error'); }); return; }
     }
-    var sc = e.target.closest('.dq-summary-card');
+    var sc = e.target.closest('[data-workflow-filter], .dq-summary-card');
     if (sc && $('dqFilters')) {
       if (sc.dataset.actionFilter !== undefined && $('dqFilters').elements.action_type) {
         $('dqFilters').elements.action_type.value = sc.dataset.actionFilter || '';

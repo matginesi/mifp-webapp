@@ -1563,16 +1563,89 @@ def test_data_quality_page_exposes_distinct_actions_and_bundle(client, app):
     body = response.get_data(as_text=True)
     assert "Scan" in body
     assert "Review &amp; Apply" in body
-    assert "Safe automatic" in body
-    assert "Needs a decision" in body
+    assert "Automatic fixes" in body
+    assert "Manual review" in body
     assert "Informational" in body
     assert "Clean record" in body
     assert "Split aggregated" in body
     assert "Apply changes" in body
     assert "Merge candidates" in body
-    assert "Queue matching automatic fixes" in body
+    assert "Queue all automatic fixes" in body
+    # Manual work is a first-class workflow, not hidden behind a generic filter.
+    assert "Review manually" in body or "Review manual" in body
     assert "Accept all" not in body
     assert "Approve all" not in body
+
+
+def test_data_quality_bulk_accept_server_filters_out_manual_findings(client, app, monkeypatch):
+    from mifp_app.routes import dashboard_data_quality
+
+    with _db(app) as conn:
+        run_id = conn.execute(
+            """INSERT INTO quality_runs(status,fingerprint,completed_at,summary_json)
+               VALUES('completed','bulk-auto-only',CURRENT_TIMESTAMP,'{}')"""
+        ).lastrowid
+        auto_id = conn.execute(
+            """INSERT INTO quality_findings(
+                   run_id,action_type,entity_type,record_ids_json,classification,score,status,fingerprint,plan_json
+               ) VALUES(?,'clean_record','member','[1]','needs_cleaning',1.0,'open','bulk-auto','{}')""",
+            (run_id,),
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO quality_findings(
+                   run_id,action_type,entity_type,record_ids_json,classification,score,status,fingerprint,plan_json
+               ) VALUES(?,'split_aggregated_record','event','[2]','aggregated_record',0.9,'open','bulk-manual',
+                        '{"action_type":"split_aggregated_record","proposed_records":[{"title_hint":"A"},{"title_hint":"B"}]}')""",
+            (run_id,),
+        )
+        conn.commit()
+
+    accepted: list[int] = []
+
+    def fake_add_to_bundle(conn, bundle_id, finding_id, payload):
+        accepted.append(int(finding_id))
+        conn.execute("UPDATE quality_findings SET status='bundled' WHERE id=?", (finding_id,))
+
+    monkeypatch.setattr(dashboard_data_quality, "add_to_bundle", fake_add_to_bundle)
+    response = client.post(
+        "/dashboard/data-quality/bulk-decision",
+        json={"decision": "accept", "run_id": run_id, "all_run": True},
+    )
+
+    assert response.status_code == 200
+    result = response.get_json()["result"]
+    assert result["matched"] == 1
+    assert result["applied"] == 1
+    assert result["skipped_review"] == 0
+    assert accepted == [auto_id]
+
+
+def test_data_quality_bulk_accept_does_not_create_empty_bundle_for_manual_only_run(client, app):
+    with _db(app) as conn:
+        run_id = conn.execute(
+            """INSERT INTO quality_runs(status,fingerprint,completed_at,summary_json)
+               VALUES('completed','bulk-manual-only',CURRENT_TIMESTAMP,'{}')"""
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO quality_findings(
+                   run_id,action_type,entity_type,record_ids_json,classification,score,status,fingerprint,plan_json
+               ) VALUES(?,'split_aggregated_record','event','[2]','aggregated_record',0.9,'open','bulk-manual-only-finding',
+                        '{"action_type":"split_aggregated_record","proposed_records":[{"title_hint":"A"},{"title_hint":"B"}]}')""",
+            (run_id,),
+        )
+        conn.commit()
+
+    response = client.post(
+        "/dashboard/data-quality/bulk-decision",
+        json={"decision": "accept", "run_id": run_id, "all_run": True},
+    )
+
+    assert response.status_code == 200
+    result = response.get_json()["result"]
+    assert result["matched"] == 0
+    assert result["applied"] == 0
+    assert result["bundle_id"] is None
+    assert _scalar(app, "SELECT COUNT(*) FROM quality_bundles") == 0
 
 
 def test_data_quality_accept_all_includes_findings_beyond_first_page(
@@ -1642,6 +1715,81 @@ def test_data_quality_manual_review_acceptance_is_terminal(client, app):
         app, "SELECT status FROM quality_findings WHERE id=?", (finding_id,)
     ) == "resolved"
     assert _scalar(app, "SELECT COUNT(*) FROM quality_bundles") == 0
+
+
+def test_data_quality_manual_without_editable_plan_can_be_marked_reviewed(client, app):
+    with _db(app) as conn:
+        asset_id = conn.execute(
+            "INSERT INTO assets(filename,path,storage_status) VALUES('missing.pdf','missing.pdf','missing')"
+        ).lastrowid
+        run_id = conn.execute(
+            """INSERT INTO quality_runs(status,fingerprint,completed_at,summary_json)
+               VALUES('completed','manual-review-generic',CURRENT_TIMESTAMP,'{}')"""
+        ).lastrowid
+        finding_id = conn.execute(
+            """INSERT INTO quality_findings(
+                   run_id,action_type,entity_type,record_ids_json,
+                   classification,score,status,fingerprint,plan_json
+               ) VALUES(?,'repair_relations_or_assets','asset',?,'blocked',
+                        1.0,'open','manual-review-generic-finding',?)""",
+            (run_id, json.dumps([asset_id]), json.dumps({
+                "action_type": "repair_relations_or_assets",
+                "entity_type": "asset",
+                "record_ids": [asset_id],
+                "operation": "recover_or_relink_missing_asset",
+                "requires_review": True,
+            })),
+        ).lastrowid
+        conn.commit()
+
+    listing = client.get(
+        f"/dashboard/data-quality/findings?run_id={run_id}&classification=manual"
+    )
+    assert listing.status_code == 200
+    assert "Mark reviewed" in listing.get_json()["items_html"]
+    assert "Review & queue" not in listing.get_json()["items_html"]
+
+    response = client.post(
+        f"/dashboard/data-quality/findings/{finding_id}/decision",
+        json={"decision": "accept"},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["reviewed_without_change"] is True
+    assert _scalar(app, "SELECT status FROM quality_findings WHERE id=?", (finding_id,)) == "resolved"
+
+
+def test_data_quality_actionable_manual_still_requires_reviewed_plan(client, app):
+    with _db(app) as conn:
+        conn.executemany(
+            "INSERT INTO events(id,slug,title) VALUES(?,?,?)",
+            [(101, "manual-a", "Manual A"), (102, "manual-b", "Manual B")],
+        )
+        run_id = conn.execute(
+            """INSERT INTO quality_runs(status,fingerprint,completed_at,summary_json)
+               VALUES('completed','manual-actionable',CURRENT_TIMESTAMP,'{}')"""
+        ).lastrowid
+        finding_id = conn.execute(
+            """INSERT INTO quality_findings(
+                   run_id,action_type,entity_type,record_ids_json,
+                   classification,score,status,fingerprint,plan_json
+               ) VALUES(?,'merge_records','event','[101,102]','ambiguous',
+                        0.5,'open','manual-actionable-finding',?)""",
+            (run_id, json.dumps({
+                "action_type": "merge_records",
+                "entity_type": "event",
+                "record_ids": [101, 102],
+                "canonical_id": 101,
+            })),
+        ).lastrowid
+        conn.commit()
+
+    response = client.post(
+        f"/dashboard/data-quality/findings/{finding_id}/decision",
+        json={"decision": "accept"},
+    )
+    assert response.status_code == 409
+    detail = client.get(f"/dashboard/data-quality/findings/{finding_id}").get_json()["detail_html"]
+    assert "Queue reviewed fix" in detail
 
 
 def test_data_quality_review_list_only_contains_open_findings(app):
@@ -1763,7 +1911,7 @@ def test_data_quality_manual_editor_can_choose_only_a_finding_record(client, app
 
     detail = client.get(f"/dashboard/data-quality/findings/{finding_id}")
     assert detail.status_code == 200
-    assert "Queue reviewed change" in detail.get_json()["detail_html"]
+    assert "Queue reviewed fix" in detail.get_json()["detail_html"]
 
     accepted = client.post(
         f"/dashboard/data-quality/bundles/{bundle_id}/items",
@@ -1880,6 +2028,9 @@ def test_data_quality_frontend_does_not_auto_accept_after_scan():
     assert "bulkDecisionUrl" not in scan_section
     assert "Scanning is read-only" in scan_section
     assert "AbortController" in script
+    template = (Path(__file__).resolve().parents[2] / "MIFPAPP/CORE/mifp_app/templates/dashboard/data_quality.html").read_text(encoding="utf-8")
+    assert "v=static_version" in template
+    assert "20260729-07" not in template
 
 
 def test_control_content_quality_links_current_data_quality_workflow(client, app):

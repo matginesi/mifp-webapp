@@ -1,82 +1,56 @@
-# MIFP Webapp
+# MIFP Data Quality fix — 2026-08-07
 
-La root contiene webapp, scraper, database, test e strumenti. I vecchi alberi `IMPORT_DATA/` non fanno più parte del progetto.
-Il launcher operativo è uno solo: `./mifp`.
+This patch fixes the Data Quality false-positive flood reproduced from the supplied post-analysis export.
 
-## Avvio
+## Exact root cause of the 279 manual findings
 
-```bash
-./mifp local
-./mifp docker
-./mifp production
-./mifp production example.org
-```
+Using the same analyzer version as the current MIFP backend:
 
-- `local`: Flask sul sistema host. Il launcher verifica realmente gli import runtime e crea, ripara o aggiorna il virtualenv quando Flask o altre dipendenze risultano mancanti.
-- `docker`: ambiente locale Docker, codice montato e dati in `MIFPAPP/DATABASE`.
-- `production`: Gunicorn in container, volume persistente e bootstrap del database.
-- `production DOMINIO`: aggiunge Caddy e HTTPS automatico.
+- 56 were non-asset content findings;
+- 223 were false missing-asset findings;
+- 56 + 223 = 279.
 
-Il launcher crea la configurazione locale, genera secret e credenziali admin se mancanti,
-attende `/ready` e mostra i log quando un avvio fallisce.
+The 223 asset findings came from two issues:
 
-## Pipeline dati
+1. 182 canonical DB asset paths already start with `assets/...`, while `ASSETS_DIR` already points at the assets directory. The old analyzer therefore checked `.../assets/assets/...`.
+2. 41 assets are intentionally `external` or `missing`; they must not be treated as local files requiring a human Data Quality decision.
 
-Gli scraper non sono stati rimossi:
+## Code fixes
 
-```bash
-./mifp scrape remote
-./mifp scrape local --local-root /percorso/mirror
-./mifp scrape all --local-root /percorso/mirror
-./mifp database
-./mifp refresh remote
-```
+1. Resolve DB-tracked asset paths through the existing `resolve_db_asset_path()` helper.
+2. Test on-disk existence only for assets with `storage_status=local` and `is_external=0`.
+3. Do not flag legitimate names such as `Andrea D'Andrea` as first/last-name inversions merely because one token is a substring of the other.
+4. Treat event suffixes such as `| ICP2DC5` as acronym/title separators instead of automatically classifying the event as an aggregated record.
+5. Normalize filler terms (`MIFP`, `of`, `international`, etc.) when comparing event series so different yearly editions are kept separate.
+6. Remove the unsafe news fallback that created manual candidates from same scraper + fuzzy-similar dates alone.
+7. Tighten fuzzy-news fallback so title similarity alone is not sufficient.
+8. Add regression tests covering these cases.
 
-`SCRAPERS/run_all.sh` resta il motore della pipeline scraper.
-`MIFPAPP/DATABASE/build.sh` resta il builder/importer del database.
-Gli input canonici arrivano esclusivamente da `SCRAPERS/OUTPUTS/` o dall’import esplicito della dashboard; `IMPORT_DATA/` è legacy e non viene distribuita.
+## Reproduction
 
-## Test
+Against the supplied 447-record post-import export, with the 205 locally-managed asset paths represented on disk:
 
-```bash
-./mifp test
-./mifp test webapp
-./mifp test scraper
-./mifp test database
-./mifp test browser
-./mifp test all
-```
+- old analyzer: 279 manual decisions in the user's real run;
+- patched analyzer before editorial event cleanup: 26 manual content findings, 0 manual asset findings;
+- patched analyzer + `MIFP_EXPORT_CLEAN_V2_IMPORT_READY_2026-08-07.zip`: 411 records, 3 total findings:
+  - 1 manual;
+  - 2 informational;
+  - 0 manual asset findings.
 
-`test_all.sh` rimane il runner interno delle suite complete. Anche la suite browser usa l’output pytest standard con avanzamento percentuale.
+The one remaining manual item is a pair of distinct Megagrant news articles about different recipients. It should be kept separate rather than auto-merged.
 
+## Apply
 
-## Archivio personale completo
+From the repository root:
 
 ```bash
-./zip_it.sh
-# oppure
-./mifp zip
+patch -p1 < data-quality-fix.patch
 ```
 
-Lo ZIP include webapp, scraper, builder database, test, tools e documentazione anche quando tali cartelle sono escluse dal remoto GitHub. Non include `IMPORT_DATA/`, database SQLite, asset scaricati, output scraper, backup, export, log, virtualenv, cache, secret o archivi precedenti.
+or copy the included files over the same paths.
 
-## Repository GitHub webapp-only
+Then restart the app and run a new Data Quality analysis. Historical runs may remain visible, but the newest run uses the corrected analyzer.
 
-Le cartelle locali restano nella root, ma `.gitignore` consente al remoto soltanto:
+## Validation note
 
-- `MIFPAPP/CORE/`;
-- launcher e configurazioni essenziali;
-- test webapp;
-- workflow CI/CD.
-
-Per sostituire anche la vecchia cronologia remota senza cancellare le cartelle locali, usa la procedura con indice temporaneo documentata in `comandi.txt`. La procedura crea prima un bundle e un branch locale di backup, genera un nuovo commit root rispettando `.gitignore`, aggiorna `main` senza toccare la working tree e usa `--force-with-lease` per evitare di sovrascrivere modifiche remote inattese.
-
-## Comandi principali
-
-```bash
-./mifp local
-./mifp docker
-./mifp production [DOMINIO]
-```
-
-Configura username e password amministratore con `./mifp admin`; la password deve avere almeno 10 caratteri. L'hash viene scritto in un formato sicuro per Docker Compose e, se uno stack Docker è già attivo, il servizio web viene ricreato automaticamente per applicare subito le nuove credenziali. Gli scraper accettano `--threads N` e usano come mirror locale predefinito `/run/media/matteo/ARCHDISK/srv/http/mifp.eu`. I comandi di pulizia sono disponibili sotto `./mifp clean`; esegui `./mifp clean all --dry-run` per vedere i target senza modificarli. `IMPORT_DATA/` non fa parte del codebase distribuito; eventuali copie locali esterne restano fuori dal flusso applicativo.
+The analyzer was exercised standalone against the reconstructed real dataset and schema. The full Flask pytest suite was not run in the analysis environment because Flask is not installed there; do not treat this package as claiming a full-suite pass. The modified Python files compile successfully and the standalone Data Quality regression produced the counts above.

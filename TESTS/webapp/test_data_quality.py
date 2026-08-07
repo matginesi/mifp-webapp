@@ -42,6 +42,23 @@ def test_data_quality_public_api_exports_count_workflows():
     assert callable(count_workflows)
 
 
+def test_blocked_finding_that_requires_review_is_manual_workflow():
+    from mifp_app.services.data_quality.analyzer import finding_workflow
+
+    finding = {
+        "classification": "blocked",
+        "action_type": "repair_relations_or_assets",
+        "plan": {
+            "operation": "recover_or_relink_missing_asset",
+            "requires_review": True,
+        },
+    }
+    assert finding_workflow(finding) == "manual"
+
+    finding["plan"]["requires_review"] = False
+    assert finding_workflow(finding) == "informational"
+
+
 @pytest.fixture
 def database(tmp_path: Path) -> Path:
     path = tmp_path / "quality.db"
@@ -289,6 +306,54 @@ def test_event_series_different_year_is_never_merge():
     assert any(item.code == "different_event_year" for item in result[3])
 
 
+def test_mifp_event_series_prefix_does_not_hide_different_editions():
+    result = evaluate_event(
+        {"id": 1, "title": "March Meeting 2018", "start_date": "2018-03-01"},
+        {"id": 2, "title": "MIFP March Meeting 2024", "start_date": "2024-02-27"},
+        context(),
+    )
+    assert result[0] == "related_not_duplicate"
+    assert any(item.code == "different_event_year" for item in result[3])
+
+
+def test_same_scraper_and_similar_date_do_not_make_unrelated_news_ambiguous():
+    result = evaluate_news(
+        {"id": 1, "title": "Quantum dots in photonics", "date": "2013-05-02", "source_kind": "legacy_scraper"},
+        {"id": 2, "title": "University cooperation agreement", "date": "2013-07-02", "source_kind": "legacy_scraper"},
+        context(),
+    )
+    assert result[0] == "related_not_duplicate"
+
+
+def test_similar_award_headlines_with_different_people_are_not_duplicate_candidates():
+    result = evaluate_news(
+        {"id": 1, "title": "Aldo Di Carlo Wins Megagrant of the Russian Federation"},
+        {"id": 2, "title": "Bernard Gil and Anvar Zakhidov Win Megagrants of the Russian Federation"},
+        context(),
+    )
+    assert result[0] == "related_not_duplicate"
+
+
+def test_member_substring_surname_is_not_reported_as_name_inversion():
+    from mifp_app.services.data_quality.analyzer import _check_name_inversion
+
+    assert _check_name_inversion({
+        "id": 1,
+        "first_name": "Andrea",
+        "last_name": "D'Andrea",
+        "display_name": "Andrea D'Andrea",
+    }) is None
+
+
+def test_pipe_before_event_acronym_is_not_aggregated_record():
+    from mifp_app.services.data_quality.analyzer import _check_aggregated_event
+
+    assert _check_aggregated_event({
+        "id": 1,
+        "title": "International Conference on Physics of 2D Crystals 2020 | ICP2DC5",
+    }) is None
+
+
 def test_generic_news_titles_have_insufficient_identity():
     result = evaluate_news({"id": 1, "title": "News"}, {"id": 2, "title": "News"}, context())
     assert result[0] == "blocked"
@@ -352,6 +417,42 @@ def test_analysis_reports_missing_asset_files_without_offering_unsafe_repair(dat
     assert finding["action_type"] == "repair_relations_or_assets"
     assert finding["classification"] == "blocked"
     assert finding["evidence"][0]["code"] == "missing_asset_file"
+
+
+def test_analysis_accepts_canonical_assets_prefix(database: Path, tmp_path: Path):
+    assets_dir = tmp_path / "assets"
+    image = assets_dir / "image" / "present.jpg"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"image")
+    with connect(database) as conn:
+        asset_id = conn.execute(
+            "INSERT INTO assets(filename,path,kind,storage_status,is_external) "
+            "VALUES('present.jpg','assets/image/present.jpg','image','local',0)"
+        ).lastrowid
+        conn.commit()
+        result = analyze(conn, assets_dir=assets_dir)
+        findings = list_findings(conn, result["run_id"], entity_type="asset")
+    assert not any(item["record_ids"] == [asset_id] for item in findings)
+
+
+def test_analysis_does_not_require_external_or_missing_assets_on_disk(database: Path, tmp_path: Path):
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    with connect(database) as conn:
+        external_id = conn.execute(
+            "INSERT INTO assets(filename,path,kind,storage_status,is_external,source_url) "
+            "VALUES('external.pdf','external/external.pdf','pdf','external',1,'https://example.test/external.pdf')"
+        ).lastrowid
+        missing_id = conn.execute(
+            "INSERT INTO assets(filename,path,kind,storage_status,is_external,source_url) "
+            "VALUES('missing.pdf','assets/pdf/missing.pdf','pdf','missing',0,'https://example.test/missing.pdf')"
+        ).lastrowid
+        conn.commit()
+        result = analyze(conn, assets_dir=assets_dir)
+        findings = list_findings(conn, result["run_id"], entity_type="asset")
+    finding_ids = {rid for item in findings for rid in item["record_ids"]}
+    assert external_id not in finding_ids
+    assert missing_id not in finding_ids
 
 
 def test_new_schema_contains_only_quality_system(database: Path):
@@ -848,3 +949,76 @@ def test_reject_writes_resolved_pair(database: Path):
         assert len(rows) > 0
         for row in rows:
             assert row["left_fingerprint"] == row["right_fingerprint"]
+
+
+def test_data_quality_deterministic_cleanup_is_automatic_even_when_large():
+    from mifp_app.services.data_quality.analyzer import finding_workflow
+
+    finding = {
+        "classification": "needs_cleaning",
+        "action_type": "clean_record",
+        "score": 0.9,
+        "evidence": [{"code": "scraper_boilerplate", "strength": "strong"}],
+        "contradictions": [],
+        "plan": {
+            "fields": [{
+                "field": "body",
+                "proposed_value": "Useful scientific content remains.",
+                "action": "replace_with_cleaned",
+                # Old policy made the whole finding manual merely because the
+                # cleaned text was much shorter than scraper garbage.
+                "requires_review": True,
+            }]
+        },
+    }
+    assert finding_workflow(finding) == "automatic"
+
+
+def test_data_quality_exact_duplicate_stays_automatic_with_conflicting_descriptive_fields():
+    from mifp_app.services.data_quality.analyzer import finding_workflow
+
+    finding = {
+        "classification": "exact_duplicate",
+        "action_type": "merge_records",
+        "score": 1.0,
+        "evidence": [{"code": "same_doi", "strength": "deterministic"}],
+        "contradictions": [],
+        "plan": {
+            "record_ids": [1, 2],
+            "fields": [{
+                "field": "abstract",
+                "proposed_value": "Longer abstract",
+                "action": "manual_edit_required",
+                "requires_review": True,
+            }],
+        },
+    }
+    assert finding_workflow(finding) == "automatic"
+
+
+def test_data_quality_only_very_high_confidence_strong_merge_is_automatic():
+    from mifp_app.services.data_quality.analyzer import finding_workflow
+
+    base = {
+        "classification": "strong_candidate",
+        "action_type": "merge_records",
+        "evidence": [{"code": "same_headline_compatible_date", "strength": "strong"}],
+        "contradictions": [],
+        "plan": {"record_ids": [1, 2], "fields": []},
+    }
+    assert finding_workflow({**base, "score": 0.98}) == "automatic"
+    assert finding_workflow({**base, "score": 0.90}) == "manual"
+
+
+def test_data_quality_technical_junk_is_automatic_reversible_quarantine():
+    from mifp_app.services.data_quality.analyzer import finding_workflow
+
+    finding = {
+        "classification": "junk_technical_record",
+        "action_type": "clean_record",
+        "score": 1.0,
+        "evidence": [{"code": "junk_technical_title", "strength": "deterministic"}],
+        "contradictions": [],
+        "plan": {"operation": "quarantine", "requires_review": False},
+    }
+    assert finding_workflow(finding) == "automatic"

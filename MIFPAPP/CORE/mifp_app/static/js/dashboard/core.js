@@ -801,6 +801,32 @@ document.addEventListener('submit', function (ev) {
   setFormLoading(form);
 });
 
+function refreshOpenOverlaysAfterResize() {
+  let scheduled = false;
+  function refresh() {
+    scheduled = false;
+    document.querySelectorAll('.modal.show').forEach(function (element) {
+      try {
+        const instance = window.bootstrap && window.bootstrap.Modal
+          ? window.bootstrap.Modal.getInstance(element)
+          : null;
+        if (instance && typeof instance.handleUpdate === 'function') instance.handleUpdate();
+      } catch (error) {
+        dashboardLog('warn', 'overlay.resize-update-failed', { message: error && error.message });
+      }
+    });
+  }
+  return function () {
+    if (scheduled) return;
+    scheduled = true;
+    window.requestAnimationFrame(refresh);
+  };
+}
+
+const updateOpenOverlays = refreshOpenOverlaysAfterResize();
+window.addEventListener('resize', updateOpenOverlays, { passive: true });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', updateOpenOverlays, { passive: true });
+
 initDashboardShell();
 document.querySelectorAll('.sidebar-link.is-active').forEach(function (link) {
   link.setAttribute('aria-current', 'page');
