@@ -410,14 +410,16 @@ def build_merge_plan(conn: sqlite3.Connection, entity_type: str, records: list[d
 def build_clean_plan(entity_type: str, record: dict, changes: dict[str, Any], removed: dict[str, list[str]]) -> dict:
     fields = []
     for field, value in changes.items():
+        original = str(record.get(field) or "")
+        requires_review = len(str(value or "")) < len(original) * .6
         fields.append({
             "field": field,
             "values_by_record": [{"record_id": record["id"], "value": record.get(field)}],
             "proposed_value": value,
             "action": "replace_with_cleaned",
             "reason": "Remove detected technical or navigation segments.",
-            "confidence": "review" if len(value) < len(str(record.get(field) or "")) * .6 else "high",
-            "requires_review": True,
+            "confidence": "review" if requires_review else "high",
+            "requires_review": requires_review,
             "losses": removed.get(field, []),
         })
     return {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import shutil
@@ -89,7 +90,7 @@ def build_export_bundle(conn: sqlite3.Connection, scope: str) -> dict[str, Any]:
         "meta": {
             "scope": scope,
             "exported_at": utc_now(),
-            "format": PORTABLE_FORMAT,
+            "format": CANONICAL_FORMAT,
             "format_version": PORTABLE_FORMAT_VERSION,
             "schema_version": SCHEMA_VERSION,
         },
@@ -99,7 +100,14 @@ def build_export_bundle(conn: sqlite3.Connection, scope: str) -> dict[str, Any]:
 
 
 
-def bundle_to_zip(conn: sqlite3.Connection, scope: str, assets_dir: Path, *, app_version: str = "") -> bytes:
+def _write_bundle_zip(
+    conn: sqlite3.Connection,
+    scope: str,
+    assets_dir: Path,
+    target: BytesIO | Path,
+    *,
+    app_version: str = "",
+) -> dict[str, Any]:
     bundle = build_export_bundle(conn, scope)
     records = bundle.get("records") or []
     asset_rows = _asset_rows_for_scope(conn, scope, records)
@@ -110,8 +118,8 @@ def bundle_to_zip(conn: sqlite3.Connection, scope: str, assets_dir: Path, *, app
         if durable_state is not None
         else None
     )
-    manifest = {
-        "format": PORTABLE_FORMAT,
+    manifest: dict[str, Any] = {
+        "format": CANONICAL_FORMAT,
         "format_version": PORTABLE_FORMAT_VERSION,
         "schema_version": SCHEMA_VERSION,
         "generated_at": utc_now(),
@@ -128,8 +136,8 @@ def bundle_to_zip(conn: sqlite3.Connection, scope: str, assets_dir: Path, *, app
         manifest["state_counts"] = {
             key: len(value) for key, value in durable_state.items() if isinstance(value, list)
         }
-    out = BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         zf.writestr(ZIP_RECORDS_NAME, records_payload)
         if state_payload is not None:
             zf.writestr(ZIP_STATE_NAME, state_payload)
@@ -153,8 +161,348 @@ def bundle_to_zip(conn: sqlite3.Connection, scope: str, assets_dir: Path, *, app
                 "size": path.stat().st_size,
                 "sha256": sha256_file(path),
             })
-        zf.writestr(ZIP_MANIFEST_NAME, json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
+        zf.writestr(
+            ZIP_MANIFEST_NAME,
+            json.dumps(manifest, ensure_ascii=False, indent=2, default=str),
+        )
+    return manifest
+
+
+def bundle_to_zip(
+    conn: sqlite3.Connection, scope: str, assets_dir: Path, *, app_version: str = ""
+) -> bytes:
+    """Compatibility API returning ZIP bytes; prefer bundle_to_zip_file for HTTP exports."""
+    out = BytesIO()
+    _write_bundle_zip(conn, scope, assets_dir, out, app_version=app_version)
     return out.getvalue()
+
+
+def bundle_to_zip_file(
+    conn: sqlite3.Connection,
+    scope: str,
+    assets_dir: Path,
+    destination: Path,
+    *,
+    app_version: str = "",
+) -> int:
+    """Write a portable ZIP directly to disk and return its byte size."""
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _write_bundle_zip(conn, scope, assets_dir, destination, app_version=app_version)
+    return destination.stat().st_size
+
+
+
+
+def bundle_to_jsonl_file(
+    conn: sqlite3.Connection,
+    scope: str,
+    assets_dir: Path,
+    destination: Path,
+    *,
+    app_version: str = "",
+) -> dict[str, Any]:
+    """Write a self-contained JSONL v2 package equivalent to the ZIP export.
+
+    Canonical record lines remain ordinary JSONL records. Package metadata,
+    durable state, and local assets use a reserved ``_mifp`` envelope so the
+    importer can restore the same information without an accompanying folder.
+    Legacy record-only JSONL files remain supported by ``import_jsonl_payload``.
+    """
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    bundle = build_export_bundle(conn, scope)
+    records = bundle.get("records") or []
+    durable_state = _durable_state(conn) if scope == "all" else None
+    asset_rows = _asset_rows_for_scope(conn, scope, records)
+    records_payload = _records_to_jsonl(records)
+    packaged_assets: list[dict[str, Any]] = []
+    for asset in asset_rows:
+        db_path = str(asset.get("path") or "").strip()
+        if not db_path:
+            continue
+        local_path = resolve_db_asset_path(assets_dir, db_path)
+        if not local_path.is_file():
+            continue
+        archive_path = db_path if db_path.startswith("assets/") else f"assets/{db_path}"
+        archive_path = _validate_asset_archive_path(archive_path)
+        packaged_assets.append({
+            "path": db_path,
+            "archive_path": archive_path,
+            "size": local_path.stat().st_size,
+            "sha256": sha256_file(local_path),
+            "source": local_path,
+        })
+
+    manifest = {
+        "format": CANONICAL_FORMAT,
+        "format_version": PORTABLE_FORMAT_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": utc_now(),
+        "exported_at": bundle["meta"]["exported_at"],
+        "app_version": app_version,
+        "scope": scope,
+        "records": len(records),
+        "records_sha256": hashlib.sha256(records_payload).hexdigest(),
+        "counts": _record_counts(records),
+        "files": [
+            {key: item[key] for key in ("path", "archive_path", "size", "sha256")}
+            for item in packaged_assets
+        ],
+        "container": "jsonl",
+    }
+    if durable_state is not None:
+        state_payload = json.dumps(durable_state, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        manifest["state_sha256"] = hashlib.sha256(state_payload).hexdigest()
+        manifest["state_counts"] = {key: len(value) for key, value in durable_state.items() if isinstance(value, list)}
+
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8", newline="\n") as output:
+        output.write(json.dumps({"_mifp": {"kind": "manifest", "data": manifest}}, ensure_ascii=False, sort_keys=True) + "\n")
+        if durable_state is not None:
+            output.write(json.dumps({"_mifp": {"kind": "state", "data": durable_state}}, ensure_ascii=False, sort_keys=True, default=str) + "\n")
+        # Keep every JSONL line bounded: large binary files are emitted as
+        # independently decodable Base64 chunks instead of one enormous line.
+        # 1 MiB is divisible only after choosing a 3-byte aligned chunk size.
+        asset_chunk_bytes = 3 * 256 * 1024
+        for item in packaged_assets:
+            source = Path(item["source"])
+            total_size = int(item["size"])
+            emitted = 0
+            chunk_index = 0
+            with source.open("rb") as asset_in:
+                while True:
+                    chunk = asset_in.read(asset_chunk_bytes)
+                    if not chunk and (total_size > 0 or chunk_index > 0):
+                        break
+                    emitted += len(chunk)
+                    final = emitted >= total_size
+                    output.write(json.dumps({"_mifp": {
+                        "kind": "asset_chunk",
+                        "path": item["path"],
+                        "archive_path": item["archive_path"],
+                        "index": chunk_index,
+                        "final": final,
+                        "encoding": "base64",
+                        "data": base64.b64encode(chunk).decode("ascii"),
+                    }}, ensure_ascii=False, sort_keys=True) + "\n")
+                    chunk_index += 1
+                    if final:
+                        break
+        output.write(records_payload.decode("utf-8"))
+    temporary.replace(destination)
+    manifest["bytes"] = destination.stat().st_size
+    return manifest
+
+
+def import_jsonl_payload(
+    conn: sqlite3.Connection,
+    raw: Path,
+    scope: str,
+    assets_dir: Path,
+    *,
+    dry_run: bool = False,
+    skip_assets: bool = False,
+    progress: Callable[[int, int], None] | None = None,
+    asset_detail: Callable[[str], None] | None = None,
+    force_import: bool = False,
+    source_name: str | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    commit: bool = True,
+) -> dict[str, Any]:
+    """Import either legacy record-only JSONL or self-contained JSONL v2."""
+    path = Path(raw)
+    try:
+        package_bytes = path.stat().st_size
+    except OSError as exc:
+        raise ValueError("JSONL package is not available") from exc
+    # Self-contained JSONL uses base64 for binary assets, so it can be larger
+    # than records.jsonl. The HTTP upload limit remains the outer hard bound.
+    if package_bytes > max(Config.IMPORT_MAX_JSONL_BYTES, Config.IMPORT_MAX_ZIP_BYTES * 2):
+        raise ValueError("JSONL package exceeds configured maximum size")
+    try:
+        with path.open("r", encoding="utf-8-sig") as handle:
+            first = next((line for line in handle if line.strip()), "")
+        first_obj = json.loads(first) if first else {}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        first_obj = {}
+    envelope = first_obj.get("_mifp") if isinstance(first_obj, dict) else None
+    if not isinstance(envelope, dict) or envelope.get("kind") != "manifest":
+        return import_jsonl(
+            conn, path, dry_run=dry_run, assets_dir=assets_dir, progress=progress,
+            asset_detail=asset_detail, force_import=force_import, source_name=source_name, cancel_check=cancel_check, commit=commit,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="mifp-jsonl-package-") as temp_dir:
+        tmp = Path(temp_dir)
+        records_path = tmp / ZIP_RECORDS_NAME
+        state: dict[str, Any] | None = None
+        manifest = _validate_manifest_object(envelope.get("data"))
+        if manifest.get("format") != CANONICAL_FORMAT or int(manifest.get("format_version") or 0) != PORTABLE_FORMAT_VERSION:
+            raise ValueError("Unsupported JSONL package format/version")
+        if manifest.get("scope") != scope:
+            raise ValueError(f"Import scope {scope!r} does not match package scope {manifest.get('scope')!r}")
+        declared_rows = manifest.get("files") or []
+        declared_archive_paths = _manifest_asset_paths(manifest)
+        declared_files = {str(item["archive_path"]): item for item in declared_rows}
+        if set(declared_files) != declared_archive_paths:
+            raise ValueError("JSONL package manifest contains invalid or duplicate asset entries")
+        seen_files: set[str] = set()
+        active_asset: dict[str, Any] | None = None
+        active_handle = None
+        record_count = 0
+        record_types: dict[str, int] = {}
+        records_digest = hashlib.sha256()
+        try:
+            with records_path.open("w", encoding="utf-8", newline="\n") as records_out, path.open("r", encoding="utf-8-sig") as handle:
+                for line_no, line in enumerate(handle, 1):
+                    if cancel_check and cancel_check():
+                        from .job_manager import JobCancelled
+                        raise JobCancelled("Import cancelled by administrator")
+                    if not line.strip():
+                        continue
+                    # Bound an individual line before json.loads. State may be
+                    # larger than ordinary entries; asset chunks are checked
+                    # against a much smaller limit after their kind is known.
+                    line_bytes = len(line.encode("utf-8"))
+                    if line_bytes > max(Config.IMPORT_MAX_STATE_BYTES, Config.IMPORT_MAX_MANIFEST_BYTES):
+                        raise ValueError(f"JSONL package line {line_no} exceeds the maximum entry size")
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(f"Invalid JSONL package line {line_no}: {exc.msg}") from exc
+                    meta = item.get("_mifp") if isinstance(item, dict) else None
+                    if not isinstance(meta, dict):
+                        if active_asset is not None:
+                            raise ValueError("JSONL asset chunks must be contiguous")
+                        record_count += 1
+                        if record_count > Config.IMPORT_MAX_JSONL_LINES:
+                            raise ValueError(f"JSONL package exceeds maximum record count: {Config.IMPORT_MAX_JSONL_LINES}")
+                        typ = str(item.get("type") or "")
+                        if typ:
+                            record_types[typ] = record_types.get(typ, 0) + 1
+                        serialized = json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+                        records_out.write(serialized)
+                        records_digest.update(serialized.encode("utf-8"))
+                        continue
+                    kind = meta.get("kind")
+                    if kind == "manifest":
+                        if line_bytes > Config.IMPORT_MAX_MANIFEST_BYTES:
+                            raise ValueError("JSONL package manifest exceeds the maximum size")
+                        continue
+                    if kind == "state":
+                        if line_bytes > Config.IMPORT_MAX_STATE_BYTES:
+                            raise ValueError("JSONL package state exceeds the maximum size")
+                        if active_asset is not None:
+                            raise ValueError("JSONL asset chunks must be contiguous")
+                        if state is not None:
+                            raise ValueError("JSONL package contains duplicate state metadata")
+                        state = meta.get("data")
+                        if not isinstance(state, dict):
+                            raise ValueError("JSONL package state is invalid")
+                        continue
+                    if kind not in {"asset", "asset_chunk"}:
+                        raise ValueError(f"Unsupported JSONL package entry at line {line_no}")
+                    if kind == "asset_chunk" and line_bytes > 2 * 1024 * 1024:
+                        raise ValueError(f"JSONL asset chunk is too large: line {line_no}")
+
+                    # ``asset`` is retained as an import-only compatibility path
+                    # for packages created by the first v2 implementation. New
+                    # exports always use bounded ``asset_chunk`` entries.
+                    archive_path = _validate_asset_archive_path(str(meta.get("archive_path") or ""))
+                    declared = declared_files.get(archive_path)
+                    if declared is None:
+                        raise ValueError(f"JSONL package contains undeclared asset: {archive_path}")
+                    expected_path = str(declared.get("path") or "")
+                    if str(meta.get("path") or "") != expected_path:
+                        raise ValueError(f"JSONL asset path mismatch: {archive_path}")
+                    if meta.get("encoding") != "base64":
+                        raise ValueError(f"Unsupported JSONL asset encoding: {archive_path}")
+                    try:
+                        data = base64.b64decode(str(meta.get("data") or ""), validate=True)
+                    except Exception as exc:
+                        raise ValueError(f"Invalid base64 asset payload: {archive_path}") from exc
+
+                    if kind == "asset":
+                        if active_asset is not None or archive_path in seen_files:
+                            raise ValueError(f"JSONL package contains duplicate asset: {archive_path}")
+                        if len(data) != int(declared.get("size") or 0) or hashlib.sha256(data).hexdigest() != str(declared.get("sha256") or ""):
+                            raise ValueError(f"JSONL asset failed integrity verification: {archive_path}")
+                        target = tmp / archive_path
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(data)
+                        seen_files.add(archive_path)
+                        continue
+
+                    index = int(meta.get("index") if meta.get("index") is not None else -1)
+                    final = bool(meta.get("final"))
+                    if active_asset is None:
+                        if archive_path in seen_files or index != 0:
+                            raise ValueError(f"JSONL asset chunk sequence is invalid: {archive_path}")
+                        target = tmp / archive_path
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        active_handle = target.open("wb")
+                        active_asset = {
+                            "archive_path": archive_path,
+                            "next_index": 0,
+                            "size": 0,
+                            "sha256": hashlib.sha256(),
+                            "declared": declared,
+                        }
+                    if active_asset["archive_path"] != archive_path or index != active_asset["next_index"]:
+                        raise ValueError(f"JSONL asset chunk sequence is invalid: {archive_path}")
+                    active_handle.write(data)
+                    active_asset["sha256"].update(data)
+                    active_asset["size"] += len(data)
+                    active_asset["next_index"] += 1
+                    if active_asset["size"] > int(declared.get("size") or 0):
+                        raise ValueError(f"JSONL asset exceeds declared size: {archive_path}")
+                    if final:
+                        active_handle.close()
+                        active_handle = None
+                        if active_asset["size"] != int(declared.get("size") or 0) or active_asset["sha256"].hexdigest() != str(declared.get("sha256") or ""):
+                            raise ValueError(f"JSONL asset failed integrity verification: {archive_path}")
+                        seen_files.add(archive_path)
+                        active_asset = None
+        finally:
+            if active_handle is not None:
+                active_handle.close()
+        if active_asset is not None:
+            raise ValueError(f"JSONL package contains an incomplete asset: {active_asset['archive_path']}")
+        if set(declared_files) != seen_files:
+            missing = sorted(set(declared_files) - seen_files)
+            raise ValueError(f"JSONL package is missing {len(missing)} declared asset file(s)")
+        if int(manifest.get("records") or 0) != record_count:
+            raise ValueError("JSONL package record count does not match manifest")
+        if manifest.get("counts") != record_types:
+            raise ValueError("JSONL package record type counts do not match manifest")
+        if manifest.get("records_sha256") and records_digest.hexdigest() != str(manifest.get("records_sha256")):
+            raise ValueError("JSONL package records failed integrity verification")
+        _validate_manifest_scope(scope, record_types)
+        if scope == "all" and state is None:
+            raise ValueError("JSONL package is missing durable state")
+        if state is not None and manifest.get("state_sha256"):
+            state_raw = json.dumps(state, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+            if hashlib.sha256(state_raw).hexdigest() != manifest["state_sha256"]:
+                raise ValueError("JSONL package state failed integrity verification")
+        if state is not None:
+            state = _normalize_durable_state(state, manifest, source_label="JSONL package state")
+
+        summary = import_jsonl(
+            conn, records_path, dry_run=dry_run, assets_dir=assets_dir,
+            asset_source_dir=None if skip_assets else tmp / "assets", import_assets=not skip_assets,
+            progress=progress, asset_detail=asset_detail, force_import=force_import, source_name=source_name, cancel_check=cancel_check, commit=False,
+        )
+        if cancel_check and cancel_check():
+            from .job_manager import JobCancelled
+            raise JobCancelled("Import cancelled by administrator")
+        if not dry_run and state is not None:
+            summary["restored_state"] = _restore_durable_state(conn, state, assets_dir, tmp / "assets")
+        summary["manifest"] = manifest
+        summary["jsonl_package"] = {"record_count": record_count, "asset_files": len(seen_files)}
+        if not dry_run and commit:
+            conn.commit()
+        return summary
 
 
 def parse_zip_payload(raw: bytes | Path) -> dict[str, Any]:
@@ -202,6 +550,11 @@ def parse_zip_payload(raw: bytes | Path) -> dict[str, Any]:
         )
         if unexpected_files:
             raise ValueError(f"ZIP contains unsupported files: {', '.join(unexpected_files[:5])}")
+        records_info = zf.getinfo(ZIP_RECORDS_NAME)
+        if records_info.file_size > Config.IMPORT_MAX_JSONL_BYTES:
+            raise ValueError(
+                f"records.jsonl exceeds maximum size: {Config.IMPORT_MAX_JSONL_BYTES} bytes"
+            )
         records_raw = zf.read(ZIP_RECORDS_NAME)
         expected_records_hash = manifest.get("records_sha256")
         if expected_records_hash and hashlib.sha256(records_raw).hexdigest() != expected_records_hash:
@@ -244,6 +597,8 @@ def import_zip_payload(
     progress: Callable[[int, int], None] | None = None,
     force_import: bool = False,
     source_name: str | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     package = parse_zip_payload(raw)
     if scope not in EXPORT_SCOPES:
@@ -272,7 +627,12 @@ def import_zip_payload(
             progress=progress,
             force_import=force_import,
             source_name=source_name,
+            cancel_check=cancel_check,
+            commit=False,
         )
+        if cancel_check and cancel_check():
+            from .job_manager import JobCancelled
+            raise JobCancelled("Import cancelled by administrator")
         if not dry_run and package.get("durable_state") is not None:
             summary["restored_state"] = _restore_durable_state(
                 conn,
@@ -287,7 +647,9 @@ def import_zip_payload(
             "asset_files": len(package["asset_files"]),
             "missing_assets": missing_assets,
         }
-        if not dry_run:
+        if not dry_run and commit:
+            conn.commit()
+        if not dry_run and commit:
             try:
                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             except sqlite3.Error:
@@ -938,7 +1300,7 @@ def _asset_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 def _asset_rows_for_scope(conn: sqlite3.Connection, scope: str, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if scope in {"assets", "all"}:
+    if scope == "all":
         return _asset_rows(conn)
     paths: set[str] = set()
     for record in records:
@@ -1035,19 +1397,19 @@ def _validate_asset_archive_path(path: str) -> str:
     return name
 
 
-def _read_manifest(zf: zipfile.ZipFile) -> dict[str, Any]:
-    try:
-        manifest = json.loads(zf.read(ZIP_MANIFEST_NAME).decode("utf-8-sig"))
-    except json.JSONDecodeError as exc:
-        raise ValueError("manifest.json is not valid JSON") from exc
+def _validate_manifest_object(manifest: Any) -> dict[str, Any]:
     if not isinstance(manifest, dict):
-        raise ValueError("manifest.json must contain an object")
+        raise ValueError("package manifest must contain an object")
     package_format = manifest.get("format")
     if package_format not in (None, PORTABLE_FORMAT, CANONICAL_FORMAT):
         raise ValueError(f"Unsupported export format: {package_format!r}")
     format_version = manifest.get("format_version")
     if format_version is not None and format_version not in SUPPORTED_FORMAT_VERSIONS:
         raise ValueError(f"Unsupported export format version: {format_version!r}")
+    if package_format == CANONICAL_FORMAT and format_version != PORTABLE_FORMAT_VERSION:
+        raise ValueError(
+            f"{CANONICAL_FORMAT} packages must declare format_version={PORTABLE_FORMAT_VERSION}"
+        )
     schema_version = manifest.get("schema_version")
     if schema_version is not None and (
         not isinstance(schema_version, int) or schema_version < 1 or schema_version > SCHEMA_VERSION
@@ -1056,12 +1418,16 @@ def _read_manifest(zf: zipfile.ZipFile) -> dict[str, Any]:
     records_sha256 = manifest.get("records_sha256")
     if records_sha256 is not None and not _valid_sha256(records_sha256):
         raise ValueError("manifest.records_sha256 must be a SHA-256 digest")
+    if package_format == CANONICAL_FORMAT and not records_sha256:
+        raise ValueError(f"{CANONICAL_FORMAT} packages require records_sha256")
     state_sha256 = manifest.get("state_sha256")
     if state_sha256 is not None and not _valid_sha256(state_sha256):
         raise ValueError("manifest.state_sha256 must be a SHA-256 digest")
     scope = str(manifest.get("scope") or "").strip()
     if scope not in EXPORT_SCOPES:
-        raise ValueError(f"Unsupported ZIP scope: {scope!r}")
+        raise ValueError(f"Unsupported package scope: {scope!r}")
+    if package_format == CANONICAL_FORMAT and scope == "all" and not state_sha256:
+        raise ValueError(f"{CANONICAL_FORMAT} full exports require state_sha256")
     if "records" in manifest and (not isinstance(manifest["records"], int) or manifest["records"] < 0):
         raise ValueError("manifest.records must be a non-negative integer")
     if "counts" in manifest:
@@ -1076,22 +1442,29 @@ def _read_manifest(zf: zipfile.ZipFile) -> dict[str, Any]:
         files = []
     if not isinstance(files, list):
         raise ValueError("manifest.files must be a list")
+    if len(files) > Config.IMPORT_MAX_FILES:
+        raise ValueError(f"manifest.files exceeds maximum file count: {Config.IMPORT_MAX_FILES}")
     return manifest
 
 
-def _read_durable_state(
-    zf: zipfile.ZipFile, manifest: dict[str, Any]
-) -> dict[str, list[dict[str, Any]]]:
-    raw = zf.read(ZIP_STATE_NAME)
-    expected_hash = manifest.get("state_sha256")
-    if expected_hash and hashlib.sha256(raw).hexdigest() != expected_hash:
-        raise ValueError("state.json failed integrity verification")
+def _read_manifest(zf: zipfile.ZipFile) -> dict[str, Any]:
+    info = zf.getinfo(ZIP_MANIFEST_NAME)
+    if info.file_size > Config.IMPORT_MAX_MANIFEST_BYTES:
+        raise ValueError(
+            f"manifest.json exceeds maximum size: {Config.IMPORT_MAX_MANIFEST_BYTES} bytes"
+        )
     try:
-        state = json.loads(raw.decode("utf-8-sig"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("state.json is not valid JSON") from exc
+        manifest = json.loads(zf.read(ZIP_MANIFEST_NAME).decode("utf-8-sig"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("manifest.json is not valid JSON") from exc
+    return _validate_manifest_object(manifest)
+
+
+def _normalize_durable_state(
+    state: Any, manifest: dict[str, Any], *, source_label: str = "state.json"
+) -> dict[str, list[dict[str, Any]]]:
     if not isinstance(state, dict):
-        raise ValueError("state.json must contain an object")
+        raise ValueError(f"{source_label} must contain an object")
     allowed = {
         "roles", "settings", "assets", "metrics_daily", "merge_exclusions",
         "resolved_pairs", "quality_decisions", "entity_relations",
@@ -1100,17 +1473,17 @@ def _read_durable_state(
     }
     unexpected = sorted(set(state) - allowed)
     if unexpected:
-        raise ValueError(f"state.json contains unsupported sections: {', '.join(unexpected)}")
+        raise ValueError(f"{source_label} contains unsupported sections: {', '.join(unexpected)}")
     normalized: dict[str, list[dict[str, Any]]] = {}
     total = 0
     for key in allowed:
         value = state.get(key, [])
         if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
-            raise ValueError(f"state.json section {key!r} must be a list of objects")
+            raise ValueError(f"{source_label} section {key!r} must be a list of objects")
         normalized[key] = value
         total += len(value)
     if total > Config.IMPORT_MAX_JSONL_LINES * 5:
-        raise ValueError("state.json contains too many records")
+        raise ValueError(f"{source_label} contains too many records")
     declared_counts = manifest.get("state_counts")
     actual_counts = {key: len(value) for key, value in normalized.items()}
     if declared_counts is not None:
@@ -1118,26 +1491,80 @@ def _read_durable_state(
             not isinstance(key, str) or not isinstance(value, int) or value < 0
             for key, value in declared_counts.items()
         ):
-            raise ValueError("manifest.state_counts must map section names to non-negative integers")
-        if declared_counts != actual_counts:
-            raise ValueError("manifest.state_counts does not match state.json")
+            raise ValueError("manifest.state_counts is invalid")
+        if any(actual_counts.get(key, 0) != value for key, value in declared_counts.items()):
+            raise ValueError(f"{source_label} counts do not match manifest")
     return normalized
 
 
+def _read_durable_state(
+    zf: zipfile.ZipFile, manifest: dict[str, Any]
+) -> dict[str, list[dict[str, Any]]]:
+    info = zf.getinfo(ZIP_STATE_NAME)
+    if info.file_size > Config.IMPORT_MAX_STATE_BYTES:
+        raise ValueError(
+            f"state.json exceeds maximum size: {Config.IMPORT_MAX_STATE_BYTES} bytes"
+        )
+    raw = zf.read(ZIP_STATE_NAME)
+    expected_hash = manifest.get("state_sha256")
+    if expected_hash and hashlib.sha256(raw).hexdigest() != expected_hash:
+        raise ValueError("state.json failed integrity verification")
+    try:
+        state = json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("state.json is not valid JSON") from exc
+    return _normalize_durable_state(state, manifest)
+
+
 def _manifest_asset_paths(manifest: dict[str, Any]) -> set[str]:
-    paths: set[str] = set()
+    archive_paths: set[str] = set()
+    canonical_package = manifest.get("format") == CANONICAL_FORMAT
     for idx, item in enumerate(manifest.get("files") or [], start=1):
         if not isinstance(item, dict):
             raise ValueError(f"manifest.files[{idx}] must be an object")
         archive_path = _validate_asset_archive_path(str(item.get("archive_path") or ""))
+        raw_db_path = str(item.get("path") or "").strip()
+        if raw_db_path:
+            db_path = _validate_manifest_asset_db_path(raw_db_path, idx)
+        elif canonical_package:
+            raise ValueError(f"manifest.files[{idx}].path is required")
+        else:
+            # Older portable bundles only carried archive_path. Import them,
+            # but all newly generated v2 bundles must declare the DB path.
+            db_path = archive_path[len("assets/"):]
+        expected_archive_path = db_path if db_path.startswith("assets/") else f"assets/{db_path}"
+        if archive_path != expected_archive_path:
+            raise ValueError(
+                f"manifest.files[{idx}] path does not match archive_path"
+            )
+        if archive_path in archive_paths:
+            raise ValueError(f"manifest.files contains duplicate archive_path: {archive_path}")
+        archive_paths.add(archive_path)
         if item.get("size") is not None and (
             not isinstance(item["size"], int) or item["size"] < 0
         ):
             raise ValueError(f"manifest.files[{idx}].size must be a non-negative integer")
         if item.get("sha256") is not None and not _valid_sha256(item["sha256"]):
             raise ValueError(f"manifest.files[{idx}].sha256 must be a SHA-256 digest")
-        paths.add(archive_path)
-    return paths
+        if canonical_package and (item.get("size") is None or item.get("sha256") is None):
+            raise ValueError(
+                f"manifest.files[{idx}] requires size and sha256 in {CANONICAL_FORMAT}"
+            )
+    return archive_paths
+
+
+def _validate_manifest_asset_db_path(path: str, index: int) -> str:
+    value = str(path or "").strip()
+    if not value:
+        raise ValueError(f"manifest.files[{index}].path is required")
+    if "\x00" in value or "\\" in value or value.startswith(("/", "./")):
+        raise ValueError(f"manifest.files[{index}].path is unsafe")
+    parts = PurePosixPath(value).parts
+    if not parts or ":" in parts[0] or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(f"manifest.files[{index}].path is unsafe")
+    if parts[0] == "assets" and len(parts) == 1:
+        raise ValueError(f"manifest.files[{index}].path must identify a file")
+    return PurePosixPath(*parts).as_posix()
 
 
 def _valid_sha256(value: Any) -> bool:

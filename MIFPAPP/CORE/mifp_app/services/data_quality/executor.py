@@ -284,8 +284,38 @@ def validate_bundle(conn: sqlite3.Connection, bundle_id: int, *, persist: bool =
                     errors.append(f"{entity_type}: field {field.get('field')} still requires a value")
         elif action == "split_aggregated_record":
             proposed = plan.get("proposed_records") or []
-            if len(proposed) < 2 or any(not item.get("title") for item in proposed):
-                errors.append(f"{entity_type}: split plan requires reviewed titles for every proposed record")
+            normalized = False
+            for index, item in enumerate(proposed, start=1):
+                if item.get("title"):
+                    continue
+                fallback = str(item.get("title_hint") or item.get("segment") or "").strip()
+                if fallback:
+                    item["title"] = fallback[:240]
+                    normalized = True
+            if len(proposed) < 2 or any(not str(item.get("title") or "").strip() for item in proposed):
+                conn.execute("DELETE FROM quality_bundle_items WHERE id=?", (row["id"],))
+                conn.execute(
+                    "UPDATE quality_findings SET status='open',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (row["finding_id"],),
+                )
+                for value in record_ids:
+                    occupied.pop((entity_type, value), None)
+                warnings.append(
+                    f"{entity_type} finding #{row['finding_id']} needs manual split titles and was returned to review"
+                )
+                log.warning(
+                    "validate_bundle returned incomplete split to review item=%s finding=%s entity=%s",
+                    row["id"], row["finding_id"], entity_type,
+                )
+                continue
+            if normalized:
+                payload = json.loads(row["payload_json"] or "{}")
+                payload["plan"] = plan
+                conn.execute(
+                    "UPDATE quality_bundle_items SET payload_json=? WHERE id=?",
+                    (json.dumps(payload, ensure_ascii=False, default=str), row["id"]),
+                )
+                warnings.append(f"{entity_type} finding #{row['finding_id']} recovered legacy split titles automatically")
         elif action == "repair_relations_or_assets":
             if plan.get("operation") not in {"deduplicate_primary_links", "deduplicate_primary_assets"}:
                 errors.append(f"{entity_type}: unsupported repair operation")
@@ -380,7 +410,7 @@ def _apply_clean(conn: sqlite3.Connection, plan: dict, bundle_id: int | None = N
         if name not in {col["name"] for col in conn.execute(f'PRAGMA table_info("{table}")')}:
             raise ValueError(f"unknown field {name}")
         proposed = field.get("proposed_value")
-        if proposed is None:
+        if proposed is None and field.get("action") != "clear_value":
             continue
         assignments.append(f'"{name}"=?')
         values.append(proposed)

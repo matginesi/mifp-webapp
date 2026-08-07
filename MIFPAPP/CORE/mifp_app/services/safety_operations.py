@@ -67,7 +67,7 @@ def safety_operations_preview(config: dict[str, Any]) -> dict[str, Any]:
         },
         "export": {
             "scope": "all",
-            "format": "mifp-export-v1 ZIP",
+            "format": "mifp-jsonl-v2 ZIP",
             "includes_assets": True,
         },
         "storage": {

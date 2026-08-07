@@ -108,5 +108,6 @@ def test_logout_clears_browser_site_data(client):
     response = client.post("/logout", data={"_csrf_token": "logout-token"})
 
     assert response.status_code == 302
-    assert response.headers["Clear-Site-Data"] == '"cache", "cookies", "storage"'
+    assert "Clear-Site-Data" not in response.headers
+    assert response.headers["Cache-Control"] == "no-store"
     assert response.headers["Cache-Control"] == "no-store, max-age=0"

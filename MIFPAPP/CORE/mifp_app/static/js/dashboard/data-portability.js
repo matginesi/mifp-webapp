@@ -44,6 +44,8 @@
   var working = document.getElementById('transferWorking');
   var result = document.getElementById('transferResult');
   var footer = document.getElementById('transferFooter');
+  var cancelButton = document.getElementById('transferCancel');
+  var closeButton = document.getElementById('transferClose');
   var progress = document.getElementById('transferProgress');
   var status = document.getElementById('transferStatus');
   var detail = document.getElementById('transferDetail');
@@ -75,6 +77,10 @@
   var operationActive = false;
   var stagedFiles = [];
   var refreshAfterImport = false;
+  var activeImportXhr = null;
+  var activeImportJobId = null;
+  var activeImportCancelUrl = null;
+  var transferHasResult = false;
 
   function setOperationActive(active) {
     operationActive = active;
@@ -147,7 +153,12 @@
     clockTimer = window.setInterval(function () { elapsed.textContent = elapsedLabel(Date.now() - startedAt); }, 500);
     working.hidden = false;
     result.hidden = true;
-    footer.hidden = true;
+    footer.hidden = false;
+    transferHasResult = false;
+    activeImportJobId = null;
+    activeImportCancelUrl = null;
+    if (cancelButton) { cancelButton.hidden = false; cancelButton.disabled = false; cancelButton.innerHTML = '<i class="bi bi-x-circle"></i> Cancel'; }
+    if (closeButton) closeButton.hidden = true;
     var smartMerge = document.getElementById('transferSmartMerge');
     if (smartMerge) smartMerge.hidden = true;
     errors.hidden = true;
@@ -174,6 +185,9 @@
     working.hidden = true;
     result.hidden = false;
     footer.hidden = false;
+    transferHasResult = true;
+    if (cancelButton) cancelButton.hidden = true;
+    if (closeButton) closeButton.hidden = false;
     var modifier = ['is-success', 'is-warning', 'is-error'].includes(payload.icon_modifier)
       ? payload.icon_modifier : 'is-success';
     var resultIcon = ['bi-check-lg', 'bi-exclamation-lg', 'bi-x-lg'].includes(payload.icon_class)
@@ -255,12 +269,20 @@
       try {
         var msg = JSON.parse(line);
         handleStreamMessage(msg);
-      } catch (_) {}
+      } catch (error) {
+        transferLog.error('transfer.stream_parse_failed', { message: error && error.message, line: line.slice(0, 200) });
+      }
     });
   }
 
   function handleStreamMessage(msg) {
-    if (msg.event === 'phase') {
+    transferLog.debug('transfer.stream_event', { event: msg.event, phase: msg.phase, file: msg.file, ok: msg.ok });
+    if (msg.event === 'queued') {
+      activeImportJobId = msg.job_id || null;
+      activeImportCancelUrl = msg.cancel_url || null;
+      transferLog.info('import.queued', { job_id: activeImportJobId });
+      logEvent('Server job queued', 'done');
+    } else if (msg.event === 'phase') {
       setPhase(msg.label, '', msg.percent);
       logEvent(msg.label, 'active');
     } else if (msg.event === 'progress') {
@@ -376,7 +398,7 @@
     var zipFiles = files.filter(function (file) { return file.name.toLowerCase().endsWith('.zip'); });
     var fileCount = document.getElementById('transferFileCount');
     var clearFiles = document.getElementById('transferClearFiles');
-    skipAssets.hidden = zipFiles.length === 0;
+    skipAssets.hidden = files.length === 0;
     fileCount.textContent = files.length + (files.length === 1 ? ' file' : ' files');
     clearFiles.hidden = files.length === 0;
     selection.replaceChildren();
@@ -469,6 +491,7 @@
     modal.show();
 
     var xhr = new XMLHttpRequest();
+    activeImportXhr = xhr;
     xhr.open('POST', form.action, true);
     xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
     var lastStreamPos = 0;
@@ -497,24 +520,33 @@
     xhr.addEventListener('loadend', function () {
       clearFormLoading(form);
       setOperationActive(false);
+      activeImportXhr = null;
       streamBuffer += xhr.responseText.substring(lastStreamPos);
       processStreamChunk();
-      transferLog.info('import.response_finished', {
-        status: xhr.status,
-        ok: xhr.status >= 200 && xhr.status < 300,
-      });
+      if (!transferHasResult && xhr.status >= 400) {
+        showResult({ event: 'result', ok: false, title_text: 'Import failed',
+          message: 'The server rejected the import (HTTP ' + (xhr.status || 0) + '). Check the browser and server logs.',
+          icon_class: 'bi-x-lg', icon_modifier: 'is-error' });
+      } else if (!transferHasResult && xhr.status > 0) {
+        showResult({ event: 'result', ok: false, title_text: 'Import ended unexpectedly',
+          message: 'The server response ended without a final result. Check the server log.',
+          icon_class: 'bi-x-lg', icon_modifier: 'is-error' });
+      }
+      transferLog.info('import.response_finished', { status: xhr.status, ok: xhr.status >= 200 && xhr.status < 300 });
     });
     xhr.addEventListener('error', function () {
       clearFormLoading(form);
       logEvent('Network error while waiting for the server', 'error');
       setOperationActive(false);
       transferLog.error('import.network_failed', { status: xhr.status || 0 });
+      if (!transferHasResult) showResult({ event: 'result', ok: false, title_text: 'Network error', message: 'The connection to the server was interrupted.', icon_class: 'bi-x-lg', icon_modifier: 'is-error' });
     });
     xhr.addEventListener('abort', function () {
       clearFormLoading(form);
       logEvent('Import request cancelled', 'error');
       setOperationActive(false);
       transferLog.warn('import.cancelled', {});
+      if (!transferHasResult) showResult({ event: 'result', ok: false, cancelled: true, title_text: 'Import cancelled', message: 'The upload/import request was cancelled.', icon_class: 'bi-x-lg', icon_modifier: 'is-warning' });
     });
     var payload = new FormData(form);
     payload.delete('data_file');
@@ -522,6 +554,36 @@
       payload.append('data_file', file, file.name);
     });
     xhr.send(payload);
+  });
+
+  if (cancelButton) cancelButton.addEventListener('click', async function () {
+    if (!operationActive) return;
+    cancelButton.disabled = true;
+    cancelButton.textContent = 'Cancelling…';
+    try {
+      if (!activeImportJobId || !activeImportCancelUrl) {
+        if (activeImportXhr) activeImportXhr.abort();
+        else {
+          setOperationActive(false);
+          showResult({ event: 'result', ok: false, cancelled: true, title_text: 'Operation cancelled', message: 'The operation was cancelled.', icon_class: 'bi-x-lg', icon_modifier: 'is-warning' });
+        }
+        return;
+      }
+      transferLog.warn('import.cancel_requested', { job_id: activeImportJobId });
+      logEvent('Cancellation requested; rolling back safely…', 'active');
+      status.textContent = 'Cancelling import…';
+      var response = await fetch(activeImportCancelUrl, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'X-CSRF-Token': config.csrfToken, 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      if (!response.ok && response.status !== 409) throw new Error('Cancel request failed (HTTP ' + response.status + ')');
+      cancelButton.textContent = 'Cancellation requested';
+    } catch (error) {
+      cancelButton.disabled = false;
+      cancelButton.innerHTML = '<i class="bi bi-x-circle"></i> Cancel';
+      transferLog.error('import.cancel_failed', { message: error && error.message });
+      logEvent(error && error.message ? error.message : 'Unable to cancel import', 'error');
+    }
   });
 
   document.querySelectorAll('.transfer-export-button[data-export]').forEach(function (button) {
@@ -533,6 +595,7 @@
       var fmtUpper = fmt.toUpperCase();
       transferLog.info('export.started', { format: fmt });
       resetModal('Export data', 'Preparing ' + fmtUpper + '…');
+      if (cancelButton) cancelButton.hidden = true;
       logEvent(fmtUpper === 'ZIP' ? 'Collecting records and local assets' : 'Serializing records as JSONL', 'active');
       modal.show();
 
@@ -589,6 +652,7 @@
         logEvent('Network error during export', 'error');
         setOperationActive(false);
         transferLog.error('export.network_failed', { format: fmt, status: xhr.status || 0 });
+        if (!transferHasResult) showResult({ event: 'result', ok: false, title_text: 'Export network error', message: 'The connection to the server was interrupted during export.', icon_class: 'bi-x-lg', icon_modifier: 'is-error' });
       });
       xhr.send('_csrf_token=' + encodeURIComponent(config.csrfToken));
     });

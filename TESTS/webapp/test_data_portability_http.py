@@ -86,7 +86,7 @@ class TestDataPortabilityHTTP:
                 # Full portable export carries durable state for lossless re-import.
                 assert "state.json" in names
                 manifest = json.loads(zf.read("manifest.json"))
-                assert manifest["format"] == "mifp-export"
+                assert manifest["format"] == "mifp-jsonl-v2"
                 assert manifest["scope"] == "all"
 
     def test_export_dl_invalid_token(self, app_with_admin):

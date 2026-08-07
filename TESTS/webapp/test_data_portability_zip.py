@@ -49,7 +49,7 @@ def test_export_zip_contains_manifest_jsonl_and_asset_file(tmp_path: Path) -> No
         records_raw = zf.read("records.jsonl").decode("utf-8")
 
     assert {"manifest.json", "records.jsonl", "assets/pdf/paper.pdf"} <= names
-    assert manifest["format"] == "mifp-export"
+    assert manifest["format"] == "mifp-jsonl-v2"
     assert manifest["format_version"] == 2
     assert manifest["schema_version"] >= 1
     assert len(manifest["records_sha256"]) == 64
@@ -62,6 +62,25 @@ def test_export_zip_contains_manifest_jsonl_and_asset_file(tmp_path: Path) -> No
     assert records[0]["assets"][0]["path"] == "pdf/paper.pdf"
     assert manifest["files"][0]["size"] == len(b"%PDF-1.4\n")
     assert len(manifest["files"][0]["sha256"]) == 64
+
+
+def test_export_zip_file_writer_writes_valid_archive(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip_file, parse_zip_payload
+
+    conn = _conn()
+    assets_dir = tmp_path / "assets"
+    (assets_dir / "pdf").mkdir(parents=True)
+    (assets_dir / "pdf" / "paper.pdf").write_bytes(b"%PDF-1.4\n")
+    _insert_news_with_document(conn)
+
+    destination = tmp_path / "export.zip"
+    written = bundle_to_zip_file(conn, "news", assets_dir, destination)
+    package = parse_zip_payload(destination)
+
+    assert written == destination.stat().st_size
+    assert package["manifest"]["format"] == "mifp-jsonl-v2"
+    assert package["manifest"]["scope"] == "news"
+    assert package["record_count"] == 1
 
 
 def test_roundtrip_uses_portable_role_and_parent_event_references(tmp_path: Path) -> None:
@@ -503,66 +522,6 @@ def test_import_keeps_valid_record_when_packaged_asset_is_invalid(tmp_path: Path
     assert conn.execute("SELECT COUNT(*) FROM news WHERE slug='valid-news'").fetchone()[0] == 1
 
 
-def _legacy_import_jsonl_accepts_standalone_asset_records(tmp_path: Path) -> None:
-    from mifp_app.services.importers import import_jsonl
-
-    conn = _conn()
-    path = tmp_path / "assets.jsonl"
-    path.write_text(
-        json.dumps({
-            "type": "asset",
-            "data": {
-                "filename": "paper.pdf",
-                "path": "pdf/paper.pdf",
-                "kind": "pdf",
-                "checksum": "asset-sha",
-                "storage_status": "missing",
-            },
-            "meta": {},
-        }) + "\n",
-        encoding="utf-8",
-    )
-
-    first = import_jsonl(conn, path, dry_run=False)
-    second = import_jsonl(conn, path, dry_run=False)
-
-    assert first["errors"] == []
-    assert second["errors"] == []
-    assert first["inserted"]["asset"] == 1
-    assert second["updated"]["asset"] == 1
-    assert conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 1
-
-
-def _legacy_assets_zip_roundtrip_imports_metadata_and_files(tmp_path: Path) -> None:
-    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
-
-    source = _conn()
-    assets_dir = tmp_path / "assets"
-    (assets_dir / "pdf").mkdir(parents=True)
-    (assets_dir / "pdf" / "paper.pdf").write_bytes(b"%PDF-1.4\n")
-    source.execute(
-        "INSERT INTO assets(filename, path, kind, checksum, storage_status) VALUES(?,?,?,?,?)",
-        ("paper.pdf", "pdf/paper.pdf", "pdf", "zip-asset-sha", "local"),
-    )
-    payload = bundle_to_zip(source, "assets", assets_dir)
-
-    target = _conn()
-    target_assets = tmp_path / "target" / "assets"
-    summary = import_zip_payload(target, payload, "assets", target_assets, dry_run=False)
-
-    assert summary["errors"] == []
-    assert summary["inserted"]["asset"] == 1
-    row = target.execute("SELECT filename, path, kind, checksum FROM assets").fetchone()
-    assert dict(row) == {
-        "filename": "paper.pdf",
-        "path": "pdf/paper.pdf",
-        "kind": "pdf",
-        "checksum": "zip-asset-sha",
-    }
-    imported_files = list((target_assets / "pdf").glob("paper-*.pdf"))
-    assert len(imported_files) == 1
-    assert imported_files[0].read_bytes() == b"%PDF-1.4\n"
-
 
 def _raw_zip(*, manifest_files: list[dict] | None = None, files: dict[str, bytes] | None = None) -> bytes:
     manifest = {
@@ -884,6 +843,110 @@ def test_parse_zip_rejects_malformed_manifest() -> None:
         parse_zip_payload(out.getvalue())
 
 
+
+def test_parse_zip_rejects_manifest_asset_path_mismatch() -> None:
+    from mifp_app.services.data_portability import parse_zip_payload
+
+    payload = _raw_zip(
+        manifest_files=[{
+            "path": "pdf/paper.pdf",
+            "archive_path": "assets/pdf/other.pdf",
+            "size": 4,
+            "sha256": "0" * 64,
+        }],
+        files={"assets/pdf/other.pdf": b"data"},
+    )
+
+    with pytest.raises(ValueError, match="does not match archive_path"):
+        parse_zip_payload(payload)
+
+
+def test_parse_zip_rejects_duplicate_manifest_asset_entry() -> None:
+    from mifp_app.services.data_portability import parse_zip_payload
+
+    payload = _raw_zip(manifest_files=[
+        {"path": "pdf/paper.pdf", "archive_path": "assets/pdf/paper.pdf"},
+        {"path": "pdf/paper.pdf", "archive_path": "assets/pdf/paper.pdf"},
+    ])
+
+    with pytest.raises(ValueError, match="duplicate archive_path"):
+        parse_zip_payload(payload)
+
+
+def test_canonical_zip_requires_version_and_records_hash() -> None:
+    from mifp_app.services.data_portability import parse_zip_payload
+
+    manifest = {
+        "format": "mifp-jsonl-v2",
+        "scope": "news",
+        "records": 0,
+        "files": [],
+    }
+    out = BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("records.jsonl", "")
+        zf.writestr("manifest.json", json.dumps(manifest))
+    with pytest.raises(ValueError, match="format_version=2"):
+        parse_zip_payload(out.getvalue())
+
+    manifest["format_version"] = 2
+    out = BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("records.jsonl", "")
+        zf.writestr("manifest.json", json.dumps(manifest))
+    with pytest.raises(ValueError, match="records_sha256"):
+        parse_zip_payload(out.getvalue())
+
+
+def test_canonical_zip_requires_complete_asset_integrity_metadata() -> None:
+    from mifp_app.services.data_portability import parse_zip_payload
+
+    manifest = {
+        "format": "mifp-jsonl-v2",
+        "format_version": 2,
+        "scope": "news",
+        "records": 0,
+        "records_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "files": [{"archive_path": "assets/pdf/paper.pdf"}],
+    }
+    out = BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("records.jsonl", "")
+        zf.writestr("assets/pdf/paper.pdf", b"data")
+        zf.writestr("manifest.json", json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="path"):
+        parse_zip_payload(out.getvalue())
+
+
+def test_parse_zip_rejects_oversized_records_member(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mifp_app.config import Config
+    from mifp_app.services.data_portability import parse_zip_payload
+
+    monkeypatch.setattr(Config, "IMPORT_MAX_JSONL_BYTES", 4)
+    out = BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("records.jsonl", "12345")
+        zf.writestr("manifest.json", json.dumps({"scope": "news", "records": 0, "files": []}))
+
+    with pytest.raises(ValueError, match="records.jsonl exceeds maximum size"):
+        parse_zip_payload(out.getvalue())
+
+
+def test_import_jsonl_rejects_oversized_file_before_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mifp_app.config import Config
+    from mifp_app.services.importers import ImportValidationError, import_jsonl
+
+    monkeypatch.setattr(Config, "IMPORT_MAX_JSONL_BYTES", 8)
+    path = tmp_path / "too-large.jsonl"
+    path.write_bytes(b"{" + b"x" * 32 + b"}")
+
+    with pytest.raises(ImportValidationError, match="exceeds maximum size"):
+        import_jsonl(_conn(), path)
+
+
 def test_import_jsonl_event_upsert_by_slug(tmp_path: Path) -> None:
     from mifp_app.services.importers import import_jsonl
 
@@ -1085,3 +1148,68 @@ def test_roundtrip_preserves_scraper_provenance(tmp_path: Path) -> None:
     assert mapping["entity_uid"] == "news-1"
     assert mapping["confidence"] == 0.95
     assert mapping["mapping_kind"] == "canonical"
+
+
+def test_jsonl_package_roundtrip_matches_zip_for_records_state_and_assets(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import (
+        bundle_to_jsonl_file,
+        bundle_to_zip,
+        import_jsonl_payload,
+        import_zip_payload,
+    )
+
+    source = _conn()
+    source_assets = tmp_path / "source-assets"
+    (source_assets / "pdf").mkdir(parents=True)
+    (source_assets / "pdf" / "paper.pdf").write_bytes(b"%PDF-1.4\nportable\n")
+    _insert_news_with_document(source)
+    source.execute("INSERT INTO settings(key,value) VALUES('portable-test','yes')")
+
+    jsonl_path = tmp_path / "export.jsonl"
+    manifest = bundle_to_jsonl_file(source, "all", source_assets, jsonl_path)
+    zip_payload = bundle_to_zip(source, "all", source_assets)
+
+    assert manifest["format"] == "mifp-jsonl-v2"
+    assert manifest["container"] == "jsonl"
+    assert manifest["files"]
+    text = jsonl_path.read_text(encoding="utf-8")
+    assert '"kind": "asset_chunk"' in text
+
+    jsonl_target = _conn()
+    zip_target = _conn()
+    jsonl_assets = tmp_path / "jsonl-assets"
+    zip_assets = tmp_path / "zip-assets"
+    jsonl_summary = import_jsonl_payload(jsonl_target, jsonl_path, "all", jsonl_assets)
+    zip_summary = import_zip_payload(zip_target, zip_payload, "all", zip_assets)
+
+    assert jsonl_summary["errors"] == zip_summary["errors"] == []
+    for conn in (jsonl_target, zip_target):
+        assert conn.execute("SELECT title FROM news WHERE slug='news'").fetchone()[0] == "News"
+        assert conn.execute("SELECT value FROM settings WHERE key='portable-test'").fetchone()[0] == "yes"
+    assert (jsonl_assets / "pdf" / "paper.pdf").read_bytes() == b"%PDF-1.4\nportable\n"
+    assert (zip_assets / "pdf" / "paper.pdf").read_bytes() == b"%PDF-1.4\nportable\n"
+
+
+def test_jsonl_package_detects_tampered_asset_chunk(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_jsonl_file, import_jsonl_payload
+
+    source = _conn()
+    source_assets = tmp_path / "source-assets"
+    (source_assets / "pdf").mkdir(parents=True)
+    (source_assets / "pdf" / "paper.pdf").write_bytes(b"%PDF-1.4\nportable\n")
+    _insert_news_with_document(source)
+    package = tmp_path / "export.jsonl"
+    bundle_to_jsonl_file(source, "news", source_assets, package)
+
+    lines = package.read_text(encoding="utf-8").splitlines()
+    for index, raw in enumerate(lines):
+        item = json.loads(raw)
+        meta = item.get("_mifp") or {}
+        if meta.get("kind") == "asset_chunk":
+            meta["data"] = "AAAA"
+            lines[index] = json.dumps(item, sort_keys=True)
+            break
+    package.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="integrity|declared size"):
+        import_jsonl_payload(_conn(), package, "news", tmp_path / "target-assets")

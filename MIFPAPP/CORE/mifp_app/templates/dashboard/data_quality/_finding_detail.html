@@ -1,11 +1,7 @@
 {% set plan = finding.plan or {} %}
 {% set records = plan.get('records') or (plan.get('record') and [plan.get('record')]) or (plan.get('source_record') and [plan.get('source_record')]) or [] %}
 {% set is_merge = finding.action_type == 'merge_records' %}
-{% set manually_editable = (
-  (is_merge and records|length >= 2)
-  or plan.get('fields')
-  or plan.get('proposed_records')
-) %}
+{% set manually_editable = finding.workflow == 'manual' %}
 {% set primary = records[0] if records else {} %}
 {% set record_label = primary.get('title') or primary.get('display_name') or primary.get('name') or ('Record #' ~ (primary.get('id') or finding.record_ids[0] if finding.record_ids else finding.id)) %}
 

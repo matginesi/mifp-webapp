@@ -245,11 +245,13 @@ def get_content_quality_summary(conn: sqlite3.Connection) -> dict[str, int]:
         "news_without_image": _safe_scalar(conn, "SELECT COUNT(*) FROM news WHERE id NOT IN (SELECT entity_id FROM asset_links WHERE entity_type='news' AND role IN ('cover','gallery'))"),
         "publications_without_doi": _safe_scalar(conn, "SELECT COUNT(*) FROM publications WHERE COALESCE(TRIM(doi),'')=''"),
         "publications_without_link": _safe_scalar(conn, "SELECT COUNT(*) FROM publications WHERE id NOT IN (SELECT entity_id FROM entity_links WHERE entity_type='publication') AND id NOT IN (SELECT entity_id FROM asset_links WHERE entity_type='publication')"),
+        "research_without_summary": _safe_scalar(conn, "SELECT COUNT(*) FROM research_areas WHERE COALESCE(TRIM(summary),'')=''"),
+        "pages_without_body": _safe_scalar(conn, "SELECT COUNT(*) FROM pages WHERE COALESCE(TRIM(body),'')=''"),
         "sponsors_without_logo": _safe_scalar(conn, "SELECT COUNT(*) FROM sponsors WHERE id NOT IN (SELECT entity_id FROM asset_links WHERE entity_type='sponsor' AND role='logo')"),
+        "sponsors_without_link": _safe_scalar(conn, "SELECT COUNT(*) FROM sponsors WHERE id NOT IN (SELECT entity_id FROM entity_links WHERE entity_type='sponsor')"),
         "asset_records": _safe_scalar(conn, "SELECT COUNT(*) FROM assets"),
         "asset_links": _safe_scalar(conn, "SELECT COUNT(*) FROM asset_links"),
         "asset_unused_db": _safe_scalar(conn, "SELECT COUNT(*) FROM assets WHERE id NOT IN (SELECT asset_id FROM asset_links WHERE asset_id IS NOT NULL)"),
-        "pages_without_translation": 0,
     }
     if has_app_context():
         try:

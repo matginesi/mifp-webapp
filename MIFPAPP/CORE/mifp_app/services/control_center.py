@@ -115,6 +115,18 @@ CONTENT_TARGETS: tuple[dict[str, str], ...] = (
         "section": "sponsors",
     },
     {
+        "code": "sponsors_link",
+        "table": "sponsors",
+        "label": "Sponsors without destination link",
+        "severity": "info",
+        "where": (
+            "NOT EXISTS (SELECT 1 FROM entity_links el WHERE el.entity_type='sponsor' "
+            "AND el.entity_id=sponsors.id)"
+        ),
+        "title": "name",
+        "section": "sponsors",
+    },
+    {
         "code": "pages_summary",
         "table": "pages",
         "label": "Public text records without summary",

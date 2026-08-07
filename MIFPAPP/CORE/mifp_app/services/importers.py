@@ -176,6 +176,9 @@ def infer_country(text: Any) -> str:
     return ""
 
 
+from .job_manager import JobCancelled
+
+
 class ImportValidationError(ValueError):
     pass
 
@@ -192,6 +195,8 @@ def import_jsonl(
     asset_detail: Callable[[str], None] | None = None,
     force_import: bool = False,
     source_name: str | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     records = _read_records(Path(path))
     summary: dict[str, Any] = {
@@ -210,6 +215,8 @@ def import_jsonl(
     if not dry_run:
         run_id = _start_import_run(conn, Path(path), len(records), source_name=source_name)
     for idx, record in enumerate(records, start=1):
+        if cancel_check and cancel_check():
+            raise JobCancelled("Import cancelled by administrator")
         savepoint = f"import_record_{idx}"
         before_inserted = dict(summary["inserted"])
         before_updated = dict(summary["updated"])
@@ -292,6 +299,8 @@ def import_jsonl(
             summary["errors"].append({"line": idx, "error": str(exc)})
         if progress and (idx == 1 or idx % 100 == 0 or idx == len(records)):
             progress(idx, len(records))
+    if cancel_check and cancel_check():
+        raise JobCancelled("Import cancelled by administrator")
     if not dry_run:
         _restore_portable_references(conn, records, summary)
     if run_id is not None:
@@ -300,12 +309,20 @@ def import_jsonl(
             "UPDATE import_runs SET completed_at=CURRENT_TIMESTAMP, status=?, stats_json=? WHERE id=?",
             (status, json.dumps(summary, ensure_ascii=False, default=str), run_id),
         )
-    if not dry_run:
+    if not dry_run and commit:
         conn.commit()
     return summary
 
 
 def _read_records(path: Path) -> list[dict[str, Any]]:
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise ImportValidationError("Import file is not available") from exc
+    if size > Config.IMPORT_MAX_JSONL_BYTES:
+        raise ImportValidationError(
+            f"JSON/JSONL import exceeds maximum size: {Config.IMPORT_MAX_JSONL_BYTES} bytes"
+        )
     try:
         raw = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError as exc:

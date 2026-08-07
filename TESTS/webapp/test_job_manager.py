@@ -69,3 +69,53 @@ def test_job_persistence_is_best_effort(tmp_path):
     _job_id, future = manager.submit("lost-job", lambda: None)
     assert future.result(timeout=2) is None
     assert manager.snapshot()["jobs"][0]["status"] == "completed"
+
+
+def test_cancellable_job_stops_cooperatively():
+    from mifp_app.services.job_manager import JobCancelled
+
+    manager = JobManager(max_workers=1, max_pending=1)
+    entered = Event()
+    release = Event()
+
+    def work(cancelled):
+        entered.set()
+        release.wait(1)
+        if cancelled():
+            raise JobCancelled("cancelled")
+        return "unexpected"
+
+    job_id, future = manager.submit_cancellable("cancel-me", work)
+    assert entered.wait(1)
+    assert manager.request_cancel(job_id) is True
+    release.set()
+    assert future.result(timeout=2) is None
+    state = next(j for j in manager.snapshot()["jobs"] if j["id"] == job_id)
+    assert state["status"] == "cancelled"
+
+
+def test_cancel_request_crosses_manager_process_boundary(tmp_path):
+    from mifp_app.services.job_manager import JobCancelled
+
+    db_path = str(tmp_path / "app.db")
+    owner = JobManager(max_workers=1, max_pending=1, db_path=db_path)
+    other_worker = JobManager(max_workers=1, max_pending=1, db_path=db_path)
+    entered = Event()
+    release = Event()
+
+    def work(cancelled):
+        entered.set()
+        while not release.wait(0.05):
+            if cancelled():
+                raise JobCancelled("cancelled remotely")
+        if cancelled():
+            raise JobCancelled("cancelled remotely")
+
+    job_id, future = owner.submit_cancellable("cross-worker-import", work)
+    assert entered.wait(1)
+    assert other_worker.request_cancel(job_id) is True
+    # Give the owner's throttled durable cancellation poll a chance to run.
+    assert future.result(timeout=2) is None
+    release.set()
+    state = next(j for j in owner.snapshot()["jobs"] if j["id"] == job_id)
+    assert state["status"] == "cancelled"

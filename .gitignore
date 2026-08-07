@@ -1,78 +1,33 @@
-# =============================================================================
-# REMOTE GITHUB: WEBAPP + RUNTIME + CI/CD ONLY
-# =============================================================================
-#
-# La working tree locale può contenere anche SCRAPERS, IMPORT_DATA, builder DB,
-# tools e documentazione privata. Queste cartelle restano sul disco ma non
-# vengono pubblicate nel repository remoto. zip_it.sh le include invece nello
-# snapshot personale del codebase, escludendo soltanto dati e output generati.
-
+# Remote repository policy: keep the deployable webapp and its webapp tests.
+# Local scraper/database/tool sources remain available for personal ZIP archives
+# through zip_it.sh, but are intentionally not part of the webapp-only remote.
 /*
 
-# File root pubblicabili
+# Root files required to run, test and document the webapp.
 !/.gitignore
-!/.gitattributes
 !/README.md
 !/DEPLOYMENT.md
 !/AGENTS.md
 !/comandi.txt
 !/mifp
-!/zip_it.sh
 !/test_all.sh
 !/pytest.ini
+!/zip_it.sh
 
-# CI/CD
+# CI/CD.
 !/.github/
 !/.github/**
 
-# Webapp deployabile
+# Webapp source. Nested MIFPAPP/CORE/.gitignore excludes secrets/runtime data.
 !/MIFPAPP/
 /MIFPAPP/*
 !/MIFPAPP/CORE/
 !/MIFPAPP/CORE/**
 
-# Test webapp usati dalla CI
+# Webapp tests only.
 !/TESTS/
 /TESTS/*
+!/TESTS/__init__.py
 !/TESTS/conftest.py
-!/TESTS/fixtures/
-!/TESTS/fixtures/**
 !/TESTS/webapp/
 !/TESTS/webapp/**
-
-# =============================================================================
-# SECRET, STATO LOCALE E FILE GENERATI — SEMPRE ESCLUSI
-# =============================================================================
-.env
-.env.*.local
-.mifp/
-**/.env
-**/.venv/
-**/.venv-production/
-**/__pycache__/
-**/.pytest_cache/
-**/.mypy_cache/
-**/.ruff_cache/
-**/.hypothesis/
-**/*.egg-info/
-.pytest_cache/
-.coverage
-coverage.xml
-htmlcov/
-playwright-report/
-test-results/
-*.py[cod]
-*.log
-*.pid
-*.db
-*.db-*
-*.sqlite
-*.sqlite3
-*.sqlite-*
-*.zip
-*.tar
-*.tar.gz
-*.tgz
-.DS_Store
-.idea/
-.vscode/

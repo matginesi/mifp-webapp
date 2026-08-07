@@ -166,6 +166,17 @@ def evaluate_event(a: dict, b: dict, context: dict) -> tuple[Classification, flo
     return Classification.RELATED, title_score, evidence, contradictions
 
 
+def _news_dates_compatible(left: object, right: object) -> bool:
+    a, b = str(left or "").strip(), str(right or "").strip()
+    if not a or not b:
+        return True
+    # Missing/partial dates from old scrapers are compatible only when their
+    # known prefix agrees. Two different complete dates are not auto-merged.
+    if len(a) < 10 or len(b) < 10:
+        return a.startswith(b) or b.startswith(a) or (a[:4] and a[:4] == b[:4])
+    return a[:10] == b[:10]
+
+
 def evaluate_news(a: dict, b: dict, context: dict) -> tuple[Classification, float, list[Evidence], list[Evidence]]:
     generic = {"news", "xhr news", "update"}
     title_a, title_b = comparison_text(a.get("title")), comparison_text(b.get("title"))
@@ -210,6 +221,15 @@ def evaluate_news(a: dict, b: dict, context: dict) -> tuple[Classification, floa
         return Classification.EXACT, 1, ev, []
 
     title_score = similarity(title_a, title_b)
+    if title_a and title_a == title_b and _news_dates_compatible(a.get("date"), b.get("date")):
+        # Exact headline plus a missing/partial matching date is the common
+        # legacy scraper duplicate: keep the richer canonical record instead
+        # of asking an administrator to resolve the pair manually.
+        return Classification.STRONG, .98, [
+            _e("same_headline_compatible_date", "strong",
+               "Same headline with compatible complete/partial publication date",
+               [a.get("date"), b.get("date")])
+        ], []
     subjects_a = set(tokens(a.get("title"))) - _NEWS_STOP
     subjects_b = set(tokens(b.get("title"))) - _NEWS_STOP
 

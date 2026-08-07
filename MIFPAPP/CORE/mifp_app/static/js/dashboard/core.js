@@ -777,6 +777,10 @@ document.addEventListener('submit', function (ev) {
     return;
   }
   const form = ev.target;
+  // Some navigation forms (notably logout) must be allowed to leave the page
+  // immediately. A loading overlay can otherwise survive while the browser
+  // clears/replaces session state and look like a frozen dashboard.
+  if (form.dataset.noSpinner === '1') return;
   // Login form loading
   if (form.classList.contains('login-form')) {
     setFormLoading(form);

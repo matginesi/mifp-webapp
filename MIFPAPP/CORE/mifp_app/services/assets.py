@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import hashlib
 import http.client
 import ipaddress
@@ -804,6 +806,8 @@ def recover_missing_assets(
     backoff_hours: float | None = None,
     force: bool = False,
     statuses: tuple[str, ...] = ("missing", "external", "local"),
+    cancel_check: Callable[[], bool] | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """Recover a bounded batch and persist retry/cooldown state per asset."""
     log = __import__("logging").getLogger("mifp.assets")
@@ -843,6 +847,9 @@ def recover_missing_assets(
     started = time.monotonic()
     now_text = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
     for row in rows:
+        if cancel_check and cancel_check():
+            from .job_manager import JobCancelled
+            raise JobCancelled("Import cancelled during asset recovery")
         asset_id = int(row["id"])
         url = str(row["source_url"] or "").strip()
         if not url:
@@ -896,5 +903,6 @@ def recover_missing_assets(
             if terminal:
                 result["terminal"] += 1
             result["marked_missing"] += 1
-    conn.commit()
+    if commit:
+        conn.commit()
     return result

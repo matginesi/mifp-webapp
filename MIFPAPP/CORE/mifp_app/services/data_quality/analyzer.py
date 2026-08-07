@@ -211,13 +211,13 @@ def _check_date_placeholder(row: dict) -> Finding | None:
             "record_ids": [row["id"]],
             "fields": [
                 {"field": "end_date", "proposed_value": None,
-                 "action": "replace_with_cleaned", "requires_review": True,
-                 "reason": "Year-only date is not a full-year event."},
+                 "action": "clear_value", "requires_review": False,
+                 "reason": "A synthetic 31 December end date is not evidence of a year-long event."},
                 {"field": "date_precision", "proposed_value": "year",
-                 "action": "replace_with_cleaned", "requires_review": True,
+                 "action": "replace_with_cleaned", "requires_review": False,
                  "reason": "Only the year is known."},
                 {"field": "date_text", "proposed_value": year,
-                 "action": "replace_with_cleaned", "requires_review": True,
+                 "action": "replace_with_cleaned", "requires_review": False,
                  "reason": "Preserve the known year."},
             ],
             "source_fingerprint": stable_fingerprint("event", [row], action="date_placeholder"),
@@ -234,9 +234,11 @@ def _check_date_placeholder(row: dict) -> Finding | None:
 def _check_event_missing_dates(row: dict) -> Finding | None:
     start = str(row.get("start_date") or "").strip()
     end = str(row.get("end_date") or "").strip()
-    if start and end:
+    # ``end_date`` is optional for normal single-day events. Flagging every
+    # event with only a start date created thousands of non-actionable findings.
+    if start:
         return None
-    missing_fields = [name for name, val in [("start_date", start), ("end_date", end)] if not val]
+    missing_fields = ["start_date"] if end else ["start_date", "end_date"]
     if not start and not end:
         score = .95
         strength = "critical"
@@ -821,39 +823,79 @@ def latest_run(conn: sqlite3.Connection) -> dict | None:
     return result
 
 
-def _finding_filter(run_id: int, action_type: str, entity_type: str, classification: str):
-    clauses: list[str] = ["run_id=?"]
-    args: list[Any] = [run_id]
+def finding_workflow(finding: dict) -> str:
+    """Map a finding to the administrator workflow shown by the UI."""
+    classification = str(finding.get("classification") or "")
+    action = str(finding.get("action_type") or "")
+    plan = finding.get("plan") or {}
+    if classification in {"blocked", "related_not_duplicate", "keep_separate"}:
+        return "informational"
+    if classification in {"ambiguous", "invalid_record", "aggregated_record"}:
+        return "manual"
+    if action == "split_aggregated_record" or bool(plan.get("requires_review")):
+        return "manual"
+    for field in plan.get("fields") or []:
+        if field.get("requires_review") or field.get("action") == "manual_edit_required":
+            return "manual"
+    if classification in {"exact_duplicate", "strong_candidate", "needs_cleaning"} or action == "repair_relations_or_assets":
+        return "automatic"
+    return "manual"
+
+
+def _requested_workflow(classification: str) -> str:
     if classification == "reviewable":
-        clauses.append("classification NOT IN ('blocked','related_not_duplicate','keep_separate','ambiguous')")
-        clauses.append("status='open'")
-        classification = ""
-    else:
-        # The review list contains decisions still awaiting an administrator.
-        # Bundled, deferred and terminal findings belong to their own states and
-        # must not reappear after the user has acted on them.
-        clauses.append("status='open'")
-    for column, value in (("action_type", action_type), ("entity_type", entity_type), ("classification", classification)):
+        return "automatic"
+    return classification if classification in {"automatic", "manual", "informational"} else ""
+
+
+def _finding_filter(run_id: int, action_type: str, entity_type: str, classification: str):
+    # Keep this helper's historical two-value return contract because executor
+    # batch operations also use it. Workflow pseudo-filters are applied after
+    # decoding the plan, since review requirements live inside plan_json.
+    clauses: list[str] = ["run_id=?", "status='open'"]
+    args: list[Any] = [run_id]
+    workflow = _requested_workflow(classification)
+    for column, value in (("action_type", action_type), ("entity_type", entity_type)):
         if value:
             clauses.append(f"{column}=?")
             args.append(value)
+    if classification and not workflow:
+        clauses.append("classification=?")
+        args.append(classification)
     return clauses, args
 
 
-def list_findings(conn: sqlite3.Connection, run_id: int, *, action_type: str = "", entity_type: str = "", classification: str = "", limit: int = 500, offset: int = 0) -> list[dict]:
+def _workflow_rows(conn: sqlite3.Connection, run_id: int, *, action_type: str = "", entity_type: str = "", classification: str = "") -> list[dict]:
     clauses, args = _finding_filter(run_id, action_type, entity_type, classification)
+    workflow = _requested_workflow(classification)
+    rows = [_decode_finding(row) for row in conn.execute(
+        f"SELECT * FROM quality_findings WHERE {' AND '.join(clauses)} ORDER BY score DESC,id", args
+    )]
+    return [row for row in rows if not workflow or row["workflow"] == workflow]
+
+
+def list_findings(conn: sqlite3.Connection, run_id: int, *, action_type: str = "", entity_type: str = "", classification: str = "", limit: int = 500, offset: int = 0) -> list[dict]:
+    rows = _workflow_rows(conn, run_id, action_type=action_type, entity_type=entity_type, classification=classification)
     safe_limit = max(1, min(int(limit), 500))
     safe_offset = max(0, int(offset))
-    rows = conn.execute(
-        f"SELECT * FROM quality_findings WHERE {' AND '.join(clauses)} ORDER BY score DESC,id LIMIT ? OFFSET ?",
-        [*args, safe_limit, safe_offset],
-    )
-    return [_decode_finding(row) for row in rows]
+    return rows[safe_offset:safe_offset + safe_limit]
 
 
 def count_findings(conn: sqlite3.Connection, run_id: int, *, action_type: str = "", entity_type: str = "", classification: str = "") -> int:
-    clauses, args = _finding_filter(run_id, action_type, entity_type, classification)
-    return int(conn.execute(f"SELECT COUNT(*) FROM quality_findings WHERE {' AND '.join(clauses)}", args).fetchone()[0])
+    return len(_workflow_rows(conn, run_id, action_type=action_type, entity_type=entity_type, classification=classification))
+
+
+def count_workflows(conn: sqlite3.Connection, run_id: int) -> dict[str, int]:
+    """Count open findings by UX workflow with one database pass."""
+    counts = {"automatic": 0, "manual": 0, "informational": 0}
+    clauses, args = _finding_filter(run_id, "", "", "")
+    for row in conn.execute(
+        f"SELECT * FROM quality_findings WHERE {' AND '.join(clauses)}", args
+    ):
+        item = _decode_finding(row)
+        workflow = item["workflow"]
+        counts[workflow] = counts.get(workflow, 0) + 1
+    return counts
 
 
 def get_finding(conn: sqlite3.Connection, finding_id: int) -> dict | None:
@@ -868,4 +910,5 @@ def _decode_finding(row: sqlite3.Row) -> dict:
         ("contradictions_json", "contradictions", []), ("plan_json", "plan", {}),
     ):
         item[target] = json.loads(item.pop(source) or json.dumps(fallback))
+    item["workflow"] = finding_workflow(item)
     return item

@@ -54,6 +54,14 @@
       else list.insertAdjacentHTML('beforeend', d.items_html);
       if ($('dqFilteredCount')) $('dqFilteredCount').textContent = String(d.total);
       $('dqLoadMore').hidden = d.items.length < 30 || S.offset >= d.total;
+      var bulk = $('dqAcceptAll');
+      if (bulk) {
+        var workflow = String((f.elements.classification && f.elements.classification.value) || 'automatic');
+        var safeAutomatic = workflow === 'automatic';
+        bulk.disabled = !safeAutomatic || Number(d.total || 0) === 0;
+        bulk.textContent = safeAutomatic ? 'Queue matching automatic fixes' : 'Bulk apply is only available for safe automatic fixes';
+        bulk.title = safeAutomatic ? 'Queue all currently filtered safe automatic fixes' : 'Review manual or informational findings individually';
+      }
       return d;
     } catch (error) {
       if (error && error.name === 'AbortError') return null;
@@ -78,7 +86,7 @@
     $('dqQueueStats').innerHTML = d.queue_html || '';
     $('dqApplyAll').disabled = !d.can_apply;
     $('dqClearQueue').disabled = !d.can_apply;
-    $('dqAcceptAll').disabled = Number(d.open_total || 0) === 0;
+    // loadFindings owns bulk-action enablement because it knows the active workflow filter.
     return d;
   }
 
@@ -176,7 +184,7 @@
     try {
       var r = await window.MIFP.request(C.bulkDecisionUrl, {
         method: 'POST',
-        json: { decision: 'accept', run_id: S.runId, all_run: true }
+        json: { decision: 'accept', run_id: S.runId, filters: Object.fromEntries(new FormData($('dqFilters')).entries()) }
       });
       if (r.data.ok) {
         if (r.data.result.bundle_id) S.bundleId = Number(r.data.result.bundle_id);
@@ -252,18 +260,6 @@
         }
 
         $('dqPhase2').classList.remove('dq-phase-disabled');
-        if (finalStatus.summary) {
-          var c = $('dqSummaryCards');
-          if (!c) {
-            var html = '<div class="dq-summary-cards" id="dqSummaryCards">';
-            [['clean_record','Clean records','bi-eraser'],['split_aggregated_record','Split aggregated','bi-scissors'],['enrich_record','Enrichments','bi-plus-circle'],['repair_relations_or_assets','Fix links & assets','bi-link-45deg'],['merge_records','Merge candidates','bi-intersect']].forEach(function (x) {
-              var count = finalStatus.summary.actions[x[0]] || 0;
-              html += '<button type="button" class="dq-summary-card" data-action-filter="' + x[0] + '"><i class="bi ' + x[2] + '"></i><b>' + count + '</b><span>' + x[1] + '</span></button>';
-            });
-            html += '</div>';
-            $('dqSummary').innerHTML = html;
-          }
-        }
         await reloadFindings();
         await renderQueue();
         $('dqPhase2').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -366,8 +362,13 @@
       if (target.classList.contains('btn-dq-ignore')) { e.stopPropagation(); ignoreFinding(fid).catch(function (err) { toast(err.message, 'error'); }); return; }
     }
     var sc = e.target.closest('.dq-summary-card');
-    if (sc && sc.dataset.actionFilter && $('dqFilters') && $('dqFilters').elements.action_type) {
-      $('dqFilters').elements.action_type.value = sc.dataset.actionFilter;
+    if (sc && $('dqFilters')) {
+      if (sc.dataset.actionFilter !== undefined && $('dqFilters').elements.action_type) {
+        $('dqFilters').elements.action_type.value = sc.dataset.actionFilter || '';
+      }
+      if (sc.dataset.workflowFilter !== undefined && $('dqFilters').elements.classification) {
+        $('dqFilters').elements.classification.value = sc.dataset.workflowFilter || 'automatic';
+      }
       reloadFindings().catch(function (err) { toast(err.message, 'error'); });
       return;
     }

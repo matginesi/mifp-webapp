@@ -13,6 +13,7 @@ from ..services.data_quality import (
     apply_bundle,
     bundle_detail,
     count_findings,
+    count_workflows,
     create_bundle,
     delete_draft,
     get_finding,
@@ -20,8 +21,7 @@ from ..services.data_quality import (
     list_findings,
     remove_from_bundle,
 )
-from ..services.data_quality.analyzer import database_fingerprint
-from ..services.data_quality.executor import force_merge_candidate
+from ..services.data_quality.analyzer import database_fingerprint, finding_workflow
 from ..services.data_quality.planner import LABELS, TABLES, records_for
 from ..services.data_quality.policies import similarity
 from ..services.job_manager import JobQueueFull, get_job_manager
@@ -59,6 +59,7 @@ def _workspace_state(conn) -> tuple[dict | None, dict | None, int]:
 @login_required
 def data_quality_page():
     current_app.logger.info("data_quality page load")
+    workflow_counts = {"automatic": 0, "manual": 0, "informational": 0}
     with connect(Path(current_app.config["DATABASE_PATH"])) as conn:
         latest, bundle, total = _workspace_state(conn)
         run = None
@@ -69,8 +70,12 @@ def data_quality_page():
             ).fetchone()[0]
             if has_findings:
                 run = latest
-    current_app.logger.info("data_quality page loaded run_id=%s bundle_id=%s open=%s", run["id"] if run else None, bundle["id"] if bundle else None, total)
-    return render_template("dashboard/data_quality.html", run=run, bundle=bundle, total=total)
+                workflow_counts = count_workflows(conn, int(run["id"]))
+    current_app.logger.info("data_quality page loaded run_id=%s bundle_id=%s open=%s workflow=%s", run["id"] if run else None, bundle["id"] if bundle else None, total, workflow_counts)
+    return render_template(
+        "dashboard/data_quality.html", run=run, bundle=bundle, total=total,
+        workflow_counts=workflow_counts,
+    )
 
 
 @bp.get("/data-quality/state")
@@ -296,55 +301,28 @@ def data_quality_decision(finding_id: int):
                 bundle_id = int(bundle_row["id"])
             else:
                 bundle_id = create_bundle(conn, str(session.get("admin_username") or "admin"))
-            # Add finding to bundle (uses best-quality automatic plan for eligible types)
+            # Only the explicitly classified safe workflow may use one-click
+            # acceptance. Manual findings are edited through the review form;
+            # informational findings are dismissed/kept separate, never coerced
+            # into executable changes.
+            if finding.get("workflow") != "automatic":
+                current_app.logger.warning(
+                    "accept finding %s rejected: workflow=%s classification=%s",
+                    finding_id, finding.get("workflow"), finding.get("classification"),
+                )
+                return jsonify({
+                    "ok": False,
+                    "message": "This finding requires manual review and cannot be auto-accepted.",
+                }), 409
             payload = {"strategy": "best_quality"} if finding["action_type"] in {"merge_records", "enrich_record", "clean_record"} else {}
             try:
-                needs_reclassify = (
-                    (payload.get("strategy") == "best_quality" and force_merge_candidate(finding))
-                    or finding["classification"] in {"blocked", "related_not_duplicate", "keep_separate"}
+                current_app.logger.info(
+                    "accept automatic finding %s: %s %s action=%s",
+                    finding_id, finding["entity_type"], finding["classification"], finding["action_type"],
                 )
-                if needs_reclassify:
-                    current_app.logger.info(
-                        "accept finding %s: reclassify %s %s score=%.2f",
-                        finding_id, finding["entity_type"], finding["classification"], finding.get("score") or 0,
-                    )
-                    original_classification = finding["classification"]
-                    conn.execute(
-                        "UPDATE quality_findings SET classification='strong_candidate' WHERE id=?",
-                        (finding_id,),
-                    )
-                    try:
-                        plan = add_to_bundle(conn, bundle_id, finding_id, payload)
-                    finally:
-                        conn.execute(
-                            "UPDATE quality_findings SET classification=? WHERE id=?",
-                            (original_classification, finding_id),
-                        )
-                else:
-                    current_app.logger.info(
-                        "accept finding %s: direct %s %s action=%s",
-                        finding_id, finding["entity_type"], finding["classification"], finding["action_type"],
-                    )
-                    plan = add_to_bundle(conn, bundle_id, finding_id, payload)
+                add_to_bundle(conn, bundle_id, finding_id, payload)
             except ValueError as exc:
                 message = str(exc)
-                if "not executable" in message or "requires review" in message:
-                    conn.execute(
-                        "UPDATE quality_findings SET status='resolved',updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                        (finding_id,),
-                    )
-                    conn.commit()
-                    current_app.logger.info(
-                        "accept finding %s completed as reviewed without change: %s",
-                        finding_id, message,
-                    )
-                    return jsonify({
-                        "ok": True,
-                        "decision": "review",
-                        "reviewed_without_change": True,
-                        "message": message,
-                        "bundle_id": bundle_id,
-                    })
                 current_app.logger.warning("accept finding %s failed: %s", finding_id, message)
                 return jsonify({"ok": False, "message": message}), 409
             # Get the item_id we just created
@@ -454,66 +432,26 @@ def data_quality_bulk_decision():
             else:
                 bundle_id = create_bundle(conn, str(session.get("admin_username") or "admin"))
 
-            skipped_best_quality = 0
             for finding in entities:
                 try:
                     action_type = str(finding.get("action_type") or "")
-                    payload = {"strategy": "best_quality"} if action_type in {"merge_records", "enrich_record", "clean_record"} else {}
-                    classification = str(finding.get("classification") or "")
-                    is_ambiguous = classification == "ambiguous"
-                    is_blocked = classification in {"blocked", "related_not_duplicate", "keep_separate"}
-                    if (is_ambiguous and force_merge_candidate(finding)) or is_blocked:
+                    workflow = finding.get("workflow") or finding_workflow(finding)
+                    if workflow != "automatic":
+                        skipped_review += 1
                         current_app.logger.debug(
-                            "bulk reclassify finding=%s %s %s score=%.2f",
-                            finding["id"], finding["entity_type"], classification, finding.get("score") or 0,
+                            "bulk accept skipped finding=%s workflow=%s classification=%s",
+                            finding.get("id"), workflow, finding.get("classification"),
                         )
-                        original_classification = finding["classification"]
-                        conn.execute(
-                            "UPDATE quality_findings SET classification='strong_candidate' WHERE id=?",
-                            (finding["id"],),
-                        )
-                        try:
-                            add_to_bundle(conn, bundle_id, finding["id"], payload)
-                        finally:
-                            conn.execute(
-                                "UPDATE quality_findings SET classification=? WHERE id=?",
-                                (original_classification, finding["id"]),
-                            )
-                    elif not is_ambiguous:
-                        if not payload:
-                            current_app.logger.debug(
-                                "bulk accept finding=%s %s action=%s (no best_quality)",
-                                finding["id"], finding["entity_type"], action_type,
-                            )
-                        add_to_bundle(conn, bundle_id, finding["id"], payload)
-                    else:
-                        skipped_best_quality += 1
-                        current_app.logger.info(
-                            "bulk resolve manual finding %s %s score=%.2f (ambiguous, below force threshold)",
-                            finding["id"], finding["entity_type"], finding.get("score") or 0,
-                        )
-                        conn.execute(
-                            "UPDATE quality_findings SET status='resolved',updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                            (finding["id"],),
-                        )
-                        reviewed_without_change += 1
                         continue
+                    payload = {"strategy": "best_quality"} if action_type in {"merge_records", "enrich_record", "clean_record"} else {}
+                    add_to_bundle(conn, bundle_id, finding["id"], payload)
                     applied += 1
                 except ValueError as exc:
-                    message = str(exc)
-                    if "not executable" in message or "requires review" in message:
-                        conn.execute(
-                            "UPDATE quality_findings SET status='resolved',updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                            (finding["id"],),
-                        )
-                        reviewed_without_change += 1
-                        review_items.append({"finding_id": finding["id"], "message": message})
-                    else:
-                        failed += 1
-                        failures.append({"finding_id": finding["id"], "message": message})
+                    failed += 1
+                    failures.append({"finding_id": finding["id"], "message": str(exc)})
             current_app.logger.info(
-                "bulk_accept done findings=%d applied=%d reviewed_without_change=%d failed=%d bundle_id=%s",
-                len(entities), applied, reviewed_without_change, failed, bundle_id,
+                "bulk_accept done findings=%d applied=%d skipped_manual=%d failed=%d bundle_id=%s",
+                len(entities), applied, skipped_review, failed, bundle_id,
             )
             if failures:
                 current_app.logger.info("bulk_accept failures: %s", failures[:20])

@@ -1,6 +1,6 @@
 # MIFP Webapp
 
-La root locale può contenere webapp, scraper, database, import data, test e strumenti.
+La root contiene webapp, scraper, database, test e strumenti. I vecchi alberi `IMPORT_DATA/` non fanno più parte del progetto.
 Il launcher operativo è uno solo: `./mifp`.
 
 ## Avvio
@@ -34,7 +34,7 @@ Gli scraper non sono stati rimossi:
 
 `SCRAPERS/run_all.sh` resta il motore della pipeline scraper.
 `MIFPAPP/DATABASE/build.sh` resta il builder/importer del database.
-`IMPORT_DATA/` non viene letta, modificata o cancellata automaticamente.
+Gli input canonici arrivano esclusivamente da `SCRAPERS/OUTPUTS/` o dall’import esplicito della dashboard; `IMPORT_DATA/` è legacy e non viene distribuita.
 
 ## Test
 
@@ -79,4 +79,4 @@ Per sostituire anche la vecchia cronologia remota senza cancellare le cartelle l
 ./mifp production [DOMINIO]
 ```
 
-Configura username e password amministratore con `./mifp admin`; la password deve avere almeno 10 caratteri. L'hash viene scritto in un formato sicuro per Docker Compose e, se uno stack Docker è già attivo, il servizio web viene ricreato automaticamente per applicare subito le nuove credenziali. Gli scraper accettano `--threads N` e usano come mirror locale predefinito `/run/media/matteo/ARCHDISK/srv/http/mifp.eu`. I comandi di pulizia sono disponibili sotto `./mifp clean`; esegui `./mifp clean all --dry-run` per vedere i target senza modificarli. `IMPORT_DATA/` non viene mai pulita automaticamente.
+Configura username e password amministratore con `./mifp admin`; la password deve avere almeno 10 caratteri. L'hash viene scritto in un formato sicuro per Docker Compose e, se uno stack Docker è già attivo, il servizio web viene ricreato automaticamente per applicare subito le nuove credenziali. Gli scraper accettano `--threads N` e usano come mirror locale predefinito `/run/media/matteo/ARCHDISK/srv/http/mifp.eu`. I comandi di pulizia sono disponibili sotto `./mifp clean`; esegui `./mifp clean all --dry-run` per vedere i target senza modificarli. `IMPORT_DATA/` non fa parte del codebase distribuito; eventuali copie locali esterne restano fuori dal flusso applicativo.

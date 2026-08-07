@@ -105,15 +105,6 @@ def password_hash(password: str, *, iterations: int = 600_000) -> str:
     return f"pbkdf2:sha256:{iterations}${salt}${digest}"
 
 
-def write_credentials(path: Path, username: str, password: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        f"ADMIN_USERNAME={username}\nADMIN_PASSWORD={password}\n",
-        encoding="utf-8",
-    )
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-
-
 def ensure_example(env_file: Path, example: Path) -> None:
     if env_file.exists():
         return
@@ -124,95 +115,56 @@ def ensure_example(env_file: Path, example: Path) -> None:
 
 
 def bootstrap(args: argparse.Namespace) -> int:
+    """Initialize non-secret runtime configuration only.
+
+    Administrator passwords are intentionally never generated, printed, or
+    persisted in plaintext by bootstrap. Use ``manage.py admin`` interactively.
+    """
     env_file = args.env_file.resolve()
     ensure_example(env_file, args.example.resolve())
     values = read_env(env_file)
     updates: dict[str, str] = {}
-    removals: set[str] = set()
-
+    removals: set[str] = {"ADMIN_PASSWORD"}
     if is_placeholder(values.get("SECRET_KEY")):
         updates["SECRET_KEY"] = secrets.token_hex(32)
-
     username = values.get("ADMIN_USERNAME", "admin").strip() or "admin"
     updates["ADMIN_USERNAME"] = username
     current_hash = values.get("ADMIN_PASSWORD_HASH", "").strip()
-    legacy_password = values.get("ADMIN_PASSWORD", "")
-
-    generated_password: str | None = None
-    if is_placeholder(current_hash):
-        if legacy_password and not is_placeholder(legacy_password):
-            if len(legacy_password) < MIN_ADMIN_PASSWORD_LENGTH:
-                raise SystemExit(
-                    f"ADMIN_PASSWORD must contain at least {MIN_ADMIN_PASSWORD_LENGTH} characters"
-                )
-            updates["ADMIN_PASSWORD_HASH"] = password_hash(legacy_password)
-            removals.add("ADMIN_PASSWORD")
-        elif not args.defer_admin:
-            generated_password = secrets.token_urlsafe(18)
-            updates["ADMIN_PASSWORD_HASH"] = password_hash(generated_password)
-            removals.add("ADMIN_PASSWORD")
-    else:
-        # Rewrite existing hashes using Compose-safe literal quoting. This also
-        # repairs .env files created by earlier launchers that used double quotes.
+    if current_hash and not is_placeholder(current_hash):
         updates["ADMIN_PASSWORD_HASH"] = current_hash
-
     update_env(env_file, updates, removals)
-    if generated_password:
-        write_credentials(args.credentials_file.resolve(), username, generated_password)
-        print("Generated administrator credentials.")
-        print(f"Username: {username}")
-        print(f"Password: {generated_password}")
+    if not current_hash or is_placeholder(current_hash):
+        print("Administrator password is not configured. Run: ./mifp admin")
     return 0
 
-
 def configure_admin(args: argparse.Namespace) -> int:
+    """Interactively set the administrator password and persist only its hash."""
     env_file = args.env_file.resolve()
     if not env_file.is_file():
         raise SystemExit(f"Environment file not found: {env_file}")
     values = read_env(env_file)
     current_username = values.get("ADMIN_USERNAME", "admin").strip() or "admin"
     username = (args.username or "").strip()
-    if not username and not args.non_interactive:
+    if not username:
         entered = input(f"Administrator username [{current_username}]: ").strip()
         username = entered or current_username
-    username = username or current_username
     if not re.fullmatch(r"[A-Za-z0-9_.@-]{1,64}", username):
-        raise SystemExit(
-            "Username must contain 1-64 characters: letters, numbers, _, ., @ or -"
-        )
-
-    if args.generate:
-        password = secrets.token_urlsafe(18)
-        write_credentials(args.credentials_file.resolve(), username, password)
-        print(f"Username: {username}")
-        print(f"Password: {password}")
-    else:
-        if args.non_interactive:
-            raise SystemExit("--non-interactive requires --generate")
-        first = getpass.getpass(
-            f"New administrator password (minimum {MIN_ADMIN_PASSWORD_LENGTH} characters): "
-        )
-        second = getpass.getpass("Repeat password: ")
-        if first != second:
-            raise SystemExit("Passwords do not match")
-        if len(first) < MIN_ADMIN_PASSWORD_LENGTH:
-            raise SystemExit(
-                f"Password must contain at least {MIN_ADMIN_PASSWORD_LENGTH} characters"
-            )
-        password = first
-        args.credentials_file.resolve().unlink(missing_ok=True)
-
+        raise SystemExit("Username must contain 1-64 characters: letters, numbers, _, ., @ or -")
+    first = getpass.getpass(
+        f"New administrator password (minimum {MIN_ADMIN_PASSWORD_LENGTH} characters): "
+    )
+    second = getpass.getpass("Repeat password: ")
+    if first != second:
+        raise SystemExit("Passwords do not match")
+    if len(first) < MIN_ADMIN_PASSWORD_LENGTH:
+        raise SystemExit(f"Password must contain at least {MIN_ADMIN_PASSWORD_LENGTH} characters")
     update_env(
         env_file,
-        {
-            "ADMIN_USERNAME": username,
-            "ADMIN_PASSWORD_HASH": password_hash(password),
-        },
+        {"ADMIN_USERNAME": username, "ADMIN_PASSWORD_HASH": password_hash(first)},
         {"ADMIN_PASSWORD"},
     )
-    print("Administrator credentials updated.")
+    print("Administrator credentials updated. Only the password hash was persisted.")
     return 0
-
 
 def set_values(args: argparse.Namespace) -> int:
     updates: dict[str, str] = {}
@@ -234,20 +186,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_bootstrap = sub.add_parser("bootstrap")
     p_bootstrap.add_argument("--env-file", type=Path, required=True)
     p_bootstrap.add_argument("--example", type=Path, required=True)
-    p_bootstrap.add_argument("--credentials-file", type=Path, required=True)
-    p_bootstrap.add_argument(
-        "--defer-admin",
-        action="store_true",
-        help="initialize configuration without generating administrator credentials",
-    )
     p_bootstrap.set_defaults(func=bootstrap)
 
     p_admin = sub.add_parser("admin")
     p_admin.add_argument("--env-file", type=Path, required=True)
-    p_admin.add_argument("--credentials-file", type=Path, required=True)
     p_admin.add_argument("--username", default=None)
-    p_admin.add_argument("--generate", action="store_true")
-    p_admin.add_argument("--non-interactive", action="store_true")
     p_admin.set_defaults(func=configure_admin)
 
     p_set = sub.add_parser("set")

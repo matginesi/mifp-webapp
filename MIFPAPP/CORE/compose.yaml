@@ -22,6 +22,7 @@ services:
       DATABASE_PATH: /app/data/mifp.db
       ASSETS_DIR: /app/data/assets
       EXPORT_DIR: /app/data/exports
+      TMPDIR: /app/data/tmp
       LOG_DIR: /app/data/logs
       CONFERENCES_DIR: /app/data/conferences
       BANNER_SETTINGS_PATH: /app/data/config/banner_settings.json

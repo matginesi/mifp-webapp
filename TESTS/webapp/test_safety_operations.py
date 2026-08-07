@@ -119,7 +119,7 @@ def test_password_gated_export_is_import_compatible(client):
     assert response.headers["Cache-Control"].startswith("no-store")
     assert response.headers["Content-Disposition"].startswith("attachment;")
     parsed = parse_zip_payload(response.data)
-    assert parsed["manifest"]["format"] == "mifp-export"
+    assert parsed["manifest"]["format"] == "mifp-jsonl-v2"
     assert parsed["manifest"]["scope"] == "all"
 
 

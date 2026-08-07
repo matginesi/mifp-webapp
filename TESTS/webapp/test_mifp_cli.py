@@ -106,7 +106,7 @@ def test_scraper_remote_uses_default_threads(tmp_path: Path) -> None:
     assert "--threads 16" in result.stdout
 
 
-def test_admin_options_are_forwarded(tmp_path: Path) -> None:
+def test_admin_username_is_forwarded_without_password_generation_flags(tmp_path: Path) -> None:
     _prepare_launcher_tree(tmp_path)
     manager = tmp_path / "MIFPAPP" / "CORE" / "manage.py"
     manager.write_text(
@@ -116,22 +116,30 @@ def test_admin_options_are_forwarded(tmp_path: Path) -> None:
     example = tmp_path / "MIFPAPP" / "CORE" / ".env.example"
     example.write_text("SECRET_KEY='x'\nADMIN_USERNAME='admin'\nADMIN_PASSWORD_HASH='hash'\n", encoding="utf-8")
     result = subprocess.run(
-        [
-            "bash",
-            "mifp",
-            "admin",
-            "--username",
-            "matteo",
-            "--generate",
-            "--non-interactive",
-        ],
+        ["bash", "mifp", "admin", "--username", "matteo"],
         cwd=tmp_path,
         text=True,
         capture_output=True,
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "--username matteo --generate --non-interactive" in result.stdout
+    assert "--username matteo" in result.stdout
+    assert "--generate" not in result.stdout
+    assert "--non-interactive" not in result.stdout
+
+
+def test_admin_rejects_removed_noninteractive_generation_flags(tmp_path: Path) -> None:
+    _prepare_launcher_tree(tmp_path)
+    manager = tmp_path / "MIFPAPP" / "CORE" / "manage.py"
+    manager.write_text("import sys\nprint('unexpected')\n", encoding="utf-8")
+    example = tmp_path / "MIFPAPP" / "CORE" / ".env.example"
+    example.write_text("SECRET_KEY='x'\nADMIN_USERNAME='admin'\nADMIN_PASSWORD_HASH=''\n", encoding="utf-8")
+    result = subprocess.run(
+        ["bash", "mifp", "admin", "--generate"],
+        cwd=tmp_path, text=True, capture_output=True, check=False,
+    )
+    assert result.returncode != 0
+    assert "Uso: ./mifp admin" in result.stderr
 
 
 def test_clean_dry_run_never_targets_import_data(tmp_path: Path) -> None:

@@ -28,6 +28,11 @@ class JobQueueFull(RuntimeError):
     pass
 
 
+class JobCancelled(RuntimeError):
+    """Raised by cooperative background jobs after a cancellation request."""
+
+
+
 def _jobs_store_path(db_path: str) -> Path:
     return Path(db_path).with_name("jobs.sqlite3")
 
@@ -58,6 +63,33 @@ def _load_job_history(db_path: str | None) -> dict[str, JobState]:
         if row[3] >= cutoff
     }
 
+
+
+
+def _persisted_job_status(db_path: str | None, job_id: str) -> str | None:
+    if not db_path:
+        return None
+    try:
+        with sqlite3.connect(str(_jobs_store_path(db_path)), timeout=2) as conn:
+            row = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+            return str(row[0]) if row else None
+    except (sqlite3.Error, OSError):
+        return None
+
+
+def _request_persisted_cancel(db_path: str | None, job_id: str) -> bool:
+    if not db_path:
+        return False
+    try:
+        with sqlite3.connect(str(_jobs_store_path(db_path)), timeout=5) as conn:
+            cur = conn.execute(
+                "UPDATE jobs SET status='cancel_requested' "
+                "WHERE id=? AND status IN ('queued','running','cancel_requested')",
+                (job_id,),
+            )
+            return cur.rowcount > 0
+    except (sqlite3.Error, OSError):
+        return False
 
 def _persist_job(db_path: str | None, state: JobState) -> None:
     if not db_path:
@@ -102,27 +134,73 @@ class JobManager:
         self._capacity = threading.BoundedSemaphore(self.max_pending)
         self._lock = threading.RLock()
         self._jobs: dict[str, JobState] = {}
+        self._cancel_events: dict[str, threading.Event] = {}
 
     def submit(self, name: str, callback: Callable[[], object]) -> tuple[str, Future]:
+        return self._submit(name, lambda _cancelled: callback())
+
+    def submit_cancellable(
+        self, name: str, callback: Callable[[Callable[[], bool]], object]
+    ) -> tuple[str, Future]:
+        """Submit a cooperative job whose callback can poll cancellation safely."""
+        return self._submit(name, callback)
+
+    def _submit(
+        self, name: str, callback: Callable[[Callable[[], bool]], object]
+    ) -> tuple[str, Future]:
         if not self._capacity.acquire(blocking=False):
             raise JobQueueFull("The background job queue is full.")
         job_id = uuid.uuid4().hex
         state = JobState(job_id, name[:80], "queued", time.time())
+        cancel_event = threading.Event()
         with self._lock:
             self._jobs[job_id] = state
+            self._cancel_events[job_id] = cancel_event
         _persist_job(self._db_path, state)
+
+        last_remote_poll = [0.0]
+
+        def cancelled() -> bool:
+            if cancel_event.is_set():
+                return True
+            if not self._db_path:
+                return False
+            now = time.monotonic()
+            if now - last_remote_poll[0] < 0.25:
+                return False
+            last_remote_poll[0] = now
+            if _persisted_job_status(self._db_path, job_id) == "cancel_requested":
+                cancel_event.set()
+                return True
+            return False
 
         def run():
             with self._lock:
-                state.status = "running"
-                state.started_at = time.time()
+                if cancelled():
+                    state.status = "cancelled"
+                    state.started_at = state.started_at or time.time()
+                    raise_cancelled = True
+                else:
+                    state.status = "running"
+                    state.started_at = time.time()
+                    raise_cancelled = False
             _persist_job(self._db_path, state)
             try:
-                result = callback()
+                if raise_cancelled:
+                    raise JobCancelled("Job cancelled before execution")
+                result = callback(cancelled)
+                if cancelled():
+                    raise JobCancelled("Job cancelled")
                 with self._lock:
                     state.status = "completed"
                 _persist_job(self._db_path, state)
                 return result
+            except JobCancelled as exc:
+                with self._lock:
+                    state.status = "cancelled"
+                    state.error = str(exc)[:300]
+                _persist_job(self._db_path, state)
+                return None
             except Exception as exc:
                 with self._lock:
                     state.status = "failed"
@@ -138,11 +216,27 @@ class JobManager:
 
         return job_id, self._executor.submit(run)
 
+    def request_cancel(self, job_id: str) -> bool:
+        local = False
+        with self._lock:
+            state = self._jobs.get(job_id)
+            cancel_event = self._cancel_events.get(job_id)
+            if state is not None and cancel_event is not None and state.status in {"queued", "running", "cancel_requested"}:
+                cancel_event.set()
+                state.status = "cancel_requested"
+                _persist_job(self._db_path, state)
+                local = True
+        # A cancellation HTTP request may land on another Gunicorn worker.
+        # Persist the request so the owning worker observes it at its next safe
+        # checkpoint even when this process has no in-memory JobState.
+        remote = _request_persisted_cancel(self._db_path, job_id)
+        return local or remote
+
     def snapshot(self) -> dict:
         merged = dict(_load_job_history(self._db_path))
         with self._lock:
             merged.update(self._jobs)
-            active = sum(item.status in {"queued", "running"} for item in self._jobs.values())
+            active = sum(item.status in {"queued", "running", "cancel_requested"} for item in self._jobs.values())
             jobs = sorted(merged.values(), key=lambda item: item.submitted_at, reverse=True)
         return {
             "pid": os.getpid(),
@@ -160,6 +254,7 @@ class JobManager:
         ]
         for job_id in stale:
             self._jobs.pop(job_id, None)
+            self._cancel_events.pop(job_id, None)
 
     def shutdown(self, *, wait: bool = True) -> None:
         """Stop accepting work and release executor threads."""

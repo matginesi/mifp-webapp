@@ -40,7 +40,7 @@ Caddy gestisce reverse proxy, HTTPS e rinnovo dei certificati.
 ```bash
 ./mifp admin
 ./mifp admin --username matteo
-./mifp admin --username matteo --generate
+./mifp admin --username matteo
 ```
 
 La password deve contenere almeno 10 caratteri. Il comando salva soltanto l'hash nella

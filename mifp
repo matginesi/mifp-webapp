@@ -12,7 +12,6 @@ VENV_DIR="$CORE_DIR/.venv"
 MANAGER="$CORE_DIR/manage.py"
 PID_FILE="$STATE_DIR/local.pid"
 LOG_FILE="$STATE_DIR/local.log"
-CREDENTIALS_FILE="$STATE_DIR/credentials"
 DEFAULT_HOST="127.0.0.1"
 DEFAULT_PORT="8000"
 DEFAULT_SCRAPER_THREADS="16"
@@ -43,8 +42,7 @@ Pipeline dati:
 
 Test e gestione:
   ./mifp test [quick|webapp|scraper|database|browser|all] [-- pytest args]
-  ./mifp admin [--username NOME] [--generate]   Password minima: 10 caratteri
-  ./mifp credentials
+  ./mifp admin [--username NOME]              Imposta password in modo interattivo (solo hash salvato)
   ./mifp status
   ./mifp logs [local|docker|production]
   ./mifp stop [local|docker|production|all]
@@ -99,16 +97,13 @@ ensure_storage() {
 }
 
 ensure_env() {
-  local defer_admin="${1:-0}"
   ensure_python
   [[ -f "$MANAGER" ]] || die "File mancante: $MANAGER"
   local bootstrap_args=(
     bootstrap
     --env-file "$ENV_FILE"
     --example "$ENV_EXAMPLE"
-    --credentials-file "$CREDENTIALS_FILE"
   )
-  [[ "$defer_admin" == "1" ]] && bootstrap_args+=(--defer-admin)
   python3 "$MANAGER" "${bootstrap_args[@]}"
   python3 "$MANAGER" set --env-file "$ENV_FILE" \
     "MIFP_UID=$(id -u)" \
@@ -239,11 +234,7 @@ show_login() {
   say "Webapp: $(local_url)"
   say "Dashboard: $(local_url)/login"
   say "Utente admin: $(env_get ADMIN_USERNAME admin)"
-  if [[ -f "$CREDENTIALS_FILE" ]]; then
-    say "Credenziali generate: ./mifp credentials"
-  else
-    say "Per cambiare password: ./mifp admin"
-  fi
+  say "Password admin: configurabile solo in modo interattivo con ./mifp admin"
 }
 
 stop_local() {
@@ -549,27 +540,17 @@ apply_admin_to_running_services() {
 }
 
 set_admin() {
-  ensure_env 1
-  local args=(admin --env-file "$ENV_FILE" --credentials-file "$CREDENTIALS_FILE")
+  ensure_env
+  local args=(admin --env-file "$ENV_FILE")
   while (($#)); do
     case "$1" in
-      --generate|--non-interactive) args+=("$1"); shift ;;
       --username) [[ $# -ge 2 ]] || die "--username richiede un valore"; args+=(--username "$2"); shift 2 ;;
       --username=*) args+=("$1"); shift ;;
-      *) die "Uso: ./mifp admin [--username NOME] [--generate]" ;;
+      *) die "Uso: ./mifp admin [--username NOME]" ;;
     esac
   done
   python3 "$MANAGER" "${args[@]}"
   apply_admin_to_running_services
-}
-
-show_credentials() {
-  if [[ -f "$CREDENTIALS_FILE" ]]; then
-    cat "$CREDENTIALS_FILE"
-  else
-    say "Nessuna password in chiaro è conservata."
-    say "Impostane una con: ./mifp admin"
-  fi
 }
 
 show_status() {
@@ -733,7 +714,7 @@ clean_project() {
       append_output_targets
       append_data_targets
       CLEAN_TARGETS+=("$PID_FILE")
-      ((remove_env)) && CLEAN_TARGETS+=("$ENV_FILE" "$CREDENTIALS_FILE")
+      ((remove_env)) && CLEAN_TARGETS+=("$ENV_FILE")
       ;;
   esac
 
@@ -829,7 +810,6 @@ case "$command_name" in
   refresh|pipeline) refresh_data "$@" ;;
   test|tests) run_tests "$@" ;;
   admin) set_admin "$@" ;;
-  credentials) show_credentials ;;
   status) show_status ;;
   logs) show_logs "${1:-local}" ;;
   stop|down) stop_mode "${1:-all}" ;;

@@ -126,6 +126,6 @@ def logout():
     session.clear()
     flash("You have been logged out.", "info")
     response = redirect(url_for("auth.login"))
-    response.headers["Clear-Site-Data"] = '"cache", "cookies", "storage"'
     response.headers["Cache-Control"] = "no-store, max-age=0"
+    current_app.logger.info("admin logout completed username=%s", username or "unknown")
     return response

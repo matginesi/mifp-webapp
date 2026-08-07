@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import shutil
@@ -22,6 +23,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     send_from_directory,
     session,
     url_for,
@@ -46,15 +48,15 @@ from ..services.dashboard_repository import (
     search_logs,
 )
 from ..services.data_portability import (
-    build_export_bundle,
-    bundle_to_zip,
+    bundle_to_jsonl_file,
+    bundle_to_zip_file,
+    import_jsonl_payload,
     import_zip_payload,
     scope_options,
     table_counts,
 )
 from ..services.database_restore import DatabaseRestoreError, restore_sqlite_database
 from ..services.exporters import export_response_payload, rows_to_json
-from ..services.importers import import_jsonl
 from ..services.metrics_service import (
     get_content_quality_summary,
     get_import_export_summary,
@@ -592,26 +594,183 @@ def data_portability():
     )
 
 
-_export_cache: dict[str, dict] = {}
 _EXPORT_CACHE_MAX = 2
 _EXPORT_CACHE_TTL_SECONDS = 300
+_EXPORT_CACHE_PREFIX = ".portability-"
+
+
+def _export_cache_dir() -> Path:
+    root = Path(current_app.config["EXPORT_DIR"])
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _export_cache_paths(token: str) -> tuple[Path, Path]:
+    digest = hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+    root = _export_cache_dir()
+    base = f"{_EXPORT_CACHE_PREFIX}{digest}"
+    return root / f"{base}.json", root / f"{base}.bin"
+
+
+def _read_export_cache_meta(path: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _discard_export_cache_file(meta_path: Path) -> None:
+    meta = _read_export_cache_meta(meta_path)
+    if meta:
+        data_name = str(meta.get("data_name") or "")
+        if data_name.startswith(_EXPORT_CACHE_PREFIX) and data_name.endswith(".bin"):
+            (_export_cache_dir() / Path(data_name).name).unlink(missing_ok=True)
+    meta_path.unlink(missing_ok=True)
 
 
 def _prune_export_cache(now: float | None = None) -> int:
-    current = now if now is not None else time.monotonic()
-    expired = [
-        token for token, entry in _export_cache.items()
-        if current - float(entry.get("created_at") or 0) > _EXPORT_CACHE_TTL_SECONDS
-    ]
-    for token in expired:
-        _export_cache.pop(token, None)
-    while len(_export_cache) >= _EXPORT_CACHE_MAX:
-        oldest = min(
-            _export_cache,
-            key=lambda item: float(_export_cache[item].get("created_at") or 0),
-        )
-        _export_cache.pop(oldest, None)
-    return len(expired)
+    """Delete expired/corrupt disk-backed export tokens and stale payloads."""
+    current = now if now is not None else time.time()
+    root = _export_cache_dir()
+    removed = 0
+    live_data: set[str] = set()
+
+    for meta_path in root.glob(f"{_EXPORT_CACHE_PREFIX}*.json"):
+        meta = _read_export_cache_meta(meta_path)
+        try:
+            created_at = float((meta or {}).get("created_at") or 0)
+        except (TypeError, ValueError):
+            created_at = 0
+        if not meta or current - created_at > _EXPORT_CACHE_TTL_SECONDS:
+            _discard_export_cache_file(meta_path)
+            removed += 1
+            continue
+        data_name = str(meta.get("data_name") or "")
+        if not data_name.startswith(_EXPORT_CACHE_PREFIX) or not data_name.endswith(".bin"):
+            _discard_export_cache_file(meta_path)
+            removed += 1
+            continue
+        live_data.add(Path(data_name).name)
+
+    # Claimed metadata belongs to a download already in progress. A crashed
+    # worker can leave it behind, so clean it after the same TTL.
+    for claim_path in root.glob(f"{_EXPORT_CACHE_PREFIX}*.claim"):
+        try:
+            stale = current - claim_path.stat().st_mtime > _EXPORT_CACHE_TTL_SECONDS
+        except OSError:
+            stale = True
+        if stale:
+            _discard_export_cache_file(claim_path)
+            removed += 1
+        else:
+            meta = _read_export_cache_meta(claim_path) or {}
+            data_name = str(meta.get("data_name") or "")
+            if data_name.startswith(_EXPORT_CACHE_PREFIX) and data_name.endswith(".bin"):
+                live_data.add(Path(data_name).name)
+
+    # Sweep temporary writes left by a crashed worker.
+    for temp_path in root.glob(f"{_EXPORT_CACHE_PREFIX}*.tmp"):
+        try:
+            stale = current - temp_path.stat().st_mtime > _EXPORT_CACHE_TTL_SECONDS
+        except OSError:
+            stale = True
+        if stale:
+            temp_path.unlink(missing_ok=True)
+            removed += 1
+
+    # Sweep orphan payloads from crashes or interrupted metadata writes.
+    for data_path in root.glob(f"{_EXPORT_CACHE_PREFIX}*.bin"):
+        if data_path.name in live_data:
+            continue
+        try:
+            stale = current - data_path.stat().st_mtime > _EXPORT_CACHE_TTL_SECONDS
+        except OSError:
+            stale = True
+        if stale:
+            data_path.unlink(missing_ok=True)
+            removed += 1
+    return removed
+
+
+def _evict_export_cache_for_new() -> None:
+    root = _export_cache_dir()
+    entries: list[tuple[float, Path]] = []
+    for meta_path in root.glob(f"{_EXPORT_CACHE_PREFIX}*.json"):
+        meta = _read_export_cache_meta(meta_path)
+        if meta:
+            try:
+                created_at = float(meta.get("created_at") or 0)
+            except (TypeError, ValueError):
+                created_at = 0
+            entries.append((created_at, meta_path))
+    entries.sort(key=lambda item: item[0])
+    while len(entries) >= _EXPORT_CACHE_MAX:
+        _, oldest = entries.pop(0)
+        _discard_export_cache_file(oldest)
+
+
+def _export_cache_count() -> int:
+    return sum(1 for _ in _export_cache_dir().glob(f"{_EXPORT_CACHE_PREFIX}*.json"))
+
+
+def _cache_export_file(
+    token: str,
+    source_path: Path,
+    *,
+    filename: str,
+    mimetype: str,
+    owner: str | None,
+) -> None:
+    _prune_export_cache()
+    _evict_export_cache_for_new()
+    meta_path, data_path = _export_cache_paths(token)
+    source_path = Path(source_path)
+    source_path.replace(data_path)
+    try:
+        data_path.chmod(0o600)
+    except OSError:
+        pass
+
+    meta = {
+        "data_name": data_path.name,
+        "filename": filename,
+        "mimetype": mimetype,
+        "bytes": data_path.stat().st_size,
+        "created_at": time.time(),
+        "owner": owner,
+    }
+    temp_meta = meta_path.with_suffix(f".{secrets.token_hex(4)}.tmp")
+    try:
+        temp_meta.write_text(json.dumps(meta, separators=(",", ":")), encoding="utf-8")
+        try:
+            temp_meta.chmod(0o600)
+        except OSError:
+            pass
+        temp_meta.replace(meta_path)
+    except Exception:
+        temp_meta.unlink(missing_ok=True)
+        data_path.unlink(missing_ok=True)
+        raise
+
+
+def _claim_export_cache_entry(token: str) -> tuple[dict[str, Any], Path, Path] | None:
+    meta_path, expected_data_path = _export_cache_paths(token)
+    entry = _read_export_cache_meta(meta_path)
+    if not entry:
+        return None
+    if entry.get("owner") != session.get("admin_username"):
+        return None
+    data_name = str(entry.get("data_name") or "")
+    if Path(data_name).name != expected_data_path.name or not expected_data_path.is_file():
+        _discard_export_cache_file(meta_path)
+        return None
+    claim_path = meta_path.with_suffix(f".{secrets.token_hex(4)}.claim")
+    try:
+        meta_path.rename(claim_path)
+    except OSError:
+        return None
+    return entry, expected_data_path, claim_path
 
 
 def _safe_upload_name(name: str, fallback_suffix: str = ".jsonl") -> str:
@@ -621,6 +780,52 @@ def _safe_upload_name(name: str, fallback_suffix: str = ".jsonl") -> str:
     if not Path(clean).suffix:
         clean += fallback_suffix
     return clean
+
+
+_ALLOWED_IMPORT_EXTENSIONS = {".json", ".jsonl", ".zip"}
+
+
+def _validate_import_selection(files: list[Any]) -> None:
+    invalid = [
+        Path(str(file.filename or "")).suffix.lower() or "(none)"
+        for file in files
+        if Path(str(file.filename or "")).suffix.lower() not in _ALLOWED_IMPORT_EXTENSIONS
+    ]
+    if invalid:
+        raise ValueError(
+            "Unsupported import file type. Use JSON, JSONL or one MIFP ZIP bundle."
+        )
+    zip_files = [file for file in files if str(file.filename or "").lower().endswith(".zip")]
+    if zip_files and len(files) != 1:
+        raise ValueError("Import one ZIP bundle at a time; do not mix ZIP and JSONL files.")
+
+
+def _stage_import_uploads(files: list[Any]) -> tuple[Path, list[tuple[str, Path]]]:
+    upload_dir = Path(tempfile.mkdtemp(prefix="mifp-import-"))
+    staged_files: list[tuple[str, Path]] = []
+    try:
+        for index, file in enumerate(files):
+            name = str(file.filename or f"file_{index}.jsonl")
+            suffix = Path(name).suffix.lower() or ".jsonl"
+            staged = upload_dir / f"{index}_{_safe_upload_name(name, suffix)}"
+            file.save(staged)
+            size = staged.stat().st_size
+            limit = (
+                int(current_app.config["IMPORT_MAX_ZIP_BYTES"])
+                if suffix == ".zip"
+                else max(
+                    int(current_app.config["IMPORT_MAX_JSONL_BYTES"]),
+                    int(current_app.config.get("MAX_CONTENT_LENGTH") or 0),
+                )
+            )
+            if size > limit:
+                label = "ZIP" if suffix == ".zip" else "JSON/JSONL"
+                raise ValueError(f"{label} import exceeds maximum size: {limit} bytes")
+            staged_files.append((name, staged))
+    except Exception:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
+    return upload_dir, staged_files
 
 
 def _payload_size(payload: bytes | Path) -> int:
@@ -637,11 +842,12 @@ def _import_zip_dispatch(
     force_import: bool,
     progress: Callable[[int, int], None] | None,
     source_name: str | None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     return import_zip_payload(
         conn, payload, scope, current_app.config["ASSETS_DIR"],
         dry_run=dry_run, skip_assets=skip_assets, force_import=force_import,
-        progress=progress, source_name=source_name,
+        progress=progress, source_name=source_name, cancel_check=cancel_check, commit=False,
     )
 
 
@@ -656,45 +862,6 @@ def _safe_upload_log_items(file_data: list[tuple[str, bytes | Path]]) -> list[di
     ]
 
 
-@bp.get("/data-portability/export/all.<fmt>")
-@login_required
-def data_portability_export_direct(fmt: str):
-    if fmt not in {"jsonl", "zip"}:
-        return Response("Invalid export format", status=400)
-    with operation_maintenance(
-        current_app.config["DATABASE_PATH"], f"data export: {fmt}", logger=current_app.logger
-    ):
-        with connect(current_app.config["DATABASE_PATH"]) as conn:
-            if fmt == "zip":
-                payload = bundle_to_zip(conn, "all", current_app.config["ASSETS_DIR"], app_version=str(current_app.config.get("APP_VERSION", "")))
-            else:
-                records = build_export_bundle(conn, "all")["records"]
-                payload = ("\n".join(
-                    json.dumps(record, ensure_ascii=False, default=str, sort_keys=True, separators=(",", ":"))
-                    for record in records
-                ) + ("\n" if records else "")).encode("utf-8")
-    mimetype = "application/zip" if fmt == "zip" else "application/x-ndjson"
-    filename = f"MIFP_EXPORT_{date.today().isoformat()}.zip" if fmt == "zip" else "records.jsonl"
-    current_app.logger.info(
-        "data portability direct export ready format=%s bytes=%d", fmt, len(payload)
-    )
-    audit_log(
-        "export.data_portability_direct",
-        "direct data portability download",
-        category="admin",
-        outcome="success",
-        format=fmt,
-        bytes=len(payload),
-    )
-    return Response(payload, mimetype=mimetype, headers={
-        "Content-Disposition": f"attachment; filename={filename}",
-        "Content-Length": str(len(payload)),
-        "Cache-Control": "no-store, max-age=0",
-        "Pragma": "no-cache",
-        "X-Content-Type-Options": "nosniff",
-    })
-
-
 @bp.post("/data-portability/export/<fmt>")
 @login_required
 def data_portability_export_post(fmt: str):
@@ -707,24 +874,49 @@ def data_portability_export_post(fmt: str):
     )
 
     record_counts: dict[str, int] = {}
+    mimetype = "application/zip" if fmt == "zip" else "application/x-ndjson"
+    filename = f"MIFP_EXPORT_{date.today().isoformat()}.zip" if fmt == "zip" else "records.jsonl"
+    token = secrets.token_urlsafe(16)
+    export_dir = _export_cache_dir()
+    with tempfile.NamedTemporaryFile(
+        mode="wb", prefix=f"{_EXPORT_CACHE_PREFIX}write-", suffix=".tmp",
+        dir=export_dir, delete=False,
+    ) as handle:
+        temp_export_path = Path(handle.name)
+
+    expired = 0
     try:
         with operation_maintenance(
             current_app.config["DATABASE_PATH"], f"data export: {fmt}", logger=current_app.logger
         ):
             with connect(current_app.config["DATABASE_PATH"]) as conn:
                 if fmt == "zip":
-                    payload = bundle_to_zip(conn, scope, current_app.config["ASSETS_DIR"], app_version=str(current_app.config.get("APP_VERSION", "")))
+                    bundle_to_zip_file(
+                        conn, scope, current_app.config["ASSETS_DIR"], temp_export_path,
+                        app_version=str(current_app.config.get("APP_VERSION", "")),
+                    )
                 else:
-                    records = build_export_bundle(conn, scope)["records"]
-                    for record in records:
-                        typ = str(record.get("type") or "")
-                        if typ:
-                            record_counts[typ] = record_counts.get(typ, 0) + 1
-                    payload = ("\n".join(
-                        json.dumps(record, ensure_ascii=False, default=str, sort_keys=True, separators=(",", ":"))
-                        for record in records
-                    ) + ("\n" if records else "")).encode("utf-8")
+                    manifest = bundle_to_jsonl_file(
+                        conn, scope, current_app.config["ASSETS_DIR"], temp_export_path,
+                        app_version=str(current_app.config.get("APP_VERSION", "")),
+                    )
+                    record_counts = dict(manifest.get("counts") or {})
+                    current_app.logger.info(
+                        "data portability JSONL package written records=%d assets=%d state=%s",
+                        int(manifest.get("records") or 0), len(manifest.get("files") or []),
+                        bool(manifest.get("state_sha256")),
+                    )
+        total_bytes = temp_export_path.stat().st_size
+        max_export_bytes = int(current_app.config["EXPORT_MAX_BYTES"])
+        if total_bytes > max_export_bytes:
+            raise ValueError(f"Export exceeds configured maximum size: {max_export_bytes} bytes")
+        expired = _prune_export_cache()
+        _cache_export_file(
+            token, temp_export_path, filename=filename, mimetype=mimetype,
+            owner=session.get("admin_username"),
+        )
     except Exception:
+        temp_export_path.unlink(missing_ok=True)
         current_app.logger.exception("data portability export failed format=%s scope=%s", fmt, scope)
         audit_log("export.data_portability", "data portability export", category="admin", outcome="failure",
                   scope=scope, format=fmt)
@@ -740,24 +932,13 @@ def data_portability_export_post(fmt: str):
             "Pragma": "no-cache",
         })
 
-    mimetype = "application/zip" if fmt == "zip" else "application/x-ndjson"
-    filename = f"MIFP_EXPORT_{date.today().isoformat()}.zip" if fmt == "zip" else "records.jsonl"
     duration_ms = int((time.monotonic() - started) * 1000)
-    total_bytes = len(payload)
     size_str = f"{total_bytes/1024:.1f} KB" if total_bytes < 1048576 else f"{total_bytes/1048576:.1f} MB"
-    token = secrets.token_urlsafe(16)
-    expired = _prune_export_cache()
-    _export_cache[token] = {
-        "data": payload,
-        "filename": filename,
-        "mimetype": mimetype,
-        "created_at": time.monotonic(),
-        "owner": session.get("admin_username"),
-    }
+    cached_exports = _export_cache_count()
 
     current_app.logger.info(
         "data portability export ready format=%s bytes=%d duration_ms=%d expired_tokens=%d cached_exports=%d counts=%s",
-        fmt, total_bytes, duration_ms, expired, len(_export_cache), record_counts,
+        fmt, total_bytes, duration_ms, expired, cached_exports, record_counts,
     )
     audit_log("export.data_portability", "data portability export", category="admin", outcome="success",
               scope=scope, format=fmt, bytes=total_bytes, duration_ms=duration_ms,
@@ -785,7 +966,8 @@ def data_portability_export_post(fmt: str):
 @login_required
 def data_portability_export_dl(token: str):
     _prune_export_cache()
-    entry = _export_cache.get(token)
+    meta_path, _ = _export_cache_paths(token)
+    entry = _read_export_cache_meta(meta_path)
     if not entry:
         audit_log(
             "export.download_rejected",
@@ -804,13 +986,17 @@ def data_portability_export_dl(token: str):
             reason="owner_mismatch",
         )
         return Response("Download link expired or invalid. Please re-export.", status=404)
-    entry = _export_cache.pop(token)
-    payload_size = len(entry["data"])
+
+    claimed = _claim_export_cache_entry(token)
+    if not claimed:
+        return Response("Download link expired or invalid. Please re-export.", status=404)
+    entry, cache_path, claim_path = claimed
+    payload_size = int(entry.get("bytes") or cache_path.stat().st_size)
     current_app.logger.info(
         "data portability download served format=%s bytes=%d cached_exports=%d",
         Path(entry["filename"]).suffix.lstrip("."),
         payload_size,
-        len(_export_cache),
+        _export_cache_count(),
     )
     audit_log(
         "export.download",
@@ -820,16 +1006,34 @@ def data_portability_export_dl(token: str):
         format=Path(entry["filename"]).suffix.lstrip("."),
         bytes=payload_size,
     )
-    return Response(
-        entry["data"],
-        mimetype=entry["mimetype"],
-        headers={
-            "Content-Disposition": f"attachment; filename={entry['filename']}",
-            "Content-Length": str(payload_size),
-            "Cache-Control": "no-store, max-age=0",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
+    try:
+        response = send_file(
+            cache_path,
+            mimetype=entry["mimetype"],
+            as_attachment=True,
+            download_name=entry["filename"],
+            conditional=False,
+            max_age=0,
+        )
+    except Exception:
+        current_app.logger.exception(
+            "data portability download failed token=%s format=%s",
+            token[:8], Path(entry["filename"]).suffix.lstrip("."),
+        )
+        cache_path.unlink(missing_ok=True)
+        claim_path.unlink(missing_ok=True)
+        raise
+    response.headers["Content-Length"] = str(payload_size)
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+
+    def cleanup_export_download() -> None:
+        cache_path.unlink(missing_ok=True)
+        claim_path.unlink(missing_ok=True)
+
+    response.call_on_close(cleanup_export_download)
+    return response
 
 
 @bp.post("/data-portability/import")
@@ -845,6 +1049,7 @@ def data_portability_import():
         dry_run = request.form.get("dry_run") == "1"
         skip_assets = request.form.get("skip_assets") == "1"
         force_import = request.form.get("force_import") == "1"
+        _validate_import_selection(files)
         current_app.logger.info(
             "data portability import request started scope=%s files=%d dry_run=%s skip_assets=%s force_import=%s",
             scope, len(files), dry_run, skip_assets, force_import,
@@ -857,18 +1062,8 @@ def data_portability_import():
         # Stage uploads to disk before the thread starts: request context and
         # its FileStorage objects die once the request returns, and holding
         # every file in memory would defeat streaming.
-        upload_dir = Path(tempfile.mkdtemp(prefix="mifp-import-"))
-        file_data: list[tuple[str, bytes | Path]] = []
-        try:
-            for i, f in enumerate(files):
-                name = f.filename or f"file_{i}"
-                suffix = Path(name).suffix or ".jsonl"
-                staged = upload_dir / f"{i}_{_safe_upload_name(name, suffix)}"
-                f.save(staged)
-                file_data.append((name, staged))
-        except Exception:
-            shutil.rmtree(upload_dir, ignore_errors=True)
-            raise
+        upload_dir, staged_files = _stage_import_uploads(files)
+        file_data: list[tuple[str, bytes | Path]] = list(staged_files)
         total_bytes = sum(p.stat().st_size for _, p in file_data)
         current_app.logger.info(
             "data portability import prepared scope=%s files=%s bytes=%d dry_run=%s skip_assets=%s force_import=%s",
@@ -878,7 +1073,7 @@ def data_portability_import():
 
         import queue
 
-        from ..services.job_manager import JobQueueFull, get_job_manager
+        from ..services.job_manager import JobCancelled, JobQueueFull, get_job_manager
 
         event_queue: queue.Queue[dict | None] = queue.Queue()
 
@@ -887,10 +1082,26 @@ def data_portability_import():
 
         app = current_app._get_current_object()
 
-        def run_import() -> None:
+        def run_import(cancelled: Callable[[], bool]) -> None:
             with app.app_context():
                 try:
-                    _perform_import(scope, file_data, dry_run, skip_assets, started, event_sink, force_import=force_import)
+                    _perform_import(
+                        scope, file_data, dry_run, skip_assets, started, event_sink,
+                        force_import=force_import, cancel_check=cancelled,
+                    )
+                except JobCancelled:
+                    app.logger.warning("data portability import cancelled scope=%s files=%d", scope, len(file_data))
+                    audit_log(
+                        "import.cancelled", "data portability import cancelled", category="admin",
+                        outcome="cancelled", scope=scope, files=len(file_data),
+                    )
+                    event_sink({
+                        "event": "result", "ok": False, "cancelled": True, "outcome": "cancelled",
+                        "title_text": "Import cancelled",
+                        "message": "The import was cancelled before completion. Uncommitted database changes were rolled back.",
+                        "icon_class": "bi-x-lg", "icon_modifier": "is-warning",
+                    })
+                    raise
                 except Exception as exc:
                     app.logger.exception("Import failed in background thread")
                     audit_log(
@@ -902,7 +1113,13 @@ def data_portability_import():
                         files=len(file_data),
                         error_type=type(exc).__name__,
                     )
-                    event_sink({"event": "error", "message": _safe_import_error(exc)})
+                    message = _safe_import_error(exc)
+                    event_sink({"event": "error", "message": message})
+                    event_sink({
+                        "event": "result", "ok": False, "outcome": "failed",
+                        "title_text": "Import failed", "message": message,
+                        "icon_class": "bi-x-lg", "icon_modifier": "is-error",
+                    })
                     raise
                 finally:
                     shutil.rmtree(upload_dir, ignore_errors=True)
@@ -911,9 +1128,10 @@ def data_portability_import():
         manager = get_job_manager(
             int(current_app.config.get("BACKGROUND_JOB_WORKERS", 2)),
             int(current_app.config.get("BACKGROUND_JOB_MAX_PENDING", 4)),
+            db_path=str(current_app.config["DATABASE_PATH"]),
         )
         try:
-            job_id, _future = manager.submit(f"data-import:{scope}", run_import)
+            job_id, _future = manager.submit_cancellable(f"data-import:{scope}", run_import)
         except JobQueueFull:
             shutil.rmtree(upload_dir, ignore_errors=True)
             audit_log(
@@ -934,6 +1152,7 @@ def data_portability_import():
         )
 
         def generate() -> Generator[str, None, None]:
+            yield json.dumps({"event": "queued", "job_id": job_id, "cancel_url": url_for("dashboard.data_portability_import_cancel", job_id=job_id)}) + "\n"
             while True:
                 data = event_queue.get()
                 if data is None:
@@ -960,6 +1179,29 @@ def data_portability_import():
         return redirect(url_for("dashboard.data_portability"))
 
 
+
+@bp.post("/data-portability/import/<job_id>/cancel")
+@login_required
+def data_portability_import_cancel(job_id: str):
+    from ..services.job_manager import get_job_manager
+
+    manager = get_job_manager(
+        int(current_app.config.get("BACKGROUND_JOB_WORKERS", 2)),
+        int(current_app.config.get("BACKGROUND_JOB_MAX_PENDING", 4)),
+        db_path=str(current_app.config["DATABASE_PATH"]),
+    )
+    cancelled = manager.request_cancel(job_id)
+    current_app.logger.warning(
+        "data portability import cancel requested job_id=%s accepted=%s", job_id, cancelled
+    )
+    audit_log(
+        "import.cancel_requested", "data portability import cancellation requested",
+        category="admin", outcome="success" if cancelled else "ignored", job_id=job_id,
+    )
+    if not cancelled:
+        return jsonify({"ok": False, "message": "Import job is no longer cancellable."}), 409
+    return jsonify({"ok": True, "job_id": job_id}), 202
+
 def _safe_import_error(exc: Exception) -> str:
     if isinstance(exc, ValueError):
         return str(exc)[:500]
@@ -975,6 +1217,7 @@ def _perform_import(
     event_sink: Callable[[dict], None],
     *,
     force_import: bool = False,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> None:
     with operation_maintenance(
         current_app.config["DATABASE_PATH"],
@@ -989,6 +1232,7 @@ def _perform_import(
             started,
             event_sink,
             force_import=force_import,
+            cancel_check=cancel_check,
         )
 
 
@@ -1001,10 +1245,14 @@ def _perform_import_unprotected(
     event_sink: Callable[[dict], None],
     *,
     force_import: bool = False,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> None:
     summaries: list[dict[str, Any]] = []
     backup_path = None
     is_zip_import = any(n.lower().endswith(".zip") for n, _ in file_data)
+    if cancel_check and cancel_check():
+        from ..services.job_manager import JobCancelled
+        raise JobCancelled("Import cancelled by administrator")
     if not dry_run:
         event_sink({"event": "phase", "phase": "backup", "label": "Creating database backup…", "current_step": 0, "total_steps": 5, "percent": 0})
         current_app.logger.info("Creating pre-import database backup")
@@ -1047,7 +1295,9 @@ def _perform_import_unprotected(
         event_sink({"event": "phase", "phase": "importing", "label": "Importing records…", "current_step": 1, "total_steps": 5, "percent": 20})
 
         zip_files = [(n, b) for n, b in file_data if n.lower().endswith(".zip")]
-        if zip_files and len(file_data) == 1:
+        if zip_files and len(file_data) != 1:
+            raise ValueError("Import one ZIP bundle at a time; do not mix ZIP and JSONL files.")
+        if zip_files:
             filename, payload = zip_files[0]
             current_app.logger.info(
                 "importing ZIP index=1 bytes=%d", _payload_size(payload)
@@ -1057,7 +1307,7 @@ def _perform_import_unprotected(
                 conn, payload, scope,
                 dry_run=dry_run, skip_assets=skip_assets, force_import=force_import,
                 progress=lambda done, total: progress(filename, done, total),
-                source_name=filename,
+                source_name=filename, cancel_check=cancel_check,
             )
             summary["filename"] = filename
             raw_errors = summary.get("errors")
@@ -1097,6 +1347,10 @@ def _perform_import_unprotected(
             _completed_record_errors += zip_errors
             _completed_asset_errors += zip_asset_errors
             summaries.append(summary)
+            current_app.logger.info(
+                "import ZIP completed file=%s inserted=%d updated=%d errors=%d asset_errors=%d linked_assets=%d",
+                filename, zip_inserted, zip_updated, zip_errors, zip_asset_errors, link_assets,
+            )
             event_sink({
                 "event": "metrics",
                 "records": _completed_records,
@@ -1111,64 +1365,9 @@ def _perform_import_unprotected(
         else:
             file_count = len(file_data)
             for file_index, (filename, payload) in enumerate(file_data):
-                if filename.lower().endswith(".zip"):
-                    event_sink({
-                        "event": "file_start", "file": filename,
-                        "file_index": file_index, "file_count": file_count,
-                        "bytes": _payload_size(payload),
-                    })
-                    current_app.logger.info(
-                        "importing ZIP in mixed batch index=%d bytes=%d",
-                        file_index + 1,
-                        _payload_size(payload),
-                    )
-                    before_asset_id = _max_asset_id(conn)
-                    summary = _import_zip_dispatch(
-                        conn, payload, scope,
-                        dry_run=dry_run, skip_assets=skip_assets, force_import=force_import,
-                        progress=lambda done, total: progress(filename, done, total),
-                        source_name=filename,
-                    )
-                    summary["filename"] = filename
-                    raw_errors = summary.get("errors")
-                    error_details = []
-                    if isinstance(raw_errors, list):
-                        error_details.extend({
-                            "kind": "record", "record": entry.get("line"),
-                            "message": str(entry.get("error") or "")[:500],
-                        } for entry in raw_errors if isinstance(entry, dict) and entry.get("error"))
-                    elif isinstance(raw_errors, dict):
-                        error_details.extend({
-                            "kind": "record", "message": str(message)[:500],
-                        } for message in raw_errors.values() if str(message).strip())
-                    raw_asset_errors = summary.get("asset_errors")
-                    if isinstance(raw_asset_errors, list):
-                        error_details.extend({
-                            "kind": "asset", "record": entry.get("line"),
-                            "message": str(entry.get("error") or "")[:500],
-                        } for entry in raw_asset_errors if isinstance(entry, dict) and entry.get("error"))
-                    summary["error_details"] = error_details
-                    summary["errors"] = _summary_count(raw_errors)
-                    summary["asset_errors"] = _summary_count(raw_asset_errors)
-                    summary["linked_assets"] = _summary_count(summary.get("linked_assets"))
-                    summary.update(_asset_delta(conn, before_asset_id))
-                    summaries.append(summary)
-                    file_inserted = _summary_count(summary.get("inserted"))
-                    file_updated = _summary_count(summary.get("updated"))
-                    file_assets = _summary_count(summary.get("linked_assets"))
-                    file_record_errors = _summary_count(summary.get("errors"))
-                    file_asset_errors = _summary_count(summary.get("asset_errors"))
-                    _completed_records += file_inserted + file_updated
-                    _completed_inserted += file_inserted
-                    _completed_updated += file_updated
-                    _completed_assets += file_assets
-                    _completed_record_errors += file_record_errors
-                    _completed_asset_errors += file_asset_errors
-                    event_sink({
-                        "event": "file_done", "file": filename,
-                        "file_index": file_index, "file_count": file_count,
-                    })
-                    continue
+                if cancel_check and cancel_check():
+                    from ..services.job_manager import JobCancelled
+                    raise JobCancelled("Import cancelled by administrator")
                 current_app.logger.info(
                     "importing JSONL index=%d bytes=%d", file_index + 1, _payload_size(payload)
                 )
@@ -1188,13 +1387,12 @@ def _perform_import_unprotected(
                         "bytes": _payload_size(payload),
                     })
                     before_asset_id = _max_asset_id(conn)
-                    counts = import_jsonl(
-                        conn, tmp_path,
-                        dry_run=dry_run, force_import=force_import,
-                        assets_dir=current_app.config["ASSETS_DIR"],
+                    counts = import_jsonl_payload(
+                        conn, tmp_path, scope, Path(current_app.config["ASSETS_DIR"]),
+                        dry_run=dry_run, skip_assets=skip_assets, force_import=force_import,
                         progress=lambda done, total: progress(filename, done, total),
                         asset_detail=lambda msg: event_sink({"event": "detail", "message": msg}),
-                        source_name=filename,
+                        source_name=filename, cancel_check=cancel_check, commit=False,
                     )
                     file_summary = {
                         "filename": filename,
@@ -1227,6 +1425,10 @@ def _perform_import_unprotected(
                     _completed_assets += file_assets
                     _completed_record_errors += file_record_errors
                     _completed_asset_errors += file_asset_errors
+                    current_app.logger.info(
+                        "import JSONL completed file=%s inserted=%d updated=%d errors=%d asset_errors=%d linked_assets=%d",
+                        filename, file_inserted, file_updated, file_record_errors, file_asset_errors, file_assets,
+                    )
                     event_sink({
                         "event": "file_done", "file": filename,
                         "file_index": file_index, "file_count": file_count,
@@ -1235,9 +1437,15 @@ def _perform_import_unprotected(
                     if owns_tmp:
                         tmp_path.unlink(missing_ok=True)
 
+        if cancel_check and cancel_check():
+            from ..services.job_manager import JobCancelled
+            raise JobCancelled("Import cancelled by administrator")
         if not dry_run:
             event_sink({"event": "phase", "phase": "assets", "label": "Recovering assets…", "current_step": 2, "total_steps": 5, "percent": 60})
-            recovery = recover_missing_assets(conn, Path(current_app.config["ASSETS_DIR"]))
+            recovery = recover_missing_assets(
+                conn, Path(current_app.config["ASSETS_DIR"]),
+                cancel_check=cancel_check, commit=False,
+            )
             if recovery.get("recovered", 0):
                 current_app.logger.info("Post-import asset recovery: %d recovered", recovery["recovered"])
             if recovery.get("failed"):
@@ -1324,6 +1532,11 @@ def _perform_import_unprotected(
         "backup_created": bool(backup_path),
     })
 
+    current_app.logger.info(
+        "data portability import finished scope=%s dry_run=%s files=%d inserted=%d updated=%d errors=%d asset_errors=%d duration_s=%.1f",
+        scope, dry_run, len(file_data), total_inserted, total_updated, total_errors, total_asset_errors, duration_s,
+    )
+
     audit_log(
         "import.data_portability", "data portability import", category="admin",
         outcome=outcome, scope=scope, dry_run=dry_run,
@@ -1336,186 +1549,40 @@ def _perform_import_unprotected(
 def _import_postback(
     scope: str, files: list, dry_run: bool, skip_assets: bool, started: float, *, force_import: bool = False
 ) -> Response:
-    summaries = []
-    backup_path = None
-    is_zip_import = any(f.filename.lower().endswith(".zip") for f in files)
-    if not dry_run:
-        current_app.logger.info("Creating pre-import database backup")
-        backup_path = backup_sqlite_database(current_app.config["DATABASE_PATH"], label="import")
-        current_app.logger.info(
-            "pre-import backup ready created=%s", bool(backup_path)
+    """Run the same import pipeline used by XHR and adapt its result for postback UI."""
+    upload_dir, staged_files = _stage_import_uploads(files)
+    result: dict[str, Any] = {}
+
+    def event_sink(event: dict) -> None:
+        nonlocal result
+        if event.get("event") == "result":
+            result = dict(event)
+
+    try:
+        _perform_import(
+            scope,
+            list(staged_files),
+            dry_run,
+            skip_assets,
+            started,
+            event_sink,
+            force_import=force_import,
         )
-    with connect(current_app.config["DATABASE_PATH"]) as conn:
-        zip_files = [f for f in files if f.filename.lower().endswith(".zip")]
-        if zip_files:
-            if len(files) > 1:
-                flash("Import one ZIP bundle at a time.", "error")
-                return redirect(url_for("dashboard.data_portability"))  # type: ignore[return-value]
-            file = zip_files[0]
-            with tempfile.NamedTemporaryFile(
-                mode="wb", suffix=".zip", delete=False, dir=current_app.config.get("TMP_DIR") or None
-            ) as f:
-                file.save(f)
-                zip_path = Path(f.name)
-            current_app.logger.info("importing ZIP index=1 bytes=%d", zip_path.stat().st_size)
-            try:
-                before_asset_id = _max_asset_id(conn)
-                summary = _import_zip_dispatch(
-                    conn, zip_path, scope,
-                    dry_run=dry_run, skip_assets=skip_assets, force_import=force_import,
-                    progress=lambda done, total: current_app.logger.info("ZIP import progress: records=%d/%d", done, total),
-                    source_name=file.filename,
-                )
-            finally:
-                zip_path.unlink(missing_ok=True)
-            summary["filename"] = file.filename
-            raw_errors = summary.get("errors")
-            error_details = []
-            if isinstance(raw_errors, list):
-                for e in raw_errors:
-                    if isinstance(e, dict):
-                        msg = (e.get("error") or "").strip()
-                        if msg:
-                            error_details.append({"kind": "record", "record": e.get("line"), "message": msg[:500]})
-            elif isinstance(raw_errors, dict):
-                for v in raw_errors.values():
-                    msg = str(v).strip()
-                    if msg:
-                        error_details.append({"kind": "record", "message": msg[:500]})
-            raw_asset_errors = summary.get("asset_errors")
-            if isinstance(raw_asset_errors, list):
-                for e in raw_asset_errors:
-                    if isinstance(e, dict):
-                        msg = str(e.get("error") or "").strip()
-                        if msg:
-                            error_details.append({"kind": "asset", "record": e.get("line"), "message": msg[:500]})
-            summary["error_details"] = error_details
-            summary["errors"] = _summary_count(summary.get("errors"))
-            summary["asset_errors"] = _summary_count(summary.get("asset_errors"))
-            summary["linked_assets"] = _summary_count(summary.get("linked_assets"))
-            summary.update(_asset_delta(conn, before_asset_id))
-            summaries.append(summary)
-        else:
-            for file in files:
-                file_index = files.index(file) + 1
-                suffix = Path(file.filename).suffix or ".jsonl"
-                with tempfile.NamedTemporaryFile(
-                    mode='wb', suffix=suffix, delete=False,
-                    dir=current_app.config.get("TMP_DIR") or None,
-                ) as f:
-                    file.save(f)
-                    tmp_path = Path(f.name)
-                current_app.logger.info(
-                    "importing JSONL index=%d bytes=%d", file_index, tmp_path.stat().st_size
-                )
-                try:
-                    before_asset_id = _max_asset_id(conn)
-                    counts = import_jsonl(
-                        conn, tmp_path,
-                        dry_run=dry_run, force_import=force_import,
-                        assets_dir=current_app.config["ASSETS_DIR"],
-                        progress=lambda done, total: current_app.logger.info(
-                            "JSONL import progress index=%d records=%d/%d",
-                            file_index,
-                            done,
-                            total,
-                        ),
-                        asset_detail=lambda _msg: None,
-                        source_name=file.filename,
-                    )
-                    file_summary = {
-                        "filename": file.filename,
-                        "inserted": counts.get("inserted"),
-                        "updated": counts.get("updated"),
-                        "errors": _summary_count(counts.get("errors")),
-                        "asset_errors": _summary_count(counts.get("asset_errors")),
-                        "skipped": _summary_count(counts.get("skipped")),
-                        "rolled_back": _summary_count(counts.get("rolled_back")),
-                        "linked_assets": counts.get("linked_assets", 0),
-                        "dry_run": dry_run,
-                        "error_details": [
-                            {"kind": "record", "record": e.get("line"), "message": str(e.get("error") or "")[:500]}
-                            for e in (counts.get("errors") or []) if isinstance(e, dict)
-                        ] + [
-                            {"kind": "asset", "record": e.get("line"), "message": str(e.get("error") or "")[:500]}
-                            for e in (counts.get("asset_errors") or []) if isinstance(e, dict)
-                        ],
-                    }
-                    file_summary.update(_asset_delta(conn, before_asset_id))
-                    summaries.append(file_summary)
-                finally:
-                    tmp_path.unlink(missing_ok=True)
-        if not dry_run:
-            recovery = recover_missing_assets(conn, Path(current_app.config["ASSETS_DIR"]))
-            summaries.append({"asset_recovery": recovery})
-            if recovery.get("recovered", 0):
-                current_app.logger.info("Post-import recovery downloaded %d assets", recovery["recovered"])
-            if recovery.get("failed"):
-                current_app.logger.warning("Post-import recovery deferred/closed %d assets", len(recovery["failed"]))
-    total_inserted = sum(_summary_count(s.get("inserted")) for s in summaries)
-    total_updated = sum(_summary_count(s.get("updated")) for s in summaries)
-    total_errors = sum(_summary_count(s.get("errors")) for s in summaries)
-    total_asset_errors = sum(_summary_count(s.get("asset_errors")) for s in summaries)
-    total_skipped = sum(_summary_count(s.get("skipped")) for s in summaries)
-    total_rolled_back = sum(_summary_count(s.get("rolled_back")) for s in summaries)
-    total_linked_assets = sum(_summary_count(s.get("linked_assets")) for s in summaries)
-    total_new_assets = sum(int(s.get("new_assets") or 0) for s in summaries)
-    total_downloaded_assets = (
-        sum(int(s.get("downloaded_assets") or 0) for s in summaries)
-        + sum(int((s.get("asset_recovery") or {}).get("recovered") or 0) for s in summaries)
-    )
-    total_external_assets = sum(int(s.get("external_assets") or 0) for s in summaries)
-    error_details = _summary_error_details(summaries)
+    finally:
+        shutil.rmtree(upload_dir, ignore_errors=True)
 
-    by_type: dict[str, dict[str, int]] = {}
-    for s in summaries:
-        for action in ("inserted", "updated"):
-            raw = s.get(action, {})
-            if isinstance(raw, dict):
-                for typ, count in raw.items():
-                    by_type.setdefault(typ, {})[action] = by_type.get(typ, {}).get(action, 0) + (count if isinstance(count, int) else _summary_count(count))
-
-    ok = total_errors == 0 and total_asset_errors == 0
-    outcome = "success" if ok else ("warning" if total_errors > 0 or total_asset_errors > 0 else "failed")
-    duration_s = round(time.monotonic() - started, 1)
-
-    _result_title = (
-        "Import completed with warnings" if outcome == "warning" else
-        "Files are valid" if (ok and dry_run) else
-        "Import complete" if ok else
-        "Import failed"
-    )
-
-    import_result = {
-        "ok": ok, "outcome": outcome, "title_text": _result_title,
-        "message": f"Imported {total_inserted} new + {total_updated} updated records. "
-                   f"Errors: {total_errors} (record) + {total_asset_errors} (asset).",
-        "inserted": total_inserted, "updated": total_updated,
-        "linked_assets": total_linked_assets,
-        "errors": total_errors, "asset_errors": total_asset_errors,
-        "skipped": total_skipped, "rolled_back": total_rolled_back,
-        "new_assets": total_new_assets,
-        "downloaded_assets": total_downloaded_assets,
-        "external_assets": total_external_assets,
-        "by_type": by_type,
-        "error_details": error_details[:20],
-        "dry_run": dry_run, "duration_s": duration_s,
-        "backup_path": str(backup_path) if backup_path else None,
-    }
+    if not result:
+        raise RuntimeError("Import completed without a result summary")
     if not dry_run:
-        session["data_portability_import_result"] = import_result
+        session["data_portability_import_result"] = result
 
     flash(
-        f"Imported {total_inserted} new + {total_updated} updated records with "
-        f"{total_linked_assets} asset(s). Errors: {total_errors} (record) + {total_asset_errors} (asset).",
-        "success" if ok else "warning",
-    )
-    audit_log(
-        "import.data_portability", "data portability import", category="admin",
-        outcome=outcome, scope=scope, dry_run=dry_run,
-        files=len(files), inserted=total_inserted, updated=total_updated,
-        errors=total_errors, asset_errors=total_asset_errors,
-        duration_s=duration_s,
+        f"Imported {int(result.get('inserted') or 0)} new + "
+        f"{int(result.get('updated') or 0)} updated records with "
+        f"{int(result.get('linked_assets') or 0)} asset(s). Errors: "
+        f"{int(result.get('errors') or 0)} (record) + "
+        f"{int(result.get('asset_errors') or 0)} (asset).",
+        "success" if result.get("ok") else "warning",
     )
     return redirect(url_for("dashboard.data_portability"))  # type: ignore[return-value]
 

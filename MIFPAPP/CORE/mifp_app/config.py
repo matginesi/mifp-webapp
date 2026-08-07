@@ -198,6 +198,11 @@ class Config:
     LOGIN_LOCKOUT_SECONDS = int(os.getenv('LOGIN_LOCKOUT_SECONDS', '60'))
     LOGIN_IP_MAX_ATTEMPTS = int(os.getenv('LOGIN_IP_MAX_ATTEMPTS', '10'))
     IMPORT_MAX_ZIP_BYTES = int(os.getenv('IMPORT_MAX_ZIP_BYTES', str(768 * 1024 * 1024)))
+    # JSON/JSONL and ZIP metadata are parsed in memory. Keep their individual
+    # limits well below the global HTTP upload ceiling to avoid memory spikes.
+    IMPORT_MAX_JSONL_BYTES = int(os.getenv('IMPORT_MAX_JSONL_BYTES', str(128 * 1024 * 1024)))
+    IMPORT_MAX_MANIFEST_BYTES = int(os.getenv('IMPORT_MAX_MANIFEST_BYTES', str(4 * 1024 * 1024)))
+    IMPORT_MAX_STATE_BYTES = int(os.getenv('IMPORT_MAX_STATE_BYTES', str(128 * 1024 * 1024)))
     IMPORT_MAX_FILES = int(os.getenv('IMPORT_MAX_FILES', '5000'))
     PERMISSIONS_POLICY = os.getenv(
         'PERMISSIONS_POLICY',

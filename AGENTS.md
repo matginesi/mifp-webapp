@@ -37,7 +37,6 @@ Development entry point:
 Production entry point:
 
 ```bash
-./mifp local
 ./mifp production
 ```
 

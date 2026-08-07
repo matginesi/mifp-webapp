@@ -13,11 +13,7 @@
     or plan.get('operation') in ('deduplicate_primary_links', 'deduplicate_primary_assets')
   )
 ) %}
-{% set manually_editable = (
-  (is_merge and records|length >= 2)
-  or plan.get('fields')
-  or plan.get('proposed_records')
-) %}
+{% set manually_editable = finding.workflow == 'manual' %}
 <div class="dq-finding-card" data-finding-id="{{ finding.id }}" data-status="{{ finding.status }}">
   <div class="dq-finding-type {{ finding.action_type }}">
     <i class="bi {{ {
@@ -66,12 +62,17 @@
     <span class="dq-badge dq-badge-type-{{ finding.action_type }}">{{ finding.action_type }}</span>
     <span class="dq-badge-entity">{{ finding.entity_type }}</span>
     <span class="dq-badge-status dq-badge-status-{{ status_class }}">{{ finding.status or 'new' }}</span>
+    <span class="dq-badge dq-workflow-{{ finding.workflow }}">{{ {'automatic':'safe automatic','manual':'manual decision','informational':'informational'}.get(finding.workflow, finding.workflow) }}</span>
   </div>
   <div class="dq-finding-actions">
     {% if finding.status not in ('rejected','resolved') %}
-    {% if manually_editable %}
+    {% if finding.workflow == 'informational' %}
+    <button type="button" class="btn btn-sm btn-dq-review btn-dq-ignore" data-finding-id="{{ finding.id }}">
+      <i class="bi bi-check2"></i> Dismiss
+    </button>
+    {% elif manually_editable %}
     <button type="button" class="btn btn-sm btn-dq-manual" data-finding-id="{{ finding.id }}">
-      <i class="bi bi-eye"></i> Review &amp; edit
+      <i class="bi bi-eye"></i> Review decision
     </button>
     {% elif executable %}
     <button type="button" class="btn btn-sm btn-dq-accept" data-finding-id="{{ finding.id }}">
@@ -82,9 +83,11 @@
       <i class="bi bi-person-check"></i> Mark reviewed
     </button>
     {% endif %}
+    {% if finding.workflow != 'informational' %}
     <button type="button" class="btn btn-sm btn-dq-ignore" data-finding-id="{{ finding.id }}">
       <i class="bi bi-x-lg"></i> Ignore
     </button>
+    {% endif %}
     {% endif %}
   </div>
 </div>

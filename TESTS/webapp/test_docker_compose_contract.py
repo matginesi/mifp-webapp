@@ -18,6 +18,7 @@ def test_local_docker_uses_host_data_and_source_mounts() -> None:
     assert web["environment"]["FLASK_ENV"] == "development"
     assert web["environment"]["DATABASE_PATH"] == "/app/data/mifp.db"
     assert any(volume.get("target") == "/app/data" for volume in volumes)
+    assert web["environment"]["TMPDIR"] == "/app/data/tmp"
     assert any(volume.get("target") == "/app/mifp_app" for volume in volumes)
     source_mounts = [v for v in volumes if v.get("target", "").startswith("/app/") and v.get("target") != "/app/data"]
     assert source_mounts
@@ -38,6 +39,8 @@ def test_production_uses_named_volume_and_non_root_web() -> None:
     assert web["read_only"] is True
     assert web["environment"]["FLASK_ENV"] == "production"
     assert web["environment"]["AUTO_MIGRATE_ON_STARTUP"] == "0"
+    assert web["environment"]["TMPDIR"] == "/app/data/tmp"
+    assert "/data/tmp" in " ".join(init["command"])
 
 
 def test_container_entrypoint_migrates_before_startup() -> None:

@@ -22,10 +22,7 @@ def _load_manage():
 def _args(module, tmp_path: Path, *, username: str | None = None):
     return module.argparse.Namespace(
         env_file=tmp_path / ".env",
-        credentials_file=tmp_path / "credentials",
         username=username,
-        generate=False,
-        non_interactive=False,
     )
 
 
@@ -73,34 +70,27 @@ def test_bootstrap_rewrites_legacy_double_quoted_hash_safely(tmp_path: Path) -> 
     module = _load_manage()
     env_file = tmp_path / ".env"
     example = tmp_path / ".env.example"
-    credentials = tmp_path / "credentials"
     value = "pbkdf2:sha256:600000$salt$digest"
     env_file.write_text(
         f'SECRET_KEY="secret"\nADMIN_USERNAME="admin"\nADMIN_PASSWORD_HASH="{value}"\n',
         encoding="utf-8",
     )
     example.write_text("", encoding="utf-8")
-    args = module.argparse.Namespace(
-        env_file=env_file, example=example, credentials_file=credentials, defer_admin=False
-    )
+    args = module.argparse.Namespace(env_file=env_file, example=example)
     assert module.bootstrap(args) == 0
     assert f"ADMIN_PASSWORD_HASH='{value}'" in env_file.read_text(encoding="utf-8")
 
 
-def test_bootstrap_can_defer_admin_generation(tmp_path: Path) -> None:
+def test_bootstrap_never_generates_admin_password(tmp_path: Path) -> None:
     module = _load_manage()
     env_file = tmp_path / ".env"
     example = tmp_path / ".env.example"
-    credentials = tmp_path / "credentials"
     example.write_text(
         "SECRET_KEY='change-me'\nADMIN_USERNAME='admin'\nADMIN_PASSWORD_HASH=''\n",
         encoding="utf-8",
     )
-    args = module.argparse.Namespace(
-        env_file=env_file, example=example, credentials_file=credentials, defer_admin=True
-    )
+    args = module.argparse.Namespace(env_file=env_file, example=example)
     assert module.bootstrap(args) == 0
     values = module.read_env(env_file)
     assert values["SECRET_KEY"] != "change-me"
     assert not values.get("ADMIN_PASSWORD_HASH")
-    assert not credentials.exists()

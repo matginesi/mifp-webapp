@@ -44,10 +44,9 @@
 ./mifp admin --username matteo
 
 # Genera una nuova password casuale per uno username scelto
-./mifp admin --username matteo --generate
+./mifp admin --username matteo
 
 # Mostra le credenziali solo quando sono state generate automaticamente
-./mifp credentials
 
 
 # =============================================================================
@@ -103,7 +102,7 @@
 ./mifp refresh local
 ./mifp refresh all --threads 24
 
-# IMPORT_DATA non viene letta, modificata o pulita automaticamente.
+# IMPORT_DATA è legacy e non fa parte del codebase; eventuali copie locali esterne non vengono lette o modificate automaticamente.
 
 
 # =============================================================================
@@ -143,7 +142,7 @@
 # Reset totale: include .env, credenziali generate e volume Docker production
 ./mifp clean all --env --docker --volumes --yes
 
-# IMPORT_DATA non è mai inclusa nei target di pulizia.
+# Eventuali copie locali legacy di IMPORT_DATA non sono mai incluse nei target di pulizia.
 
 
 # =============================================================================
@@ -195,7 +194,7 @@ git branch "backup/prima-reset-$(date +%Y%m%d-%H%M%S)"
 
 # Costruisce un nuovo commit root usando un indice temporaneo.
 # .gitignore decide cosa entra: webapp, runtime, test webapp e CI/CD.
-# IMPORT_DATA, SCRAPERS, DATABASE e tools restano fisicamente nella root.
+# SCRAPERS, DATABASE e tools restano fisicamente nella root; IMPORT_DATA è stata rimossa dal codebase.
 OLD_REMOTE="$(git rev-parse refs/remotes/origin/main)"
 TMP_INDEX="$(mktemp)"
 rm -f "$TMP_INDEX"

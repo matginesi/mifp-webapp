@@ -15,6 +15,7 @@ from mifp_app.services.data_quality import (
     apply_bundle,
     batch_add_to_bundle,
     batch_reject_findings,
+    count_workflows,
     create_bundle,
     delete_draft,
     list_findings,
@@ -33,6 +34,12 @@ from mifp_app.services.data_quality.policies import (
     evaluate_publication,
 )
 from mifp_app.services.data_quality.planner import build_merge_plan, records_for
+
+
+def test_data_quality_public_api_exports_count_workflows():
+    # dashboard_data_quality imports this from the package root; keep that
+    # contract covered so application startup cannot regress silently.
+    assert callable(count_workflows)
 
 
 @pytest.fixture
@@ -717,6 +724,48 @@ def test_batch_accept_skips_manual_splits_and_overlapping_actions(database: Path
         assert result["errors"] == 0
         assert report["valid"]
 
+
+
+def test_validate_bundle_recovers_legacy_split_titles(database: Path):
+    """Legacy split bundles with title_hint/segment must not fail the whole apply preflight."""
+    with connect(database) as conn:
+        conn.execute(
+            "INSERT INTO publications(title,slug,abstract) VALUES(?,?,?)",
+            (
+                "Container",
+                "legacy-split-container",
+                "First scientific paper with a sufficiently descriptive title. Uploaded: 2020 File Size: 1MB Download\n"
+                "Second scientific paper with another sufficiently descriptive title. Page 2 of 4 Results 11 - 20 of 34",
+            ),
+        )
+        conn.commit()
+        run = analyze(conn)
+        finding = next(
+            item for item in list_findings(conn, run["run_id"])
+            if item["action_type"] == "split_aggregated_record"
+        )
+        legacy_plan = json.loads(json.dumps(finding["plan"]))
+        assert len(legacy_plan.get("proposed_records") or []) >= 2
+        for proposed in legacy_plan["proposed_records"]:
+            proposed.pop("title", None)
+            assert proposed.get("title_hint") or proposed.get("segment")
+
+        bundle = create_bundle(conn, "tester")
+        conn.execute(
+            "INSERT INTO quality_bundle_items(bundle_id,finding_id,action_type,payload_json) VALUES(?,?,?,?)",
+            (bundle, finding["id"], "split_aggregated_record", json.dumps({"plan": legacy_plan})),
+        )
+        conn.execute("UPDATE quality_findings SET status='bundled' WHERE id=?", (finding["id"],))
+        conn.commit()
+
+        report = validate_bundle(conn, bundle)
+        assert report["valid"], report
+        assert any("recovered legacy split titles" in warning for warning in report["warnings"])
+        stored = conn.execute(
+            "SELECT payload_json FROM quality_bundle_items WHERE bundle_id=?", (bundle,)
+        ).fetchone()["payload_json"]
+        stored_plan = json.loads(stored)["plan"]
+        assert all(str(item.get("title") or "").strip() for item in stored_plan["proposed_records"])
 
 def test_content_fingerprint_ignores_id_and_slug(database: Path):
     a = {"id": 1, "slug": "old", "title": "Same content", "body": "Hello"}
