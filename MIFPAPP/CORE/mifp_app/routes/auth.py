@@ -123,9 +123,12 @@ def login_post():
 def logout():
     username = session.get("admin_username")
     audit_log("auth.logout", "admin logout", category="auth", outcome="success", username=username, ip=get_client_ip())
+
+    # Keep logout truly session-empty. Using flash() after session.clear() would
+    # create a fresh signed session cookie just to carry the confirmation text.
+    # The login page receives a non-sensitive query flag instead.
     session.clear()
-    flash("You have been logged out.", "info")
-    response = redirect(url_for("auth.login"))
+    response = redirect(url_for("auth.login", logged_out="1"))
     response.headers["Cache-Control"] = "no-store, max-age=0"
     current_app.logger.info("admin logout completed username=%s", username or "unknown")
     return response

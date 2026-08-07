@@ -99,15 +99,27 @@ def test_same_origin_dashboard_write_passes_origin_check(app, client):
     assert response.status_code != 403
 
 
-def test_logout_clears_browser_site_data(client):
+def test_logout_invalidates_session_without_browser_wide_clear(client):
     with client.session_transaction() as sess:
         sess["admin_logged_in"] = True
         sess["admin_username"] = "admin"
         sess["_csrf_token"] = "logout-token"
 
-    response = client.post("/logout", data={"_csrf_token": "logout-token"})
+    response = client.post("/logout", data={"_csrf_token": "logout-token"}, follow_redirects=False)
 
     assert response.status_code == 302
+    assert response.location.endswith("/login?logged_out=1")
+    # Clear-Site-Data previously caused disruptive browser-wide clearing/freeze.
     assert "Clear-Site-Data" not in response.headers
-    assert response.headers["Cache-Control"] == "no-store"
-    assert response.headers["Cache-Control"] == "no-store, max-age=0"
+    cache_control = response.headers.get("Cache-Control", "")
+    assert "no-store" in cache_control
+    assert "max-age=0" in cache_control
+
+    with client.session_transaction() as sess:
+        assert not sess.get("admin_logged_in")
+        assert not sess.get("admin_username")
+        assert "_csrf_token" not in sess
+
+    protected = client.get("/dashboard/", follow_redirects=False)
+    assert protected.status_code == 302
+    assert "/login" in protected.location

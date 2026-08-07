@@ -293,7 +293,68 @@ def data_quality_decision(finding_id: int):
         if not finding:
             return jsonify({"ok": False, "message": "Finding not found"}), 404
         if decision == "accept":
-            # Get or create a draft bundle
+            workflow = str(finding.get("workflow") or finding_workflow(finding))
+            plan = finding.get("plan") or {}
+            record_ids = [
+                int(value)
+                for value in (finding.get("record_ids") or [])
+                if str(value).isdigit()
+            ]
+
+            # Some manual findings are intentionally review-only.  The main
+            # example is an event page fragment: analysis can identify that a
+            # row looks like a sub-page, but with no second record there is no
+            # safe merge target to execute.  An administrator must be able to
+            # close that finding after reviewing it instead of being trapped in
+            # an impossible bundle action.  This changes only Data Quality
+            # state; it never mutates the content record.
+            review_only_manual = (
+                workflow == "manual"
+                and finding.get("action_type") == "merge_records"
+                and (
+                    str(plan.get("operation") or "") == "absorb_fragment"
+                    or str(finding.get("classification") or "") == "page_fragment_attached"
+                )
+                and len(set(record_ids)) < 2
+            )
+            if review_only_manual:
+                conn.execute(
+                    "UPDATE quality_findings SET status='resolved',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (finding_id,),
+                )
+                conn.commit()
+                current_app.logger.info(
+                    "manual finding %s reviewed without database change classification=%s operation=%s",
+                    finding_id, finding.get("classification"), plan.get("operation"),
+                )
+                audit_log(
+                    "data_quality.manual_review",
+                    "administrator completed a review-only Data Quality finding",
+                    finding_id=finding_id,
+                    classification=str(finding.get("classification") or ""),
+                )
+                return jsonify({
+                    "ok": True,
+                    "decision": decision,
+                    "reviewed_without_change": True,
+                })
+
+            # Only safe automatic findings may be queued by one-click accept.
+            # Actionable manual findings must go through the reviewed-plan form;
+            # informational findings are dismissed/kept separate instead.
+            if workflow != "automatic":
+                current_app.logger.warning(
+                    "accept finding %s rejected: workflow=%s classification=%s",
+                    finding_id, workflow, finding.get("classification"),
+                )
+                return jsonify({
+                    "ok": False,
+                    "message": "This finding requires a reviewed plan before it can be queued.",
+                }), 409
+
+            # Get or create a draft bundle only when there is an executable
+            # automatic action to queue.  Review-only findings above therefore
+            # do not leave empty draft bundles behind.
             bundle_row = conn.execute(
                 "SELECT id FROM quality_bundles WHERE status IN ('draft','validated') ORDER BY id DESC LIMIT 1"
             ).fetchone()
@@ -301,19 +362,6 @@ def data_quality_decision(finding_id: int):
                 bundle_id = int(bundle_row["id"])
             else:
                 bundle_id = create_bundle(conn, str(session.get("admin_username") or "admin"))
-            # Only the explicitly classified safe workflow may use one-click
-            # acceptance. Manual findings are edited through the review form;
-            # informational findings are dismissed/kept separate, never coerced
-            # into executable changes.
-            if finding.get("workflow") != "automatic":
-                current_app.logger.warning(
-                    "accept finding %s rejected: workflow=%s classification=%s",
-                    finding_id, finding.get("workflow"), finding.get("classification"),
-                )
-                return jsonify({
-                    "ok": False,
-                    "message": "This finding requires manual review and cannot be auto-accepted.",
-                }), 409
             payload = {"strategy": "best_quality"} if finding["action_type"] in {"merge_records", "enrich_record", "clean_record"} else {}
             try:
                 current_app.logger.info(

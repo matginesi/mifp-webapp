@@ -67,7 +67,10 @@ class TestDataPortabilityHTTP:
             lines = [l for l in text.strip().splitlines() if l.strip()]
             if lines:
                 obj = json.loads(lines[0])
-                assert "type" in obj
+                envelope = obj.get("_mifp") if isinstance(obj, dict) else None
+                assert isinstance(envelope, dict)
+                assert envelope.get("kind") == "manifest"
+                assert (envelope.get("data") or {}).get("format") == "mifp-jsonl-v2"
 
     def test_export_zip(self, app_with_admin):
         with app_with_admin.test_client() as client:
@@ -242,8 +245,17 @@ class TestDataPortabilityHTTP:
             assert dl.status_code == 200
             jsonl_bytes = dl.data
             exported = [json.loads(l) for l in jsonl_bytes.decode("utf-8").strip().splitlines() if l.strip()]
+            manifests = [
+                row.get("_mifp") for row in exported
+                if isinstance(row, dict) and isinstance(row.get("_mifp"), dict)
+                and row["_mifp"].get("kind") == "manifest"
+            ]
+            assert manifests
+            assert (manifests[0].get("data") or {}).get("format") == "mifp-jsonl-v2"
             exported_types = {}
             for rec in exported:
+                if not isinstance(rec, dict) or "type" not in rec:
+                    continue
                 exported_types[rec["type"]] = exported_types.get(rec["type"], 0) + 1
 
             resp = client.post(
@@ -268,7 +280,7 @@ class TestDataPortabilityHTTP:
         def boom(*args, **kwargs):
             raise RuntimeError("simulated export failure")
 
-        monkeypatch.setattr(dashboard_routes, "bundle_to_zip", boom)
+        monkeypatch.setattr(dashboard_routes, "bundle_to_zip_file", boom)
         with app_with_admin.test_client() as client:
             _login(client)
             resp = client.post("/dashboard/data-portability/export/zip", data={"_csrf_token": "x"})

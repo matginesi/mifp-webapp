@@ -793,11 +793,11 @@ def _validate_import_selection(files: list[Any]) -> None:
     ]
     if invalid:
         raise ValueError(
-            "Unsupported import file type. Use JSON, JSONL or one MIFP ZIP bundle."
+            "Unsupported import file type. Use JSON/JSONL and optionally one MIFP ZIP bundle."
         )
     zip_files = [file for file in files if str(file.filename or "").lower().endswith(".zip")]
-    if zip_files and len(files) != 1:
-        raise ValueError("Import one ZIP bundle at a time; do not mix ZIP and JSONL files.")
+    if len(zip_files) > 1:
+        raise ValueError("Import at most one ZIP bundle per request. JSON/JSONL files may be queued with it.")
 
 
 def _stage_import_uploads(files: list[Any]) -> tuple[Path, list[tuple[str, Path]]]:
@@ -1043,7 +1043,7 @@ def data_portability_import():
     scope = request.form.get("scope", "").strip() or "all"
     files = [f for f in request.files.getlist("data_file") if f and f.filename]
     if not files:
-        flash("Upload one or more JSON/JSONL files, or a single ZIP bundle.", "error")
+        flash("Upload one or more JSON/JSONL files, optionally together with one ZIP bundle.", "error")
         return redirect(url_for("dashboard.data_portability"))
     try:
         dry_run = request.form.get("dry_run") == "1"
@@ -1249,7 +1249,6 @@ def _perform_import_unprotected(
 ) -> None:
     summaries: list[dict[str, Any]] = []
     backup_path = None
-    is_zip_import = any(n.lower().endswith(".zip") for n, _ in file_data)
     if cancel_check and cancel_check():
         from ..services.job_manager import JobCancelled
         raise JobCancelled("Import cancelled by administrator")
@@ -1294,103 +1293,98 @@ def _perform_import_unprotected(
 
         event_sink({"event": "phase", "phase": "importing", "label": "Importing records…", "current_step": 1, "total_steps": 5, "percent": 20})
 
-        zip_files = [(n, b) for n, b in file_data if n.lower().endswith(".zip")]
-        if zip_files and len(file_data) != 1:
-            raise ValueError("Import one ZIP bundle at a time; do not mix ZIP and JSONL files.")
-        if zip_files:
-            filename, payload = zip_files[0]
-            current_app.logger.info(
-                "importing ZIP index=1 bytes=%d", _payload_size(payload)
-            )
-            before_asset_id = _max_asset_id(conn)
-            summary = _import_zip_dispatch(
-                conn, payload, scope,
-                dry_run=dry_run, skip_assets=skip_assets, force_import=force_import,
-                progress=lambda done, total: progress(filename, done, total),
-                source_name=filename, cancel_check=cancel_check,
-            )
-            summary["filename"] = filename
-            raw_errors = summary.get("errors")
-            error_details = []
-            if isinstance(raw_errors, list):
-                for e in raw_errors:
-                    if isinstance(e, dict):
-                        msg = (e.get("error") or "").strip()
-                        if msg:
-                            error_details.append({"kind": "record", "record": e.get("line"), "message": msg[:500]})
-            elif isinstance(raw_errors, dict):
-                for v in raw_errors.values():
-                    msg = str(v).strip()
-                    if msg:
-                        error_details.append({"kind": "record", "message": msg[:500]})
-            raw_asset_errors = summary.get("asset_errors")
-            if isinstance(raw_asset_errors, list):
-                for e in raw_asset_errors:
-                    if isinstance(e, dict):
-                        msg = str(e.get("error") or "").strip()
-                        if msg:
-                            error_details.append({"kind": "asset", "record": e.get("line"), "message": msg[:500]})
-            summary["error_details"] = error_details
-            summary["errors"] = _summary_count(summary.get("errors"))
-            summary["asset_errors"] = _summary_count(summary.get("asset_errors"))
-            summary["linked_assets"] = _summary_count(summary.get("linked_assets"))
-            summary.update(_asset_delta(conn, before_asset_id))
-            zip_inserted = _summary_count(summary.get("inserted"))
-            zip_updated = _summary_count(summary.get("updated"))
-            link_assets = _summary_count(summary.get("linked_assets"))
-            zip_errors = _summary_count(summary.get("errors"))
-            zip_asset_errors = _summary_count(summary.get("asset_errors"))
-            _completed_records += zip_inserted + zip_updated
-            _completed_inserted += zip_inserted
-            _completed_updated += zip_updated
-            _completed_assets += link_assets
-            _completed_record_errors += zip_errors
-            _completed_asset_errors += zip_asset_errors
-            summaries.append(summary)
-            current_app.logger.info(
-                "import ZIP completed file=%s inserted=%d updated=%d errors=%d asset_errors=%d linked_assets=%d",
-                filename, zip_inserted, zip_updated, zip_errors, zip_asset_errors, link_assets,
-            )
+        zip_count = sum(1 for name, _ in file_data if name.lower().endswith(".zip"))
+        if zip_count > 1:
+            raise ValueError("Import at most one ZIP bundle per request. JSON/JSONL files may be queued with it.")
+
+        file_count = len(file_data)
+        for file_index, (filename, payload) in enumerate(file_data):
+            if cancel_check and cancel_check():
+                from ..services.job_manager import JobCancelled
+                raise JobCancelled("Import cancelled by administrator")
+
+            is_zip = filename.lower().endswith(".zip")
             event_sink({
-                "event": "metrics",
-                "records": _completed_records,
-                "total_records": _total_records_aggregate or _completed_records,
-                "assets_linked": _completed_assets,
-                "errors": _completed_record_errors + _completed_asset_errors,
-                "asset_errors": _completed_asset_errors,
-                "record_errors": _completed_record_errors,
-                "inserted": _completed_inserted,
-                "updated": _completed_updated,
+                "event": "file_start", "file": filename,
+                "file_index": file_index, "file_count": file_count,
+                "bytes": _payload_size(payload),
             })
-        else:
-            file_count = len(file_data)
-            for file_index, (filename, payload) in enumerate(file_data):
-                if cancel_check and cancel_check():
-                    from ..services.job_manager import JobCancelled
-                    raise JobCancelled("Import cancelled by administrator")
+
+            if is_zip:
                 current_app.logger.info(
-                    "importing JSONL index=%d bytes=%d", file_index + 1, _payload_size(payload)
+                    "importing ZIP index=%d/%d bytes=%d",
+                    file_index + 1, file_count, _payload_size(payload),
+                )
+                before_asset_id = _max_asset_id(conn)
+                summary = _import_zip_dispatch(
+                    conn, payload, scope,
+                    dry_run=dry_run, skip_assets=skip_assets, force_import=force_import,
+                    progress=lambda done, total, name=filename: progress(name, done, total),
+                    source_name=filename, cancel_check=cancel_check,
+                )
+                summary["filename"] = filename
+                raw_errors = summary.get("errors")
+                error_details = []
+                if isinstance(raw_errors, list):
+                    for error in raw_errors:
+                        if isinstance(error, dict):
+                            message = (error.get("error") or "").strip()
+                            if message:
+                                error_details.append({
+                                    "kind": "record", "record": error.get("line"),
+                                    "message": message[:500],
+                                })
+                elif isinstance(raw_errors, dict):
+                    for value in raw_errors.values():
+                        message = str(value).strip()
+                        if message:
+                            error_details.append({"kind": "record", "message": message[:500]})
+                raw_asset_errors = summary.get("asset_errors")
+                if isinstance(raw_asset_errors, list):
+                    for error in raw_asset_errors:
+                        if isinstance(error, dict):
+                            message = str(error.get("error") or "").strip()
+                            if message:
+                                error_details.append({
+                                    "kind": "asset", "record": error.get("line"),
+                                    "message": message[:500],
+                                })
+                summary["error_details"] = error_details
+                summary["errors"] = _summary_count(summary.get("errors"))
+                summary["asset_errors"] = _summary_count(summary.get("asset_errors"))
+                summary["linked_assets"] = _summary_count(summary.get("linked_assets"))
+                summary.update(_asset_delta(conn, before_asset_id))
+
+                file_inserted = _summary_count(summary.get("inserted"))
+                file_updated = _summary_count(summary.get("updated"))
+                file_assets = _summary_count(summary.get("linked_assets"))
+                file_record_errors = _summary_count(summary.get("errors"))
+                file_asset_errors = _summary_count(summary.get("asset_errors"))
+                summaries.append(summary)
+                current_app.logger.info(
+                    "import ZIP completed file=%s inserted=%d updated=%d errors=%d asset_errors=%d linked_assets=%d",
+                    filename, file_inserted, file_updated, file_record_errors, file_asset_errors, file_assets,
+                )
+            else:
+                current_app.logger.info(
+                    "importing JSON/JSONL index=%d/%d bytes=%d",
+                    file_index + 1, file_count, _payload_size(payload),
                 )
                 if isinstance(payload, Path):
                     tmp_path = payload
                     owns_tmp = False
                 else:
                     suffix = Path(filename).suffix or ".jsonl"
-                    with tempfile.NamedTemporaryFile(mode='wb', suffix=suffix, delete=False) as f:
-                        f.write(payload)
-                        tmp_path = Path(f.name)
+                    with tempfile.NamedTemporaryFile(mode="wb", suffix=suffix, delete=False) as handle:
+                        handle.write(payload)
+                        tmp_path = Path(handle.name)
                     owns_tmp = True
                 try:
-                    event_sink({
-                        "event": "file_start", "file": filename,
-                        "file_index": file_index, "file_count": file_count,
-                        "bytes": _payload_size(payload),
-                    })
                     before_asset_id = _max_asset_id(conn)
                     counts = import_jsonl_payload(
                         conn, tmp_path, scope, Path(current_app.config["ASSETS_DIR"]),
                         dry_run=dry_run, skip_assets=skip_assets, force_import=force_import,
-                        progress=lambda done, total: progress(filename, done, total),
+                        progress=lambda done, total, name=filename: progress(name, done, total),
                         asset_detail=lambda msg: event_sink({"event": "detail", "message": msg}),
                         source_name=filename, cancel_check=cancel_check, commit=False,
                     )
@@ -1405,11 +1399,11 @@ def _perform_import_unprotected(
                         "linked_assets": counts.get("linked_assets", 0),
                         "dry_run": dry_run,
                         "error_details": [
-                            {"kind": "record", "record": e.get("line"), "message": str(e.get("error") or "")[:500]}
-                            for e in (counts.get("errors") or []) if isinstance(e, dict)
+                            {"kind": "record", "record": error.get("line"), "message": str(error.get("error") or "")[:500]}
+                            for error in (counts.get("errors") or []) if isinstance(error, dict)
                         ] + [
-                            {"kind": "asset", "record": e.get("line"), "message": str(e.get("error") or "")[:500]}
-                            for e in (counts.get("asset_errors") or []) if isinstance(e, dict)
+                            {"kind": "asset", "record": error.get("line"), "message": str(error.get("error") or "")[:500]}
+                            for error in (counts.get("asset_errors") or []) if isinstance(error, dict)
                         ],
                     }
                     file_summary.update(_asset_delta(conn, before_asset_id))
@@ -1419,23 +1413,35 @@ def _perform_import_unprotected(
                     file_assets = counts.get("linked_assets", 0) if isinstance(counts.get("linked_assets"), int) else _summary_count(counts.get("linked_assets"))
                     file_record_errors = len(counts.get("errors") or [])
                     file_asset_errors = len(counts.get("asset_errors") or [])
-                    _completed_records += file_inserted + file_updated
-                    _completed_inserted += file_inserted
-                    _completed_updated += file_updated
-                    _completed_assets += file_assets
-                    _completed_record_errors += file_record_errors
-                    _completed_asset_errors += file_asset_errors
                     current_app.logger.info(
-                        "import JSONL completed file=%s inserted=%d updated=%d errors=%d asset_errors=%d linked_assets=%d",
+                        "import JSON/JSONL completed file=%s inserted=%d updated=%d errors=%d asset_errors=%d linked_assets=%d",
                         filename, file_inserted, file_updated, file_record_errors, file_asset_errors, file_assets,
                     )
-                    event_sink({
-                        "event": "file_done", "file": filename,
-                        "file_index": file_index, "file_count": file_count,
-                    })
                 finally:
                     if owns_tmp:
                         tmp_path.unlink(missing_ok=True)
+
+            _completed_records += file_inserted + file_updated
+            _completed_inserted += file_inserted
+            _completed_updated += file_updated
+            _completed_assets += file_assets
+            _completed_record_errors += file_record_errors
+            _completed_asset_errors += file_asset_errors
+            event_sink({
+                "event": "file_done", "file": filename,
+                "file_index": file_index, "file_count": file_count,
+            })
+            event_sink({
+                "event": "metrics",
+                "records": _completed_records,
+                "total_records": _total_records_aggregate or _completed_records,
+                "assets_linked": _completed_assets,
+                "errors": _completed_record_errors + _completed_asset_errors,
+                "asset_errors": _completed_asset_errors,
+                "record_errors": _completed_record_errors,
+                "inserted": _completed_inserted,
+                "updated": _completed_updated,
+            })
 
         if cancel_check and cancel_check():
             from ..services.job_manager import JobCancelled

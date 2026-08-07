@@ -2,6 +2,7 @@
 {% set records = plan.get('records') or (plan.get('record') and [plan.get('record')]) or (plan.get('source_record') and [plan.get('source_record')]) or [] %}
 {% set is_merge = finding.action_type == 'merge_records' %}
 {% set manually_editable = finding.workflow == 'manual' %}
+{% set review_only = manually_editable and finding.action_type == 'merge_records' and (plan.get('operation') == 'absorb_fragment' or finding.classification == 'page_fragment_attached') and (finding.record_ids or [])|length < 2 %}
 {% set primary = records[0] if records else {} %}
 {% set record_label = primary.get('title') or primary.get('display_name') or primary.get('name') or ('Record #' ~ (primary.get('id') or finding.record_ids[0] if finding.record_ids else finding.id)) %}
 
@@ -151,7 +152,7 @@
 </div>
 {% endif %}
 
-{% if finding.status == 'open' and manually_editable %}
+{% if finding.status == 'open' and manually_editable and not review_only %}
 <form class="dq-manual-editor" id="dqManualEditor" data-finding-id="{{ finding.id }}">
   <div class="dq-detail-section">
     <h6>Manual decision</h6>
@@ -211,7 +212,14 @@
 {% endif %}
 
 <div class="dq-detail-actions mt-3 d-flex gap-2">
-  {% if finding.status not in ('rejected','resolved') and not manually_editable %}
+  {% if finding.status not in ('rejected','resolved') and review_only %}
+  <button type="button" class="btn btn-sm btn-dq-accept" data-finding-id="{{ finding.id }}">
+    <i class="bi bi-check2"></i> Mark reviewed
+  </button>
+  <button type="button" class="btn btn-sm btn-dq-ignore" data-finding-id="{{ finding.id }}">
+    <i class="bi bi-x-lg"></i> Ignore forever
+  </button>
+  {% elif finding.status not in ('rejected','resolved') and not manually_editable %}
   <button type="button" class="btn btn-sm btn-dq-accept" data-finding-id="{{ finding.id }}">
     <i class="bi bi-check-lg"></i> Accept
   </button>

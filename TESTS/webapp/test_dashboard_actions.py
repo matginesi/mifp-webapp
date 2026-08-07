@@ -1516,6 +1516,7 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.data_quality_bundle_apply",
     "dashboard.data_quality_bundle_delete",
     "dashboard.data_portability_import",
+    "dashboard.data_portability_import_cancel",
     "dashboard.join_approve",
     "dashboard.join_archive",
     "dashboard.join_delete",
@@ -1561,15 +1562,17 @@ def test_data_quality_page_exposes_distinct_actions_and_bundle(client, app):
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Scan" in body
-    assert "Apply" in body
-    assert "Uncertain records" not in body
-    assert "Clean records" in body
+    assert "Review &amp; Apply" in body
+    assert "Safe automatic" in body
+    assert "Needs a decision" in body
+    assert "Informational" in body
+    assert "Clean record" in body
     assert "Split aggregated" in body
     assert "Apply changes" in body
     assert "Merge candidates" in body
+    assert "Queue matching automatic fixes" in body
+    assert "Accept all" not in body
     assert "Approve all" not in body
-    assert "Accept all" in body
-    assert "Accept all visible" not in body
 
 
 def test_data_quality_accept_all_includes_findings_beyond_first_page(
@@ -1638,6 +1641,7 @@ def test_data_quality_manual_review_acceptance_is_terminal(client, app):
     assert _scalar(
         app, "SELECT status FROM quality_findings WHERE id=?", (finding_id,)
     ) == "resolved"
+    assert _scalar(app, "SELECT COUNT(*) FROM quality_bundles") == 0
 
 
 def test_data_quality_review_list_only_contains_open_findings(app):

@@ -30,6 +30,11 @@
         <p>Sign in with the credentials configured for this server.</p>
       </div>
 
+      {% if request.args.get('logged_out') == '1' %}
+      <div class="flash-stack" aria-live="polite" aria-atomic="true">
+        <div class="flash-message flash-info">You have been logged out.</div>
+      </div>
+      {% endif %}
       {% include "partials/flash.html" %}
       <form id="loginForm" method="post" action="{{ url_for('auth.login_post', next=request.args.get('next', '')) }}" class="login-form">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">

@@ -14,6 +14,7 @@
   )
 ) %}
 {% set manually_editable = finding.workflow == 'manual' %}
+{% set review_only = manually_editable and finding.action_type == 'merge_records' and (plan.get('operation') == 'absorb_fragment' or finding.classification == 'page_fragment_attached') and (finding.record_ids or [])|length < 2 %}
 <div class="dq-finding-card" data-finding-id="{{ finding.id }}" data-status="{{ finding.status }}">
   <div class="dq-finding-type {{ finding.action_type }}">
     <i class="bi {{ {
@@ -69,6 +70,10 @@
     {% if finding.workflow == 'informational' %}
     <button type="button" class="btn btn-sm btn-dq-review btn-dq-ignore" data-finding-id="{{ finding.id }}">
       <i class="bi bi-check2"></i> Dismiss
+    </button>
+    {% elif review_only %}
+    <button type="button" class="btn btn-sm btn-dq-review btn-dq-accept" data-finding-id="{{ finding.id }}" title="Close this finding after review without changing the database record">
+      <i class="bi bi-check2"></i> Mark reviewed
     </button>
     {% elif manually_editable %}
     <button type="button" class="btn btn-sm btn-dq-manual" data-finding-id="{{ finding.id }}">
