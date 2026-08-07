@@ -31,3 +31,5 @@
 !/TESTS/conftest.py
 !/TESTS/webapp/
 !/TESTS/webapp/**
+
+/TESTS/_pycache_/
