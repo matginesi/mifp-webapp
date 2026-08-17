@@ -7,6 +7,7 @@ from datetime import datetime
 from flask import Response, current_app, flash, redirect, render_template, request, url_for
 
 from ..services.dashboard_repository import delete_old_logs, search_logs_paginated
+from ..services.exporters import _csv_escape, _safe_filename
 from ..services.operation_maintenance import maintenance_guarded
 from ..utils.logger import audit_log
 from .auth import login_required
@@ -94,12 +95,14 @@ def logs_export(fmt: str):
     )
     rows = result["rows"]
     export_stem = (log_file or "mifp_logs").replace(".", "_")
+    safe_stem = _safe_filename(export_stem)
+    disposition = f'attachment; filename="{safe_stem}"'
 
     if fmt == "json":
         return Response(
             json.dumps(rows, ensure_ascii=False, default=str, indent=2),
             mimetype="application/json",
-            headers={"Content-Disposition": f"attachment; filename={export_stem}.json"},
+            headers={"Content-Disposition": disposition},
         )
 
     if fmt == "txt":
@@ -118,7 +121,7 @@ def logs_export(fmt: str):
         return Response(
             output,
             mimetype="text/plain",
-            headers={"Content-Disposition": f"attachment; filename={export_stem}.txt"},
+            headers={"Content-Disposition": disposition},
         )
 
     import csv
@@ -131,12 +134,12 @@ def logs_export(fmt: str):
         row = {k: (r.get(k) or "") for k in fieldnames}
         if isinstance(row["details"], dict):
             row["details"] = json.dumps(row["details"], ensure_ascii=False, default=str)
-        writer.writerow(row)
+        writer.writerow({k: _csv_escape(str(v)) for k, v in row.items()})
     output = si.getvalue()
     return Response(
         output,
         mimetype="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={export_stem}.csv"},
+        headers={"Content-Disposition": disposition},
     )
 
 

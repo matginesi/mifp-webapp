@@ -176,7 +176,25 @@ def test_logs_export_txt_returns_plain_text(client):
 
     assert resp.status_code == 200
     assert resp.mimetype == "text/plain"
-    assert "filename=mifp_logs.txt" in resp.headers["Content-Disposition"]
+    assert 'filename="mifp_logs"' in resp.headers["Content-Disposition"]
+
+
+def test_logs_export_csv_escapes_formula_injection_and_quotes_filename(app, client):
+    log_dir = Path(app.config["LOG_DIR"])
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (log_dir / "mifp_app.log").write_text(
+        '2026-01-01T00:00:00 | INFO | application | test.logger | event=test rid=a | =HYPERLINK("http://evil.example")',
+        encoding="utf-8",
+    )
+    client.post("/login", data={"login_username": "admin", "login_password": "secret123"})
+
+    resp = client.get("/dashboard/logs/export/csv")
+
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/csv"
+    assert 'filename="mifp_logs"' in resp.headers["Content-Disposition"]
+    body = resp.get_data(as_text=True)
+    assert "'=HYPERLINK" in body
 
 
 def test_logs_page_does_not_claim_file_logging_is_disabled(client):
@@ -187,7 +205,6 @@ def test_logs_page_does_not_claim_file_logging_is_disabled(client):
     assert resp.status_code == 200
     assert b"File logging is disabled" not in resp.data
     assert b"Conference ops" not in resp.data
-
 
 def test_login_success_and_failure_are_logged_without_password(app, client):
     from mifp_app.utils.logger import shutdown_logging
