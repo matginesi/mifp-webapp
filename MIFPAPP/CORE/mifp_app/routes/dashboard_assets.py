@@ -25,7 +25,6 @@ from ..services.asset_cleanup import (
     export_assets_to_zip,
     import_assets_from_jsonl,
     import_assets_from_zip,
-    list_exported_zips,
 )
 from ..services.assets import (
     reconcile_asset_storage_status,
@@ -400,7 +399,6 @@ def assets_page():
             "deferred": metrics["deferred"],
             "terminal": metrics["terminal"],
         }
-        exported_zips = list_exported_zips(current_app.config["ASSETS_DIR"], export_dir=current_app.config["EXPORT_DIR"])
         unused_ids = metrics["unused_ids"]
         missing_ids = metrics["missing_ids"]
         recoverable_ids = metrics["recoverable_ids"]
@@ -433,14 +431,6 @@ def assets_page():
         }
         if status:
             rows = [item for item in rows if int(item["id"]) in status_sets[status]]
-        issue_summary = {
-            "missing": metrics["missing"],
-            "recoverable": metrics["recoverable"],
-            "errors": metrics["errors"],
-            "unused": metrics["unused"],
-            "metadata": metrics["metadata"],
-            "duplicates": metrics["duplicates"],
-        }
     return render_template(
         "dashboard/assets.html",
         counts=counts,
@@ -453,10 +443,8 @@ def assets_page():
         missing_count=missing_count,
         orphan_count=orphan_count,
         cleanup_plan=cleanup_plan,
-        exported_zips=exported_zips,
         linked_records=linked_records,
         recovery=recovery,
-        issue_summary=issue_summary,
         metrics=metrics,
         q=q,
         kind=kind,

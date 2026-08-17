@@ -1210,7 +1210,7 @@ def test_unused_asset_cleanup_action(app, client):
     assert list(Path(app.config["EXPORT_DIR"]).glob("*unused.zip"))
 
 
-def test_assets_page_triage_filters_missing_and_metadata(app, client):
+def test_assets_page_missing_filter_and_banner(app, client):
     with _db(app) as conn:
         conn.execute(
             """
@@ -1224,11 +1224,10 @@ def test_assets_page_triage_filters_missing_and_metadata(app, client):
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    assert "Asset health shortcuts" in body
-    assert "Missing locally" in body
-    assert "Needs intervention" in body
-    assert "Metadata incomplete" in body
     assert "recoverable.jpg" in body
+    assert "files are absent locally" in body
+    assert "Asset health shortcuts" not in body
+    assert "Missing locally" not in body
     assert 'option value="missing" selected' in body
 
 
