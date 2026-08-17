@@ -1227,7 +1227,7 @@ def test_assets_page_missing_filter_and_banner(app, client):
     assert "recoverable.jpg" in body
     assert "files are absent locally" in body
     assert "Asset health shortcuts" not in body
-    assert "Missing locally" not in body
+    assert "asset-triage" not in body
     assert 'option value="missing" selected' in body
 
 

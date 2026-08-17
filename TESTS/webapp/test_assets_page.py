@@ -148,6 +148,6 @@ def test_view_button_and_external_aria_preserved(app, client):
     )
     resp = client.get("/dashboard/assets")
     body = resp.get_data(as_text=True)
-    assert 'aria-label="Open external asset {{ a.filename }}"' in body
+    assert 'aria-label="Open external asset doc.pdf"' in body
     assert "asset-view-btn" in body
     assert "Esterno" in body
