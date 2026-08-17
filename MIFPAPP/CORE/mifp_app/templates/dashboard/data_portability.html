@@ -88,6 +88,15 @@
         </span>
         <i class="bi bi-download transfer-export-action" aria-hidden="true"></i>
       </button>
+      <a class="transfer-export-button is-guide" href="{{ url_for('dashboard.data_portability_import_guide') }}" download>
+        <span class="transfer-export-icon"><i class="bi bi-filetype-md" aria-hidden="true"></i></span>
+        <span class="transfer-export-copy">
+          <span class="transfer-export-title"><b>LLM import guide</b><em>Markdown</em></span>
+          <small>Machine-readable instructions, schemas, allowed fields, examples and data-quality rules.</small>
+          <span class="transfer-export-use"><i class="bi bi-stars" aria-hidden="true"></i> Give this file and your source material to an agent before generating JSONL</span>
+        </span>
+        <i class="bi bi-download transfer-export-action" aria-hidden="true"></i>
+      </a>
     </div>
 </section>
 </div>

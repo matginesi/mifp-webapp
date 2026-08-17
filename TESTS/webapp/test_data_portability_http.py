@@ -72,6 +72,39 @@ class TestDataPortabilityHTTP:
                 download_token = ev.get("download_token")
         return events, download_token, result
 
+    def test_llm_import_guide_is_downloadable_and_matches_importer_contract(self, app_with_admin):
+        from mifp_app.services.importers import DATA_FIELDS, REQUIRED_FIELDS
+
+        with app_with_admin.test_client() as client:
+            denied = client.get("/dashboard/data-portability/import-guide.md")
+            assert denied.status_code == 302
+
+            _login(client)
+            page = client.get("/dashboard/data-portability")
+            assert page.status_code == 200
+            assert b"LLM import guide" in page.data
+            assert b"/dashboard/data-portability/import-guide.md" in page.data
+
+            response = client.get("/dashboard/data-portability/import-guide.md")
+
+        assert response.status_code == 200
+        assert response.mimetype == "text/markdown"
+        assert response.headers["Content-Disposition"] == (
+            'attachment; filename="MIFP_LLM_IMPORT_GUIDE.md"'
+        )
+        assert response.headers["Cache-Control"] == "no-store, max-age=0"
+        guide = response.get_data(as_text=True)
+        assert "one JSON object per line" in guide
+        assert "Never merge two news items only because" in guide
+        assert "Agents should not generate `state.json`" in guide
+        assert "Validate only" in guide
+        for typ, fields in DATA_FIELDS.items():
+            assert f"### `{typ}`" in guide
+            for field in fields:
+                assert f"| `{field}` |" in guide
+            for required in REQUIRED_FIELDS[typ]:
+                assert f"| `{required}` | yes |" in guide
+
     def test_export_jsonl(self, app_with_admin):
         with app_with_admin.test_client() as client:
             _login(client)

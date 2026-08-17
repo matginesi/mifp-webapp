@@ -738,6 +738,7 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   font-family: inherit;
   box-shadow: var(--shadow);
   transition: border-color var(--transition), box-shadow var(--transition), transform var(--transition), background var(--transition);
+  text-decoration: none;
 }
 .portability-export-actions .transfer-export-button:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .portability-export-actions .transfer-export-button:focus-visible { outline: 3px solid var(--accent-alpha); outline-offset: 2px; }
@@ -745,12 +746,14 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .portability-export-actions .transfer-export-button.is-recommended { border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); background: linear-gradient(120deg, var(--accent-subtle), #fff 58%); }
 .transfer-export-icon { display: grid; width: 2.45rem; height: 2.45rem; place-items: center; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border-soft)); border-radius: var(--radius-sm); background: #fff; font-size: 1.15rem; }
 .is-technical .transfer-export-icon { color: var(--blue); border-color: color-mix(in srgb, var(--blue) 22%, var(--border-soft)); background: var(--blue-bg); }
+.is-guide .transfer-export-icon { color: var(--green); border-color: color-mix(in srgb, var(--green) 24%, var(--border-soft)); background: var(--green-bg); }
 .transfer-export-copy,
 .transfer-export-title { min-width: 0; }
 .transfer-export-title { display: flex; align-items: center; justify-content: space-between; gap: .45rem; }
 .transfer-export-title b { color: var(--text-bright); font-size: .8rem; }
 .transfer-export-title em { padding: .18rem .35rem; color: var(--accent); border-radius: var(--radius-full); background: rgba(167,43,49,.1); font-size: .55rem; font-style: normal; font-weight: 850; letter-spacing: .035em; text-transform: uppercase; }
 .is-technical .transfer-export-title em { color: var(--blue); background: var(--blue-bg); }
+.is-guide .transfer-export-title em { color: var(--green); background: var(--green-bg); }
 .portability-export-actions .transfer-export-copy small { display: block; margin-top: .2rem; color: var(--text-2); font-size: .67rem; font-weight: 500; line-height: 1.38; white-space: normal; }
 .transfer-export-use { display: flex; align-items: center; gap: .28rem; margin-top: .42rem; color: var(--text-3); font-size: .6rem; font-weight: 700; line-height: 1.3; }
 .transfer-export-use i { color: var(--green); }

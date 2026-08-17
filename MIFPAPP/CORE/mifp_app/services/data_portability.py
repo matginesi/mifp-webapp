@@ -19,7 +19,18 @@ from ..db.connection import table_exists, utc_now, sha256_file
 from ..db.migrations import SCHEMA_VERSION
 from .assets import resolve_db_asset_path
 from .data_quality.normalizers import stable_fingerprint
-from .importers import TYPE_TO_TABLE, import_jsonl
+from .importers import (
+    ASSET_KINDS,
+    ASSET_LINK_FIELDS,
+    ASSET_ROLES,
+    ASSET_STORAGE_STATUSES,
+    DATA_FIELDS,
+    LINK_ROLES,
+    REQUIRED_FIELDS,
+    REVIEW_STATUSES,
+    TYPE_TO_TABLE,
+    import_jsonl,
+)
 
 TABLE_TO_TYPE = {table: typ for typ, table in TYPE_TO_TABLE.items()}
 PORTABLE_TYPES = ["member", "news", "event", "publication", "research_area", "page", "sponsor"]
@@ -72,6 +83,172 @@ QUALITY_FINGERPRINT_ACTIONS = {
 
 def scope_options() -> list[dict[str, Any]]:
     return [{"key": key, **meta} for key, meta in EXPORT_SCOPES.items()]
+
+
+def build_import_format_guide() -> str:
+    """Build the agent-facing guide from the importer's live field contract."""
+    type_notes = {
+        "member": "One real person. Use natural given-name/family-name order in display_name.",
+        "news": "One announcement or article. Similar wording does not make two news items identical.",
+        "event": "One occurrence. Recurring editions must be separate records.",
+        "publication": "One scholarly output. Prefer DOI as stable identity when available.",
+        "research_area": "One research topic or programme area.",
+        "page": "One managed site page.",
+        "sponsor": "One sponsoring organisation.",
+    }
+    field_types = {
+        "uid": "string", "slug": "string", "title": "string", "name": "string",
+        "first_name": "string", "last_name": "string", "display_name": "string",
+        "email": "string", "year": "integer", "sort_order": "integer",
+        "source_priority": "integer", "source_order": "integer", "display_order": "integer",
+        "menu_order": "integer", "parent_event_id": "integer", "is_featured": "boolean",
+        "is_active": "boolean", "date_is_inferred": "boolean", "start_date": "date",
+        "end_date": "date", "date": "date", "effective_date": "date",
+    }
+    enums = {
+        "review_status": sorted(REVIEW_STATUSES),
+        "date_precision": ["day", "month", "year", "range", "unknown"],
+        "event_type": ["conference", "workshop", "seminar", "meeting", "school", "project_event", "other"],
+        "news_type": ["general", "announcement", "publication_highlight", "agreement", "award", "event_highlight", "institutional", "sponsor", "memorial", "science_commentary"],
+        "page.type": ["about", "privacy", "cookie_policy", "manifesto", "code_of_conduct", "documentation", "custom", "legacy_home", "contact", "error_page"],
+    }
+
+    example = {
+        "type": "news",
+        "data": {
+            "uid": "news_example_2026_001", "slug": "example-research-announcement",
+            "title": "Example Research Announcement", "date": "2026-08-17",
+            "date_precision": "day", "summary": "A concise factual summary.",
+            "body": "Complete article text without navigation or cookie boilerplate.",
+            "news_type": "announcement", "review_status": "review", "source_kind": "agent",
+        },
+        "links": [{
+            "url": "https://example.org/news/announcement", "role": "source",
+            "label": "Original announcement", "is_primary": True, "sort_order": 1,
+        }],
+        "assets": [],
+    }
+    member_example = {
+        "type": "member",
+        "data": {
+            "uid": "member_jacqueline_bloch", "slug": "jacqueline-bloch",
+            "first_name": "Jacqueline", "last_name": "Bloch",
+            "display_name": "Jacqueline Bloch", "affiliation": "CNRS",
+            "country": "France", "review_status": "review",
+        },
+        "links": [{"url": "https://example.org/people/jacqueline-bloch", "role": "website"}],
+        "assets": [{
+            "url": "https://example.org/media/jacqueline-bloch.jpg", "role": "profile",
+            "kind": "image", "alt_text": "Jacqueline Bloch", "is_primary": True,
+        }],
+    }
+    compact = lambda value: json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    lines = [
+        "# MIFP data-generation guide for agents and LLMs", "",
+        f"> Target: UTF-8 JSONL. Packaged format: `{CANONICAL_FORMAT}` version `{PORTABLE_FORMAT_VERSION}`.", "",
+        "## Objective", "",
+        "Transform supplied material into clean, factual MIFP records for **Dashboard → Import / Export**. "
+        "The safest agent output is record-only `.jsonl`: exactly one JSON object per line, with no "
+        "Markdown fences, comments, headings, trailing commas, or explanatory prose in the output file.", "",
+        "Do not invent missing facts. Omit unknown optional fields. Preserve meaningful text, accents, "
+        "names, dates, URLs, and distinctions between separate people, articles, events, or publications.", "",
+        "## Required workflow", "",
+        "1. Inventory sources and assign every item to one supported record type.",
+        "2. Extract facts and provenance; never merge on title similarity alone.",
+        "3. Normalize names, dates, URLs, identifiers, whitespace, and obvious boilerplate.",
+        "4. Deduplicate only on strong identity evidence described below.",
+        "5. Emit one compact UTF-8 JSON object per line.",
+        "6. Run **Validate only** first; import only after zero structural errors and a count review.", "",
+        "## Record envelope", "",
+        "Only these top-level keys are accepted:", "",
+        "| Key | Required | Meaning |", "| --- | --- | --- |",
+        "| `type` | yes | A supported singular type below. |",
+        "| `data` | yes | Only fields allowed for that type. |",
+        "| `links` | no | External link objects; default `[]`. |",
+        "| `assets` | no | Local or remote asset objects; default `[]`. |",
+        "| `meta` | no | Provenance metadata. Do not use `exported_from_id` in new agent data. |", "",
+        "```json", compact(example), "```", "",
+        "## Supported record types and fields", "",
+        "Unknown fields are rejected. Keep `uid` and `slug` deterministic across repeated runs. "
+        "Prefer lowercase hyphenated slugs; the importer can generate one only as a fallback.", "",
+    ]
+    for typ in sorted(DATA_FIELDS):
+        lines.extend([
+            f"### `{typ}`", "", type_notes[typ], "",
+            "| Field | Required | Expected value |", "| --- | --- | --- |",
+        ])
+        for field in sorted(DATA_FIELDS[typ]):
+            expected = field_types.get(field, "string or null")
+            enum_key = "page.type" if typ == "page" and field == "type" else field
+            if enum_key in enums:
+                expected = "one of: " + ", ".join(f"`{item}`" for item in enums[enum_key])
+            lines.append(f"| `{field}` | {'yes' if field in REQUIRED_FIELDS[typ] else 'no'} | {expected} |")
+        lines.append("")
+
+    lines.extend([
+        "## Links", "",
+        "A link accepts only `url`, `role`, `label`, `is_primary`, and `sort_order`.", "",
+        f"- `role`: {', '.join(f'`{v}`' for v in sorted(LINK_ROLES))}.",
+        "- Use an absolute HTTP(S) canonical source URL and at most one primary link.",
+        "- `is_primary` is a JSON boolean; `sort_order` is an integer starting at 1.",
+        "- PDF/Office URLs in ordinary JSONL may be promoted to document assets.", "",
+        "## Assets", "",
+        "An asset needs `path` or `url`. Do not fabricate checksums, dimensions, MIME types, or paths.", "",
+        f"- Allowed keys: {', '.join(f'`{v}`' for v in sorted(ASSET_LINK_FIELDS))}.",
+        f"- `role`: {', '.join(f'`{v}`' for v in sorted(ASSET_ROLES))}.",
+        f"- `kind`: {', '.join(f'`{v}`' for v in sorted(ASSET_KINDS))}.",
+        f"- `storage_status`: {', '.join(f'`{v}`' for v in sorted(ASSET_STORAGE_STATUSES))}; normally omit it.",
+        "- Paths must be relative, contain no `..` or backslashes, and identify a supplied file.",
+        "- Write useful image `alt_text`; do not prefix it with “image of”.", "",
+        "```json", compact(member_example), "```", "",
+        "## Dates and values", "",
+        "- Exact date: `YYYY-MM-DD`. Month: first day plus `date_precision: \"month\"`. "
+        "Year: `YYYY-01-01` plus `date_precision: \"year\"`.",
+        "- Keep uncertain wording in `date_text`/`original_date_text`; never invent day precision.",
+        "- Use JSON booleans and numbers, not quoted substitutes. Omit unknown optional values.",
+        "- `authors` may be a string or list; it is stored as a comma-separated string.", "",
+        "## Identity, duplicates, and merging", "",
+        "Repeated imports are idempotent when stable identities are reused. Matching considers `uid`, "
+        "`slug`, provenance, then strong type-specific identity:", "",
+        "- member: same complete name (order-insensitive), strengthened by email; different non-empty emails mean different people;",
+        "- publication: same normalized DOI;",
+        "- event: same recognized series and year;",
+        "- news: same normalized full title **and exact date**, or same canonical source URL;",
+        "- other types: same normalized title/name or canonical source URL.", "",
+        "Never merge two news items only because they share words, topics, people, institutions, or book titles. "
+        "Different dates, sources, bodies, awards, agreements, announcements, and event editions remain separate. "
+        "For uncertainty use `review_status: \"review\"`; do not use force-import as an identity decision.", "",
+        "## Content quality", "",
+        "- One record is one real entity/content item; never manufacture an article from a caption or filename.",
+        "- Member `display_name` uses natural `First Last` order; preserve particles and diacritics.",
+        "- Remove menus, cookie banners, breadcrumbs, related lists, and repeated headers from body fields.",
+        "- Prefer primary sources and retain their URL as `source` or `primary`.",
+        "- Never silently combine conflicting names, affiliations, dates, titles, or descriptions.",
+        "- Use `published` only for verified material; otherwise use `review`.", "",
+        "## File/package choices", "",
+        "### Record-only JSONL (recommended for agents)", "",
+        "Use any `.jsonl` filename and one envelope per line. One JSON object or a JSON array is also "
+        "accepted, but JSONL gives better large-file and line-error handling.", "",
+        "### ZIP (records plus local files)", "",
+        "A compatible ZIP contains `manifest.json`, `records.jsonl`, optional `state.json`, and declared "
+        "files under `assets/`. Each declared file needs exact byte size and lowercase SHA-256. "
+        "`records_sha256` and `state_sha256` hash the exact UTF-8 bytes. Paths are relative and unique; "
+        "any mismatch rejects the archive.", "",
+        "Agents should not generate `state.json`: it is installation-owned durable state (settings, "
+        "quality decisions, relations, provenance, mappings). Use dashboard export for a lossless backup. "
+        "For new content with local assets use the scraper artifact assembler or deterministic packaging "
+        "code, never LLM-generated checksums.", "",
+        "## Final checklist", "",
+        "- [ ] UTF-8; one JSON object per line; no Markdown/prose in the data file.",
+        "- [ ] Supported type, data object, required field, and no unknown keys.",
+        "- [ ] Deterministic UIDs/slugs reused for repeated source items.",
+        "- [ ] Dates match their precision and no facts were invented.",
+        "- [ ] Separate people/news/events/publications were not merged on weak similarity.",
+        "- [ ] Canonical source URLs and real/reachable or actually packaged assets.",
+        "- [ ] Uncertain records use `review_status: \"review\"`.",
+        "- [ ] Dashboard **Validate only** finishes with zero structural errors.", "",
+    ])
+    return "\n".join(lines)
 
 
 def table_counts(conn: sqlite3.Connection) -> dict[str, int]:

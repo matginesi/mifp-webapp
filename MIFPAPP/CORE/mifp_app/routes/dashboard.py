@@ -48,6 +48,7 @@ from ..services.dashboard_repository import (
     search_logs,
 )
 from ..services.data_portability import (
+    build_import_format_guide,
     bundle_to_jsonl_file,
     bundle_to_zip_file,
     import_jsonl_payload,
@@ -592,6 +593,29 @@ def data_portability():
         portable_total=portable_total,
         recent_imports=recent_imports,
         import_result=session.pop("data_portability_import_result", None),
+    )
+
+
+@bp.get("/data-portability/import-guide.md")
+@login_required
+def data_portability_import_guide():
+    guide = build_import_format_guide()
+    audit_log(
+        "import.guide_downloaded",
+        "LLM import format guide downloaded",
+        category="admin",
+        outcome="success",
+        bytes=len(guide.encode("utf-8")),
+    )
+    return Response(
+        guide,
+        mimetype="text/markdown",
+        headers={
+            "Content-Disposition": 'attachment; filename="MIFP_LLM_IMPORT_GUIDE.md"',
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
