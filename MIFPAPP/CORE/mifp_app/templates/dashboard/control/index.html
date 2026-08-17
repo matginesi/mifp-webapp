@@ -28,7 +28,7 @@
 </section>
 
 <section class="control-snapshot" aria-label="System snapshot">
-  <a href="{{ url_for('dashboard.control_assets') }}"><span>Missing assets</span><b>{{ assets.totals.missing + assets.totals.unsafe }}</b><small>{{ assets.recovery.ready }} ready to retry</small></a>
+  <a href="{{ url_for('dashboard.assets_page', status='missing') }}"><span>Missing assets</span><b>{{ assets.missing }}</b><small>{{ assets.recoverable }} recoverable</small></a>
   <a href="{{ url_for('dashboard.control_processes') }}"><span>Recent imports</span><b>{{ processes.imports|length }}</b><small>{{ processes.recovery|length }} asset recovery jobs</small></a>
   <a href="{{ url_for('dashboard.control_storage') }}"><span>Runtime paths</span><b>{{ storage['items']|length }}</b><small>{{ 'Docker' if storage.docker else 'Host process' }}</small></a>
   <a href="{{ url_for('dashboard.control_backups') }}"><span>Local backups</span><b>{{ backups.total }}</b><small>{% if backups.latest %}Latest {{ backups.latest.age_hours }}h ago{% else %}None found{% endif %}</small></a>

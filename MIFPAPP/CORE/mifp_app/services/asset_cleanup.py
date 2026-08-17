@@ -7,7 +7,7 @@ import stat
 import tempfile
 import zipfile
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -379,7 +379,7 @@ def list_exported_zips(assets_dir: Path, export_dir: Path | None = None) -> list
     return zips
 
 
-def build_asset_cleanup_plan(conn, assets_dir):
+def build_asset_cleanup_plan(conn, assets_dir, *, scan_orphans: bool = True):
     assets_dir = Path(assets_dir).resolve()
     usage_by_id = {int(r["id"]): int(r.get("usage_count") or 0) for r in asset_usage(conn)}
     rows = [dict(r) for r in conn.execute("SELECT * FROM assets ORDER BY id DESC").fetchall()]
@@ -391,7 +391,11 @@ def build_asset_cleanup_plan(conn, assets_dir):
     for row in rows:
         aid = int(row["id"])
         row["usage_count"] = usage_by_id.get(aid, 0)
-        path = resolve_db_asset_path(assets_dir, row.get("path"))
+        try:
+            path = resolve_db_asset_path(assets_dir, row.get("path"))
+        except ValueError:
+            missing_file_assets.append(row)
+            continue
         if row.get("path"):
             db_file_paths.add(path.resolve())
             fallback = (assets_dir / Path(str(row.get("path"))).name).resolve()
@@ -403,7 +407,7 @@ def build_asset_cleanup_plan(conn, assets_dir):
             missing_file_assets.append(row)
 
     orphan_files: list[dict[str, Any]] = []
-    if assets_dir.exists():
+    if scan_orphans and assets_dir.exists():
         for path in assets_dir.rglob("*"):
             if not path.is_file():
                 continue
@@ -420,3 +424,119 @@ def build_asset_cleanup_plan(conn, assets_dir):
         missing_file_assets=missing_file_assets,
         orphan_files=orphan_files,
     )
+
+
+def asset_library_summary(conn, assets_dir, *, scan_orphans: bool = True) -> dict[str, Any]:
+    """Single source of truth for the asset library page metrics.
+
+    Counts are derived from the local filesystem, ``is_external``,
+    ``source_url`` and ``asset_recovery_state`` — never from the potentially
+    stale ``storage_status`` column. Returns both totals and the id sets the
+    page uses to annotate rows and filter the table.
+    """
+    assets_dir = Path(assets_dir).resolve()
+    plan = build_asset_cleanup_plan(conn, assets_dir, scan_orphans=scan_orphans)
+    all_rows = [dict(r) for r in conn.execute("SELECT * FROM assets").fetchall()]
+    usage_by_id = {int(r["id"]): int(r.get("usage_count") or 0) for r in asset_usage(conn)}
+    recovery_state = {
+        int(item["asset_id"]): dict(item)
+        for item in conn.execute(
+            "SELECT asset_id, attempts, terminal, next_attempt_at FROM asset_recovery_state"
+        ).fetchall()
+    }
+
+    missing_ids = {int(item["id"]) for item in plan.missing_file_assets}
+    unused_ids = {int(item["id"]) for item in plan.unused_db_assets}
+    external_ids = {
+        int(item["id"]) for item in all_rows
+        if int(item.get("is_external") or 0) == 1
+        or str(item.get("path") or "").startswith("external/")
+    }
+
+    duplicate_rows = conn.execute(
+        """
+        SELECT checksum FROM assets
+        WHERE checksum IS NOT NULL AND checksum<>''
+        GROUP BY checksum HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+    duplicate_checksums = {str(item["checksum"]) for item in duplicate_rows}
+    duplicate_signatures = {
+        (str(item["display_name"]), int(item["size"]))
+        for item in conn.execute(
+            """
+            SELECT LOWER(COALESCE(NULLIF(original_filename,''), filename)) AS display_name,
+                   size
+            FROM assets
+            WHERE size IS NOT NULL AND size>0
+            GROUP BY display_name, size HAVING COUNT(*) > 1
+            """
+        ).fetchall()
+    }
+    metadata_ids = {
+        int(item["id"]) for item in all_rows
+        if not item.get("checksum")
+        or (
+            item.get("kind") == "image"
+            and (not item.get("alt_text") or not item.get("width") or not item.get("height"))
+        )
+    }
+    duplicate_ids = {
+        int(item["id"]) for item in all_rows
+        if (
+            item.get("checksum") and str(item["checksum"]) in duplicate_checksums
+        ) or (
+            item.get("size")
+            and (
+                str(item.get("original_filename") or item.get("filename") or "").lower(),
+                int(item["size"]),
+            ) in duplicate_signatures
+        )
+    }
+
+    by_id = {int(item["id"]): item for item in all_rows}
+    now_text = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    recoverable_ids: set[int] = set()
+    error_ids: set[int] = set()
+    terminal = 0
+    deferred = 0
+    for aid in missing_ids:
+        item = by_id.get(aid)
+        if item is None:
+            continue
+        state = recovery_state.get(aid, {})
+        is_terminal = int(state.get("terminal") or 0) == 1
+        has_source = bool(str(item.get("source_url") or "").strip())
+        if has_source and not is_terminal:
+            recoverable_ids.add(aid)
+        else:
+            error_ids.add(aid)
+        if is_terminal:
+            terminal += 1
+        elif state.get("next_attempt_at") and str(state["next_attempt_at"]) > now_text:
+            deferred += 1
+
+    used_ids = set(usage_by_id) - unused_ids
+    return {
+        "total": len(all_rows),
+        "used": len(used_ids),
+        "unused": len(unused_ids),
+        "missing": len(missing_ids),
+        "external": len(external_ids),
+        "recoverable": len(recoverable_ids),
+        "errors": len(error_ids),
+        "terminal": terminal,
+        "deferred": deferred,
+        "metadata": len(metadata_ids),
+        "duplicates": len(duplicate_ids),
+        "orphan_count": len(plan.orphan_files),
+        "used_ids": used_ids,
+        "unused_ids": unused_ids,
+        "missing_ids": missing_ids,
+        "external_ids": external_ids,
+        "recoverable_ids": recoverable_ids,
+        "error_ids": error_ids,
+        "metadata_ids": metadata_ids,
+        "duplicate_ids": duplicate_ids,
+        "plan": plan,
+    }

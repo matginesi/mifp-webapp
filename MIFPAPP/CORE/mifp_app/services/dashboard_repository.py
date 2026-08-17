@@ -676,7 +676,7 @@ def unused_assets(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [r for r in asset_usage(conn) if int(r.get("usage_count") or 0) == 0]
 
 
-def dashboard_alerts(conn: sqlite3.Connection, log_dir: Path | None = None) -> list[dict[str, Any]]:
+def dashboard_alerts(conn: sqlite3.Connection, log_dir: Path | None = None, assets_dir: Path | None = None) -> list[dict[str, Any]]:
     """Return a list of alerts (editorial + technical) for the dashboard hub."""
     alerts: list[dict[str, Any]] = []
 
@@ -705,28 +705,27 @@ def dashboard_alerts(conn: sqlite3.Connection, log_dir: Path | None = None) -> l
                 "action_url": f"/dashboard/content/{tbl}",
             })
 
-    # Technical: assets with missing files
-    missing = conn.execute(
-        """
-        SELECT COUNT(*) AS c,
-               SUM(CASE WHEN COALESCE(source_url,'') != '' THEN 1 ELSE 0 END) AS recoverable,
-               SUM(CASE WHEN COALESCE(source_url,'') = '' THEN 1 ELSE 0 END) AS without_source
-        FROM assets
-        WHERE storage_status='missing'
-        """
-    ).fetchone()
-    if missing and missing["c"]:
-        recoverable = int(missing["recoverable"] or 0)
-        without_source = int(missing["without_source"] or 0)
-        alerts.append({
-            "type": "warning" if recoverable else "error",
-            "label": "Missing asset files",
-            "message": (
-                f"{missing['c']} records without a local file · "
-                f"{recoverable} have a recovery URL · {without_source} need a source"
-            ),
-            "action_url": "/dashboard/assets",
-        })
+    # Technical: assets with missing files (disk truth, not stale storage_status)
+    if assets_dir is not None:
+        try:
+            from .asset_cleanup import asset_library_summary
+
+            summary = asset_library_summary(conn, Path(assets_dir), scan_orphans=False)
+            missing_count = summary["missing"]
+        except Exception:
+            summary = {}
+            missing_count = 0
+        if missing_count:
+            alerts.append({
+                "type": "warning" if summary.get("recoverable") else "error",
+                "label": "Missing asset files",
+                "message": (
+                    f"{missing_count} records without a local file · "
+                    f"{summary.get('recoverable', 0)} have a recovery URL · "
+                    f"{summary.get('errors', 0)} need a source or stopped retrying"
+                ),
+                "action_url": "/dashboard/assets",
+            })
 
     # Technical: recent errors from audit log
     try:

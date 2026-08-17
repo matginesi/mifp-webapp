@@ -135,7 +135,7 @@ def index():
             LIMIT 8
             """
         ).fetchall()]
-        alerts = dashboard_alerts(conn, current_app.config["LOG_DIR"])
+        alerts = dashboard_alerts(conn, current_app.config["LOG_DIR"], Path(current_app.config["ASSETS_DIR"]))
         try:
             log_entries = search_logs(current_app.config["LOG_DIR"], q=None, level="ALL", limit=6)
         except Exception:
@@ -221,7 +221,7 @@ def stats():
         ("News without an image", content_quality["news_without_image"], url_for("dashboard.content", section="news")),
         ("Publications without a link", content_quality["publications_without_link"], url_for("dashboard.content", section="publications")),
         ("Sponsors without a logo", content_quality["sponsors_without_logo"], url_for("dashboard.content", section="sponsors")),
-        ("Missing asset files", len(cleanup_plan.missing_file_assets), url_for("dashboard.control_assets")),
+        ("Missing asset files", len(cleanup_plan.missing_file_assets), url_for("dashboard.assets_page", status="missing")),
     ]
     quality_checks = [
         {"label": label, "count": int(count or 0), "url": action_url}

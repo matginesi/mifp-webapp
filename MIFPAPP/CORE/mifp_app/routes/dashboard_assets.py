@@ -21,14 +21,14 @@ from ..db.connection import connect
 from ..runtime_storage import prune_runtime_exports
 from ..services.admin_safety import backup_sqlite_database
 from ..services.asset_cleanup import (
-    build_asset_cleanup_plan,
+    asset_library_summary,
     export_assets_to_zip,
     import_assets_from_jsonl,
     import_assets_from_zip,
     list_exported_zips,
 )
 from ..services.assets import (
-    asset_recovery_overview,
+    reconcile_asset_storage_status,
     resolve_db_asset_path,
     store_asset,
     store_external_asset,
@@ -82,20 +82,18 @@ def _safe_asset_filename(filename: str) -> str | None:
     return filename
 
 
-def _delete_db_asset(conn, asset_id: int, *, force: bool = False) -> bool:
-    usage = {r["id"]: int(r["usage_count"] or 0) for r in asset_usage(conn)}
-    if usage.get(asset_id, 0) and not force:
-        return False
+def _delete_db_asset(conn, asset_id: int) -> bool:
     row = conn.execute("SELECT path FROM assets WHERE id=?", (asset_id,)).fetchone()
-    if row:
-        fpath = resolve_db_asset_path(current_app.config["ASSETS_DIR"], str(row["path"]))
-        assets_root = Path(current_app.config["ASSETS_DIR"]).resolve()
-        try:
-            resolved = fpath.resolve()
-            if resolved.is_file() and (resolved.parent == assets_root or assets_root in resolved.parents):
-                resolved.unlink()
-        except OSError:
-            pass
+    if not row:
+        return False
+    fpath = resolve_db_asset_path(current_app.config["ASSETS_DIR"], str(row["path"]))
+    assets_root = Path(current_app.config["ASSETS_DIR"]).resolve()
+    try:
+        resolved = fpath.resolve()
+        if resolved.is_file() and (resolved.parent == assets_root or assets_root in resolved.parents):
+            resolved.unlink()
+    except OSError:
+        pass
     conn.execute("DELETE FROM assets WHERE id=?", (asset_id,))
     return True
 
@@ -132,7 +130,7 @@ def cleanup_unused_assets():
                 flash("Cleanup stopped: the recovery archive could not be created.", "error")
                 return redirect(url_for("dashboard.assets_page", status="unused"))
             for aid in ids:
-                if _delete_db_asset(conn, aid, force=False):
+                if _delete_db_asset(conn, aid):
                     deleted += 1
             conn.commit()
     if deleted:
@@ -267,7 +265,7 @@ def assets_page():
                     )
                     if archive_path is None:
                         raise RuntimeError("Recovery archive could not be created")
-                    if asset_id and _delete_db_asset(conn, asset_id, force=False):
+                    if asset_id and _delete_db_asset(conn, asset_id):
                         conn.commit()
                         audit_log(
                             "asset.delete", "asset delete", asset_id=asset_id, force=False,
@@ -305,6 +303,20 @@ def assets_page():
                         flash(f"Exported filtered assets to {zip_path.name}.", "success")
                     else:
                         flash("No matching assets to export.", "info")
+                elif action == "reconcile":
+                    backup_path = backup_sqlite_database(current_app.config["DATABASE_PATH"], label="asset-reconcile")
+                    if backup_path is None:
+                        raise RuntimeError("Database backup could not be created")
+                    result = reconcile_asset_storage_status(conn, current_app.config["ASSETS_DIR"])
+                    audit_log(
+                        "asset.reconcile", "asset storage status reconciled", count=result["updated"],
+                        backup_path=str(backup_path),
+                    )
+                    flash(
+                        f"Reconciled {result['updated']} asset record(s): "
+                        f"{result['local']} local, {result['external']} external, {result['missing']} missing.",
+                        "success",
+                    )
                 elif action == "import_zip":
                     file = request.files.get("zip_file")
                     if file and file.filename and file.filename.endswith(".zip"):
@@ -375,75 +387,31 @@ def assets_page():
             linked_records.setdefault(row["asset_id"], []).append(dict(row))
         summary = assets_summary(conn)
         total_mb = round(sum(r["bytes"] for r in summary) / 1024 / 1024, 2)
-        cleanup_plan = build_asset_cleanup_plan(conn, current_app.config["ASSETS_DIR"])
-        unused_count = len(cleanup_plan.unused_db_assets) if cleanup_plan else 0
-        exported_zips = list_exported_zips(current_app.config["ASSETS_DIR"], export_dir=current_app.config["EXPORT_DIR"])
-        used_count = max(0, counts.get("assets", 0) - unused_count)
-        missing_count = len(cleanup_plan.missing_file_assets) if cleanup_plan else 0
-        orphan_count = len(cleanup_plan.orphan_files) if cleanup_plan else 0
-        recovery = asset_recovery_overview(conn)
-        unused_ids = {int(item["id"]) for item in cleanup_plan.unused_db_assets}
-        missing_ids = {int(item["id"]) for item in cleanup_plan.missing_file_assets}
-        duplicate_rows = conn.execute(
-            """
-            SELECT checksum FROM assets
-            WHERE checksum IS NOT NULL AND checksum<>''
-            GROUP BY checksum HAVING COUNT(*) > 1
-            """
-        ).fetchall()
-        duplicate_checksums = {str(item["checksum"]) for item in duplicate_rows}
-        duplicate_signatures = {
-            (str(item["display_name"]), int(item["size"]))
-            for item in conn.execute(
-                """
-                SELECT LOWER(COALESCE(NULLIF(original_filename,''), filename)) AS display_name,
-                       size
-                FROM assets
-                WHERE size IS NOT NULL AND size>0
-                GROUP BY display_name, size HAVING COUNT(*) > 1
-                """
-            ).fetchall()
+        metrics = asset_library_summary(conn, current_app.config["ASSETS_DIR"])
+        cleanup_plan = metrics["plan"]
+        unused_count = metrics["unused"]
+        used_count = metrics["used"]
+        missing_count = metrics["missing"]
+        orphan_count = metrics["orphan_count"]
+        recovery = {
+            "missing": metrics["missing"],
+            "with_url": metrics["recoverable"],
+            "external": metrics["external"],
+            "deferred": metrics["deferred"],
+            "terminal": metrics["terminal"],
         }
+        exported_zips = list_exported_zips(current_app.config["ASSETS_DIR"], export_dir=current_app.config["EXPORT_DIR"])
+        unused_ids = metrics["unused_ids"]
+        missing_ids = metrics["missing_ids"]
+        recoverable_ids = metrics["recoverable_ids"]
+        error_ids = metrics["error_ids"]
+        metadata_ids = metrics["metadata_ids"]
+        duplicate_ids = metrics["duplicate_ids"]
         recovery_states = {
             int(item["asset_id"]): dict(item)
             for item in conn.execute(
                 "SELECT asset_id, attempts, last_error, terminal, next_attempt_at FROM asset_recovery_state"
             ).fetchall()
-        }
-        metadata_ids = {
-            int(item["id"])
-            for item in all_rows
-            if not item.get("checksum")
-            or (
-                item.get("kind") == "image"
-                and (not item.get("alt_text") or not item.get("width") or not item.get("height"))
-            )
-        }
-        duplicate_ids = {
-            int(item["id"]) for item in all_rows
-            if (
-                item.get("checksum") and str(item["checksum"]) in duplicate_checksums
-            ) or (
-                item.get("size")
-                and (
-                    str(item.get("original_filename") or item.get("filename") or "").lower(),
-                    int(item["size"]),
-                ) in duplicate_signatures
-            )
-        }
-        recoverable_ids = {
-            int(item["id"]) for item in all_rows
-            if int(item["id"]) in missing_ids
-            and item.get("source_url")
-            and not int((recovery_states.get(int(item["id"])) or {}).get("terminal") or 0)
-        }
-        error_ids = {
-            int(item["id"]) for item in all_rows
-            if int(item["id"]) in missing_ids
-            and (
-                not item.get("source_url")
-                or int((recovery_states.get(int(item["id"])) or {}).get("terminal") or 0)
-            )
         }
         for item in rows:
             asset_id = int(item["id"])
@@ -455,7 +423,7 @@ def assets_page():
         if kind:
             rows = [item for item in rows if item.get("kind") == kind]
         status_sets = {
-            "used": set(usage) - unused_ids,
+            "used": metrics["used_ids"],
             "unused": unused_ids,
             "missing": missing_ids,
             "recoverable": recoverable_ids,
@@ -466,12 +434,12 @@ def assets_page():
         if status:
             rows = [item for item in rows if int(item["id"]) in status_sets[status]]
         issue_summary = {
-            "missing": len(missing_ids),
-            "recoverable": len(recoverable_ids),
-            "errors": len(error_ids),
-            "unused": len(unused_ids),
-            "metadata": len(metadata_ids),
-            "duplicates": len(duplicate_ids),
+            "missing": metrics["missing"],
+            "recoverable": metrics["recoverable"],
+            "errors": metrics["errors"],
+            "unused": metrics["unused"],
+            "metadata": metrics["metadata"],
+            "duplicates": metrics["duplicates"],
         }
     return render_template(
         "dashboard/assets.html",
@@ -489,6 +457,7 @@ def assets_page():
         linked_records=linked_records,
         recovery=recovery,
         issue_summary=issue_summary,
+        metrics=metrics,
         q=q,
         kind=kind,
         status=status,

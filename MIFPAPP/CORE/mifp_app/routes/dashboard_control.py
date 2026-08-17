@@ -13,8 +13,8 @@ from ..services.admin_safety import (
     backup_sqlite_database,
     cleanup_backup_copies,
 )
+from ..services.asset_cleanup import asset_library_summary
 from ..services.control_center import (
-    asset_health,
     backup_inventory,
     content_quality_checks,
     data_quality_workflow_summary,
@@ -113,7 +113,7 @@ def control_center():
     with connect(cfg["DATABASE_PATH"]) as conn:
         quality = _quality_context(conn)
         quality_workflow = data_quality_workflow_summary(conn)
-        assets = asset_health(conn, Path(cfg["ASSETS_DIR"]), scan_orphans=False)
+        assets = asset_library_summary(conn, Path(cfg["ASSETS_DIR"]), scan_orphans=False)
         processes = process_activity(conn)
         pending_join = conn.execute(
             "SELECT COUNT(*) FROM join_requests WHERE status IN ('pending','in_review')"
@@ -151,16 +151,16 @@ def control_center():
         "danger",
         "Missing local asset files",
         "Database records point to files that are not available locally.",
-        assets["totals"]["missing"] + assets["totals"]["unsafe"],
-        url_for("dashboard.control_assets"),
+        assets["missing"],
+        url_for("dashboard.assets_page", status="missing"),
     )
     add(
         "unused_assets",
         "warning",
         "Database assets not currently used",
         "Review usage before any manual cleanup.",
-        assets["totals"]["unused"],
-        url_for("dashboard.control_assets"),
+        assets["unused"],
+        url_for("dashboard.assets_page", status="unused"),
     )
     add(
         "pending_join",
@@ -249,14 +249,6 @@ def control_quality():
         checks=checks,
         workflow=workflow,
     )
-
-
-@bp.get("/control/assets")
-@login_required
-def control_assets():
-    with connect(current_app.config["DATABASE_PATH"]) as conn:
-        health = asset_health(conn, Path(current_app.config["ASSETS_DIR"]))
-    return render_template("dashboard/control/assets.html", health=health)
 
 
 @bp.get("/control/storage")

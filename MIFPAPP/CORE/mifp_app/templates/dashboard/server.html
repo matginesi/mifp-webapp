@@ -92,7 +92,7 @@
   <section class="system-panel ops-panel">
     <header class="panel-head">
       <div><span>Files</span><h2>Asset storage</h2><p>Database assets grouped by their current storage state.</p></div>
-      <a href="{{ url_for('dashboard.control_assets') }}">Asset health</a>
+      <a href="{{ url_for('dashboard.assets_page') }}">Asset library</a>
     </header>
     <div class="system-storage-list">
       {% for row in asset_status %}

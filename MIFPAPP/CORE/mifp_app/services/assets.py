@@ -719,30 +719,47 @@ def _ensure_recovery_state_schema(conn) -> None:
     )
 
 
-def asset_recovery_overview(conn) -> dict[str, int]:
-    _ensure_recovery_state_schema(conn)
-    row = conn.execute(
-        """
-        SELECT
-            COUNT(*) AS missing,
-            SUM(CASE WHEN COALESCE(a.source_url,'') != '' THEN 1 ELSE 0 END) AS with_url,
-            SUM(CASE WHEN COALESCE(a.source_url,'') = '' THEN 1 ELSE 0 END) AS without_url,
-            SUM(CASE WHEN COALESCE(s.terminal,0)=1 THEN 1 ELSE 0 END) AS terminal,
-            SUM(CASE WHEN COALESCE(s.terminal,0)=0
-                       AND s.next_attempt_at IS NOT NULL
-                       AND s.next_attempt_at > CURRENT_TIMESTAMP THEN 1 ELSE 0 END) AS deferred
-        FROM assets a
-        LEFT JOIN asset_recovery_state s ON s.asset_id=a.id
-        WHERE a.storage_status IN ('missing','external')
-        """
-    ).fetchone()
-    return {
-        "missing": int(row["missing"] or 0),
-        "with_url": int(row["with_url"] or 0),
-        "without_url": int(row["without_url"] or 0),
-        "terminal": int(row["terminal"] or 0),
-        "deferred": int(row["deferred"] or 0),
-    }
+def reconcile_asset_storage_status(conn, assets_dir, *, commit: bool = True) -> dict[str, int]:
+    """Recompute ``assets.storage_status`` from disk truth and the external flag.
+
+    Truth rules per row:
+    - ``is_external=1`` or ``path`` starts with ``external/`` → ``external``
+    - a local file exists at ``resolve_db_asset_path`` → ``local``
+    - otherwise → ``missing``
+
+    Assets that turn out to be present locally have their
+    ``asset_recovery_state`` cleared, since there is nothing left to recover.
+    Returns a summary of the resulting state; only changed rows are written.
+    """
+    assets_dir = Path(assets_dir).resolve()
+    rows = conn.execute("SELECT id, path, is_external, storage_status FROM assets").fetchall()
+    result = {"updated": 0, "local": 0, "external": 0, "missing": 0, "recovery_cleared": 0}
+    for row in rows:
+        aid = int(row["id"])
+        is_ext = int(row["is_external"] or 0) == 1
+        path = str(row["path"] or "")
+        if is_ext or path.startswith("external/"):
+            truth = "external"
+        else:
+            try:
+                exists = resolve_db_asset_path(assets_dir, path).is_file()
+            except ValueError:
+                exists = False
+            truth = "local" if exists else "missing"
+        result[truth] += 1
+        if str(row["storage_status"] or "local") != truth:
+            conn.execute(
+                "UPDATE assets SET storage_status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (truth, aid),
+            )
+            result["updated"] += 1
+        if truth == "local":
+            result["recovery_cleared"] += conn.execute(
+                "DELETE FROM asset_recovery_state WHERE asset_id=?", (aid,)
+            ).rowcount
+    if commit:
+        conn.commit()
+    return result
 
 
 def _record_recovery_failure(
@@ -826,7 +843,7 @@ def recover_missing_assets(
                COALESCE(s.terminal,0) AS recovery_terminal, s.next_attempt_at
         FROM assets a
         LEFT JOIN asset_recovery_state s ON s.asset_id=a.id
-        WHERE a.storage_status IN ({placeholders})
+        WHERE a.is_external=0 AND a.storage_status IN ({placeholders})
         ORDER BY COALESCE(s.terminal,0), COALESCE(s.attempts,0), a.id DESC
         """,
         statuses,

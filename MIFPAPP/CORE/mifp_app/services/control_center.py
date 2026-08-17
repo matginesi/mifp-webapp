@@ -13,7 +13,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..db.connection import table_exists
-from .assets import resolve_db_asset_path
 from .dashboard_repository import search_logs
 
 CONTENT_TARGETS: tuple[dict[str, str], ...] = (
@@ -293,111 +292,6 @@ def data_quality_workflow_summary(conn: sqlite3.Connection) -> dict[str, Any]:
                 (result["bundle_id"],),
             )
     return result
-
-
-def asset_health(
-    conn: sqlite3.Connection,
-    assets_dir: Path,
-    *,
-    scan_orphans: bool = True,
-) -> dict[str, Any]:
-    rows = conn.execute(
-        "SELECT a.id,a.filename,a.path,a.mime_type,a.kind,a.size,a.checksum,"
-        "a.source_url,a.storage_status,a.is_external,"
-        "COALESCE(rs.attempts,0) AS attempts,rs.last_attempt_at,rs.next_attempt_at,"
-        "rs.last_error,COALESCE(rs.terminal,0) AS terminal "
-        "FROM assets a LEFT JOIN asset_recovery_state rs ON rs.asset_id=a.id "
-        "ORDER BY a.id DESC"
-    ).fetchall()
-    missing: list[dict[str, Any]] = []
-    known_paths: set[Path] = set()
-    totals = {"complete": 0, "missing": 0, "external": 0, "unsafe": 0, "unused": 0}
-    for row in rows:
-        item = dict(row)
-        item["last_error"] = _safe_recovery_error(item.get("last_error"))
-        if item["is_external"] or item["storage_status"] == "external":
-            totals["external"] += 1
-            continue
-        try:
-            resolved = resolve_db_asset_path(assets_dir, item["path"])
-            known_paths.add(resolved.resolve())
-            exists = resolved.is_file()
-        except (OSError, ValueError):
-            totals["unsafe"] += 1
-            item["reason"] = "Unsafe or invalid path"
-            missing.append(item)
-            continue
-        if exists:
-            totals["complete"] += 1
-        else:
-            totals["missing"] += 1
-            item["reason"] = "Local file is absent"
-            missing.append(item)
-
-    if table_exists(conn, "asset_links"):
-        totals["unused"] = _scalar(
-            conn,
-            "SELECT COUNT(*) FROM assets a LEFT JOIN asset_links al ON al.asset_id=a.id "
-            "WHERE al.id IS NULL",
-        )
-
-    duplicate_groups = [
-        {
-            "checksum": str(row["checksum"]),
-            "count": int(row["total"]),
-            "size": int(row["size"] or 0),
-        }
-        for row in conn.execute(
-            "SELECT checksum,COUNT(*) AS total,MAX(size) AS size FROM assets "
-            "WHERE TRIM(COALESCE(checksum,''))!='' GROUP BY checksum HAVING COUNT(*)>1 "
-            "ORDER BY total DESC LIMIT 25"
-        ).fetchall()
-    ]
-
-    orphans: list[dict[str, Any]] = []
-    scanned = 0
-    if scan_orphans and assets_dir.is_dir():
-        for path in assets_dir.rglob("*"):
-            if scanned >= 50000 or len(orphans) >= 100:
-                break
-            if not path.is_file():
-                continue
-            scanned += 1
-            try:
-                resolved = path.resolve()
-                resolved.relative_to(assets_dir.resolve())
-            except (OSError, ValueError):
-                continue
-            if resolved not in known_paths:
-                try:
-                    rel = resolved.relative_to(assets_dir.resolve())
-                    size = resolved.stat().st_size
-                except OSError:
-                    continue
-                orphans.append({"path": str(rel), "size": size})
-
-    recovery = {
-        "ready": _scalar(
-            conn,
-            "SELECT COUNT(*) FROM asset_recovery_state "
-            "WHERE terminal=0 AND (next_attempt_at IS NULL OR next_attempt_at<=CURRENT_TIMESTAMP)",
-        ),
-        "cooldown": _scalar(
-            conn,
-            "SELECT COUNT(*) FROM asset_recovery_state "
-            "WHERE terminal=0 AND next_attempt_at>CURRENT_TIMESTAMP",
-        ),
-        "terminal": _scalar(conn, "SELECT COUNT(*) FROM asset_recovery_state WHERE terminal=1"),
-    }
-    return {
-        "totals": totals,
-        "missing": missing[:200],
-        "missing_total": len(missing),
-        "orphans": orphans,
-        "orphan_scan_limited": scanned >= 50000 or len(orphans) >= 100,
-        "duplicate_groups": duplicate_groups,
-        "recovery": recovery,
-    }
 
 
 def process_activity(conn: sqlite3.Connection) -> dict[str, Any]:

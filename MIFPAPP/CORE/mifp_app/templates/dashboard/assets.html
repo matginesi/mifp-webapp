@@ -11,6 +11,11 @@
       <button class="btn btn-outline btn-sm"><i class="bi bi-cloud-download"></i> Recover missing</button>
     </form>
     {% endif %}
+    <form method="post" action="{{ url_for('dashboard.assets_page') }}" class="inline-action-form" data-confirm="Recompute storage status from the local filesystem and external flag? A database backup will be created first.">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="action" value="reconcile">
+      <button class="btn btn-outline btn-sm"><i class="bi bi-arrow-repeat"></i> Reconcile storage status</button>
+    </form>
     <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.data_quality_page') }}#analysis"><i class="bi bi-clipboard2-pulse"></i> Analyze quality</a>
 {% endcall %}
 <section class="operations-status-strip assets-status-strip status-strip" aria-label="Asset library status">
@@ -20,7 +25,7 @@
   </div>
   <a href="{{ url_for('dashboard.assets_page', status='used') }}"><small>Published use</small><strong class="tone-success">{{ used_count }}</strong><em>linked files</em></a>
   <a href="{{ url_for('dashboard.assets_page', status='unused') }}"><small>Unused</small><strong class="tone-warning">{{ unused_count }}</strong><em>review before cleanup</em></a>
-  <a href="{{ url_for('dashboard.assets_page', status='missing') }}"><small>Missing</small><strong class="{{ 'tone-danger' if missing_count else 'tone-muted' }}">{{ missing_count }}</strong><em>{{ recovery.with_url }} recoverable</em></a>
+  <a href="{{ url_for('dashboard.assets_page', status='missing') }}"><small>Missing</small><strong class="{{ 'tone-danger' if missing_count else 'tone-muted' }}">{{ missing_count }}</strong><em>{{ recovery.with_url }} recoverable{% if recovery.external %} · {{ recovery.external }} external{% endif %}</em></a>
   <div><small>File types</small><strong>{{ summary|length }}</strong><em>{% if orphan_count %}{{ orphan_count }} orphan files{% else %}No orphan files{% endif %}</em></div>
 </section>
 
@@ -234,7 +239,6 @@
                       <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
                       <input type="hidden" name="action" value="delete">
                       <input type="hidden" name="id" value="{{ a.id }}">
-                      {% if u == 0 %}<input type="hidden" name="force" value="1">{% endif %}
                       <button class="btn btn-mini btn-outline-danger">Delete</button>
                     </form>
                   </div>
@@ -314,6 +318,7 @@
       {% if cleanup_plan %}
       <div class="kv"><span>Missing files</span><b>{{ cleanup_plan.missing_file_assets|length }}</b></div>
       <div class="kv"><span>Files not in DB</span><b>{{ cleanup_plan.orphan_files|length }}</b></div>
+      <div class="kv"><span>External refs</span><b>{{ metrics.external }}</b></div>
       {% endif %}
     </div>
   </div>
