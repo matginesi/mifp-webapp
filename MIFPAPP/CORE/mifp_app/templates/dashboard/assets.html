@@ -51,7 +51,7 @@
     {% if recovery.deferred %}{{ recovery.deferred }} are cooling down before another attempt.{% endif %}
     {% if recovery.terminal %}{{ recovery.terminal }} reached the retry limit or returned a permanent error.{% endif %}
   {% else %}
-    No recovery URL is available; import a ZIP containing the files or add a valid source URL.
+    No recovery URL is available; import a ZIP containing the files on the <a href="{{ url_for('dashboard.data_portability') }}">Import / Export</a> page or add a valid source URL.
   {% endif %}
 </div>
 {% endif %}
