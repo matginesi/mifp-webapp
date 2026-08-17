@@ -1,36 +1,98 @@
-# Remote repository policy: keep the deployable webapp and its webapp tests.
-# Local scraper/database/tool sources remain available for personal ZIP archives
-# through zip_it.sh, but are intentionally not part of the webapp-only remote.
-/*
+# Secrets and machine-local configuration
+.env
+.env.*
+**/.env
+**/.env.*
+secrets/
+**/secrets/
+credentials.json
+credentials.*.json
+*.secret
+*.token
+*.key
+*.pem
+*.p12
+*.pfx
+.htpasswd
 
-# Root files required to run, test and document the webapp.
-!/.gitignore
-!/README.md
-!/DEPLOYMENT.md
-!/AGENTS.md
-!/comandi.txt
-!/mifp
-!/test_all.sh
-!/pytest.ini
-!/zip_it.sh
-
-# CI/CD.
-!/.github/
-!/.github/**
-
-# Webapp source. Nested MIFPAPP/CORE/.gitignore excludes secrets/runtime data.
-!/MIFPAPP/
-/MIFPAPP/*
-!/MIFPAPP/CORE/
-!/MIFPAPP/CORE/**
-
-# Webapp tests only.
-!/TESTS/
-/TESTS/*
-!/TESTS/__init__.py
-!/TESTS/conftest.py
-!/TESTS/webapp/
-!/TESTS/webapp/**
-
-/TESTS/_pycache_/
+# Local scraper and legacy import trees
+SCRAPER/
+SCRAPERS/
 scrapers_/
+IMPORT_DATA/
+NEW_IMPORT_DATA/
+
+# Persistent application data (never source code)
+MIFPAPP/DATABASE/
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.sqlite3-journal
+rate_limit.sqlite3
+:memory:
+
+# Runtime output
+data/
+logs/
+backups/
+exports/
+uploads/
+instance/
+*.log
+
+# Exported archives and backups
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.bak
+
+# Python environments and generated caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+
+# Generated build output
+build/
+dist/
+.cache/
+node_modules/
+npm-debug.log*
+
+# Patch, merge and editor leftovers
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+
+# IDE and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local agent/tool state
+.codex/
+.agents/
+.superpowers/

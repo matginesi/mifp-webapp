@@ -2,11 +2,23 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import sqlite3
 import zipfile
 from pathlib import Path
 
 import pytest
+
+
+class _RecordCollector(logging.Handler):
+    """Capture a logger directly, independent of pytest/root propagation."""
+
+    def __init__(self):
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
 
 
 @pytest.fixture
@@ -233,25 +245,31 @@ class TestDataPortabilityHTTP:
             "first.zip", "second.zip"
         ]
 
-    def test_import_requires_password_before_processing_files(self, app_with_admin, caplog):
+    def test_import_requires_password_before_processing_files(self, app_with_admin):
         record = {
             "type": "news",
             "data": {"title": "Must not import", "slug": "must-not-import"},
             "links": [], "assets": [],
         }
-        with app_with_admin.test_client() as client:
-            _login(client)
-            response = client.post(
-                "/dashboard/data-portability/import",
-                data={
-                    "password": "wrong-password",
-                    "data_file": (
-                        io.BytesIO((json.dumps(record) + "\n").encode()),
-                        "blocked.jsonl",
-                    ),
-                },
-                headers={"X-Requested-With": "XMLHttpRequest"},
-            )
+        collector = _RecordCollector()
+        audit_logger = logging.getLogger("mifp.audit")
+        audit_logger.addHandler(collector)
+        try:
+            with app_with_admin.test_client() as client:
+                _login(client)
+                response = client.post(
+                    "/dashboard/data-portability/import",
+                    data={
+                        "password": "wrong-password",
+                        "data_file": (
+                            io.BytesIO((json.dumps(record) + "\n").encode()),
+                            "blocked.jsonl",
+                        ),
+                    },
+                    headers={"X-Requested-With": "XMLHttpRequest"},
+                )
+        finally:
+            audit_logger.removeHandler(collector)
 
         assert response.status_code == 403
         assert response.content_type == "application/x-ndjson"
@@ -259,7 +277,10 @@ class TestDataPortabilityHTTP:
         assert result["outcome"] == "authorization_denied"
         assert result["ok"] is False
         assert "No file was processed" in result["message"]
-        assert "portable import password verification failed" in caplog.text
+        assert any(
+            "portable import password verification failed" in record.getMessage()
+            for record in collector.records
+        )
         with sqlite3.connect(app_with_admin.config["DATABASE_PATH"]) as conn:
             assert conn.execute(
                 "SELECT COUNT(*) FROM news WHERE slug='must-not-import'"
@@ -290,24 +311,27 @@ class TestDataPortabilityHTTP:
         assert responses[5].status_code == 429
         assert "Too many failed attempts" in responses[5].get_data(as_text=True)
 
-    def test_oversized_import_returns_actionable_json_and_is_logged(
-        self, app_with_admin, caplog
-    ):
+    def test_oversized_import_returns_actionable_json_and_is_logged(self, app_with_admin):
         app_with_admin.config["MAX_CONTENT_LENGTH"] = 256
-        with app_with_admin.test_client() as client:
-            _login(client)
-            response = client.post(
-                "/dashboard/data-portability/import",
-                data={"password": "test-pass", "data_file": (io.BytesIO(b"x" * 2048), "large.jsonl")},
-                headers={"X-Requested-With": "XMLHttpRequest"},
-            )
+        collector = _RecordCollector()
+        app_with_admin.logger.addHandler(collector)
+        try:
+            with app_with_admin.test_client() as client:
+                _login(client)
+                response = client.post(
+                    "/dashboard/data-portability/import",
+                    data={"password": "test-pass", "data_file": (io.BytesIO(b"x" * 2048), "large.jsonl")},
+                    headers={"X-Requested-With": "XMLHttpRequest"},
+                )
+        finally:
+            app_with_admin.logger.removeHandler(collector)
 
         assert response.status_code == 413
         payload = response.get_json()
         assert payload["error"] == "file_too_large"
         assert "upload large packages sequentially" in payload["message"]
         assert payload["request_id"]
-        assert "payload too large" in caplog.text
+        assert any("payload too large" in record.getMessage() for record in collector.records)
 
     def test_import_page_exposes_upload_limits_to_preflight_selection(self, app_with_admin):
         with app_with_admin.test_client() as client:
