@@ -126,21 +126,6 @@ class TestAssetCleanup:
         with pytest.raises(ValueError, match="Zip Slip"):
             import_assets_from_jsonl(_conn(), jsonl_path)
 
-    def test_list_exported_zips(self, tmp_path):
-        from mifp_app.services.asset_cleanup import list_exported_zips, export_assets_to_zip, _export_dir
-
-        conn = _conn()
-        assets_dir = tmp_path / "assets"
-        assets_dir.mkdir(parents=True)
-        conn.execute("INSERT INTO assets(id, filename, path, kind, checksum, storage_status) VALUES(1,'f.txt','f.txt','document','sha','local')")
-        (assets_dir / "f.txt").write_bytes(b"data")
-
-        export_assets_to_zip(conn, assets_dir)
-        zips = list_exported_zips(assets_dir)
-        assert len(zips) == 1
-        assert zips[0]["filename"].endswith(".zip")
-        assert zips[0]["size"] > 0
-
     def test_build_asset_cleanup_plan(self, tmp_path):
         from mifp_app.services.asset_cleanup import build_asset_cleanup_plan
 

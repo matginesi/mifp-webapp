@@ -363,22 +363,6 @@ def import_assets_from_jsonl(conn, jsonl_path: Path, *, dry_run: bool = False) -
     return result
 
 
-def list_exported_zips(assets_dir: Path, export_dir: Path | None = None) -> list[dict[str, Any]]:
-    out_dir = export_dir.resolve() if export_dir else _export_dir(assets_dir)
-    if not out_dir.exists():
-        return []
-    zips = []
-    for p in sorted(out_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-        if p.suffix == ".zip":
-            zips.append({
-                "filename": p.name,
-                "path": str(p),
-                "size": p.stat().st_size,
-                "mtime": datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec="seconds"),
-            })
-    return zips
-
-
 def build_asset_cleanup_plan(conn, assets_dir, *, scan_orphans: bool = True):
     assets_dir = Path(assets_dir).resolve()
     usage_by_id = {int(r["id"]): int(r.get("usage_count") or 0) for r in asset_usage(conn)}
