@@ -1,0 +1,13 @@
+<nav class="institutional-index" aria-label="Institutional sections">
+  <span class="institutional-index-label">MIFP archive</span>
+  <div class="institutional-index-links">
+    <a href="{{ url_for('public.about') }}" class="{{ 'active' if request.endpoint == 'public.about' }}">About</a>
+    <a href="{{ url_for('public.manifesto') }}" class="{{ 'active' if request.endpoint == 'public.manifesto' }}">Manifesto</a>
+    <a href="{{ url_for('public.code_of_conduct') }}" class="{{ 'active' if request.endpoint == 'public.code_of_conduct' }}">Conduct</a>
+    <a href="{{ url_for('public.research') }}" class="{{ 'active' if request.endpoint == 'public.research' }}">Research</a>
+    <a href="{{ url_for('public.publications') }}" class="{{ 'active' if request.endpoint == 'public.publications' }}">Publications</a>
+    <a href="{{ url_for('public.sponsor_how_to') }}" class="{{ 'active' if request.endpoint == 'public.sponsor_how_to' }}">Support</a>
+    <a href="{{ url_for('public.privacy') }}" class="{{ 'active' if request.endpoint == 'public.privacy' }}">Privacy</a>
+    <a href="{{ url_for('public.cookie_policy') }}" class="{{ 'active' if request.endpoint == 'public.cookie_policy' }}">Cookies</a>
+  </div>
+</nav>
