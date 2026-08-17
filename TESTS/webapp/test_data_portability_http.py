@@ -507,3 +507,35 @@ class TestDataPortabilityHTTP:
             errors = [e for e in events if e.get("event") == "error"]
             assert errors, "expected at least one 'error' NDJSON event"
             assert errors[0]["ok"] is False
+
+    def test_import_integrity_error_identifies_file_and_confirms_rollback(
+        self, app_with_admin, monkeypatch
+    ):
+        import mifp_app.routes.dashboard as dashboard_routes
+
+        def reject_archive(*args, **kwargs):
+            raise ValueError("state.json does not match the checksum in manifest.json")
+
+        monkeypatch.setattr(dashboard_routes, "_import_zip_dispatch", reject_archive)
+        with app_with_admin.test_client() as client:
+            _login(client)
+            resp = client.post(
+                "/dashboard/data-portability/import",
+                data={
+                    "password": "test-pass",
+                    "scope": "all",
+                    "data_file": (io.BytesIO(b"not-read-by-test"), "backup 2026.zip"),
+                },
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+
+            assert resp.status_code == 200
+            events = [
+                json.loads(line)
+                for line in resp.data.decode("utf-8").splitlines()
+                if line.strip()
+            ]
+            result = next(event for event in events if event.get("event") == "result")
+            assert result["ok"] is False
+            assert "backup2026.zip" in result["message"]
+            assert "No database changes from this failed batch were committed" in result["message"]

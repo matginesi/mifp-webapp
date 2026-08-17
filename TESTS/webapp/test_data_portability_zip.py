@@ -265,6 +265,26 @@ def test_parse_zip_rejects_tampered_records(tmp_path: Path) -> None:
         parse_zip_payload(changed.getvalue())
 
 
+def test_parse_zip_rejects_tampered_durable_state(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, parse_zip_payload
+
+    source = _conn()
+    source.execute("INSERT INTO settings(key, value) VALUES('portable-test', 'original')")
+    payload = bundle_to_zip(source, "all", tmp_path / "assets")
+    changed = BytesIO()
+    with zipfile.ZipFile(BytesIO(payload), "r") as src, zipfile.ZipFile(
+        changed, "w", zipfile.ZIP_DEFLATED
+    ) as dst:
+        for info in src.infolist():
+            body = src.read(info.filename)
+            if info.filename == "state.json":
+                body = body.replace(b'"original"', b'"tampered"')
+            dst.writestr(info.filename, body)
+
+    with pytest.raises(ValueError, match="state.json does not match.*manifest.json"):
+        parse_zip_payload(changed.getvalue())
+
+
 def test_parse_zip_rejects_tampered_asset(tmp_path: Path) -> None:
     from mifp_app.services.data_portability import bundle_to_zip, parse_zip_payload
 

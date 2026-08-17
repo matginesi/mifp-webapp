@@ -1244,7 +1244,10 @@ def data_portability_import():
                         files=len(file_data),
                         error_type=type(exc).__name__,
                     )
-                    message = _safe_import_error(exc)
+                    message = (
+                        f"{_safe_import_error(exc)} "
+                        "No database changes from this failed batch were committed."
+                    )
                     event_sink({"event": "error", "message": message})
                     event_sink({
                         "event": "result", "ok": False, "outcome": "failed",
@@ -1450,18 +1453,34 @@ def _perform_import_unprotected(
                 "bytes": _payload_size(payload),
             })
 
+            safe_filename = _safe_upload_name(filename, Path(filename).suffix or ".jsonl")
+            try:
+                if is_zip:
+                    current_app.logger.info(
+                        "importing ZIP file=%s index=%d/%d bytes=%d",
+                        safe_filename, file_index + 1, file_count, _payload_size(payload),
+                    )
+                    before_asset_id = _max_asset_id(conn)
+                    summary = _import_zip_dispatch(
+                        conn, payload, scope,
+                        dry_run=dry_run, skip_assets=skip_assets, force_import=force_import,
+                        progress=lambda done, total, name=filename: progress(name, done, total),
+                        source_name=filename, cancel_check=cancel_check,
+                    )
+                else:
+                    summary = None
+            except Exception as exc:
+                current_app.logger.exception(
+                    "import file failed file=%s index=%d/%d type=%s",
+                    safe_filename, file_index + 1, file_count,
+                    "zip" if is_zip else "jsonl",
+                )
+                if isinstance(exc, ValueError):
+                    raise ValueError(f"{safe_filename}: {exc}") from exc
+                raise
+
             if is_zip:
-                current_app.logger.info(
-                    "importing ZIP index=%d/%d bytes=%d",
-                    file_index + 1, file_count, _payload_size(payload),
-                )
-                before_asset_id = _max_asset_id(conn)
-                summary = _import_zip_dispatch(
-                    conn, payload, scope,
-                    dry_run=dry_run, skip_assets=skip_assets, force_import=force_import,
-                    progress=lambda done, total, name=filename: progress(name, done, total),
-                    source_name=filename, cancel_check=cancel_check,
-                )
+                assert summary is not None
                 summary["filename"] = filename
                 raw_errors = summary.get("errors")
                 error_details = []

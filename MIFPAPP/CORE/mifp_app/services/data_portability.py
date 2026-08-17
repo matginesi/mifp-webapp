@@ -1508,7 +1508,10 @@ def _read_durable_state(
     raw = zf.read(ZIP_STATE_NAME)
     expected_hash = manifest.get("state_sha256")
     if expected_hash and hashlib.sha256(raw).hexdigest() != expected_hash:
-        raise ValueError("state.json failed integrity verification")
+        raise ValueError(
+            "state.json does not match the checksum in manifest.json; "
+            "the archive may be incomplete, corrupt, or modified after export"
+        )
     try:
         state = json.loads(raw.decode("utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
