@@ -163,6 +163,14 @@ def favicon():
     return send_from_directory(str(icon_path.parent), icon_path.name, mimetype="image/png")
 
 
+def _canonical_url() -> str:
+    """Return the canonical URL without 'www.' prefix."""
+    host = request.host_url.rstrip('/')
+    if host.startswith('www.'):
+        return host[4:]
+    return host
+
+
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------

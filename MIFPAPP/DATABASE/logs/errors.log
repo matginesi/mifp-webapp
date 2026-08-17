@@ -1,0 +1,32 @@
+2026-08-17T20:23:38.942+00:00 | ERROR    | errors | mifp.flask | event=application.exception rid=9a1275f8e3014b5f9f84ed6830abc08d | Unhandled Flask error: UndefinedError: '_canonical_url' is undefined
+Traceback (most recent call last):
+  File "/home/matteo/.local/lib/python3.14/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/home/matteo/.local/lib/python3.14/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/home/matteo/Projects/MifpWebNew/MIFPAPP/CORE/mifp_app/routes/public.py", line 141, in home
+    return render_template(
+        "public/home.html",
+    ...<10 lines>...
+        research_areas=research_areas,
+    )
+  File "/home/matteo/.local/lib/python3.14/site-packages/flask/templating.py", line 151, in render_template
+    return _render(app, template, context)
+  File "/home/matteo/.local/lib/python3.14/site-packages/flask/templating.py", line 132, in _render
+    rv = template.render(context)
+  File "/usr/lib/python3.14/site-packages/jinja2/environment.py", line 1295, in render
+    self.environment.handle_exception()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.14/site-packages/jinja2/environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "/home/matteo/Projects/MifpWebNew/MIFPAPP/CORE/mifp_app/templates/public/home.html", line 1, in top-level template code
+    {% extends "public/base.html" %}
+    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/matteo/Projects/MifpWebNew/MIFPAPP/CORE/mifp_app/templates/public/base.html", line 13, in top-level template code
+    <link rel="canonical" href="{{ _canonical_url() }}">
+    ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/site-packages/jinja2/utils.py", line 92, in from_obj
+    if hasattr(obj, "jinja_pass_arg"):
+       ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+jinja2.exceptions.UndefinedError: '_canonical_url' is undefined
