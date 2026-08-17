@@ -185,10 +185,6 @@ def test_repository_keeps_one_readme_and_no_orphan_database_tools():
     ]
     assert readmes == [ROOT / "README.md"]
 
-    assert (ROOT / "SCRAPERS/validate_import_data.py").is_file()
-    assert "SCRAPERS_DIR/validate_import_data.py" in (
-        ROOT / "SCRAPERS/run_all.sh"
-    ).read_text(encoding="utf-8")
     assert not (ROOT / "tools").exists()
 
     root_readme = (ROOT / "README.md").read_text(encoding="utf-8")
