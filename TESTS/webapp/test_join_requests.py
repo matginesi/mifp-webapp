@@ -81,14 +81,14 @@ def _scalar(app, sql: str, params: tuple = ()):
         return row[0] if row else None
 
 
-def _insert_join_request(app, suffix: str, status: str = "pending") -> int:
+def _insert_join_request(app, suffix: str, status: str = "pending", created_at: str | None = None) -> int:
     with _db(app) as conn:
         cursor = conn.execute(
             """
-            INSERT INTO join_requests(first_name,last_name,email,affiliation,country,field,motivation,status)
-            VALUES(?,?,?,?,?,?,?,?)
+            INSERT INTO join_requests(first_name,last_name,email,affiliation,country,field,motivation,status,created_at)
+            VALUES(?,?,?,?,?,?,?,?,COALESCE(?, CURRENT_TIMESTAMP))
             """,
-            ("Ada", suffix, f"ada-{suffix.lower()}@example.org", "MIFP", "Italy", "Physics", "Testing", status),
+            ("Ada", suffix, f"ada-{suffix.lower()}@example.org", "MIFP", "Italy", "Physics", "Testing", status, created_at),
         )
         conn.commit()
         return int(cursor.lastrowid)
@@ -319,8 +319,11 @@ class TestJoinRequestsList:
         assert "Ada Other" not in body
 
     def test_join_requests_pagination(self, app, client):
+        # created_at is second-granular; give each request a distinct, decreasing
+        # timestamp so ORDER BY created_at DESC is stable even across second
+        # boundaries on slow runners.
         for i in range(25):
-            _insert_join_request(app, f"User{i:02d}")
+            _insert_join_request(app, f"User{i:02d}", created_at=f"2026-08-17 12:00:{59 - i:02d}")
 
         page1 = client.get("/dashboard/join-requests")
         assert page1.status_code == 200

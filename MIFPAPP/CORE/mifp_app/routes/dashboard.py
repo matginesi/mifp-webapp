@@ -1971,7 +1971,7 @@ def join_requests():
         params.extend([f"%{q}%"] * 5)
     clause = " WHERE " + " AND ".join(where) if where else ""
     with connect(current_app.config["DATABASE_PATH"]) as conn:
-        order = "CASE status WHEN 'pending' THEN 0 WHEN 'in_review' THEN 1 WHEN 'approved' THEN 2 WHEN 'rejected' THEN 3 ELSE 4 END, created_at DESC"
+        order = "CASE status WHEN 'pending' THEN 0 WHEN 'in_review' THEN 1 WHEN 'approved' THEN 2 WHEN 'rejected' THEN 3 ELSE 4 END, created_at DESC, id DESC"
         count_row = conn.execute(f"SELECT COUNT(*) AS cnt FROM join_requests{clause}", params).fetchone()
         total_filtered = int(count_row["cnt"]) if count_row else 0
         total_pages = max(1, (total_filtered + per_page - 1) // per_page)
