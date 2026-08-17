@@ -265,6 +265,22 @@ def test_parse_zip_rejects_tampered_records(tmp_path: Path) -> None:
         parse_zip_payload(changed.getvalue())
 
 
+def test_import_rejects_review_status_not_supported_by_content_tables(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    source = tmp_path / "unsupported-status.jsonl"
+    source.write_text(json.dumps({
+        "type": "news",
+        "data": {"title": "Archived is not importable", "review_status": "archived"},
+    }) + "\n", encoding="utf-8")
+
+    summary = import_jsonl(_conn(), source)
+
+    assert summary["inserted"] == {}
+    assert summary["skipped"] == 1
+    assert "Invalid review_status: archived" in summary["errors"][0]["error"]
+
+
 def test_parse_zip_rejects_tampered_durable_state(tmp_path: Path) -> None:
     from mifp_app.services.data_portability import bundle_to_zip, parse_zip_payload
 

@@ -105,6 +105,63 @@ def build_import_format_guide() -> str:
         "is_active": "boolean", "date_is_inferred": "boolean", "start_date": "date",
         "end_date": "date", "date": "date", "effective_date": "date",
     }
+    field_help = {
+        "uid": "Stable external identity. Reuse exactly on every run; never use a database row id.",
+        "slug": "Stable lowercase URL key using ASCII words and hyphens; do not add random suffixes.",
+        "title": "Canonical human title, trimmed; not a filename, caption, menu label, or surrounding page chrome.",
+        "name": "Canonical organisation name, preserving official spelling and legal suffix when sourced.",
+        "first_name": "Given name(s), including initials/particles exactly as supported by the source.",
+        "last_name": "Family name(s), preserving particles such as de, van, von, Di.",
+        "display_name": "Public natural-order name, normally First Last; never Last First unless that is the person's documented usage.",
+        "affiliation": "Organisation as stated for this person; do not concatenate conflicting historical affiliations.",
+        "normalized_affiliation": "Optional machine-normalized affiliation; omit unless built deterministically.",
+        "normalized_name": "Optional machine-normalized name; omit unless built deterministically.",
+        "country": "English country name supported by explicit evidence, not guessed from a person's name.",
+        "email": "Person-specific email. Lower/upper case is ignored for identity; never infer an address pattern.",
+        "role": "Portable member role name, for example member, coordinator, or advisory_board; prefer this over role_id.",
+        "role_id": "Installation-local numeric role id. Agents must omit it; dashboard exports may carry it.",
+        "field": "Research discipline or position text from the source.",
+        "bio": "Clean factual biography; remove navigation, consent text, and repeated headings.",
+        "review_status": "Workflow state. Use review for uncertain/new agent extraction; published only after verification.",
+        "is_active": "Whether the member/sponsor is active. Omit unless the source establishes this.",
+        "sort_order": "Deterministic display order; use 0 when no curated order exists.",
+        "start_date": "ISO start date. For incomplete dates use the documented placeholder convention plus date_precision.",
+        "end_date": "ISO end date, only for a genuine range; must not precede start_date.",
+        "date": "ISO news date. It is part of news identity, so never fabricate precision.",
+        "date_text": "Human source wording for incomplete, inferred, or display-specific dates.",
+        "original_date_text": "Unmodified date phrase extracted from the source before normalization.",
+        "date_precision": "Precision actually supported by evidence: day, month, year, range, or unknown.",
+        "date_is_inferred": "True only when date was derived rather than explicitly printed.",
+        "date_inference_rule": "Short deterministic rule identifier explaining an inferred date; omit for explicit dates.",
+        "location": "Venue/city/country as one concise factual string; no travel or registration prose.",
+        "description": "Clean main descriptive text, preserving paragraphs and factual distinctions.",
+        "event_type": "Controlled event category; choose other if evidence does not support a narrower value.",
+        "series_key": "Stable identifier shared by editions of one event series; editions remain separate records.",
+        "parent_event_slug": "Stable slug of a parent event included in the same or existing dataset.",
+        "parent_event_id": "Installation-local id. Agents must omit it and use parent_event_slug.",
+        "remote_url": "Canonical external event page URL when distinct from links.",
+        "is_featured": "Editorial presentation flag; omit unless explicitly requested by the operator.",
+        "news_type": "Controlled editorial category based on what happened, not keyword similarity.",
+        "card_layout": "Optional existing theme layout token. Omit for new agent data unless supplied by the operator.",
+        "summary": "Concise standalone factual abstract; do not simply truncate mid-sentence.",
+        "body": "Complete clean content; preserve distinct news and do not blend other source items into it.",
+        "source_kind": "Origin label such as agent, scraper, local, remote, or manual; use one consistent vocabulary per run.",
+        "source_priority": "Lower/higher source ranking only when the pipeline defines it; otherwise omit and accept default 50.",
+        "source_order": "Stable order within the source feed, otherwise omit.",
+        "display_order": "Explicit editorial order, otherwise omit.",
+        "year": "Four-digit publication year supported by bibliographic evidence.",
+        "authors": "Author names in source order, either one string or a list; do not reorder alphabetically.",
+        "journal": "Canonical venue/journal name, without mixing volume/pages unless no separate field exists.",
+        "doi": "Canonical DOI such as 10.xxxx/yyy, without doi: or https://doi.org/ decoration.",
+        "abstract": "Publication abstract only; do not substitute an unrelated news summary.",
+        "type": "Controlled page type when record type is page.",
+        "version": "Human policy/document version string, not a database schema version.",
+        "effective_date": "ISO date on which a managed page/policy becomes effective.",
+        "nav_group": "Existing site navigation group token; omit unless supplied by site configuration.",
+        "menu_order": "Integer order inside nav_group; use only when navigation placement is intentional.",
+        "sponsor_type": "Organisation relationship category, using source/site vocabulary consistently.",
+        "tier": "Sponsorship tier exactly as defined by the programme; never infer from logo size.",
+    }
     enums = {
         "review_status": sorted(REVIEW_STATUSES),
         "date_precision": ["day", "month", "year", "range", "unknown"],
@@ -142,6 +199,53 @@ def build_import_format_guide() -> str:
             "kind": "image", "alt_text": "Jacqueline Bloch", "is_primary": True,
         }],
     }
+    type_examples = {
+        "member": member_example,
+        "news": example,
+        "event": {
+            "type": "event", "data": {
+                "uid": "event_plmcn_2027", "slug": "plmcn-2027",
+                "title": "PLMCN 2027", "start_date": "2027-06-14",
+                "end_date": "2027-06-18", "date_precision": "range",
+                "location": "Rome, Italy", "event_type": "conference",
+                "series_key": "plmcn", "review_status": "review",
+            }, "links": [{"url": "https://example.org/plmcn-2027", "role": "primary"}], "assets": [],
+        },
+        "publication": {
+            "type": "publication", "data": {
+                "uid": "publication_10_1234_example", "slug": "light-matter-coupling-review",
+                "title": "Light–Matter Coupling: A Review", "year": 2026,
+                "authors": ["Ada Example", "Bruno Example"], "journal": "Example Physics",
+                "doi": "10.1234/example.2026.42", "date_precision": "year",
+                "review_status": "review",
+            }, "links": [{"url": "https://doi.org/10.1234/example.2026.42", "role": "doi"}], "assets": [],
+        },
+        "research_area": {
+            "type": "research_area", "data": {
+                "uid": "research_quantum_fluids", "slug": "quantum-fluids",
+                "title": "Quantum Fluids", "summary": "Research on collective quantum phenomena.",
+                "description": "A source-grounded description of the programme.", "review_status": "review",
+            }, "links": [], "assets": [],
+        },
+        "page": {
+            "type": "page", "data": {
+                "uid": "page_code_of_conduct", "slug": "code-of-conduct",
+                "title": "Code of Conduct", "type": "code_of_conduct",
+                "body": "Complete approved page content.", "version": "1.0",
+                "effective_date": "2026-08-17", "review_status": "review",
+            }, "links": [], "assets": [],
+        },
+        "sponsor": {
+            "type": "sponsor", "data": {
+                "uid": "sponsor_example_lab", "slug": "example-lab", "name": "Example Lab",
+                "description": "Official programme sponsor.", "sponsor_type": "institutional",
+                "tier": "gold", "is_active": True,
+            }, "links": [{"url": "https://example.org", "role": "website"}], "assets": [{
+                "url": "https://example.org/logo.svg", "role": "logo", "kind": "image",
+                "alt_text": "Example Lab", "is_primary": True,
+            }],
+        },
+    }
     compact = lambda value: json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     lines = [
         "# MIFP data-generation guide for agents and LLMs", "",
@@ -175,15 +279,19 @@ def build_import_format_guide() -> str:
     for typ in sorted(DATA_FIELDS):
         lines.extend([
             f"### `{typ}`", "", type_notes[typ], "",
-            "| Field | Required | Expected value |", "| --- | --- | --- |",
+            "| Field | Required | Type / allowed | Construction rule |", "| --- | --- | --- | --- |",
         ])
         for field in sorted(DATA_FIELDS[typ]):
             expected = field_types.get(field, "string or null")
             enum_key = "page.type" if typ == "page" and field == "type" else field
             if enum_key in enums:
                 expected = "one of: " + ", ".join(f"`{item}`" for item in enums[enum_key])
-            lines.append(f"| `{field}` | {'yes' if field in REQUIRED_FIELDS[typ] else 'no'} | {expected} |")
+            lines.append(
+                f"| `{field}` | {'yes' if field in REQUIRED_FIELDS[typ] else 'no'} | "
+                f"{expected} | {field_help.get(field, 'Source-supported value; omit rather than guess.')} |"
+            )
         lines.append("")
+        lines.extend(["Valid example:", "", "```json", compact(type_examples[typ]), "```", ""])
 
     lines.extend([
         "## Links", "",
@@ -238,6 +346,129 @@ def build_import_format_guide() -> str:
         "quality decisions, relations, provenance, mappings). Use dashboard export for a lossless backup. "
         "For new content with local assets use the scraper artifact assembler or deterministic packaging "
         "code, never LLM-generated checksums.", "",
+        "## Import scopes", "",
+        "The selected dashboard scope must match the content being imported. A record-only JSONL may "
+        "contain only types allowed by that scope. A packaged ZIP/JSONL declares its scope in the manifest.", "",
+        "| Scope | Allowed record types |", "| --- | --- |",
+        "| `members` | `member` |", "| `news` | `news` |", "| `events` | `event` |",
+        "| `publications` | `publication` |", "| `research` | `research_area` |",
+        "| `sponsors` | `sponsor` |", "| `all` | every supported type, including `page` |", "",
+        "If a generated dataset contains more than one type, instruct the operator to select `all`.", "",
+        "## Exact ZIP manifest contract", "",
+        "This example shows shape only. A deterministic program must replace counts, timestamps, sizes, "
+        "and digests after serializing the final byte streams. Do not copy placeholder hashes.", "",
+        "```json", compact({
+            "format": CANONICAL_FORMAT, "format_version": PORTABLE_FORMAT_VERSION,
+            "schema_version": SCHEMA_VERSION, "generated_at": "2026-08-17T12:00:00Z",
+            "exported_at": "2026-08-17T12:00:00Z", "app_version": "",
+            "scope": "news", "records": 1,
+            "records_sha256": "<64 lowercase hexadecimal characters>",
+            "counts": {"news": 1},
+            "files": [{
+                "path": "news/example/image.jpg", "archive_path": "assets/news/example/image.jpg",
+                "size": 12345, "sha256": "<64 lowercase hexadecimal characters>",
+            }],
+        }), "```", "",
+        "Manifest invariants:", "",
+        "- `format`, `format_version`, `scope`, `records`, `records_sha256`, `counts`, and `files` are required for canonical packages.",
+        "- `records` equals the number of non-empty record lines; `counts` exactly groups them by singular type.",
+        "- `path` is the database-relative asset path; `archive_path` is exactly `assets/` plus that path.",
+        "- Every archive asset is declared exactly once; no undeclared asset or unsupported extra file is allowed.",
+        "- A full `all` dashboard backup also requires `state.json`, `state_sha256`, and `state_counts`.",
+        "- Hash exact bytes, not parsed/reformatted JSON. Repacking or pretty-printing after hashing invalidates the package.", "",
+        "## Self-contained JSONL v2 envelope", "",
+        "Dashboard JSONL exports are not ordinary record-only JSONL. Their first line is an `_mifp` "
+        "manifest envelope, followed by optional durable state, bounded Base64 asset chunks, then ordinary "
+        "record objects. This is designed for dashboard round-trip, not freehand agent output.", "",
+        "```json", compact({"_mifp": {"kind": "manifest", "data": {"format": CANONICAL_FORMAT, "format_version": PORTABLE_FORMAT_VERSION, "scope": "news", "records": 1, "records_sha256": "<sha256>", "counts": {"news": 1}, "files": []}}}), "```", "",
+        "```json", compact({"_mifp": {"kind": "asset_chunk", "path": "news/example/image.jpg", "archive_path": "assets/news/example/image.jpg", "index": 0, "final": True, "encoding": "base64", "data": "<base64>"}}), "```", "",
+        "Asset chunks for one file must be contiguous, zero-indexed, complete, and together match the "
+        "manifest size/hash. Prefer ZIP when binary assets are involved.", "",
+        "## Durable state: reserved for dashboard backups", "",
+        "`state.json` is an object whose supported list sections are: `roles`, `settings`, `assets`, "
+        "`metrics_daily`, `merge_exclusions`, `resolved_pairs`, `quality_decisions`, `entity_relations`, "
+        "`join_requests`, `content_aliases`, `source_systems`, `source_runs`, `source_records`, and "
+        "`canonical_mappings`. It may contain security-sensitive or installation-specific operational data.", "",
+        "An agent creating new editorial content must omit durable state. Only preserve it byte-for-byte from "
+        "a dashboard export. Never synthesize roles, settings, quality decisions, join requests, source lineage, "
+        "or canonical mappings from source documents.", "",
+        "## Provenance and `meta`", "",
+        "`meta` is stored with import provenance but is not public content. For new agent datasets it may "
+        "contain concise non-sensitive traceability such as source document name, source item key, extraction "
+        "timestamp, or an operator-supplied batch id. Do not place credentials, personal notes, raw private "
+        "documents, chain-of-thought, or prompts in it. Never set `exported_from_id`: that marker is reserved "
+        "for dashboard exports and changes restore behavior.", "",
+        "Recommended shape (keys are descriptive metadata, not identity):", "",
+        "```json", compact({"source_document": "announcements-2026.pdf", "source_item": "page-4-item-2", "batch": "operator-provided-batch-id", "extraction_confidence": 0.93}), "```", "",
+        "## What import actually does", "",
+        "- Ordinary import matches existing records and enriches them. It does not blindly replace curated non-empty values.",
+        "- `uid` match has priority, then `slug`, recorded provenance, and strong type-specific identity keys.",
+        "- Existing name/display_name/slug values are not overwritten by ordinary enrichment.",
+        "- Existing real descriptive text is not replaced merely because incoming text is longer; empty or obvious placeholder values may be enriched.",
+        "- Boolean featured/active flags are additive during enrichment.",
+        "- Links and asset links are added/updated with primary-link normalization.",
+        "- A malformed record is rolled back to its savepoint and reported with its line number; other valid records may continue.",
+        "- A fatal package-integrity error rejects the package. A multi-file batch is committed only if its database transaction completes.",
+        "- `Validate only` verifies syntax/structure/package integrity but cannot prove factual truth and does not exercise every final database conflict.",
+        "- Actual import creates a pre-import database backup. Asset/network failures may be reported separately from record errors.", "",
+        "Never tell the operator that validation proves the facts are correct. It proves conformance, not truth.", "",
+        "## Per-type decision rules", "",
+        "### Members", "",
+        "Split one person per record. Resolve `Surname Given` or `Surname, Given` into explicit first/last "
+        "fields and natural display order. Keep homonyms separate when emails differ. Do not treat title prefixes "
+        "(Prof., Dr.) as name tokens. Do not create a second person merely because affiliation formatting changed.", "",
+        "### News", "",
+        "A news record represents one dated editorial occurrence. Book announcements for different books, "
+        "agreements with different partners, awards to different recipients, and different editions/dates are "
+        "separate even when the wording template is nearly identical. Title similarity is context, never sufficient "
+        "merge authority. Retain the exact canonical source URL and enough clean body/summary to disambiguate.", "",
+        "### Events", "",
+        "One edition/occurrence per record. Reuse `series_key` across editions but keep year-specific `uid` and "
+        "slug`. Use `parent_event_slug` only for a real containment relationship, not merely related events. "
+        "A year-only event is not a full-year range unless the source explicitly says so.", "",
+        "### Publications", "",
+        "DOI dominates identity when present. Normalize it without URL/prefix. Preserve author order. A news item "
+        "announcing a publication and the publication itself are two different records of different types.", "",
+        "### Research areas, pages, sponsors", "",
+        "Do not infer editorial navigation, sponsorship tier, active status, policy version, or effective date from "
+        "visual prominence. Preserve official organisation/topic/page naming and only emit site-control fields when supplied.", "",
+        "## Failure modes the agent must prevent", "",
+        "| Bad output | Why it fails or causes damage | Correct action |", "| --- | --- | --- |",
+        "| Markdown code fences inside `.jsonl` | They are not JSON records. | Save raw JSON lines only. |",
+        "| Unknown key such as `content` | Strict schema rejects the line. | Map to `body`, `description`, or `abstract` as appropriate. |",
+        "| `review_status: archived` | Not a supported content-table status. | Use draft, review, published, quarantined, or duplicate. |",
+        "| Same slug reused for different news | Creates a false identity collision. | Derive stable item-specific slugs and UIDs. |",
+        "| Random UID on every run | Re-import can create duplicates. | Derive UID deterministically from source identity. |",
+        "| Same person emitted as First Last and Last First | Name-order duplicates. | Normalize explicit name parts and one display_name. |",
+        "| Missing date replaced with today's date | Fabricated identity and chronology. | Omit date; retain source wording and unknown precision. |",
+        "| Remote asset invented from page URL | Asset retrieval errors or wrong media. | Use the direct media URL only when evidenced. |",
+        "| Hand-edited ZIP after hashing | Integrity verification rejects it. | Rebuild manifest and all hashes deterministically. |",
+        "| Conflicting facts blended together | Silent semantic data loss. | Keep records separate or mark review. |", "",
+        "## Copy/paste task prompt for an agent", "",
+        "Use the following prompt together with this guide and the source material:", "",
+        "```text",
+        "You are preparing data for the MIFP importer. Treat MIFP_LLM_IMPORT_GUIDE.md as a strict contract.",
+        "Read all supplied source material before emitting records. Build an internal evidence inventory first.",
+        "Do not reveal chain-of-thought. Do not invent facts. Do not merge entities on weak similarity.",
+        "For every proposed record, verify type, required fields, stable identity, date precision, provenance URL,",
+        "and separation from every other record. When uncertain, keep records separate and set review_status to review.",
+        "Produce two deliverables:",
+        "1. dataset.jsonl — UTF-8, one compact valid JSON object per line, no fences/comments/prose.",
+        "2. generation-report.md — source inventory, counts by type, omitted/uncertain items, duplicate decisions with",
+        "   evidence, warnings, and validation checklist. Never put this report inside dataset.jsonl.",
+        "Unless explicitly asked for a packaged backup, produce record-only JSONL and do not create state.json,",
+        "manifest hashes, installation ids, or local asset paths.",
+        "```", "",
+        "## Required generation report", "",
+        "The companion report is for human review and is not imported. It must contain:", "",
+        "- input source list and any unreadable/missing material;",
+        "- record counts by type and total;",
+        "- every omitted item with reason;",
+        "- every deduplication/merge decision and the strong identity evidence used;",
+        "- every uncertain date, identity, affiliation, category, or asset;",
+        "- deterministic UID/slug strategy;",
+        "- whether URLs/assets were verified or merely copied from supplied material;",
+        "- JSON parse/schema self-check outcome and a SHA-256 of the final `dataset.jsonl` when code execution is available.", "",
         "## Final checklist", "",
         "- [ ] UTF-8; one JSON object per line; no Markdown/prose in the data file.",
         "- [ ] Supported type, data object, required field, and no unknown keys.",

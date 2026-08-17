@@ -38,7 +38,7 @@ IMPORT_TYPES = {"event", "news", "member", "publication", "research_area", "page
 TABLE_TO_TYPE = {table: typ for typ, table in TYPE_TO_TABLE.items()}
 
 TOP_KEYS = {"type", "data", "links", "assets", "meta"}
-REVIEW_STATUSES = {"draft", "review", "published", "archived", "quarantined", "duplicate"}
+REVIEW_STATUSES = {"draft", "review", "published", "quarantined", "duplicate"}
 LINK_ROLES = {"primary", "website", "source", "doi", "publisher", "registration", "program", "document", "social", "other"}
 ASSET_ROLES = {"cover", "gallery", "attachment", "logo", "document", "profile", "banner"}
 ASSET_KINDS = {"image", "document", "pdf", "video", "other"}

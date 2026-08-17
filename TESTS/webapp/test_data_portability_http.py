@@ -73,7 +73,7 @@ class TestDataPortabilityHTTP:
         return events, download_token, result
 
     def test_llm_import_guide_is_downloadable_and_matches_importer_contract(self, app_with_admin):
-        from mifp_app.services.importers import DATA_FIELDS, REQUIRED_FIELDS
+        from mifp_app.services.importers import DATA_FIELDS, REQUIRED_FIELDS, _validate_record
 
         with app_with_admin.test_client() as client:
             denied = client.get("/dashboard/data-portability/import-guide.md")
@@ -98,12 +98,35 @@ class TestDataPortabilityHTTP:
         assert "Never merge two news items only because" in guide
         assert "Agents should not generate `state.json`" in guide
         assert "Validate only" in guide
+        assert "## Exact ZIP manifest contract" in guide
+        assert "## Self-contained JSONL v2 envelope" in guide
+        assert "## What import actually does" in guide
+        assert "## Per-type decision rules" in guide
+        assert "## Failure modes the agent must prevent" in guide
+        assert "## Copy/paste task prompt for an agent" in guide
+        assert "## Required generation report" in guide
+        assert "dataset.jsonl" in guide
+        assert "generation-report.md" in guide
+        assert len(guide.encode("utf-8")) >= 25_000
         for typ, fields in DATA_FIELDS.items():
             assert f"### `{typ}`" in guide
             for field in fields:
                 assert f"| `{field}` |" in guide
             for required in REQUIRED_FIELDS[typ]:
                 assert f"| `{required}` | yes |" in guide
+        json_examples = [
+            json.loads(block.split("\n```", 1)[0])
+            for block in guide.split("```json\n")[1:]
+        ]
+        record_examples = [item for item in json_examples if item.get("type") in DATA_FIELDS]
+        assert {item["type"] for item in record_examples} == set(DATA_FIELDS)
+        for line_no, record in enumerate(record_examples, start=1):
+            typ, data, links, assets, meta = _validate_record(record, line_no)
+            assert typ == record["type"]
+            assert data
+            assert isinstance(links, list)
+            assert isinstance(assets, list)
+            assert isinstance(meta, dict)
 
     def test_export_jsonl(self, app_with_admin):
         with app_with_admin.test_client() as client:
