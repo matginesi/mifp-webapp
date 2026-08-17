@@ -361,19 +361,6 @@ document.addEventListener('click', function (ev) {
     return;
   }
 
-  var assetEditButton = ev.target.closest('[data-action="toggle-asset-edit"]');
-  if (assetEditButton) {
-    ev.preventDefault();
-    var assetRow = assetEditButton.closest('.expandable-row');
-    if (!assetRow) return;
-    var assetExpanded = !assetRow.classList.contains('expanded');
-    assetRow.classList.toggle('expanded', assetExpanded);
-    assetEditButton.setAttribute('aria-expanded', assetExpanded ? 'true' : 'false');
-    assetEditButton.textContent = assetExpanded ? 'Close edit' : 'Edit';
-    if (assetExpanded) assetRow.querySelector('.asset-row-edit input:not([type="hidden"])')?.focus();
-    return;
-  }
-
   var assetViewButton = ev.target.closest('.asset-view-btn');
   if (assetViewButton) {
     ev.preventDefault();
