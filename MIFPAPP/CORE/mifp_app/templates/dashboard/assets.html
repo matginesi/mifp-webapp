@@ -211,7 +211,7 @@
                 data-preview="{{ asset_url if a.kind == 'image' else '' }}"
                 data-links="{% for link in linked_records.get(a.id, []) %}{{ link.entity_type }} #{{ link.entity_id }} {{ link.role }}: {{ link.label or 'record' }}{% if not loop.last %}||{% endif %}{% endfor %}"
               >View</button>
-              <button class="btn btn-mini btn-outline" type="button" data-row-toggle="asset-{{ a.id }}" aria-expanded="false">Edit</button>
+              <button class="btn btn-mini btn-outline" type="button" data-row-toggle="asset-{{ a.id }}">Edit</button>
               <form method="post" action="{{ url_for('dashboard.assets_page') }}" class="d-inline" data-confirm="Archive and remove asset #{{ a.id }}? A recovery ZIP and database backup will be created first.">
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="action" value="delete">
