@@ -1173,14 +1173,12 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .data-table tbody tr.record-row.is-selected { background: var(--accent-subtle); }
 
 
-.asset-col-id { width: 2.5rem; }
-.asset-col-preview { width: 2.8rem; }
 .asset-col-file { min-width: 10rem; }
 .asset-col-kind,
 .asset-col-size { width: 5rem; }
 .asset-col-used { width: 3.5rem; }
 .asset-col-created { width: 8rem; }
-.asset-detail-cell { padding: 0; }
+.data-table td.asset-col-file { max-width: 26rem; white-space: normal; }
 .asset-file-title {
   color: var(--text-bright);
 }
@@ -1189,32 +1187,6 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   font-size: .625rem;
   vertical-align: middle;
 }
-.asset-used-count {
-  display: inline-flex;
-  width: auto;
-  padding: 0 .4rem;
-  border-radius: var(--radius-full);
-  font-size: .6875rem;
-}
-.asset-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: .6rem;
-  margin-top: .6rem;
-}
-.asset-triage { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .55rem; margin-bottom: .75rem; }
-.asset-triage-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .2rem .55rem; min-width: 0; padding: .7rem; color: var(--text-2); border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-xs); text-decoration: none; transition: border-color .16s ease, transform .16s ease, background .16s ease; }
-.asset-triage-card:hover, .asset-triage-card.is-active { color: var(--text-bright); border-color: color-mix(in srgb, var(--accent) 42%, var(--border-soft)); background: var(--accent-subtle); transform: translateY(-1px); }
-.asset-triage-card.is-danger:hover, .asset-triage-card.is-danger.is-active { border-color: color-mix(in srgb, var(--red) 45%, var(--border-soft)); background: var(--red-bg); }
-.asset-triage-card > i { grid-row: span 2; margin-top: .12rem; color: var(--accent); font-size: 1rem; }
-.asset-triage-card.is-danger > i { color: var(--red); }
-.asset-triage-card span { display: flex; align-items: baseline; gap: .38rem; min-width: 0; }
-.asset-triage-card b { color: var(--text-bright); font-size: 1rem; font-variant-numeric: tabular-nums; }
-.asset-triage-card small { overflow: hidden; font-size: .68rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-.asset-triage-card em { grid-column: 2; overflow: hidden; color: var(--text-3); font-size: .59rem; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 1100px) { .asset-triage { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 700px) { .asset-triage { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 460px) { .asset-triage { grid-template-columns: 1fr; } }
 .asset-scroll-list {
   margin: .55rem 0;
   max-height: 12rem;
@@ -1463,15 +1435,6 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .kv b { color: var(--text-bright); }
 
 /* ── Asset rows ────────────────────────────────────────────── */
-.asset-row-inner { display: grid; gap: .35rem; padding: .35rem; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: #fff; max-width: 100%; overflow: hidden; }
-.asset-row-cells { display: grid; grid-template-columns: 2.5rem 2.8rem minmax(10rem,1fr) 5rem 5rem 3.5rem 8rem 10rem; align-items: center; gap: .25rem; padding: .4rem .5rem; }
-.asset-row-cells > div { min-width: 0; padding: .1rem; }
-.asset-cell-main { padding-inline: .4rem !important; }
-.asset-cell-main b, .asset-cell-main .tiny { overflow-wrap: anywhere; }
-.asset-cell-size, .asset-cell-used, .asset-cell-actions { text-align: right; }
-.asset-cell-size { font-weight: 650; }
-.asset-row-edit { display: none; }
-.expandable-row.expanded .asset-row-edit { display: block; }
 .asset-thumb, .asset-picker-thumb { display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); overflow: hidden; background: var(--surface-3); border: 1px solid var(--border); color: var(--text-3); }
 .asset-thumb { width: 2.2rem; height: 2.2rem; }
 .asset-thumb img, .asset-picker-thumb img { width: 100%; height: 100%; object-fit: cover; }
@@ -1547,6 +1510,9 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .export-dropdown.show .dropdown-menu { display: grid; gap: .15rem; }
 .export-dropdown .dropdown-menu a { display: flex; align-items: center; gap: .4rem; padding: .45rem .5rem; border-radius: var(--radius-sm); color: var(--text); font-size: .8rem; }
 .export-dropdown .dropdown-menu a:hover { color: var(--accent); background: var(--accent-subtle); }
+.export-dropdown .dropdown-menu form { display: contents; }
+.export-dropdown .dropdown-menu button { display: flex; align-items: center; gap: .4rem; width: 100%; padding: .45rem .5rem; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); font-size: .8rem; text-align: left; cursor: pointer; }
+.export-dropdown .dropdown-menu button:hover { color: var(--accent); background: var(--accent-subtle); }
 
 .export-caret {
   margin-left: .2rem;
@@ -1637,9 +1603,6 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
     flex-direction: column;
   }
   .markdown-editor-grid {
-    grid-template-columns: 1fr;
-  }
-  .asset-summary-grid {
     grid-template-columns: 1fr;
   }
   .copy-btn-floating {
@@ -2902,16 +2865,6 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   border: 1px solid #abefc6;
   border-radius: var(--radius-sm);
   font-size: .68rem;
-}
-.asset-row-edit {
-  padding: .5rem;
-  background: var(--surface-2);
-  border-top: 1px solid var(--border-soft);
-}
-.asset-cell-actions [aria-expanded="true"] {
-  color: var(--brand-red);
-  border-color: var(--brand-red);
-  background: var(--accent-subtle);
 }
 .asset-detail-list dd {
   display: flex;
