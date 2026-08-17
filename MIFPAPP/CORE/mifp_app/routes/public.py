@@ -182,7 +182,7 @@ def event_detail(slug: str):
     with connect(db_path) as conn:
         if target := _alias_target(conn, "event", slug):
             return redirect(url_for("public.event_detail", slug=target), code=308)
-        event = get_public_event(conn, slug, lambda filename: url_for("public.media", filename=filename))
+        event = get_public_event(conn, slug, lambda filename: url_for("public.media", filename=filename, _external=True))
         if not event:
             abort(404)
     event["conference_website_url"] = event.get("remote_url")
@@ -235,7 +235,7 @@ def news_detail(slug: str):
     with connect(db_path) as conn:
         if target := _alias_target(conn, "news", slug):
             return redirect(url_for("public.news_detail", slug=target), code=308)
-        article = get_public_news(conn, slug, lambda filename: url_for("public.media", filename=filename))
+        article = get_public_news(conn, slug, lambda filename: url_for("public.media", filename=filename, _external=True))
         if not article:
             abort(404)
     return render_template("public/news_detail.html", article=article)

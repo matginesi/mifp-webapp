@@ -16,7 +16,7 @@
   <meta property="og:description" content="{% block og_description %}Mediterranean Institute of Fundamental Physics{% endblock %}">
   <meta property="og:type" content="website">
   <meta property="og:url" content="{{ request.url }}">
-  <meta property="og:image" content="{{ url_for('static', filename='img/background.png', v=static_version, _external=True) }}">
+  <meta property="og:image" content="{% block og_image %}{{ url_for('static', filename='img/background.png', v=static_version, _external=True) }}{% endblock %}">
   {% endblock %}
 
   {# Self-hosted Inter; headings use a system serif stack. #}

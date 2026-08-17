@@ -4,15 +4,13 @@
 {% block meta_description %}{{ article.summary[:160] if article.summary else article.title }}{% endblock %}
 {% block og_title %}{{ article.title }}{% endblock %}
 {% block og_description %}{{ article.summary[:200] if article.summary else 'MIFP News' }}{% endblock %}
-{% if article.cover_url %}
 {% block og_tags %}
 <meta property="og:title" content="{{ article.title }}">
 <meta property="og:description" content="{{ article.summary[:200] if article.summary else 'MIFP News' }}">
 <meta property="og:type" content="article">
 <meta property="og:url" content="{{ request.url }}">
-<meta property="og:image" content="{{ article.cover_url }}">
+{% if article.cover_url %}<meta property="og:image" content="{{ article.cover_url }}">{% else %}<meta property="og:image" content="{{ url_for('static', filename='img/background.png', v=static_version, _external=True) }}">{% endif %}
 {% endblock %}
-{% endif %}
 
 {% block json_ld %}
 <script type="application/ld+json" nonce="{{ csp_nonce }}">

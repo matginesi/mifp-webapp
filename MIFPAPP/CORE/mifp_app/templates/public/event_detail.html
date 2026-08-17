@@ -4,7 +4,7 @@
 {% block meta_description %}{{ event.description[:160] if event.description else event.title }}{% endblock %}
 {% block og_title %}{{ event.title }}{% endblock %}
 {% block og_description %}{{ event.description[:200] if event.description else 'MIFP Event' }}{% endblock %}
-{% block og_image %}{{ event.cover_url if event.cover_url }}{% endblock %}
+{% block og_image %}{{ event.cover_url or url_for('static', filename='img/background.png', v=static_version, _external=True) }}{% endblock %}
 
 {% block json_ld %}
 <script type="application/ld+json" nonce="{{ csp_nonce }}">
