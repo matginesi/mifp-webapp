@@ -10,13 +10,12 @@
       <li><a href="{{ url_for('public.home') }}">Home</a></li>
       <li aria-current="page">Sponsors</li>
     </ol>
-    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-      <span class="num serif italic" style="color:#d97706;font-size:0.85rem;">—</span>
-      <span class="eyebrow" style="color:#fcd34d;">Partners</span>
+    <div class="eyebrow-row sponsor-page-eyebrow">
+      <span class="eyebrow">Institutional network · Partners</span>
     </div>
     <h1>{{ site_copy.sponsors_title }}</h1>
     <p>{{ site_copy.sponsors_intro }}</p>
-    <div class="accent-bar" style="background: linear-gradient(90deg, #d97706, var(--mifp-red));"></div>
+    <div class="accent-bar"></div>
   </div>
 </section>
 
@@ -24,6 +23,10 @@
   <div class="container-wide">
 
     {% if sponsors %}
+    <div class="partner-registry-head">
+      <span>Institutional partner registry</span>
+      <span>{{ sponsors|length }} active partner{{ '' if sponsors|length == 1 else 's' }}</span>
+    </div>
     <div class="sponsor-grid">
       {% for sponsor in sponsors %}
       <article class="sponsor-card">
@@ -33,6 +36,7 @@
         </a>
         {% endif %}
         <a href="{{ url_for('public.sponsor_detail', slug=sponsor.slug) if sponsor.slug else '#' }}" class="sponsor-card-button js-sponsor-modal" data-sponsor-target="sponsor-modal-{{ sponsor.id }}" aria-label="Open {{ sponsor.name }} sponsor profile">
+          <span class="sponsor-index" aria-hidden="true">{{ '%02d'|format(loop.index) }}</span>
           <div class="sponsor-logo">
             {% if sponsor.logo_url %}
             <img src="{{ sponsor.logo_url }}" alt="{{ sponsor.name }}" loading="lazy">
@@ -47,6 +51,7 @@
           {% if sponsor.tier %}
           <span class="sponsor-tier">{{ sponsor.tier }}</span>
           {% endif %}
+          <span class="sponsor-profile-cue">View partner profile <span aria-hidden="true">→</span></span>
         </a>
       </article>
       {% include "public/_sponsor_modal.html" %}
@@ -63,11 +68,11 @@
 
     {# ── How to sponsor CTA ── #}
     {% if sponsor_how_to %}
-    <div class="cta-card" style="margin-top:48px;">
+    <div class="cta-card sponsor-page-cta">
       <div class="icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7H14a3.5 3.5 0 0 1 0 7H6"/></svg>
       </div>
-      <div style="flex:1;min-width:200px;">
+      <div class="sponsor-page-cta-copy">
         <h3>{{ site_copy.sponsors_cta_title }}</h3>
         <p>
           {% if sponsor_how_to.summary %}
@@ -79,7 +84,7 @@
           {% endif %}
         </p>
       </div>
-      <a href="{{ url_for('public.sponsor_how_to') }}" class="btn btn-amber">
+      <a href="{{ url_for('public.sponsor_how_to') }}" class="btn btn-primary">
         {{ site_copy.sponsors_cta_button }}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
       </a>

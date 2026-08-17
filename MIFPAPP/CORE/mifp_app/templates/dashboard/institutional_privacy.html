@@ -30,7 +30,8 @@
           </div>
           <div class="markdown-editor-grid">
             <div class="markdown-editor-source">
-              <textarea name="body" rows="20" class="form-control form-control-sm"
+              <textarea name="body" rows="20" class="form-control form-control-sm markdown-source-input"
+                        aria-label="Privacy Policy markdown source"
                         placeholder="Write markdown content here…">{{ privacy_body or '' }}</textarea>
             </div>
             <div class="markdown-preview">
@@ -70,7 +71,8 @@
           </div>
           <div class="markdown-editor-grid">
             <div class="markdown-editor-source">
-              <textarea name="cookie_body" rows="20" class="form-control form-control-sm"
+              <textarea name="cookie_body" rows="20" class="form-control form-control-sm markdown-source-input"
+                        aria-label="Cookie Policy markdown source"
                         placeholder="Write markdown content here…">{{ cookie_body or '' }}</textarea>
             </div>
             <div class="markdown-preview">
@@ -112,7 +114,7 @@
         <div class="banner-preview-chrome"><i></i><i></i><i></i><span>mifp.eu</span></div>
         <div class="banner-preview-page">
           <div class="banner-preview-sitebar">
-            <span class="banner-preview-brand"><img src="{{ url_for('static', filename='img/logo-mifp.png') }}" alt=""> MIFP</span>
+            <span class="banner-preview-brand"><img src="{{ url_for('static', filename='img/logo-mifp.png') }}" alt="" width="18" height="18"> MIFP</span>
             <span></span><span></span><span></span>
           </div>
           <div class="banner-preview-copy"></div>

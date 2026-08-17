@@ -41,7 +41,7 @@
   </script>
   {% block json_ld %}{% endblock %}
 </head>
-<body class="public-site">
+<body class="public-site{% block body_class %}{% endblock %}">
   <a class="skip-link" href="#main-content">Skip to main content</a>
 
   {% if site_settings.get('cookie_banner_enabled') == '1' %}

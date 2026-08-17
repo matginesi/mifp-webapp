@@ -8,7 +8,11 @@ from flask import current_app, flash, redirect, render_template, request, send_f
 from werkzeug.security import check_password_hash
 
 from ..db.connection import connect
-from ..services.admin_safety import backup_sqlite_database
+from ..services.admin_safety import (
+    backup_cleanup_inventory,
+    backup_sqlite_database,
+    cleanup_backup_copies,
+)
 from ..services.control_center import (
     asset_health,
     backup_inventory,
@@ -29,7 +33,7 @@ from ..services.operation_maintenance import operation_maintenance
 from ..services.safety_operations import execute_safe_cleanup, safety_operations_preview
 from ..services.site_copy import copy_groups
 from ..utils.logger import audit_log
-from ..utils.security import get_client_ip
+from ..utils.security import get_client_ip, ip_rate_allowed
 from .auth import login_required
 from .dashboard import bp
 
@@ -341,7 +345,103 @@ def control_incidents():
 @login_required
 def control_backups():
     inventory = backup_inventory(Path(current_app.config["DATABASE_PATH"]))
-    return render_template("dashboard/control/backups.html", inventory=inventory, verification=None)
+    cleanup = backup_cleanup_inventory(
+        Path(current_app.config["DATABASE_PATH"]),
+        Path(current_app.config["EXPORT_DIR"]),
+    )
+    return render_template(
+        "dashboard/control/backups.html",
+        inventory=inventory,
+        cleanup=cleanup,
+        verification=None,
+    )
+
+
+@bp.post("/control/backups/cleanup")
+@login_required
+def control_backups_cleanup():
+    targets = set(request.form.getlist("targets"))
+    allowed = {"database", "portability"}
+    if not targets or not targets.issubset(allowed):
+        flash("Select at least one valid backup group to clean.", "error")
+        return redirect(url_for("dashboard.control_backups") + "#cleanup-copies")
+
+    identity = {
+        "username": session.get("admin_username"),
+        "ip": get_client_ip(),
+        "targets": sorted(targets),
+    }
+    password = request.form.get("password", "")
+    expected_hash = str(current_app.config.get("ADMIN_PASSWORD_HASH") or "")
+    if not expected_hash or not password or not check_password_hash(expected_hash, password):
+        within_limit = ip_rate_allowed(
+            "backup_cleanup_password_failure",
+            f"{get_client_ip()}:{session.get('admin_username') or '-'}",
+            limit=5,
+            window_seconds=300,
+        )
+        audit_log(
+            "backup_cleanup.authorization_denied",
+            "backup copy cleanup password verification failed",
+            category="security",
+            outcome="denied",
+            rate_limited=not within_limit,
+            **identity,
+        )
+        message = (
+            "Too many failed attempts. Try again in a few minutes."
+            if not within_limit
+            else "Password verification failed. No backup copy was removed."
+        )
+        flash(message, "error")
+        return redirect(url_for("dashboard.control_backups") + "#cleanup-copies")
+
+    if request.form.get("acknowledge") != "1":
+        flash("Review and acknowledge the cleanup before continuing.", "error")
+        return redirect(url_for("dashboard.control_backups") + "#cleanup-copies")
+    if request.form.get("confirmation", "").strip() != "CLEAN COPIES":
+        flash("Type CLEAN COPIES exactly to authorize cleanup.", "error")
+        return redirect(url_for("dashboard.control_backups") + "#cleanup-copies")
+
+    try:
+        report = cleanup_backup_copies(
+            Path(current_app.config["DATABASE_PATH"]),
+            Path(current_app.config["EXPORT_DIR"]),
+            database="database" in targets,
+            portability="portability" in targets,
+            reserve_bytes=int(current_app.config.get("STORAGE_MIN_FREE_BYTES", 0)),
+        )
+    except Exception:
+        current_app.logger.exception("backup copy cleanup failed targets=%s", sorted(targets))
+        audit_log(
+            "backup_cleanup.failed",
+            "backup copy cleanup failed",
+            category="admin",
+            outcome="failure",
+            **identity,
+        )
+        flash("Cleanup stopped safely. Review the logs before trying again.", "error")
+        return redirect(url_for("dashboard.control_backups") + "#cleanup-copies")
+
+    audit_log(
+        "backup_cleanup.completed",
+        "backup copy cleanup completed",
+        category="admin",
+        outcome="success",
+        database_removed=report["database"]["copies"],
+        portability_removed=report["portability"]["copies"],
+        bytes_removed=report["bytes"],
+        replacement=report["database"]["created"],
+        **identity,
+    )
+    flash(
+        "Backup cleanup completed: "
+        f"{report['database']['copies']} previous database snapshot(s) and "
+        f"{report['portability']['copies']} expired portability copy/copies removed. "
+        "Active downloads and unknown files were preserved.",
+        "success",
+    )
+    return redirect(url_for("dashboard.control_backups"))
 
 
 @bp.get("/control/safety-operations")
@@ -487,9 +587,14 @@ def control_backup_verify():
         flash("Backup verification failed. Check the server log.", "error")
         return redirect(url_for("dashboard.control_backups"))
     inventory = backup_inventory(Path(current_app.config["DATABASE_PATH"]))
+    cleanup = backup_cleanup_inventory(
+        Path(current_app.config["DATABASE_PATH"]),
+        Path(current_app.config["EXPORT_DIR"]),
+    )
     return render_template(
         "dashboard/control/backups.html",
         inventory=inventory,
+        cleanup=cleanup,
         verification=result,
     )
 

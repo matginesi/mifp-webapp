@@ -15,7 +15,7 @@
     <article><span>Thread capacity</span><b>{{ jobs.max_workers }}</b><small>Concurrent jobs</small></article>
     <article><span>Queue capacity</span><b>{{ jobs.max_pending }}</b><small>Running + waiting</small></article>
   </div>
-  <div class="control-list">
+  <div class="control-list" role="region" tabindex="0" aria-label="Recent import activity">
     {% for job in jobs.jobs %}
     <div class="control-list-row">
       <span><b>{{ job.name }}</b><small>{{ job.id[:12] }} · submitted {{ job.submitted_at|int }}</small></span>
@@ -47,7 +47,7 @@
 
 <section class="control-panel">
     <div class="panel-head"><div><h2>Asset recovery</h2><p>Bounded attempts and cooldown state.</p></div><span>{{ activity.recovery|length }}</span></div>
-    <div class="control-list">
+    <div class="control-list" role="region" tabindex="0" aria-label="Recent asset recovery attempts">
       {% for item in activity.recovery %}
       <div class="control-list-row">
         <span><b>{{ item.filename }}</b><small>{{ item.last_error or 'No error recorded' }}</small></span>

@@ -28,7 +28,7 @@
       </a>
       <form method="post" action="{{ url_for('auth.logout') }}" data-no-spinner="1">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-        <button class="topbar-action" type="submit" title="Logout">
+        <button class="topbar-action" type="submit" title="Logout" aria-label="Logout">
           <i class="bi bi-box-arrow-right" aria-hidden="true"></i><span>Logout</span>
         </button>
       </form>
@@ -49,7 +49,7 @@
       <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.content' and current_section == 'sponsors' }}" href="{{ url_for('dashboard.content', section='sponsors') }}" title="Sponsors"><i class="bi bi-building" aria-hidden="true"></i><span>Sponsors</span></a>
       <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.content' and current_section == 'research' }}" href="{{ url_for('dashboard.content', section='research') }}" title="Research areas"><i class="bi bi-lightbulb" aria-hidden="true"></i><span>Research areas</span></a>
       <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.institutional' }}" href="{{ url_for('dashboard.institutional') }}" title="Institutional pages"><i class="bi bi-file-text" aria-hidden="true"></i><span>Institutional</span></a>
-      <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.institutional_privacy' }}" href="{{ url_for('dashboard.institutional_privacy') }}" title="Privacy and Cookies"><i class="bi bi-shield-check" aria-hidden="true"></i><span>Privacy &amp; Cookies</span></a>
+      <a class="sidebar-link {{ 'is-active' if current_endpoint in ['dashboard.institutional_privacy', 'dashboard.institutional_cookie'] }}" href="{{ url_for('dashboard.institutional_privacy') }}" title="Privacy and Cookies"><i class="bi bi-shield-check" aria-hidden="true"></i><span>Privacy &amp; Cookies</span></a>
       <p class="sidebar-label">Operations</p>
       <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.assets_page' }}" href="{{ url_for('dashboard.assets_page') }}" title="Assets"><i class="bi bi-folder" aria-hidden="true"></i><span>Assets</span></a>
       <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.data_portability' }}" href="{{ url_for('dashboard.data_portability') }}" title="Import and export"><i class="bi bi-arrow-down-up" aria-hidden="true"></i><span>Import / Export</span></a>

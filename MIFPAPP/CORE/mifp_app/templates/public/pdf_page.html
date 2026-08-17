@@ -5,6 +5,11 @@
 <meta name="author" content="Matteo Ginesi">
 <title>{{ title }} — MIFP</title>
 <style nonce="{{ csp_nonce }}">
+  :root {
+    --pdf-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+    --pdf-sans: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --pdf-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  }
   @page {
     size: A4;
     margin: 2.2cm 2.8cm 2.5cm;
@@ -17,7 +22,7 @@
   }
   * { box-sizing: border-box; }
   body {
-    font-family: Georgia, "Times New Roman", Times, serif;
+    font-family: var(--pdf-serif);
     font-size: 10.5pt;
     line-height: 1.65;
     color: #1f2937;
@@ -31,36 +36,36 @@
     margin-bottom: 20pt;
   }
   .pdf-header .institute {
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-    font-size: 13pt;
-    font-weight: 800;
+    font-family: var(--pdf-serif);
+    font-size: 15pt;
+    font-weight: 700;
     color: #b42318;
     letter-spacing: 1.5px;
     margin: 0;
   }
   .pdf-header .subtitle {
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-family: var(--pdf-sans);
     font-size: 6.5pt;
     color: #9ca3af;
     letter-spacing: 1px;
     margin: 1pt 0 0 0;
   }
   .pdf-header .doc-title {
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-    font-size: 16pt;
-    font-weight: 700;
+    font-family: var(--pdf-serif);
+    font-size: 18pt;
+    font-weight: 600;
     color: #0a0e1a;
     margin: 8pt 0 0 0;
   }
   .pdf-header .doc-meta {
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-family: var(--pdf-sans);
     font-size: 7pt;
     color: #9ca3af;
     margin: 4pt 0 0 0;
   }
   /* ── Content ── */
   .pdf-content h1 {
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-family: var(--pdf-serif);
     font-size: 16pt;
     font-weight: 700;
     color: #0a0e1a;
@@ -69,14 +74,14 @@
     border-bottom: 1pt solid #e5e7eb;
   }
   .pdf-content h2 {
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-family: var(--pdf-serif);
     font-size: 13pt;
     font-weight: 700;
     color: #0a0e1a;
     margin: 16pt 0 8pt 0;
   }
   .pdf-content h3 {
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-family: var(--pdf-serif);
     font-size: 11pt;
     font-weight: 700;
     color: #0a0e1a;
@@ -93,6 +98,7 @@
     border-collapse: collapse;
     margin: 12pt 0;
     font-size: 9.5pt;
+    font-family: var(--pdf-sans);
   }
   .pdf-content th, .pdf-content td {
     border: 1pt solid #d1d5db;
@@ -127,12 +133,13 @@
     margin: 16pt 0;
   }
   .pdf-content strong { color: #0a0e1a; }
+  .pdf-content code, .pdf-content pre { font-family: var(--pdf-mono); }
   /* ── Footer ── */
   .pdf-footer {
     margin-top: 30pt;
     padding-top: 8pt;
     border-top: 1pt solid #e5e7eb;
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-family: var(--pdf-sans);
     font-size: 6.5pt;
     color: #9ca3af;
     text-align: center;

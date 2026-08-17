@@ -1,9 +1,13 @@
+:root {
+  --conference-body: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  --conference-display: "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", serif;
+}
 * { box-sizing: border-box; }
 body {
   margin: 0;
   background: #0b1019;
   color: #f4f5f7;
-  font: 16px/1.6 Arial, sans-serif;
+  font: 16px/1.6 var(--conference-body);
 }
 body[data-theme="light"] { background: #f4f5f7; color: #181b20; }
 body[data-theme="light"] header,
@@ -17,15 +21,16 @@ header {
   border-bottom: 1px solid #293241;
 }
 a { color: inherit; }
-.brand { font-size: 1.35rem; font-weight: 800; text-decoration: none; }
+.brand { font-family: var(--conference-display); font-size: 1.35rem; font-weight: 700; text-decoration: none; }
 nav { display: flex; gap: 20px; }
 nav a { color: #aeb7c4; text-decoration: none; }
 nav a.active { color: #fff; border-bottom: 2px solid #b92b22; }
 main { max-width: 1080px; margin: auto; padding: clamp(40px, 8vw, 90px) 24px; }
 h1 {
   max-width: 16ch;
-  font: 700 clamp(2.4rem, 7vw, 5rem)/1.05 Georgia, serif;
+  font: 600 clamp(2.4rem, 7vw, 5rem)/1.05 var(--conference-display);
 }
+h2, h3 { font-family: var(--conference-display); font-weight: 600; line-height: 1.2; }
 .lead { max-width: 760px; color: #cbd0d8; font-size: 1.15rem; }
 .hero-logo { display: block; max-width: min(320px, 70vw); max-height: 180px; margin-bottom: 2rem; object-fit: contain; }
 .people {

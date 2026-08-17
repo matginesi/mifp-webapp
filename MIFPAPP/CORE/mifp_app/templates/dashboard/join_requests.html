@@ -24,7 +24,7 @@
 <section class="modern-card join-filter-card">
   <form method="get" class="toolbar join-inbox-toolbar">
     <label class="toolbar-search"><span class="visually-hidden">Search applications</span><i class="bi bi-search"></i><input class="form-control form-control-sm" type="search" name="q" value="{{ q }}" placeholder="Search name, email, affiliation or field"></label>
-    <select class="form-select" name="status">
+    <select class="form-select" name="status" aria-label="Application status">
       <option value="">All statuses</option>
       {% for st in ['pending','in_review','approved','rejected','archived'] %}
       <option value="{{ st }}" {% if current_status == st %}selected{% endif %}>{{ st.replace('_',' ') }}</option>
@@ -107,9 +107,9 @@
   {% endfor %}
 </section>
 <nav class="pagination-nav">
-  <a class="btn btn-outline btn-sm {{ 'disabled' if pagination.page <= 1 }}" href="{{ url_for('dashboard.join_requests', page=pagination.page-1, status=current_status, q=q) if pagination.page > 1 else '#' }}"><i class="bi bi-chevron-left"></i></a>
+  <a class="btn btn-outline btn-sm {{ 'disabled' if pagination.page <= 1 }}" href="{{ url_for('dashboard.join_requests', page=pagination.page-1, status=current_status, q=q) if pagination.page > 1 else '#' }}" aria-label="Previous page"><i class="bi bi-chevron-left" aria-hidden="true"></i></a>
   <span>Page {{ pagination.page }} of {{ pagination.total_pages }} ({{ pagination.total_filtered }} total)</span>
-  <a class="btn btn-outline btn-sm {{ 'disabled' if pagination.page >= pagination.total_pages }}" href="{{ url_for('dashboard.join_requests', page=pagination.page+1, status=current_status, q=q) if pagination.page < pagination.total_pages else '#' }}"><i class="bi bi-chevron-right"></i></a>
+  <a class="btn btn-outline btn-sm {{ 'disabled' if pagination.page >= pagination.total_pages }}" href="{{ url_for('dashboard.join_requests', page=pagination.page+1, status=current_status, q=q) if pagination.page < pagination.total_pages else '#' }}" aria-label="Next page"><i class="bi bi-chevron-right" aria-hidden="true"></i></a>
 </nav>
 {% endif %}
 

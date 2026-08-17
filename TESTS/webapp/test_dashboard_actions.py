@@ -1561,6 +1561,7 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.institutional_privacy_force_banner",
     "dashboard.control_site_maintenance",
     "dashboard.control_site_force_clear_maintenance",
+    "dashboard.control_backups_cleanup",
     "dashboard.control_safety_operations_run",
 }
 

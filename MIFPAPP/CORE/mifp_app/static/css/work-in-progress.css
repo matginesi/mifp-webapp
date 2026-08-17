@@ -6,6 +6,8 @@
   --line: #d9e0e9;
   --red: #a72b31;
   --blue: #315f9b;
+  --wip-body: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  --wip-display: "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", serif;
 }
 * { box-sizing: border-box; }
 body {
@@ -17,13 +19,14 @@ body {
     linear-gradient(90deg, rgba(49,95,155,.045) 1px, transparent 1px),
     var(--paper);
   background-size: 32px 32px;
-  font-family: Inter, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--wip-body);
 }
 .wip-shell { display: grid; min-height: 100vh; grid-template-columns: minmax(0, 1.25fr) minmax(22rem, .75fr); }
 .wip-stage { position: relative; display: flex; justify-content: center; flex-direction: column; overflow: hidden; padding: clamp(2rem, 7vw, 7rem); border-right: 1px solid var(--line); }
 .wip-logo { width: clamp(7rem, 11vw, 10rem); height: auto; margin: 0 0 1.7rem; object-fit: contain; object-position: left center; }
 .wip-mark, .wip-index { margin: 0 0 1.4rem; color: var(--blue); font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-.wip-stage h1 { max-width: 12ch; margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp(3.4rem, 8vw, 7.8rem); font-weight: 400; letter-spacing: -.055em; line-height: .88; }
+.wip-stage h1 { max-width: 12ch; margin: 0; font-family: var(--wip-display); font-size: clamp(3.4rem, 8vw, 7.8rem); font-weight: 400; letter-spacing: -.055em; line-height: .88; }
+.wip-access h2 { font-family: var(--wip-display); font-weight: 600; }
 .wip-copy { max-width: 34rem; margin: 2rem 0; color: var(--muted); font-size: clamp(1rem, 1.5vw, 1.25rem); line-height: 1.65; }
 .wip-status { display: flex; align-items: center; gap: .55rem; font-size: .72rem; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; }
 .wip-status span { width: .6rem; height: .6rem; background: var(--red); border-radius: 50%; box-shadow: 0 0 0 .35rem rgba(167,43,49,.1); animation: pulse 2s ease-in-out infinite; }

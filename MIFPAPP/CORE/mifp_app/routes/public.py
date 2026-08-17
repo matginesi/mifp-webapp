@@ -321,11 +321,26 @@ def research():
                 "SELECT COALESCE(country,'Unknown') AS country, COUNT(*) AS total FROM members WHERE is_active=1 GROUP BY country ORDER BY total DESC LIMIT 10"
             ).fetchall()
         ]
+        member_profile = conn.execute(
+            """
+            SELECT COUNT(*) AS active_members,
+                   COUNT(DISTINCT NULLIF(TRIM(country), '')) AS represented_countries
+            FROM members
+            WHERE is_active=1
+            """
+        ).fetchone()
+        research_stats = {
+            "areas": len(areas),
+            "publications": sum(int(row["total"]) for row in pub_by_year),
+            "active_members": int(member_profile["active_members"] or 0),
+            "countries": int(member_profile["represented_countries"] or 0),
+        }
     return render_template(
         "public/research.html",
         research_areas=areas,
         pub_by_year=pub_by_year,
         members_by_country=members_by_country,
+        research_stats=research_stats,
     )
 
 

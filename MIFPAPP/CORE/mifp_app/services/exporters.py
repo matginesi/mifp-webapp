@@ -228,6 +228,11 @@ def rows_to_docx(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
     from docx.shared import Cm, Pt, RGBColor
 
     doc = Document()
+    export_display = "Georgia"
+    export_body = "Arial"
+    normal_style = doc.styles["Normal"]
+    normal_style.font.name = export_body
+    normal_style._element.rPr.rFonts.set(qn("w:eastAsia"), export_body)
 
     # ── Page setup ──
     for section in doc.sections:
@@ -242,13 +247,16 @@ def rows_to_docx(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
     mifp_run = title_para.add_run("MIFP")
     mifp_run.font.size = Pt(18)
     mifp_run.font.bold = True
+    mifp_run.font.name = export_display
     mifp_run.font.color.rgb = RGBColor(0xB4, 0x23, 0x18)
     sep_run = title_para.add_run("  ·  ")
     sep_run.font.size = Pt(14)
+    sep_run.font.name = export_body
     sep_run.font.color.rgb = RGBColor(0x6B, 0x72, 0x80)
     title_run = title_para.add_run(title)
     title_run.font.size = Pt(16)
     title_run.font.bold = True
+    title_run.font.name = export_display
     title_run.font.color.rgb = RGBColor(0x0A, 0x0E, 0x1A)
 
     # ── Subtitle ──
@@ -256,6 +264,7 @@ def rows_to_docx(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
     sub_para.space_after = Pt(8)  # type: ignore[attr-defined]
     sub_run = sub_para.add_run(f"Exported: {datetime.now():%Y-%m-%d %H:%M}  ·  {len(rows)} records")
     sub_run.font.size = Pt(9)
+    sub_run.font.name = export_body
     sub_run.font.color.rgb = RGBColor(0x6B, 0x72, 0x80)
     sub_run.font.italic = True
 
@@ -276,6 +285,7 @@ def rows_to_docx(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
 
     if not rows:
         empty_para = doc.add_paragraph("No data to export.")
+        empty_para.runs[0].font.name = export_body
         empty_para.runs[0].font.color.rgb = RGBColor(0x6B, 0x72, 0x80)
         empty_para.runs[0].font.italic = True
     else:
@@ -293,7 +303,7 @@ def rows_to_docx(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
             run.font.bold = True
             run.font.size = Pt(8)
             run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-            run.font.name = "Inter"
+            run.font.name = export_body
             # Red background
             shading = OxmlElement("w:shd")
             shading.set(qn("w:fill"), _MIFP_RED)
@@ -309,7 +319,7 @@ def rows_to_docx(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
                 p = cell.paragraphs[0]
                 run = p.add_run(val[:300])
                 run.font.size = Pt(7.5)
-                run.font.name = "Inter"
+                run.font.name = export_body
                 run.font.color.rgb = RGBColor(0x1F, 0x29, 0x37)
                 # Alternating row shading
                 if row_idx % 2 == 1:
@@ -384,33 +394,38 @@ def rows_to_pdf(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
     )
 
     styles = getSampleStyleSheet()
+    pdf_display = "Times-Bold"
+    pdf_body = "Helvetica"
+    pdf_body_bold = "Helvetica-Bold"
+    pdf_body_italic = "Helvetica-Oblique"
 
     # ── Custom styles ──
     title_style = ParagraphStyle(
         "MifpTitle", parent=styles["Heading1"],
         fontSize=18, spaceAfter=2, spaceBefore=0,
         textColor=colors.HexColor(f"#{_MIFP_RED}"),
-        fontName="Helvetica-Bold",
+        fontName=pdf_display,
     )
     h2_style = ParagraphStyle(
         "MifpH2", parent=styles["Heading2"],
         fontSize=12, spaceAfter=2,
         textColor=colors.HexColor(f"#{_MIFP_NAVY}"),
+        fontName=pdf_display,
     )
     subtitle_style = ParagraphStyle(
         "MifpSubtitle", parent=styles["Normal"],
         fontSize=8.5, textColor=colors.HexColor(f"#{_MIFP_GRAY_500}"),
-        spaceAfter=6, fontName="Helvetica-Oblique",
+        spaceAfter=6, fontName=pdf_body_italic,
     )
     header_style = ParagraphStyle(
         "MifpHeader", parent=styles["Normal"],
         fontSize=7, textColor=colors.white,
-        fontName="Helvetica-Bold",
+        fontName=pdf_body_bold,
     )
     cell_style = ParagraphStyle(
         "MifpCell", parent=styles["Normal"],
         fontSize=7, textColor=colors.HexColor("#1F2937"),
-        fontName="Helvetica",
+        fontName=pdf_body,
     )
 
     elements = []
@@ -488,14 +503,14 @@ def rows_to_pdf(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
                 # Header
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(f"#{_MIFP_RED}")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 0), (-1, 0), pdf_body_bold),
                 ("FONTSIZE", (0, 0), (-1, 0), 7),
                 ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
                 ("TOPPADDING", (0, 0), (-1, 0), 6),
                 ("LEFTPADDING", (0, 0), (-1, -1), 5),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 5),
                 # Data
-                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                ("FONTNAME", (0, 1), (-1, -1), pdf_body),
                 ("FONTSIZE", (0, 1), (-1, -1), 7),
                 ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
                 ("TOPPADDING", (0, 1), (-1, -1), 4),
@@ -522,7 +537,7 @@ def rows_to_pdf(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
         canvas.setLineWidth(0.5)
         canvas.line(1.8 * cm, 1.3 * cm, pw - 1.8 * cm, 1.3 * cm)
         # Footer text
-        canvas.setFont("Helvetica", 7)
+        canvas.setFont(pdf_body, 7)
         canvas.setFillColor(colors.HexColor(f"#{_MIFP_GRAY_500}"))
         canvas.drawString(1.8 * cm, 0.8 * cm, f"MIFP · {title}")
         canvas.drawRightString(pw - 1.8 * cm, 0.8 * cm, f"Page {page_num}")

@@ -28,5 +28,71 @@
     </table>
   </div>
 </section>
+
+<section class="control-panel">
+  <div class="panel-head">
+    <div><h2>Portability recovery copies</h2><p>Download-ready copies expire after five minutes; in-progress downloads receive a longer safety window.</p></div>
+    <span>{{ cleanup.portability.total }}</span>
+  </div>
+  <div class="control-table-wrap">
+    <table class="control-table">
+      <thead><tr><th>Package</th><th>Last activity</th><th>Size</th><th>Status</th></tr></thead>
+      <tbody>{% for item in cleanup.portability['items'] %}
+      <tr>
+        <td><b>{{ item.name }}</b><span class="table-subline">{{ item.files }} private cache file(s)</span></td>
+        <td>{{ item.modified_at }}</td>
+        <td>{{ (item.size / 1024 / 1024)|round(2) }} MB</td>
+        <td>
+          {% if item.status == 'expired' %}<span class="status-badge status-warning">Expired · removable</span>
+          {% elif item.status == 'downloading' %}<span class="status-badge status-info">Download in progress</span>
+          {% elif item.status == 'building' %}<span class="status-badge status-info">Export in progress</span>
+          {% else %}<span class="status-badge status-success">Ready · protected</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}<tr><td colspan="4"><div class="empty">No portability recovery copy is retained on the server.</div></td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+
+<section class="control-panel" id="cleanup-copies">
+  <div class="panel-head">
+    <div><h2>Clean retained copies</h2><p>Remove only app-owned files after a fresh password check.</p></div>
+    <span><i class="bi bi-shield-lock" aria-hidden="true"></i></span>
+  </div>
+  <form class="safety-panel" method="post" action="{{ url_for('dashboard.control_backups_cleanup') }}">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <div class="safety-review">
+      <div class="safety-review-title is-warning"><i class="bi bi-archive"></i><div><b>Exact cleanup plan</b><small>Choose either group or both. Other files and active downloads are outside the plan.</small></div></div>
+      <ul>
+        <li>
+          <label class="form-check"><input type="checkbox" name="targets" value="database"><span>Database snapshots</span></label>
+          <b>{{ cleanup.database.removable }} replaced · {{ (cleanup.database.removable_bytes / 1024 / 1024)|round(2) }} MB</b>
+        </li>
+        <li>
+          <label class="form-check"><input type="checkbox" name="targets" value="portability"><span>Expired portability copies</span></label>
+          <b>{{ cleanup.portability.removable }} expired · {{ (cleanup.portability.removable_bytes / 1024 / 1024)|round(2) }} MB</b>
+        </li>
+      </ul>
+    </div>
+    <div class="control-note"><i class="bi bi-database-check"></i><div><b>The database is never left without a recovery point</b><span>If database cleanup is selected, a new integrity-checked snapshot is created first. Only after it succeeds are earlier automatic snapshots removed.</span></div></div>
+    <div class="safety-auth-grid">
+      <label class="field">
+        <span>Administrator password</span>
+        <input class="form-control" type="password" name="password" autocomplete="current-password" required>
+        <small>Checked against the configured administrator hash; never stored or logged.</small>
+      </label>
+      <label class="safety-ack">
+        <input type="checkbox" name="acknowledge" value="1" required>
+        <span><b>I reviewed the cleanup plan</b><small>I understand that removed server copies cannot be recovered.</small></span>
+      </label>
+      <label class="field safety-cleanup-confirm">
+        <span>Type <code>CLEAN COPIES</code></span>
+        <input class="form-control" type="text" name="confirmation" autocomplete="off" required>
+        <small>The phrase must match exactly.</small>
+      </label>
+    </div>
+    <div class="safety-actions"><span></span><button class="btn btn-danger" type="submit"><i class="bi bi-trash3"></i> Clean selected copies</button></div>
+  </form>
+</section>
 <div class="control-note"><i class="bi bi-shield-lock"></i><div><b>Restore is intentionally unavailable</b><span>Restoring a production database remains a manual server operation with application writes stopped and an independent copy of current data.</span></div></div>
 {% endblock %}

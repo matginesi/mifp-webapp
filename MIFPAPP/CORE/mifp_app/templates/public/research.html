@@ -1,77 +1,107 @@
 {% extends "public/base.html" %}
+{% block body_class %} institutional-page{% endblock %}
 
 {% block title %}Research — MIFP{% endblock %}
 {% block meta_description %}Research activities at the Mediterranean Institute of Fundamental Physics.{% endblock %}
 
 {% block content %}
-<section class="page-hero">
+<section class="page-hero research-page-hero">
   <div class="container-wide">
     <ol class="mifp-breadcrumb">
       <li><a href="{{ url_for('public.home') }}">Home</a></li>
       <li aria-current="page">Research</li>
     </ol>
-    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-      <span class="num serif italic" style="color:var(--mifp-red-hover);font-size:0.85rem;">—</span>
-      <span class="eyebrow eyebrow-red">Research</span>
-    </div>
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap;">
-      <div style="flex:1;min-width:0;">
+    {% include "public/_institutional_nav.html" %}
+    <div class="research-hero-layout">
+      <div class="research-hero-copy">
+        <div class="eyebrow-row institutional-eyebrow">
+          <span class="num serif italic">—</span>
+          <span class="eyebrow eyebrow-red">Research programme</span>
+        </div>
         <h1>{{ site_copy.research_title }}</h1>
         <p>{{ site_copy.research_intro }}</p>
-      </div>
-      <div class="no-pdf">
-        <a href="{{ url_for('public.pdf_research') }}" target="_blank" rel="noopener noreferrer" class="pdf-button">
+        <div class="research-hero-actions no-pdf">
+          <a href="#research-directory" class="research-primary-link">
+            Explore research areas
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+          <a href="{{ url_for('public.pdf_research') }}" target="_blank" rel="noopener noreferrer" class="pdf-button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-          {{ site_copy.research_pdf }}
-        </a>
+            {{ site_copy.research_pdf }}
+          </a>
+        </div>
       </div>
-    </div>
+      <aside class="research-profile" aria-label="Institute research profile">
+        <span class="research-profile-label">Current research profile</span>
+        <dl>
+          <div><dt>Published areas</dt><dd>{{ research_stats.areas }}</dd></div>
+          <div><dt>Research outputs</dt><dd>{{ research_stats.publications }}</dd></div>
+          <div><dt>Active members</dt><dd>{{ research_stats.active_members }}</dd></div>
+          <div><dt>Countries represented</dt><dd>{{ research_stats.countries }}</dd></div>
+        </dl>
+        <p>Figures reflect the institute's current published archive.</p>
+      </aside>
+      </div>
     <div class="accent-bar"></div>
   </div>
 </section>
 
-<section class="section-sm">
+<section class="section-sm research-page-section" id="research-directory">
   <div class="container-wide">
-
+    <header class="research-section-head">
+      <div>
+        <span class="research-section-kicker">Research directory</span>
+        <h2>Fields of inquiry</h2>
+      </div>
+      <p>Browse the scientific themes represented across the MIFP network. Each file brings together its scope, supporting material and external resources.</p>
+    </header>
     <article id="institutional-pdf-content">
       {% if research_areas %}
-      <div class="research-grid">
+      <ol class="research-grid" aria-label="Published research areas">
         {% for area in research_areas %}
-        {% set idx = loop.index0 %}
-        {% set accent = '#b42318' if idx % 2 == 0 else '#175cd3' %}
-        <div class="research-card">
+        <li class="research-card">
+          <div class="research-card-index" aria-hidden="true">R&thinsp;{% if loop.index < 10 %}0{% endif %}{{ loop.index }}</div>
           {% if area.cover_url %}
-          <div class="research-cover">
-            <img src="{{ area.cover_url }}" alt="{{ area.title }}" loading="lazy">
-          </div>
+          <figure class="research-cover">
+            <img src="{{ area.cover_url }}" alt="" loading="lazy">
+          </figure>
           {% else %}
-          <div class="research-cover">
+          <div class="research-cover" aria-hidden="true">
             <div class="research-cover-fallback">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              <span></span><span></span><span></span>
             </div>
           </div>
           {% endif %}
           <div class="research-body">
-            <div class="research-num" style="color: {{ accent }};">{% if idx < 9 %}0{% endif %}{{ idx + 1 }} / Research area</div>
+            <span class="research-record-type">Research area</span>
             <h3>{{ area.title }}</h3>
             {% if area.summary %}
-            <p class="summary">{{ area.summary[:140] }}{% if area.summary|length > 140 %}…{% endif %}</p>
+            <div class="research-summary">{{ area.summary|safe }}</div>
+            {% elif area.description %}
+            <div class="research-summary">{{ area.description|safe }}</div>
             {% endif %}
-            {% if area.description and area.description != area.summary %}
-            <div class="description line-clamp-3">{{ area.description|safe }}</div>
+            {% if area.summary and area.description and area.description != area.summary %}
+            <details class="research-overview">
+              <summary>Read full overview</summary>
+              <div>{{ area.description|safe }}</div>
+            </details>
             {% endif %}
-            {% if area.document_url or area.external_links %}
-            <a href="{{ area.document_url or area.external_links[0].url }}"
-               class="doc-link"
-               {% if area.document_url %}download{% else %}target="_blank" rel="noopener noreferrer"{% endif %}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              {{ "Download PDF" if area.document_url else (area.external_links[0].label or "Open link") }}
-            </a>
-            {% endif %}
+            <div class="research-card-footer">
+              {% if area.document_url or area.external_links %}
+              <a href="{{ area.document_url or area.external_links[0].url }}"
+                 class="doc-link"
+                 {% if area.document_url %}download{% else %}target="_blank" rel="noopener noreferrer"{% endif %}>
+                {{ "Download research file" if area.document_url else (area.external_links[0].label or "Open research source") }}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+              </a>
+              {% else %}
+              <span>Institute research archive</span>
+              {% endif %}
+            </div>
           </div>
-        </div>
+        </li>
         {% endfor %}
-      </div>
+      </ol>
       {% else %}
       <div class="empty-state">
         <div class="empty-state-icon">
@@ -82,37 +112,35 @@
       {% endif %}
     </article>
 
-    {# ── Charts section ── #}
     {% if pub_by_year or members_by_country %}
-    <div class="no-pdf" style="margin-top: 64px;">
-      <div class="section-head" style="margin-bottom: 32px;">
-        <div class="section-head-left">
-          <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-            <span class="num serif italic" style="color:var(--mifp-blue-soft);font-size:0.85rem;">—</span>
-            <span class="eyebrow eyebrow-blue">Data &amp; Insights</span>
-          </div>
-          <h2>Institute at a Glance</h2>
+    <section class="research-evidence no-pdf" aria-labelledby="research-evidence-title">
+      <header class="research-section-head">
+        <div>
+          <span class="research-section-kicker research-section-kicker-blue">Research evidence</span>
+          <h2 id="research-evidence-title">The network in context</h2>
         </div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:24px;">
+        <p>Published outputs over time and the geographic distribution of active members provide a concise view of the institute's reach.</p>
+      </header>
+      <div class="research-chart-grid">
         {% if pub_by_year %}
-        <div class="detail-info-card" style="padding:20px;">
-          <h3 style="font-size:1rem;margin-bottom:14px;">Publications by Year</h3>
+        <article class="research-chart-card">
+          <header><span>Output record</span><h3>Publications by year</h3></header>
           <div class="chart-container">
-            <canvas id="pubByYearChart"></canvas>
+            <canvas id="pubByYearChart" aria-label="Bar chart of publications by year" role="img"></canvas>
           </div>
-        </div>
+        </article>
         {% endif %}
         {% if members_by_country %}
-        <div class="detail-info-card" style="padding:20px;">
-          <h3 style="font-size:1rem;margin-bottom:14px;">Members by Country (Top 10)</h3>
+        <article class="research-chart-card">
+          <header><span>Network reach</span><h3>Members by country</h3></header>
           <div class="chart-container">
-            <canvas id="membersByCountryChart"></canvas>
+            <canvas id="membersByCountryChart" aria-label="Bar chart of active members in the ten most represented countries" role="img"></canvas>
           </div>
-        </div>
+          <p class="research-chart-note">Ten most represented countries</p>
+        </article>
         {% endif %}
       </div>
-    </div>
+    </section>
     {% endif %}
 
   </div>

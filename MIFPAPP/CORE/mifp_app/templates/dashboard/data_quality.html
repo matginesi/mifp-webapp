@@ -2,7 +2,7 @@
 {% from "dashboard/_components.html" import page_header %}
 {% block page_title %}Data quality{% endblock %}
 {% block content %}
-{% call page_header('Data quality', 'Database cleanup', 'Scan, review, and consolidate records. The system never deletes — it quarantines and merges.') %}
+{% call page_header('Operations', 'Data quality', 'Scan, review, and consolidate records. Nothing changes until a reviewed plan is applied.') %}
   <a class="btn btn-outline btn-sm" href="#dqQuarantine"><i class="bi bi-shield-lock"></i> Quarantine <span>{{ quarantined|length }}</span></a>
   <button type="button" class="btn btn-primary btn-sm" id="dqAnalyze"><i class="bi bi-stars"></i> Scan database</button>
 {% endcall %}
@@ -165,7 +165,7 @@
         <code>{{ bundle.report.backup_path }}</code>
       </div>
       {% else %}
-      <p class="text-3" style="font-size:.7rem">No previous consolidations.</p>
+      <p class="dq-history-empty">No previous consolidations.</p>
       {% endif %}
     </div>
     {% else %}

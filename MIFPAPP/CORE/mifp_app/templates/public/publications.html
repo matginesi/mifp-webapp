@@ -1,4 +1,5 @@
 {% extends "public/base.html" %}
+{% block body_class %} institutional-page{% endblock %}
 
 {% block title %}Publications — MIFP{% endblock %}
 {% block meta_description %}Scientific publications from the Mediterranean Institute of Fundamental Physics.{% endblock %}
@@ -10,13 +11,14 @@
       <li><a href="{{ url_for('public.home') }}">Home</a></li>
       <li aria-current="page">Publications</li>
     </ol>
-    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-      <span class="num serif italic" style="color:var(--mifp-blue-soft);font-size:0.85rem;">—</span>
+    {% include "public/_institutional_nav.html" %}
+    <div class="eyebrow-row institutional-eyebrow is-blue">
+      <span class="num serif italic">—</span>
       <span class="eyebrow eyebrow-blue">Publications</span>
     </div>
     <h1>{{ site_copy.publications_title }}</h1>
     <p>{{ site_copy.publications_intro }}</p>
-    <div class="accent-bar" style="background: linear-gradient(90deg, var(--mifp-blue), var(--mifp-red));"></div>
+    <div class="accent-bar"></div>
   </div>
 </section>
 

@@ -9,7 +9,7 @@
 
 <section class="control-panel">
   <div class="panel-head"><div><h2>Grouped incidents</h2><p>Volatile IDs and numbers are removed only from the grouping signature; original samples remain unchanged.</p></div><span>{{ groups.incidents|length }}</span></div>
-  <div class="control-list">
+  <div class="control-list" role="region" tabindex="0" aria-label="Incident groups">
     {% for item in groups.incidents %}
     <div class="incident-row">
       <span class="status-chip status-{{ 'danger' if item.highest_level in ['ERROR','CRITICAL'] else 'warning' }}">{{ item.highest_level }}</span>
@@ -22,7 +22,7 @@
 
 <section class="control-panel">
   <div class="panel-head"><div><h2>Recent administrative audit</h2><p>Actor, operation and outcome from the dedicated audit stream.</p></div><span>{{ groups.audit|length }}</span></div>
-  <div class="control-list">
+  <div class="control-list" role="region" tabindex="0" aria-label="Recent administrative audit events">
     {% for item in groups.audit %}
     <div class="control-list-row"><span><b>{{ item.message or item.event or 'Administrative action' }}</b><small>{{ item.when or '—' }} · {{ item.user or 'unknown user' }}{% if item.path %} · {{ item.path }}{% endif %}</small></span><span class="status-chip status-info">{{ item.method or 'AUDIT' }}</span></div>
     {% else %}<div class="empty">No audit events in the current log window.</div>{% endfor %}

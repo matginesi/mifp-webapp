@@ -101,11 +101,11 @@
         </label>
         <label>
           <span>Alt text</span>
-          <input type="text" name="alt_text" maxlength="500" class="form-control form-control-sm" placeholder="Describe the image or document">
+          <input type="text" name="alt_text" maxlength="500" class="form-control form-control-sm" placeholder="Describe the image or document…" autocomplete="off">
         </label>
         <label>
           <span>Caption</span>
-          <input type="text" name="caption" maxlength="500" class="form-control form-control-sm" placeholder="Optional public caption">
+          <input type="text" name="caption" maxlength="500" class="form-control form-control-sm" placeholder="Optional public caption…" autocomplete="off">
         </label>
       </div>
         </form>
@@ -115,7 +115,7 @@
       <div class="upload-grid">
         <label class="upload-file-wrap">
           <span>External URL</span>
-          <input type="url" name="source_url" required maxlength="2048" class="form-control form-control-sm" placeholder="https://example.org/file.pdf">
+          <input type="url" name="source_url" required maxlength="2048" class="form-control form-control-sm" placeholder="https://example.org/file.pdf…" autocomplete="off" spellcheck="false">
         </label>
         <label>
           <span>Kind</span>
@@ -145,8 +145,8 @@
 </div>
 
 <form class="toolbar asset-library-toolbar" method="get" aria-label="Filter asset library">
-  <div class="toolbar-search"><i class="bi bi-search"></i><input class="form-control form-control-sm" name="q" value="{{ q or '' }}" placeholder="Search by filename or caption"></div>
-  <select name="kind" class="form-select form-select-sm slim">
+  <label class="toolbar-search"><span class="visually-hidden">Search asset library</span><i class="bi bi-search" aria-hidden="true"></i><input class="form-control form-control-sm" type="search" name="q" value="{{ q or '' }}" placeholder="Search by filename or caption…" autocomplete="off"></label>
+  <select name="kind" class="form-select form-select-sm slim" aria-label="Asset kind">
     <option value="">All kinds</option>
     {% for k in ['image','pdf','document','video','other'] %}<option value="{{ k }}" {{ 'selected' if kind == k }}>{{ k }}</option>{% endfor %}
   </select>
@@ -191,9 +191,9 @@
                   {% if a.kind == 'image' and a.path %}
                   {% set img_url = url_for('dashboard.asset_file', filename=a.path.split('/', 1)[1] if '/' in a.path else a.path) %}
                   <div class="asset-thumb"><img src="{{ img_url }}" alt="{{ a.alt_text or a.filename }}" width="36" height="36" loading="lazy" data-error-fallback="{{ a.source_url or img_url }}"></div>
-                  {% elif a.kind == 'pdf' %}<div class="asset-thumb">{% if a.source_url and a.is_external %}<a href="{{ a.source_url }}" target="_blank" rel="noopener noreferrer"><i class="bi bi-file-earmark-pdf"></i></a>{% else %}<i class="bi bi-file-earmark-pdf"></i>{% endif %}</div>
+                  {% elif a.kind == 'pdf' %}<div class="asset-thumb">{% if a.source_url and a.is_external %}<a href="{{ a.source_url }}" target="_blank" rel="noopener noreferrer" aria-label="Open external asset {{ a.filename }}"><i class="bi bi-file-earmark-pdf" aria-hidden="true"></i></a>{% else %}<i class="bi bi-file-earmark-pdf" aria-hidden="true"></i>{% endif %}</div>
                   {% elif a.kind == 'video' %}<div class="asset-thumb"><i class="bi bi-film"></i></div>
-                  {% else %}<div class="asset-thumb">{% if a.source_url and a.is_external %}<a href="{{ a.source_url }}" target="_blank" rel="noopener noreferrer"><i class="bi bi-link-45deg"></i></a>{% else %}<i class="bi bi-file-earmark"></i>{% endif %}</div>
+                  {% else %}<div class="asset-thumb">{% if a.source_url and a.is_external %}<a href="{{ a.source_url }}" target="_blank" rel="noopener noreferrer" aria-label="Open external asset {{ a.filename }}"><i class="bi bi-link-45deg" aria-hidden="true"></i></a>{% else %}<i class="bi bi-file-earmark" aria-hidden="true"></i>{% endif %}</div>
                   {% endif %}
                 </div>
                 <div class="asset-cell-main">

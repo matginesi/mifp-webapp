@@ -234,6 +234,47 @@ def test_paginated_log_counts_cover_the_filtered_scope(tmp_path):
     assert result["level_counts"] == {"ERROR": 1, "WARNING": 1, "INFO": 1}
 
 
+def test_text_logs_split_message_from_structured_context(tmp_path):
+    from mifp_app.services.dashboard_repository import search_logs
+
+    (tmp_path / "mifp_app.log").write_text(
+        '2026-08-17T01:57:49.218+00:00 | WARNING | application | mifp.dashboard | '
+        'event=dashboard.request_failed rid=request-1 | Administrative request failed | '
+        '{"method":"GET","path":"/dashboard/assets/missing.png","status":404,"duration_ms":5.35}',
+        encoding="utf-8",
+    )
+
+    row = search_logs(tmp_path, level="WARNING")[0]
+
+    assert row["message"] == "Administrative request failed"
+    assert row["event"] == "dashboard.request_failed"
+    assert row["stream"] == "application"
+    assert row["status"] == 404
+    assert row["details"]["path"] == "/dashboard/assets/missing.png"
+    assert {item["label"] for item in row["detail_items"]} >= {"Method", "Path", "Status"}
+    assert '"status":404' in row["raw"]
+
+
+def test_logs_page_presents_context_and_keeps_raw_record_collapsed(app, client):
+    log_dir = Path(app.config["LOG_DIR"])
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (log_dir / "mifp_app.log").write_text(
+        '2026-08-17T01:57:49.218+00:00 | ERROR | application | mifp.jobs | '
+        'event=jobs.failed rid=job-request | Background job failed | '
+        '{"job_name":"data-import:all","error_type":"ValueError"}',
+        encoding="utf-8",
+    )
+    client.post("/login", data={"login_username": "admin", "login_password": "secret123"})
+
+    response = client.get("/dashboard/logs?level=ERROR")
+
+    assert response.status_code == 200
+    assert b"Structured context" in response.data
+    assert b"Background job failed" in response.data
+    assert b"Raw record" in response.data
+    assert b"log-context-grid" in response.data
+
+
 def test_recursive_redaction_handles_nested_values_and_email():
     from mifp_app.utils.logger import redact
 

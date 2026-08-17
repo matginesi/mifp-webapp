@@ -31,7 +31,11 @@ from flask import (
 from werkzeug.security import check_password_hash
 
 from ..db.connection import connect
-from ..services.admin_safety import backup_sqlite_database
+from ..services.admin_safety import (
+    PORTABILITY_CACHE_PREFIX as _EXPORT_CACHE_PREFIX,
+    PORTABILITY_CACHE_TTL_SECONDS as _EXPORT_CACHE_TTL_SECONDS,
+    backup_sqlite_database,
+)
 from ..services.asset_cleanup import build_asset_cleanup_plan
 from ..services.assets import recover_missing_assets
 from ..services.dashboard_repository import (
@@ -620,8 +624,6 @@ def data_portability_import_guide():
 
 
 _EXPORT_CACHE_MAX = 2
-_EXPORT_CACHE_TTL_SECONDS = 300
-_EXPORT_CACHE_PREFIX = ".portability-"
 
 
 def _export_cache_dir() -> Path:

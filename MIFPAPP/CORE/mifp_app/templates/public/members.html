@@ -10,11 +10,11 @@
       <li><a href="{{ url_for('public.home') }}">{{ site_copy.nav_home }}</a></li>
       <li aria-current="page">{{ site_copy.members_title }}</li>
     </ol>
-    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
-      <span class="num serif italic" style="color:var(--mifp-red-hover);font-size:0.85rem;">—</span>
+    <div class="eyebrow-row directory-eyebrow">
+      <span class="num serif italic">—</span>
       <span class="eyebrow eyebrow-red">Community</span>
       {% if total is defined %}
-      <span class="tag red" style="margin-left:8px;">{{ total }} member{{ 's' if total != 1 }}</span>
+      <span class="directory-count">{{ total }} member{{ 's' if total != 1 }}</span>
       {% endif %}
     </div>
     <h1>{{ site_copy.members_title }}</h1>
@@ -27,7 +27,8 @@
   <div class="container-wide">
 
     {# ── Search + role filter ── #}
-    <form method="get" action="{{ url_for('public.members') }}" class="filter-panel">
+    <div class="member-directory-tools">
+    <form method="get" action="{{ url_for('public.members') }}" class="filter-panel member-directory-search">
       <label class="filter-search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input type="text" name="q" placeholder="{{ site_copy.members_search }}" value="{{ search or '' }}" aria-label="Search members">
@@ -51,9 +52,15 @@
     </div>
     {% endif %}
 
+    <div class="member-directory-caption">
+      <span>People directory</span>
+      <span>{{ total }} result{{ '' if total == 1 else 's' }}</span>
+    </div>
+    </div>
+
     {% if search %}
-    <p style="font-size:0.84rem;color:var(--paper-dim);margin-bottom:20px;">
-      Showing results for "<strong style="color:var(--paper);">{{ search }}</strong>" — {{ total }} member{{ 's' if total != 1 }} found
+    <p class="member-search-summary">
+      Showing results for “<strong>{{ search }}</strong>” — {{ total }} member{{ 's' if total != 1 }} found
     </p>
     {% endif %}
 
@@ -74,7 +81,8 @@
       {% else %}
       {% set initials = '?' %}
       {% endif %}
-      <div class="member-card">
+      <article class="member-card">
+        <span class="member-index" aria-hidden="true">{{ '%02d'|format(((page - 1) * 12) + loop.index) }}</span>
         <div class="member-avatar {{ role_class }}">
           {% if member.image_url %}
           <img src="{{ member.image_url }}" alt="{{ member.display_name or (first ~ ' ' ~ last)|trim }}" width="80" height="80" loading="lazy">
@@ -83,18 +91,20 @@
           {% endif %}
         </div>
 
-        <h3 class="member-name line-clamp-2">
-          {{ ([first, last]|reject('none')|join(' '))|trim or member.display_name or 'Member' }}
-        </h3>
+        <div class="member-card-copy">
+          <h3 class="member-name line-clamp-2">
+            {{ ([first, last]|reject('none')|join(' '))|trim or member.display_name or 'Member' }}
+          </h3>
 
-        {% if member.role_label %}
-        <span class="member-role {{ role_class }}">{{ member.role_label }}</span>
-        {% endif %}
+          {% if member.affiliation %}
+          <p class="member-affiliation line-clamp-2">{{ member.affiliation }}</p>
+          {% endif %}
 
-        {% if member.affiliation %}
-        <p class="member-affiliation line-clamp-1">{{ member.affiliation }}</p>
-        {% endif %}
-      </div>
+          {% if member.role_label %}
+          <span class="member-role {{ role_class }}">{{ member.role_label }}</span>
+          {% endif %}
+        </div>
+      </article>
       {% endfor %}
     </div>
 

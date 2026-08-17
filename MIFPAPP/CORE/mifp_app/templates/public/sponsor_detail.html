@@ -11,47 +11,53 @@
       <li aria-current="page">{{ sponsor.name }}</li>
     </ol>
 
-    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
-      <span class="num serif italic" style="color:#d97706;font-size:0.85rem;">—</span>
-      <span class="eyebrow" style="color:#fcd34d;">Sponsor</span>
-      {% if sponsor.tier %}<span class="tag amber">{{ sponsor.tier }}</span>{% endif %}
+    <div class="eyebrow-row sponsor-page-eyebrow">
+      <span class="eyebrow">Institutional network · Sponsor</span>
+      {% if sponsor.tier %}<span class="tag red">{{ sponsor.tier }}</span>{% endif %}
     </div>
 
-    <div style="display:flex;align-items:center;gap:32px;flex-wrap:wrap;">
-      <div style="flex-shrink:0;width:120px;height:120px;border:1px solid var(--line);border-radius:var(--r);background:white;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+    <div class="sponsor-detail-identity">
+      <div class="sponsor-detail-logo">
         {% if sponsor.logo_url %}
-        <img src="{{ sponsor.logo_url }}" alt="{{ sponsor.name }}" style="max-width:90%;max-height:90%;object-fit:contain;">
+        <img src="{{ sponsor.logo_url }}" alt="{{ sponsor.name }}">
         {% else %}
-        <span class="serif" style="font-size:2.5rem;font-weight:700;color:var(--paper-faint);">{{ sponsor.name[:2]|upper }}</span>
+        <span class="serif">{{ sponsor.name[:2]|upper }}</span>
         {% endif %}
       </div>
-      <div style="flex:1;min-width:280px;">
+      <div class="sponsor-detail-copy">
         <h1>{{ sponsor.name }}</h1>
         {% if sponsor.description %}
         <p>{{ sponsor.description|striptags|truncate(280) }}</p>
         {% endif %}
       </div>
     </div>
-    <div class="accent-bar" style="background: linear-gradient(90deg, #d97706, var(--mifp-red));"></div>
+    <div class="accent-bar"></div>
   </div>
 </section>
 
 <section class="section-sm">
   <div class="container-wide">
-
-    {% if sponsor.website_url %}
-    <a href="{{ sponsor.website_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-blue" style="margin-bottom:32px;">
+    <div class="sponsor-detail-layout">
+      <aside class="sponsor-detail-meta">
+        <span>Institutional partner</span>
+        <strong>{{ sponsor.name }}</strong>
+        {% if sponsor.website_url %}
+        <a href="{{ sponsor.website_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
       Visit Website
-    </a>
-    {% endif %}
+        </a>
+        {% endif %}
+      </aside>
 
     {# ── Body content ── #}
     {% if sponsor.body %}
-    <article class="article-body md-body" style="max-width:760px;">
+    <article class="article-body md-body sponsor-detail-body">
       {{ sponsor.body|safe }}
     </article>
+    {% elif sponsor.description %}
+    <article class="article-body sponsor-detail-body"><p>{{ sponsor.description|striptags }}</p></article>
     {% endif %}
+    </div>
 
     {# ── Linked events ── #}
     {% if sponsor.linked_events %}
@@ -59,8 +65,7 @@
       <div class="section-head" style="margin-bottom:24px;">
         <div class="section-head-left">
           <div class="eyebrow-row">
-            <span class="num serif italic" style="color:#d97706;">—</span>
-            <span class="eyebrow" style="color:#fcd34d;">Related Events</span>
+            <span class="eyebrow eyebrow-red">Related events</span>
           </div>
           <h2 style="font-size:1.6rem;">Events sponsored by {{ sponsor.name }}</h2>
         </div>

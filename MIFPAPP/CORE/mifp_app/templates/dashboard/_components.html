@@ -25,7 +25,7 @@
 {% macro section_header(title, help_text='', icon='') -%}
 <div class="panel-head">
   <div>
-    <h2>{% if icon %}<i class="bi {{ icon }}"></i> {% endif %}{{ title }}</h2>
+    <h2>{% if icon %}<i class="bi {{ icon }}" aria-hidden="true"></i> {% endif %}{{ title }}</h2>
     {% if help_text %}<p>{{ help_text }}</p>{% endif %}
   </div>
   {% if caller %}<div class="panel-actions">{{ caller() }}</div>{% endif %}
@@ -34,7 +34,7 @@
 
 {% macro empty_state(title, help_text='', icon='bi-inbox', action_url='', action_label='') -%}
 <div class="dash-empty-state">
-  <i class="bi {{ icon }}"></i>
+  <i class="bi {{ icon }}" aria-hidden="true"></i>
   <b>{{ title }}</b>
   {% if help_text %}<p>{{ help_text }}</p>{% endif %}
   {% if action_url and action_label %}<a class="btn btn-outline btn-sm" href="{{ action_url }}">{{ action_label }}</a>{% endif %}
@@ -48,14 +48,14 @@
 {% macro export_dropdown(formats, section='') -%}
 <div class="export-dropdown">
   <button class="btn btn-outline btn-sm" type="button" data-export-toggle>
-    <i class="bi bi-download"></i> Export <span class="export-caret">&#9662;</span>
+    <i class="bi bi-download" aria-hidden="true"></i> Export <span class="export-caret" aria-hidden="true">&#9662;</span>
   </button>
   <div class="dropdown-menu">
     {% for label, url, icon in formats %}
-    <a href="{{ url }}"><i class="{{ icon }}"></i> {{ label }}</a>
+    <a href="{{ url }}"><i class="{{ icon }}" aria-hidden="true"></i> {{ label }}</a>
     {% endfor %}
     {% if section in ['members','news','events'] %}
-    <a href="{{ url_for('dashboard.data_portability') }}"><i class="bi bi-box-arrow-in-down"></i> Import bundle</a>
+    <a href="{{ url_for('dashboard.data_portability') }}"><i class="bi bi-box-arrow-in-down" aria-hidden="true"></i> Import bundle</a>
     {% endif %}
   </div>
 </div>
@@ -64,7 +64,7 @@
 {% macro form_section(title, help_text='', icon='') -%}
 <section class="editor-section">
   <header class="editor-section-head">
-    {% if icon %}<i class="bi {{ icon }}"></i>{% endif %}
+    {% if icon %}<i class="bi {{ icon }}" aria-hidden="true"></i>{% endif %}
     <div><h3>{{ title }}</h3>{% if help_text %}<p>{{ help_text }}</p>{% endif %}</div>
   </header>
   <div class="editor-section-body">{{ caller() }}</div>

@@ -67,6 +67,10 @@ class TestExporters:
         raw = rows_to_docx(SAMPLE, title="Test DOCX")
         assert isinstance(raw, bytes)
         assert len(raw) > 200
+        with zipfile.ZipFile(BytesIO(raw)) as archive:
+            typography = archive.read("word/document.xml") + archive.read("word/styles.xml")
+        assert b"Georgia" in typography
+        assert b"Arial" in typography
 
     def test_rows_to_pdf_output(self):
         from mifp_app.services.exporters import rows_to_pdf
@@ -74,6 +78,8 @@ class TestExporters:
         raw = rows_to_pdf(SAMPLE, title="Test PDF")
         assert isinstance(raw, bytes)
         assert raw[:5] == b"%PDF-"
+        assert b"Times-Bold" in raw
+        assert b"Helvetica" in raw
 
     def test_export_response_payload_dispatches(self):
         from mifp_app.services.exporters import export_response_payload

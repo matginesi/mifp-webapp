@@ -396,6 +396,7 @@ def search_logs(
         for entry in reversed(entries):
             lvl = entry.get("level") or "LOG"
             blob = "\n".join(str(entry.get(k) or "") for k in ["when", "level", "event", "logger", "location", "message", "trace", "file", "request_id"])
+            blob += "\n" + json.dumps(entry.get("details") or {}, ensure_ascii=False, default=str)
             if level and level != "ALL" and lvl != level:
                 continue
             if q and q.lower() not in blob.lower():
@@ -479,6 +480,12 @@ def _parse_json_log_entries(filename: str, lines: list[str]) -> list[dict[str, A
             data = json.loads(line)
         except json.JSONDecodeError:
             continue
+        core_keys = {
+            "timestamp", "level", "logger", "event", "stream", "module",
+            "function", "line", "message", "stack_trace", "exception",
+            "request_id", "status", "duration_ms",
+        }
+        details = {key: value for key, value in data.items() if key not in core_keys}
         entries.append({
             "file": filename,
             "when": data.get("timestamp", ""),
@@ -496,6 +503,9 @@ def _parse_json_log_entries(filename: str, lines: list[str]) -> list[dict[str, A
             "request_id": data.get("request_id", ""),
             "status": data.get("status", ""),
             "duration_ms": data.get("duration_ms", ""),
+            "details": details,
+            "detail_items": _log_detail_items(details),
+            "raw": line[:12000],
         })
     return entries
 
@@ -533,11 +543,21 @@ def _parse_log_line(filename: str, line: str, level: str, trace: list[str] | Non
     parts = [p.strip() for p in line.split(" | ")]
     when = parts[0] if len(parts) > 0 else ""
     lvl = parts[1] if len(parts) > 1 and parts[1] else level
-    proc = ""
-    logger = parts[2] if len(parts) > 2 else ""
-    location = parts[3] if len(parts) > 3 else ""
+    stream = parts[2] if len(parts) > 2 else ""
+    logger = parts[3] if len(parts) > 3 else ""
+    location = logger
     context = parts[4] if len(parts) > 4 else ""
-    message = " | ".join(parts[5:]).strip() if len(parts) > 5 else (parts[-1] if parts else line)
+    message_parts = parts[5:] if len(parts) > 5 else [parts[-1] if parts else line]
+    details: dict[str, Any] = {}
+    if message_parts and message_parts[-1].lstrip().startswith("{"):
+        try:
+            payload = json.loads(message_parts[-1])
+        except (json.JSONDecodeError, TypeError):
+            payload = None
+        if isinstance(payload, dict):
+            details = payload
+            message_parts = message_parts[:-1]
+    message = " | ".join(message_parts).strip()
     module = func = ""
     if location:
         base = location.split(":", 1)[0]
@@ -550,7 +570,8 @@ def _parse_log_line(filename: str, line: str, level: str, trace: list[str] | Non
         "file": filename,
         "when": when,
         "level": lvl.strip().upper() or level,
-        "process": proc,
+        "process": "",
+        "stream": stream,
         "logger": logger,
         "where": logger,
         "location": location,
@@ -558,10 +579,34 @@ def _parse_log_line(filename: str, line: str, level: str, trace: list[str] | Non
         "function": func,
         "message": message[:1200],
         "trace": trace_text[:6000],
+        "event": _extract_context_value(context, "event"),
         "request_id": _extract_context_value(context, "rid"),
-        "status": _extract_context_value(context, "status"),
-        "duration_ms": _extract_context_value(context, "duration_ms"),
+        "status": details.get("status", _extract_context_value(context, "status")),
+        "duration_ms": details.get("duration_ms", _extract_context_value(context, "duration_ms")),
+        "details": details,
+        "detail_items": _log_detail_items(details),
+        "raw": (line + ("\n" + trace_text if trace_text else ""))[:12000],
     }
+
+
+def _log_detail_items(details: dict[str, Any]) -> list[dict[str, str]]:
+    """Return safe, presentation-ready fields for the dashboard log drawer."""
+    items: list[dict[str, str]] = []
+    for key, value in details.items():
+        if value is None:
+            display = "—"
+        elif isinstance(value, bool):
+            display = "Yes" if value else "No"
+        elif isinstance(value, (dict, list, tuple)):
+            display = json.dumps(value, ensure_ascii=False, default=str)
+        else:
+            display = str(value)
+        items.append({
+            "key": str(key),
+            "label": str(key).replace("_", " ").strip().title(),
+            "display": display,
+        })
+    return items
 
 
 def _extract_context_value(context: str, key: str) -> str:

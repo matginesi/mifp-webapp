@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 
@@ -95,7 +96,6 @@ def logs_export(fmt: str):
     export_stem = (log_file or "mifp_logs").replace(".", "_")
 
     if fmt == "json":
-        import json
         return Response(
             json.dumps(rows, ensure_ascii=False, default=str, indent=2),
             mimetype="application/json",
@@ -124,11 +124,14 @@ def logs_export(fmt: str):
     import csv
     import io
     si = io.StringIO()
-    fieldnames = ["when", "level", "stream", "event", "logger", "file", "location", "message", "request_id"]
+    fieldnames = ["when", "level", "stream", "event", "logger", "file", "location", "message", "request_id", "status", "duration_ms", "details"]
     writer = csv.DictWriter(si, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     for r in rows:
-        writer.writerow({k: (r.get(k) or "") for k in fieldnames})
+        row = {k: (r.get(k) or "") for k in fieldnames}
+        if isinstance(row["details"], dict):
+            row["details"] = json.dumps(row["details"], ensure_ascii=False, default=str)
+        writer.writerow(row)
     output = si.getvalue()
     return Response(
         output,

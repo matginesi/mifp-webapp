@@ -11,7 +11,7 @@ Both themes represent the same institution and therefore share:
 - cool neutral borders rather than warm decorative surfaces;
 - compact, precise geometry;
 - Inter for interface/body text;
-- visible keyboard focus, minimum 44 px touch targets on public/mobile controls, and reduced-motion support;
+- visible but restrained keyboard focus: a crisp 2 px ring shown only through `:focus-visible`, minimum 44 px touch targets on public/mobile controls, and reduced-motion support;
 - sentence-case labels and action names that describe the result.
 
 The themes are related, not identical. The public site is editorial and atmospheric. The dashboard is an operational tool.
@@ -32,21 +32,29 @@ The design behaves like a contemporary scientific atlas: dark field, precise rul
 
 | Role | Token | Value |
 | --- | --- | --- |
-| Canvas | `--ink-900` | `#0a0e1a` |
-| Raised canvas | `--ink-850` | `#0d1320` |
-| Panel | `--ink-800` | `#111827` |
-| Border | `--line` | `#273149` |
-| Primary text | `--paper` | `#f5f7fa` |
-| Body text | `--paper-mute` | `#c4cad6` |
-| Muted text | `--paper-dim` | `#8b94a8` |
-| Brand/action | `--mifp-red` | `#b42318` |
+| Canvas | `--ink-900` | `#0b1019` |
+| Raised canvas | `--ink-850` | `#101722` |
+| Panel | `--ink-800` | `#151d2a` |
+| Border | `--line` | `#293241` |
+| Primary text | `--paper` | `#f4f5f7` |
+| Body text | `--paper-mute` | `#cbd0d8` |
+| Muted text | `--paper-dim` | `#929baa` |
+| Brand/action | `--mifp-red` | `#b92b22` |
 | Reference/link | `--mifp-blue` | `#3f7ae0` |
+| Keyboard focus | `--focus-ring` | `#86a8eb` |
 
 Typography:
 
-- display: Iowan Old Style / Palatino / Georgia, used for page titles and editorial headings only;
-- body and controls: Inter;
-- data, coordinates, dates, labels: system monospace where it materially improves scanning.
+- display `--f-display`: Iowan Old Style / Palatino / Georgia, used for page titles, editorial headings, research titles and authored institutional prose;
+- body `--f-body`: Inter, used for navigation, ordinary editorial summaries, forms, controls and supporting copy;
+- data `--f-data`: system monospace, used only where fixed-width scanning materially helps: coordinates, dates, identifiers and compact labels.
+
+Institutional pages deliberately use more serif than news, events and
+directories: their hero introduction and continuous document body are serif,
+while archive navigation, metadata, controls, tables and technical references
+remain sans-serif. Institutional PDF exports mirror this division. Operational
+database PDF/DOCX exports use serif for the MIFP/title block and sans-serif for
+metadata, tables and page furniture.
 
 Geometry:
 
@@ -63,11 +71,35 @@ Cards, forms, navigation, banners, and content panels use flat color. Decorative
 
 ### Components
 
-- Buttons share one height, radius, weight, and focus treatment. Primary means one main action; ghost means lower priority.
+- Buttons share one height, radius, weight, and focus treatment. The focus ring is 2 px, blue and offset by 2 px; dark navigation may use the same ring inset. Primary means one main action; ghost means lower priority.
 - Cards use one border, one radius, and no glow. Hover changes border/color by a small amount and does not make content jump.
 - Section headings use typography and a rule, not ornamental capsules.
 - The cookie notice is a compact institutional panel aligned with the same card geometry. Its close control remains icon-only with a clear accessible label.
 - Lists prefer rows and dividers when the information is comparable; cards are used for genuinely self-contained editorial objects.
+
+### Public page families
+
+- **People directory:** Members are presented as a compact scientific
+  directory, with portrait/initials, name, affiliation and role read in that
+  order. The desktop grid uses three legible columns rather than a wall of
+  small profile tiles; mobile becomes a single-column register.
+- **Institutional network:** Sponsors are partner records, not promotional
+  logo tiles. Logo, organization name, description and profile action belong
+  to one bordered registry entry. Sponsor details and the quick-view lightbox
+  use the same identity block.
+- **Institutional archive:** About, Manifesto, Conduct, Research,
+  Publications, Sponsorship, Privacy and Cookies share the `MIFP archive`
+  index. Long-form policy pages pair a restrained metadata rail with a single
+  readable document column. Repeated floating cards must not fragment a
+  continuous document.
+- **Research dossier:** Research opens with a compact, database-derived
+  institute profile. Areas are presented as indexed scientific records with
+  scope, supporting material and source actions; publication history and
+  member geography form one evidence section rather than a detached dashboard.
+
+The archive index is the signature shared element for inner institutional
+pages. It encodes actual information architecture and should not be copied to
+unrelated content such as news or events.
 
 ### Motion
 
@@ -98,7 +130,7 @@ The dashboard behaves like a calibrated control instrument: dark persistent shel
 
 | Role | Token | Value |
 | --- | --- | --- |
-| Workspace | `--content-bg` | `#f3f4f6` |
+| Workspace | `--content-bg` | `#eef1f4` |
 | Primary surface | `--surface` | `#ffffff` |
 | Secondary surface | `--surface-2` | `#f7f8fa` |
 | Strong border | `--border` | `#c7cdd5` |
@@ -108,6 +140,7 @@ The dashboard behaves like a calibrated control instrument: dark persistent shel
 | Muted text | `--text-2` | `#5f6670` |
 | Shell | `--shell-bg` | `#181b20` |
 | Primary action | `--accent` | `#a72b31` |
+| Keyboard focus | `--focus-ring` | `#456f9d` |
 
 Geometry:
 
@@ -125,6 +158,12 @@ Geometry:
 - purple/orange only when a distinct semantic category already exists;
 - never use a gradient to imply importance or state.
 
+### Typography
+
+- Dashboard interface, headings, tables, controls and messages use `--font-family-base` (Inter/system sans-serif).
+- Identifiers, log context, timestamps and machine values use `--font-family-mono` only when alignment or scanning benefits.
+- `--font-family-editorial` is reserved for previews of public-facing content inside the dashboard; it must not leak into operational UI.
+
 ### Page anatomy
 
 Every dashboard page follows the same sequence:
@@ -137,6 +176,11 @@ Every dashboard page follows the same sequence:
 
 Do not introduce a bespoke hero. Operational pages do not need marketing treatments.
 
+The shared page header is a white instrument plate with one thin MIFP-red
+calibration rail. It is the same on editorial lists, editors, workflows and
+system pages. Summary strips use the same border, radius and low elevation;
+their cells may change content, but not their visual grammar.
+
 ### Components and interaction
 
 - Use `page_header` for all page titles/actions.
@@ -148,6 +192,9 @@ Do not introduce a bespoke hero. Operational pages do not need marketing treatme
 - Loading state preserves context and names the current operation.
 - Success/error messages repeat the action vocabulary used by the initiating control.
 - Modal footer order is Cancel, then the outcome action. Password confirmation is reserved for sensitive data operations.
+- Modals use the dark administrative shell as their header, a red state rule, a scrollable white body, and a fixed light action footer.
+- Logs show human-readable message and structured context first; the original raw record stays collapsed as a diagnostic fallback.
+- A dark command strip is reserved for an active or protected operational workflow (for example Data Quality continuation or password-gated safety operations). It always uses the dashboard shell color and red calibration rail; it is not a page-specific hero.
 
 ### Navigation UX
 
@@ -168,6 +215,22 @@ Do not introduce a bespoke hero. Operational pages do not need marketing treatme
 - Filters, pagination, selection, and bulk actions retain visible state.
 - Mobile layout keeps the primary action and current context reachable.
 
+### Page-family coverage
+
+The contract is checked across every dashboard destination, grouped by the job
+it performs:
+
+- directory and search: Dashboard, global search;
+- editorial ledgers: Members, News, Events, Publications, Sponsors, Research Areas, Conference Sites;
+- policy editors: Institutional Pages, Privacy & Cookies, Site Texts;
+- operational workspaces: Assets, Import / Export, Data Quality, Join Requests;
+- reports and diagnostics: Statistics, Logs, Server;
+- Control Centre: Overview, Processes, Content Quality, Asset Health, Storage,
+  Site Readiness, Incidents, Backups, Configuration, and Protected Operations.
+
+New destinations must fit one of these families or document why a genuinely new
+interaction primitive is necessary.
+
 ---
 
 ## Maintenance rules
@@ -185,5 +248,29 @@ Source-section comments inside those files are organizational markers, not separ
 4. test desktop and mobile widths;
 5. test keyboard focus and reduced motion;
 6. update this document only when the system itself changes, not for a one-off page.
+
+### CSS ownership and retirement
+
+- A visual primitive has one canonical definition. Do not append a second
+  “refinement”, compatibility layer, or page-local copy at the end of a
+  stylesheet.
+- Responsive changes stay beside the component when practical; the final
+  responsive section is reserved for shared layout breakpoints.
+- Selectors retained only for old templates must be removed with those
+  templates. Before removal, search templates, JavaScript and Python-generated
+  markup; naming a class in CSS alone is not usage.
+- Runtime templates may load only the two canonical theme files above, plus the
+  isolated `work-in-progress.css` used exclusively by its standalone page.
+- Vendor styles remain vendored and are not copied into theme files. Overrides
+  are scoped to `.public-site` or `.dashboard-shell` and kept as small as
+  possible.
+- Token values are declared once near the beginning of the stylesheet. A later
+  `:root` block that silently changes the palette, radius or shadow contract is
+  considered a regression.
+
+For a cleanup pass, verify selector references, exercise the affected page at
+desktop and mobile widths, check keyboard focus and run the UI contract tests.
+Dynamic state classes such as `is-active`, status levels and Data Quality types
+must be traced through JavaScript/server rendering before removal.
 
 Automated contract tests should reject reintroduced dashboard gradients, uncontrolled radii, missing focus treatment, or templates that bypass the shared page header without a documented reason.

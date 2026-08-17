@@ -135,16 +135,30 @@
           <td colspan="5">
             <div class="log-drawer">
               <div class="log-detail-grid">
-                <div><span>File</span><b>{{ row.file or '—' }}</b></div>
-                <div><span>Process / thread</span><b>{{ row.process or '—' }}</b></div>
+                <div><span>Event</span><b>{{ row.event or 'Application message' }}</b></div>
                 <div><span>Logger</span><b>{{ row.logger or '—' }}</b></div>
+                <div><span>Stream / file</span><b>{{ row.stream or 'application' }} · {{ row.file or '—' }}</b></div>
                 <div><span>Request ID</span><b>{{ row.request_id or '—' }}</b></div>
-                <div><span>Source</span><b>{{ row.location or row.where or '—' }}</b></div>
+                <div><span>HTTP status</span><b>{{ row.status or '—' }}</b></div>
+                <div><span>Duration</span><b>{{ (row.duration_ms ~ ' ms') if row.duration_ms not in ['', none] else '—' }}</b></div>
               </div>
               <div class="log-detail-block">
-                <span>Full message</span>
-                <pre class="log-pre">{{ row.message or '—' }}</pre>
+                <span>Message</span>
+                <p class="log-message-full">{{ row.message or '—' }}</p>
               </div>
+              {% if row.detail_items %}
+              <section class="log-context-card" aria-label="Structured log context">
+                <header><span>Structured context</span><small>{{ row.detail_items|length }} fields</small></header>
+                <dl class="log-context-grid">
+                  {% for item in row.detail_items %}
+                  <div>
+                    <dt>{{ item.label }}</dt>
+                    <dd title="{{ item.display }}">{{ item.display }}</dd>
+                  </div>
+                  {% endfor %}
+                </dl>
+              </section>
+              {% endif %}
               {% if row.trace %}
               <div class="log-detail-block">
                 <span>Traceback / details</span>
@@ -156,6 +170,18 @@
                   </button>
                 </div>
               </div>
+              {% endif %}
+              {% if row.raw %}
+              <details class="log-raw-details">
+                <summary><i class="bi bi-code-slash" aria-hidden="true"></i> Raw record</summary>
+                <div class="trace-wrap">
+                  <pre class="log-pre" id="raw-{{ loop.index }}">{{ row.raw }}</pre>
+                  <button class="btn btn-outline btn-xs copy-btn copy-btn-floating" type="button"
+                          data-copy-trace="raw-{{ loop.index }}" aria-label="Copy raw log record">
+                    <i class="bi bi-clipboard" aria-hidden="true"></i>
+                  </button>
+                </div>
+              </details>
               {% endif %}
             </div>
           </td>

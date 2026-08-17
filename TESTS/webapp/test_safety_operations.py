@@ -110,6 +110,77 @@ def test_password_gated_backup_is_verified_and_retained(client, app):
     assert f"{backups[0].name}: valid" in result.get_data(as_text=True)
 
 
+def test_backup_page_exposes_scoped_password_gated_cleanup(client):
+    response = client.get("/dashboard/control/backups")
+    body = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "Portability recovery copies" in body
+    assert "Clean retained copies" in body
+    assert 'name="targets" value="database"' in body
+    assert 'name="targets" value="portability"' in body
+    assert 'type="password"' in body
+    assert "CLEAN COPIES" in body
+
+
+def test_backup_cleanup_rejects_wrong_password_without_removing_files(client, app):
+    from mifp_app.services.admin_safety import backup_sqlite_database
+
+    backup = backup_sqlite_database(Path(app.config["DATABASE_PATH"]), label="preserve")
+    response = client.post(
+        "/dashboard/control/backups/cleanup",
+        data={
+            "targets": "database",
+            "password": "wrong",
+            "acknowledge": "1",
+            "confirmation": "CLEAN COPIES",
+        },
+    )
+
+    assert response.status_code == 302
+    assert backup and backup.exists()
+
+
+def test_backup_cleanup_replaces_database_snapshot_and_removes_expired_portability(client, app):
+    import json
+
+    from mifp_app.services.admin_safety import backup_sqlite_database
+
+    db_path = Path(app.config["DATABASE_PATH"])
+    backup_sqlite_database(db_path, label="one")
+    backup_sqlite_database(db_path, label="two")
+    export_dir = Path(app.config["EXPORT_DIR"])
+    digest = "c" * 64
+    data_path = export_dir / f".portability-{digest}.bin"
+    meta_path = export_dir / f".portability-{digest}.json"
+    old = time.time() - 600
+    data_path.write_bytes(b"expired")
+    meta_path.write_text(json.dumps({
+        "data_name": data_path.name,
+        "filename": "old-export.zip",
+        "created_at": old,
+    }), encoding="utf-8")
+    os.utime(data_path, (old, old))
+    os.utime(meta_path, (old, old))
+
+    response = client.post(
+        "/dashboard/control/backups/cleanup",
+        data={
+            "targets": ["database", "portability"],
+            "password": "correct-password",
+            "acknowledge": "1",
+            "confirmation": "CLEAN COPIES",
+        },
+    )
+
+    assert response.status_code == 302
+    snapshots = list((db_path.parent / "backups").glob("*.db"))
+    assert len(snapshots) == 1
+    assert "retention-cleanup" in snapshots[0].name
+    assert not data_path.exists()
+    assert not meta_path.exists()
+
+
 def test_password_gated_export_is_import_compatible(client):
     from mifp_app.services.data_portability import parse_zip_payload
 

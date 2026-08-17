@@ -5,7 +5,7 @@
 {% call page_header('Content', 'Cookie Policy', 'Edit the cookie policy and configure the cookie banner shown on the public site.') %}
 {% endcall %}
 
-<div class="portability-grid" style="grid-template-columns: 1.4fr 1fr;">
+<div class="portability-grid cookie-policy-layout">
   <section class="modern-card">
     <div class="panel-head">
       <div><h3><i class="bi bi-file-text"></i> Cookie policy content</h3><p>The full text displayed on the cookie policy page. Supports markdown.</p></div>
@@ -28,7 +28,8 @@
           </div>
           <div class="markdown-editor-grid">
             <div class="markdown-editor-source">
-              <textarea name="body" rows="20" class="form-control form-control-sm"
+              <textarea name="body" rows="20" class="form-control form-control-sm markdown-source-input"
+                        aria-label="Cookie Policy markdown source"
                         placeholder="Write markdown content here…">{{ cookie_body or '' }}</textarea>
             </div>
             <div class="markdown-preview">

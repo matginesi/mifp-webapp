@@ -94,16 +94,16 @@
         if (e.target === overlay || e.target === closeBtn) close();
       });
 
+      var panel = document.createElement('div');
+      panel.className = 'mifp-lightbox-panel';
+      overlay.appendChild(panel);
+
       closeBtn = document.createElement('button');
       closeBtn.className = 'mifp-lightbox-close';
       closeBtn.type = 'button';
       closeBtn.setAttribute('aria-label', 'Close modal');
       closeBtn.innerHTML = '&times;';
-      overlay.appendChild(closeBtn);
-
-      var panel = document.createElement('div');
-      panel.className = 'mifp-lightbox-panel';
-      overlay.appendChild(panel);
+      panel.appendChild(closeBtn);
 
       overlayImg = document.createElement('img');
       overlayImg.className = 'mifp-lightbox-img';

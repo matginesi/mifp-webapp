@@ -8,13 +8,13 @@
 <div class="control-two-column">
   <section class="control-panel">
     <div class="panel-head"><div><h2>Application surface</h2><p>Required routes, static files and SQLite.</p></div><span>{{ checks|selectattr('status','equalto','ok')|list|length }}/{{ checks|length }}</span></div>
-    <div class="control-list">{% for item in checks %}
+    <div class="control-list" role="region" tabindex="0" aria-label="Application readiness checks">{% for item in checks %}
       <div class="control-list-row"><span><b>{{ item.label }}</b><small>{{ item.detail }}</small></span><span class="status-chip status-{{ 'success' if item.status == 'ok' else 'danger' }}">{{ item.status }}</span></div>
     {% endfor %}</div>
   </section>
   <section class="control-panel">
     <div class="panel-head"><div><h2>Security posture</h2><p>Effective non-secret Flask settings.</p></div></div>
-    <div class="control-list">
+    <div class="control-list" role="region" tabindex="0" aria-label="Security posture checks">
       {% for label, value, detail in [
         ('CSRF protection', security.csrf, 'Required for every mutative dashboard request'),
         ('Secure session cookie', security.secure_cookie, 'Should be enabled in HTTPS production'),
@@ -63,7 +63,7 @@
     <article><span>HTTP warnings</span><b>{{ links.counts.warning }}</b><small>Unencrypted links</small></article>
     <article><span>Unsafe URLs</span><b>{{ links.counts.danger }}</b><small>Invalid or private target</small></article>
   </div>
-  <div class="control-list">
+  <div class="control-list" role="region" tabindex="0" aria-label="Link hygiene findings">
     {% for item in links.issues %}
     <div class="control-list-row"><span><b>{{ item.label }} · #{{ item.record_id }}</b><small>{{ item.reason }} · {{ item.url }}</small></span><span class="status-chip status-{{ item.severity }}">{{ item.source }}</span></div>
     {% else %}<div class="empty">No stored URL hygiene problems found.</div>{% endfor %}

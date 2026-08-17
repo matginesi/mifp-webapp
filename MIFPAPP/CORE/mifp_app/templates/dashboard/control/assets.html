@@ -34,11 +34,11 @@
 <div class="control-two-column">
   <section class="control-panel">
     <div class="panel-head"><div><h2>Unregistered files</h2><p>Read-only inventory; nothing is deleted here.</p></div><span>{{ health.orphans|length }}</span></div>
-    <div class="control-list">{% for item in health.orphans[:30] %}<div class="control-list-row"><span><b>{{ item.path }}</b></span><small>{{ (item.size / 1024)|round(1) }} KB</small></div>{% else %}<div class="empty">No orphan files found.</div>{% endfor %}</div>
+    <div class="control-list" role="region" tabindex="0" aria-label="Orphan asset files">{% for item in health.orphans[:30] %}<div class="control-list-row"><span><b>{{ item.path }}</b></span><small>{{ (item.size / 1024)|round(1) }} KB</small></div>{% else %}<div class="empty">No orphan files found.</div>{% endfor %}</div>
   </section>
   <section class="control-panel">
     <div class="panel-head"><div><h2>Duplicate checksums</h2><p>Evidence only; automatic deletion is intentionally unavailable.</p></div><span>{{ health.duplicate_groups|length }}</span></div>
-    <div class="control-list">{% for item in health.duplicate_groups %}<div class="control-list-row"><span><b>{{ item.checksum[:18] }}…</b><small>{{ (item.size / 1024)|round(1) }} KB each</small></span><strong>{{ item.count }}</strong></div>{% else %}<div class="empty">No duplicate checksum groups.</div>{% endfor %}</div>
+    <div class="control-list" role="region" tabindex="0" aria-label="Duplicate asset groups">{% for item in health.duplicate_groups %}<div class="control-list-row"><span><b>{{ item.checksum[:18] }}…</b><small>{{ (item.size / 1024)|round(1) }} KB each</small></span><strong>{{ item.count }}</strong></div>{% else %}<div class="empty">No duplicate checksum groups.</div>{% endfor %}</div>
   </section>
 </div>
 {% endblock %}
