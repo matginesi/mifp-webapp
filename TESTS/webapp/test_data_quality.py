@@ -34,6 +34,10 @@ from mifp_app.services.data_quality.policies import (
     evaluate_publication,
 )
 from mifp_app.services.data_quality.planner import build_merge_plan, records_for
+from mifp_app.services.data_quality.quarantine import (
+    list_quarantined_records,
+    transition_quarantined_record,
+)
 
 
 def test_data_quality_public_api_exports_count_workflows():
@@ -287,6 +291,95 @@ def test_member_name_inversion(left, right):
     assert result[0] == "strong_candidate"
 
 
+def test_reimported_member_payload_is_deterministic_even_after_enrichment(database: Path):
+    with connect(database) as conn:
+        first = conn.execute(
+            "INSERT INTO members(display_name,slug,bio) VALUES('Alexey Kavokin','alexey-kavokin','Curated biography')"
+        ).lastrowid
+        second = conn.execute(
+            "INSERT INTO members(display_name,slug) VALUES('Kavokin Alexey','kavokin-alexey-old')"
+        ).lastrowid
+        third = conn.execute(
+            "INSERT INTO members(display_name,slug,affiliation) VALUES('Alexey Kavokin','alexey-kavokin-copy','University of Southampton')"
+        ).lastrowid
+        run_id = conn.execute(
+            "INSERT INTO import_runs(name,source_kind,status,stats_json) VALUES('legacy','jsonl-v2','completed','{}')"
+        ).lastrowid
+        for entity_id in (first, second, third):
+            conn.execute(
+                """INSERT INTO import_records(
+                       import_run_id,entity_type,entity_id,content_hash,raw_json
+                   ) VALUES(?,'member',?,'same-legacy-member-payload','{}')""",
+                (run_id, entity_id),
+            )
+        conn.commit()
+
+        result = analyze(conn)
+        finding = next(
+            item for item in list_findings(conn, result["run_id"])
+            if item["entity_type"] == "member"
+            and set(item["record_ids"]) == {first, second, third}
+        )
+
+    assert finding["classification"] == "exact_duplicate"
+    assert finding["workflow"] == "automatic"
+    assert any(item["code"] == "same_imported_member_record" for item in finding["evidence"])
+
+
+def test_inverted_member_with_same_affiliation_is_one_automatic_merge(database: Path):
+    with connect(database) as conn:
+        canonical = conn.execute(
+            """INSERT INTO members(
+                   first_name,last_name,display_name,slug,affiliation,country
+               ) VALUES('Jacqueline','Bloch','Jacqueline Bloch','jacqueline-bloch','CNRS','France')"""
+        ).lastrowid
+        inverted = conn.execute(
+            """INSERT INTO members(
+                   first_name,last_name,display_name,slug,affiliation
+               ) VALUES('Jacqueline','Bloch','Bloch Jacqueline','bloch-jacqueline','CNRS')"""
+        ).lastrowid
+        conn.commit()
+
+        result = analyze(conn)
+        findings = list_findings(conn, result["run_id"])
+
+    merge = next(
+        item for item in findings
+        if item["action_type"] == "merge_records"
+        and set(item["record_ids"]) == {canonical, inverted}
+    )
+    assert merge["classification"] == "strong_candidate"
+    assert merge["score"] == pytest.approx(.97)
+    assert merge["workflow"] == "automatic"
+    assert any(item["code"] == "same_affiliation" for item in merge["evidence"])
+    assert not any(
+        item["action_type"] == "clean_record"
+        and item["record_ids"] == [inverted]
+        and item["plan"].get("operation") == "swap_name_fields"
+        for item in findings
+    )
+
+    with connect(database) as conn:
+        bundle = create_bundle(conn, "tester")
+        queued = batch_add_to_bundle(
+            conn, bundle, result["run_id"],
+            entity_type="member", classification="automatic",
+        )
+        assert queued["added"] == 1
+        assert validate_bundle(conn, bundle)["valid"]
+
+    report = apply_bundle(database, bundle)
+    assert report["records_removed"] == 1
+    with connect(database) as conn:
+        remaining = conn.execute(
+            "SELECT display_name,affiliation,country FROM members"
+        ).fetchall()
+    assert len(remaining) == 1
+    assert remaining[0]["display_name"] == "Jacqueline Bloch"
+    assert remaining[0]["affiliation"] == "CNRS"
+    assert remaining[0]["country"] == "France"
+
+
 @pytest.mark.parametrize("left,right", [
     ("Aleiner Igor", "Lerner Igor"),
     ("Karabchevsky Alina", "Karabchevsky Serge"),
@@ -332,6 +425,81 @@ def test_similar_award_headlines_with_different_people_are_not_duplicate_candida
         context(),
     )
     assert result[0] == "related_not_duplicate"
+
+
+def test_templated_megagrant_articles_with_different_people_are_never_merge_candidates():
+    result = evaluate_news(
+        {
+            "id": 29,
+            "title": "Aldo Di Carlo Wins Megagrant of the Russian Federation",
+            "date": "2016-10-29",
+            "summary": "MIFP congratulates Aldo Di Carlo for winning a prestigious Megagrant of the Government of the Russian Federation.",
+            "body": "Congratulations to the member of MIFP Aldo Di Carlo who won the prestigous Megagrants of the Government of Russian Federation.",
+        },
+        {
+            "id": 33,
+            "title": "Bernard Gil and Anvar Zakhidov Win Megagrants of the Russian Federation",
+            "date": "2016-12-29",
+            "summary": "Congratulations to the members of MIFP Bernard Gil and Anvar Zakhidov who won the prestigious Megagrants of the Government of Russian Federation.",
+            "body": "Congratulations to the members of MIFP Bernard Gil and Anvar Zakhidov who won the prestigious Megagrants of the Government of Russian Federation.",
+        },
+        context(),
+    )
+
+    assert result[0] == "related_not_duplicate"
+    assert any(item.code == "different_named_subjects" for item in result[2])
+
+
+def test_different_quantum_books_are_not_merge_candidates():
+    result = evaluate_news(
+        {
+            "id": 43,
+            "title": '"Physics of Quantum Fluids"',
+            "date": "2012-11-01",
+            "summary": '"Physics of Quantum Fluids" A new book, edited by the Member of MIFP Alberto Bramati and by Michele Modugno.',
+            "body": '"Physics of Quantum Fluids" A new book, edited by the Member of MIFP Alberto Bramati and by Michele Modugno.',
+        },
+        {
+            "id": 44,
+            "title": '"Physics of Quantum Rings"',
+            "date": "2013-07-02",
+            "summary": '"Physics of Quantum Rings" The Member of MIFP Professor Vladimir Fomin has published a book on Quantum Rings.',
+            "body": '"Physics of Quantum Rings" The Member of MIFP Professor Vladimir Fomin has published a book on Quantum Rings.',
+        },
+        {
+            "links": {
+                43: [{"url": "http://www.springer.com/materials/book/978-3-642-37568-2"}],
+                44: [{"url": "http://www.springer.com/physics/condensed+matter+physics/book/978-3-642-39196-5"}],
+            },
+            "assets": {},
+        },
+    )
+
+    assert result[0] == "related_not_duplicate"
+    assert any(item.code == "different_news_year" for item in result[3])
+
+
+def test_cooperation_agreements_from_different_years_are_not_merge_candidates():
+    result = evaluate_news(
+        {
+            "id": 7,
+            "title": "MIFP-Quantum College Cooperation Agreement Signed",
+            "date": "2016-01-01",
+            "summary": "MIFP and Quantum College sign cooperation agreement.",
+            "body": "The President of MIFP and the Director of Quantum College signed a Cooperation Agreement between the two institutions.",
+        },
+        {
+            "id": 16,
+            "title": "MIFP-Quantum College Partnership and Collaboration Agreement Signed",
+            "date": "2018-06-29",
+            "summary": "On 29 June 2018 the institutions signed a Partnership and Collaboration Agreement.",
+            "body": "On 29 June 2018 the President of MIFP and the Principal of Quantum College signed a Partnership and Collaboration Agreement.",
+        },
+        context(),
+    )
+
+    assert result[0] == "related_not_duplicate"
+    assert any(item.code == "different_news_year" for item in result[3])
 
 
 def test_member_substring_surname_is_not_reported_as_name_inversion():
@@ -580,7 +748,7 @@ def test_event_merge_remaps_hierarchy_without_foreign_key_errors(database: Path)
         assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
 
 
-def test_news_with_different_titles_and_same_content_is_proposed(database: Path):
+def test_news_with_different_titles_and_same_content_requires_review(database: Path):
     body = "The institute announces a quantum photonics programme with international research partners."
     with connect(database) as conn:
         conn.execute(
@@ -597,7 +765,9 @@ def test_news_with_different_titles_and_same_content_is_proposed(database: Path)
             item for item in list_findings(conn, run["run_id"])
             if item["entity_type"] == "news" and item["action_type"] == "merge_records"
         )
-    assert finding["classification"] == "exact_duplicate"
+    assert finding["classification"] == "ambiguous"
+    assert finding["workflow"] == "manual"
+    assert any(item["code"] == "different_named_subjects" for item in finding["contradictions"])
     date_field = next(field for field in finding["plan"]["fields"] if field["field"] == "date")
     assert date_field["requires_review"]
 
@@ -652,11 +822,41 @@ def test_generic_news_without_content_is_quarantined_without_nulling_title(datab
     assert row["title"] == "News"
     assert row["review_status"] == "quarantined"
     with connect(database) as conn:
+        quarantined = list_quarantined_records(conn)
+        item = next(item for item in quarantined if item["entity_type"] == "news" and item["id"] == news_id)
+        assert "technical identifier" in item["reason"]
+        assert item["previous_status"] == "published"
+
+        result = transition_quarantined_record(conn, "news", news_id, "restore")
+        conn.commit()
+        assert result["new_status"] == "draft"
+        restored = conn.execute(
+            "SELECT title,review_status FROM news WHERE id=?", (news_id,)
+        ).fetchone()
+        assert restored["title"] == "News"
+        assert restored["review_status"] == "draft"
+
+        with pytest.raises(ValueError, match="no longer quarantined"):
+            transition_quarantined_record(conn, "news", news_id, "restore")
+
         rerun = analyze(conn)
-        assert not any(
+        assert any(
             item["record_ids"] == [news_id]
             for item in list_findings(conn, rerun["run_id"])
         )
+
+
+def test_quarantine_rejects_unknown_types_and_actions(database: Path):
+    with connect(database) as conn:
+        news_id = conn.execute(
+            "INSERT INTO news(title,slug,review_status) VALUES('Protected','protected','quarantined')"
+        ).lastrowid
+        conn.commit()
+
+        with pytest.raises(ValueError, match="Unsupported quarantine record type"):
+            transition_quarantined_record(conn, "quality_findings", news_id, "restore")
+        with pytest.raises(ValueError, match="Unsupported quarantine action"):
+            transition_quarantined_record(conn, "news", news_id, "delete")
 
 
 def test_shared_asset_alone_not_exact_duplicate(database: Path):
@@ -1008,6 +1208,84 @@ def test_data_quality_only_very_high_confidence_strong_merge_is_automatic():
     }
     assert finding_workflow({**base, "score": 0.98}) == "automatic"
     assert finding_workflow({**base, "score": 0.90}) == "manual"
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "score", "evidence"),
+    [
+        ("news", 0.95, ["equivalent_article_text", "compatible_publication_date"]),
+        ("publication", 0.90, ["same_title_authors", "same_publication_year", "same_journal"]),
+        ("member", 0.92, ["same_normalized_person_name", "compatible_affiliation", "similar_bio"]),
+    ],
+)
+def test_data_quality_entity_evidence_profiles_expand_safe_automatic_merging(
+    entity_type, score, evidence
+):
+    from mifp_app.services.data_quality.analyzer import finding_workflow
+
+    finding = {
+        "classification": "strong_candidate",
+        "action_type": "merge_records",
+        "entity_type": entity_type,
+        "score": score,
+        "evidence": [{"code": code, "strength": "strong"} for code in evidence],
+        "contradictions": [],
+        "plan": {"entity_type": entity_type, "record_ids": [1, 2], "fields": []},
+    }
+    assert finding_workflow(finding) == "automatic"
+
+    finding["contradictions"] = [{"code": "identity_conflict", "strength": "review"}]
+    assert finding_workflow(finding) == "manual"
+
+
+def test_news_near_identical_text_requires_compatible_dates_for_automatic_merge():
+    sentences = [
+        "The institute announced a new result in quantum field theory.",
+        "The collaboration includes researchers from Rome and Marseille.",
+        "The study develops a precise model for interacting particles.",
+        "Experimental comparisons support the main theoretical prediction.",
+        "The authors will present the work at the annual MIFP meeting.",
+        "Additional calculations are available in the published appendix.",
+    ]
+    body_a = " ".join(sentences)
+    body_b = " ".join(sentences[:2] + [
+        "The study develops a refined model for interacting particles."
+    ] + sentences[3:])
+    classification, score, evidence, contradictions = evaluate_news(
+        {"id": 1, "title": "Research result announced", "body": body_a, "date": "2026-04-09"},
+        {"id": 2, "title": "A research result is announced", "body": body_b, "date": "2026-04-09"},
+        context(),
+    )
+    assert classification.value == "strong_candidate"
+    assert score >= 0.94
+    assert "compatible_publication_date" in {item.code for item in evidence}
+    assert not contradictions
+    from mifp_app.services.data_quality.analyzer import finding_workflow
+    finding = {
+        "classification": classification.value,
+        "action_type": "merge_records",
+        "entity_type": "news",
+        "score": score,
+        "evidence": [item.__dict__ for item in evidence],
+        "contradictions": [],
+        "plan": {"entity_type": "news", "record_ids": [1, 2], "fields": []},
+    }
+    assert finding_workflow(finding) == "automatic"
+
+    classification, score, evidence, contradictions = evaluate_news(
+        {"id": 1, "title": "Research result announced", "body": body_a, "date": "2025-04-09"},
+        {"id": 2, "title": "A research result is announced", "body": body_b, "date": "2026-04-09"},
+        context(),
+    )
+    assert classification.value == "ambiguous"
+    assert any(item.code == "different_publication_date" for item in contradictions)
+    finding.update({
+        "classification": classification.value,
+        "score": score,
+        "evidence": [item.__dict__ for item in evidence],
+        "contradictions": [item.__dict__ for item in contradictions],
+    })
+    assert finding_workflow(finding) == "manual"
 
 
 def test_data_quality_technical_junk_is_automatic_reversible_quarantine():

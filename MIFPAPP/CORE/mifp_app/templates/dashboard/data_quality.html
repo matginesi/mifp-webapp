@@ -3,6 +3,7 @@
 {% block page_title %}Data quality{% endblock %}
 {% block content %}
 {% call page_header('Data quality', 'Database cleanup', 'Scan, review, and consolidate records. The system never deletes — it quarantines and merges.') %}
+  <a class="btn btn-outline btn-sm" href="#dqQuarantine"><i class="bi bi-shield-lock"></i> Quarantine <span>{{ quarantined|length }}</span></a>
   <button type="button" class="btn btn-primary btn-sm" id="dqAnalyze"><i class="bi bi-stars"></i> Scan database</button>
 {% endcall %}
 
@@ -14,7 +15,7 @@
       <span class="dq-phase-num"><i class="bi bi-search"></i></span>
       <div>
         <h2>Scan</h2>
-        <p>Detect records that should be merged, cleaned, enriched, or split. This step never changes content.</p>
+        <p>Detect records that should be merged, cleaned, enriched, or split. A scan alone never changes record counts: queue the automatic fixes, then apply them.</p>
       </div>
     </header>
     <div class="dq-progress" id="dqProgress" hidden>
@@ -28,7 +29,7 @@
       <div class="dq-summary-cards" id="dqSummaryCards">
         {% for value, label, icon, help in [
           ('automatic','Automatic fixes','bi-lightning-charge','Deterministic and very-high-confidence changes that can be queued in bulk.'),
-          ('manual','Manual review','bi-person-check','Only changes that genuinely need your decision.'),
+          ('manual','Needs decision','bi-person-check','Only changes that genuinely need your decision.'),
           ('informational','Informational','bi-info-circle','Related/blocked findings that do not need a database change.'),
         ] %}
         <button type="button" class="dq-summary-card" data-workflow-filter="{{ value }}" title="{{ help }}">
@@ -46,12 +47,12 @@
           <b>{{ manual_count }} items need a human decision</b>
           <span>These are the only findings the analyzer cannot resolve safely by itself.</span>
           {% else %}
-          <b>No manual decisions required</b>
-          <span>Manual review stays available here whenever a scan finds genuinely ambiguous items.</span>
+          <b>No decisions required</b>
+          <span>This area appears only when a scan finds something that cannot be resolved safely.</span>
           {% endif %}
         </div>
         <button type="button" class="btn btn-sm btn-dq-manual-jump" data-workflow-filter="manual" {% if not manual_count %}disabled aria-disabled="true"{% endif %}>
-          Review manually <span>{{ manual_count }}</span>
+          Review decisions <span>{{ manual_count }}</span>
         </button>
       </div>
       {% else %}
@@ -72,7 +73,7 @@
       <span class="dq-phase-num"><i class="bi bi-check2-square"></i></span>
       <div>
         <h2>Review &amp; Apply</h2>
-        <p>Queue deterministic fixes in one click. Manual review is reserved for changes that truly need your judgment.</p>
+        <p>Queue safe fixes in one click. Your decision is requested only when the evidence is genuinely ambiguous.</p>
       </div>
     </header>
     {% if run %}
@@ -104,7 +105,7 @@
         <span>Finding</span>
         <select class="form-select form-select-sm" name="classification">
           <option value="automatic" selected>Automatic fixes</option>
-          <option value="manual">Manual review</option>
+          <option value="manual">Needs decision</option>
           <option value="informational">Informational / non-blocking</option>
           <option value="">All</option>
           <option value="exact_duplicate">Exact match</option>
@@ -141,7 +142,7 @@
           <i class="bi bi-check2-all"></i> Queue all automatic fixes
         </button>
         <button type="button" class="btn btn-sm btn-dq-review-manual" data-workflow-filter="manual" {% if not workflow_counts.get('manual', 0) %}disabled aria-disabled="true"{% endif %}>
-          <i class="bi bi-person-check"></i> Review manual <b>{{ workflow_counts.get('manual', 0) }}</b>
+          <i class="bi bi-person-check"></i> Review decisions <b>{{ workflow_counts.get('manual', 0) }}</b>
         </button>
         <button type="button" class="btn btn-sm btn-dq-apply" id="dqApplyAll" {% if not bundle %}disabled{% endif %}>
           <i class="bi bi-database-check"></i> Apply changes
@@ -177,6 +178,8 @@
   </section>
 
 </div>
+
+{% include "dashboard/data_quality/_quarantine.html" %}
 
 <div class="modal fade" id="dqApplyModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">

@@ -81,7 +81,13 @@ def login_post():
         else url_for("auth.login", next=request.args.get("next", ""))
     )
     if not _check_rate_limit():
-        security_event("auth.login_rate_limited", "login rate limit exceeded", severity="warning", username=request.form.get("username", "").strip(), ip=get_client_ip())
+        security_event(
+            "auth.login_rate_limited",
+            "login rate limit exceeded",
+            severity="warning",
+            username=request.form.get("login_username", "").strip(),
+            ip=get_client_ip(),
+        )
         flash("Too many attempts. Please try again in 60 seconds.", "error")
         return redirect(failure_url)
 

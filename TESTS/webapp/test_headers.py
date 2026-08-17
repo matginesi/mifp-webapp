@@ -105,4 +105,4 @@ def test_public_cookie_banner_reads_configured_runtime_file(app, client, tmp_pat
     assert b"Runtime cookie notice" in response.data
     assert b"cookie-banner-icon" in response.data
     assert b"cookie-banner-actions" in response.data
-    assert b">Dismiss<" in response.data
+    assert b'<span class="visually-hidden">Dismiss</span>' in response.data

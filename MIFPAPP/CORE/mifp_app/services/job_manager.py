@@ -10,6 +10,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from ..utils.logger import get_logger, log_event, log_exception
+
 _JOB_HISTORY_SECONDS = 24 * 3600
 
 
@@ -113,8 +115,17 @@ def _persist_job(db_path: str | None, state: JobState) -> None:
                     state.error,
                 ),
             )
-    except (sqlite3.Error, OSError):
-        pass
+    except (sqlite3.Error, OSError) as exc:
+        log_event(
+            get_logger("jobs"),
+            "job.state_persist_failed",
+            "Background job state could not be persisted",
+            level="WARNING",
+            job_id=state.id,
+            job_name=state.name,
+            job_status=state.status,
+            error_type=type(exc).__name__,
+        )
 
 
 class JobManager:
@@ -206,6 +217,14 @@ class JobManager:
                     state.status = "failed"
                     state.error = str(exc)[:300]
                 _persist_job(self._db_path, state)
+                log_exception(
+                    get_logger("jobs"),
+                    "job.failed",
+                    "Background job failed",
+                    job_id=state.id,
+                    job_name=state.name,
+                    error_type=type(exc).__name__,
+                )
                 raise
             finally:
                 with self._lock:

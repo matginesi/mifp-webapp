@@ -148,5 +148,6 @@ def logs_cleanup():
         audit_log("log.cleanup", f"log cleanup: deleted {deleted} files older than {days} days")
         flash(f"Deleted {deleted} log file(s) older than {days} days.", "success")
     except OSError:
+        current_app.logger.exception("log cleanup failed days=%s", days)
         flash("Log cleanup failed. Check the application error log.", "error")
     return redirect(url_for("dashboard.logs"))

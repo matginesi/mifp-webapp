@@ -636,6 +636,60 @@ def test_import_jsonl_member_update_does_not_steal_existing_slug(tmp_path: Path)
     assert [r["slug"] for r in rows] == ["alice-smith", "alice-s"]
 
 
+def test_repeated_member_import_matches_reversed_name_without_email(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    first_path = tmp_path / "member-first.jsonl"
+    second_path = tmp_path / "member-second.jsonl"
+    first_path.write_text(json.dumps({
+        "type": "member",
+        "data": {"display_name": "Alexey Kavokin", "slug": "alexey-kavokin"},
+    }) + "\n", encoding="utf-8")
+    second_path.write_text(json.dumps({
+        "type": "member",
+        "data": {
+            "display_name": "Kavokin Alexey",
+            "slug": "kavokin-alexey-old",
+            "affiliation": "University of Southampton",
+        },
+    }) + "\n", encoding="utf-8")
+
+    first = import_jsonl(conn, first_path)
+    second = import_jsonl(conn, second_path)
+
+    assert first["inserted"]["member"] == 1
+    assert second["updated"]["member"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM members").fetchone()[0] == 1
+    row = conn.execute("SELECT display_name,slug,affiliation FROM members").fetchone()
+    assert row["display_name"] == "Alexey Kavokin"
+    assert row["slug"] == "alexey-kavokin"
+    assert row["affiliation"] == "University of Southampton"
+
+
+def test_member_import_does_not_merge_same_name_with_conflicting_emails(tmp_path: Path) -> None:
+    from mifp_app.services.importers import import_jsonl
+
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO members(display_name,slug,email) VALUES('Alex Smith','alex-smith-one','one@example.test')"
+    )
+    path = tmp_path / "homonym.jsonl"
+    path.write_text(json.dumps({
+        "type": "member",
+        "data": {
+            "display_name": "Alex Smith",
+            "slug": "alex-smith-two",
+            "email": "two@example.test",
+        },
+    }) + "\n", encoding="utf-8")
+
+    summary = import_jsonl(conn, path)
+
+    assert summary["inserted"]["member"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM members").fetchone()[0] == 2
+
+
 def test_import_jsonl_event_url_becomes_link(tmp_path: Path) -> None:
     from mifp_app.services.importers import import_jsonl
 

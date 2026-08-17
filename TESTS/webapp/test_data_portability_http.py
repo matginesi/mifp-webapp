@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import zipfile
 from pathlib import Path
 
@@ -15,6 +16,8 @@ def app_with_admin(tmp_path):
     os.environ["TESTING"] = "1"
     os.environ["DATABASE_PATH"] = str(tmp_path / "test.db")
     os.environ["LOG_DIR"] = str(tmp_path / "logs")
+    os.environ["EXPORT_DIR"] = str(tmp_path / "exports")
+    os.environ["ASSETS_DIR"] = str(tmp_path / "assets")
     os.environ["SECRET_KEY"] = "test-secret-key-not-for-prod"
     os.environ["LOG_ACCESS_ENABLED"] = "0"
     from mifp_app import create_app
@@ -23,6 +26,10 @@ def app_with_admin(tmp_path):
     app.config["WTF_CSRF_ENABLED"] = False
     app.config["ADMIN_USERNAME"] = "admin"
     app.config["ADMIN_PASSWORD_HASH"] = generate_password_hash("test-pass")
+    app.config["EXPORT_DIR"] = tmp_path / "exports"
+    app.config["ASSETS_DIR"] = tmp_path / "assets"
+    app.config["EXPORT_DIR"].mkdir(parents=True, exist_ok=True)
+    app.config["ASSETS_DIR"].mkdir(parents=True, exist_ok=True)
     yield app
 
 
@@ -36,7 +43,10 @@ def _login(client):
 class TestDataPortabilityHTTP:
     def _export_post(self, client, fmt: str) -> tuple[list[dict], dict | None]:
         """POST export, parse NDJSON events, return (events, last_event_with_token)."""
-        resp = client.post(f"/dashboard/data-portability/export/{fmt}", data={"_csrf_token": "x"})
+        resp = client.post(
+            f"/dashboard/data-portability/export/{fmt}",
+            data={"_csrf_token": "x", "password": "test-pass"},
+        )
         assert resp.status_code == 200
         assert resp.content_type == "application/x-ndjson"
         text = resp.data.decode("utf-8")
@@ -72,6 +82,27 @@ class TestDataPortabilityHTTP:
                 assert envelope.get("kind") == "manifest"
                 assert (envelope.get("data") or {}).get("format") == "mifp-jsonl-v2"
 
+    def test_export_uses_explicit_user_download_control(self, app_with_admin):
+        """The browser must not rely on an async synthetic click, which can
+        be blocked and consume the one-time download token invisibly."""
+        with app_with_admin.test_client() as client:
+            _login(client)
+            page = client.get("/dashboard/data-portability")
+            assert page.status_code == 200
+            assert b'id="transferDownload"' in page.data
+            assert b"Download export" in page.data
+            assert b'id="exportAuthModal"' in page.data
+            assert b'id="exportAuthPassword"' in page.data
+            assert b'autocomplete="current-password"' in page.data
+            assert b"Verify and export" in page.data
+
+        script_path = Path(app_with_admin.static_folder) / "js/dashboard/data-portability.js"
+        script = script_path.read_text(encoding="utf-8")
+        assert "downloadButton.href = config.exportDlUrl.replace" in script
+        assert "anchor.click()" not in script
+        assert "startAuthorizedExport(fmt, password)" in script
+        assert "&password=" in script
+
     def test_export_zip(self, app_with_admin):
         with app_with_admin.test_client() as client:
             _login(client)
@@ -98,6 +129,34 @@ class TestDataPortabilityHTTP:
             resp = client.get("/dashboard/data-portability/export-dl/invalid-token")
             assert resp.status_code == 404
 
+    def test_export_requires_password_before_creating_any_file(self, app_with_admin):
+        with app_with_admin.test_client() as client:
+            _login(client)
+            missing = client.post(
+                "/dashboard/data-portability/export/zip",
+                data={"_csrf_token": "x"},
+            )
+            wrong = client.post(
+                "/dashboard/data-portability/export/zip",
+                data={"_csrf_token": "x", "password": "wrong-password"},
+            )
+
+        assert missing.status_code == 403
+        assert wrong.status_code == 403
+        assert b"No export was created" in missing.data
+        assert b"No export was created" in wrong.data
+        assert not list(Path(app_with_admin.config["EXPORT_DIR"]).glob(".portability-*"))
+
+    def test_export_download_token_is_bound_to_login_session(self, app_with_admin):
+        with app_with_admin.test_client() as client:
+            _login(client)
+            _events, token, _result = self._export_post(client, "jsonl")
+            with client.session_transaction() as browser_session:
+                browser_session["_csrf_token"] = "a-different-login-session-token"
+            rejected = client.get(f"/dashboard/data-portability/export-dl/{token}")
+
+        assert rejected.status_code == 404
+
     def test_export_invalid_format(self, app_with_admin):
         with app_with_admin.test_client() as client:
             _login(client)
@@ -114,6 +173,7 @@ class TestDataPortabilityHTTP:
             resp = client.post(
                 "/dashboard/data-portability/import",
                 data={
+                    "password": "test-pass",
                     "data_file": (io.BytesIO(jsonl_content.encode("utf-8")), "test.jsonl"),
                     "dry_run": "0",
                 },
@@ -133,6 +193,7 @@ class TestDataPortabilityHTTP:
             resp = client.post(
                 "/dashboard/data-portability/import",
                 data={
+                    "password": "test-pass",
                     "data_file": (zip_buf, "test.zip"),
                     "dry_run": "1",
                 },
@@ -140,10 +201,134 @@ class TestDataPortabilityHTTP:
             )
             assert resp.status_code == 200
 
+    def test_import_xhr_accepts_multiple_zips(self, app_with_admin):
+        def package() -> io.BytesIO:
+            payload = io.BytesIO()
+            with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("manifest.json", json.dumps({"scope": "all", "records": 0, "files": []}))
+                archive.writestr("records.jsonl", "")
+            payload.seek(0)
+            return payload
+
+        with app_with_admin.test_client() as client:
+            _login(client)
+            response = client.post(
+                "/dashboard/data-portability/import",
+                data={
+                    "password": "test-pass",
+                    "data_file": [(package(), "first.zip"), (package(), "second.zip")],
+                    "dry_run": "1",
+                },
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+
+        assert response.status_code == 200
+        assert response.content_type == "application/x-ndjson"
+        messages = [json.loads(line) for line in response.data.splitlines() if line]
+        result = messages[-1]
+        assert result["event"] == "result"
+        assert result["ok"] is True
+        assert result["dry_run"] is True
+        assert [m["file"] for m in messages if m.get("event") == "file_start"] == [
+            "first.zip", "second.zip"
+        ]
+
+    def test_import_requires_password_before_processing_files(self, app_with_admin, caplog):
+        record = {
+            "type": "news",
+            "data": {"title": "Must not import", "slug": "must-not-import"},
+            "links": [], "assets": [],
+        }
+        with app_with_admin.test_client() as client:
+            _login(client)
+            response = client.post(
+                "/dashboard/data-portability/import",
+                data={
+                    "password": "wrong-password",
+                    "data_file": (
+                        io.BytesIO((json.dumps(record) + "\n").encode()),
+                        "blocked.jsonl",
+                    ),
+                },
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+
+        assert response.status_code == 403
+        assert response.content_type == "application/x-ndjson"
+        result = json.loads(response.data)
+        assert result["outcome"] == "authorization_denied"
+        assert result["ok"] is False
+        assert "No file was processed" in result["message"]
+        assert "portable import password verification failed" in caplog.text
+        with sqlite3.connect(app_with_admin.config["DATABASE_PATH"]) as conn:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM news WHERE slug='must-not-import'"
+            ).fetchone()[0] == 0
+            assert conn.execute(
+                "SELECT COUNT(*) FROM import_runs WHERE name='blocked.jsonl'"
+            ).fetchone()[0] == 0
+
+    def test_import_password_failures_are_rate_limited(self, app_with_admin):
+        from mifp_app.utils.security import reset_rate_limits
+
+        reset_rate_limits(
+            "portable_import_password_failure",
+            db_path=str(app_with_admin.config["DATABASE_PATH"]),
+        )
+        with app_with_admin.test_client() as client:
+            _login(client)
+            responses = [
+                client.post(
+                    "/dashboard/data-portability/import",
+                    data={"password": "wrong-password"},
+                    headers={"X-Requested-With": "XMLHttpRequest"},
+                )
+                for _ in range(6)
+            ]
+
+        assert [response.status_code for response in responses[:5]] == [403] * 5
+        assert responses[5].status_code == 429
+        assert "Too many failed attempts" in responses[5].get_data(as_text=True)
+
+    def test_oversized_import_returns_actionable_json_and_is_logged(
+        self, app_with_admin, caplog
+    ):
+        app_with_admin.config["MAX_CONTENT_LENGTH"] = 256
+        with app_with_admin.test_client() as client:
+            _login(client)
+            response = client.post(
+                "/dashboard/data-portability/import",
+                data={"password": "test-pass", "data_file": (io.BytesIO(b"x" * 2048), "large.jsonl")},
+                headers={"X-Requested-With": "XMLHttpRequest"},
+            )
+
+        assert response.status_code == 413
+        payload = response.get_json()
+        assert payload["error"] == "file_too_large"
+        assert "upload large packages sequentially" in payload["message"]
+        assert payload["request_id"]
+        assert "payload too large" in caplog.text
+
+    def test_import_page_exposes_upload_limits_to_preflight_selection(self, app_with_admin):
+        with app_with_admin.test_client() as client:
+            _login(client)
+            response = client.get("/dashboard/data-portability")
+
+        assert response.status_code == 200
+        assert b'"maxUploadBytes"' in response.data
+        assert b'"maxZipBytes"' in response.data
+        assert b'"maxZipFiles"' not in response.data
+        assert b'id="transferSelectionError"' in response.data
+        assert b'id="transferBatchNotice"' in response.data
+        assert b'id="importAuthModal"' in response.data
+        assert b'id="importAuthPassword"' in response.data
+        assert b'autocomplete="current-password"' in response.data
+
     def test_routes_require_auth(self):
         """Anon requests redirect to login."""
         routes = [
             ("POST", "/dashboard/data-portability/export/jsonl"),
+            ("POST", "/dashboard/data-portability/import"),
             ("GET", "/dashboard/data-portability/export-dl/some-token"),
         ]
         import tempfile, os
@@ -174,6 +359,7 @@ class TestDataPortabilityHTTP:
             resp = client.post(
                 "/dashboard/data-portability/import",
                 data={
+                    "password": "test-pass",
                     "data_file": (io.BytesIO(jsonl_content.encode("utf-8")), "test.jsonl"),
                     "dry_run": "0",
                 },
@@ -201,6 +387,7 @@ class TestDataPortabilityHTTP:
             resp = client.post(
                 "/dashboard/data-portability/import",
                 data={
+                    "password": "test-pass",
                     "data_file": (io.BytesIO(jsonl_content.encode("utf-8")), "test.jsonl"),
                     "dry_run": "1",
                 },
@@ -223,6 +410,7 @@ class TestDataPortabilityHTTP:
             resp = client.post(
                 "/dashboard/data-portability/import",
                 data={
+                    "password": "test-pass",
                     "data_file": (io.BytesIO(jsonl_content.encode("utf-8")), "multi.jsonl"),
                     "dry_run": "0",
                 },
@@ -261,6 +449,7 @@ class TestDataPortabilityHTTP:
             resp = client.post(
                 "/dashboard/data-portability/import",
                 data={
+                    "password": "test-pass",
                     "data_file": (io.BytesIO(jsonl_bytes), "roundtrip.jsonl"),
                     "dry_run": "0",
                 },
@@ -283,7 +472,10 @@ class TestDataPortabilityHTTP:
         monkeypatch.setattr(dashboard_routes, "bundle_to_zip_file", boom)
         with app_with_admin.test_client() as client:
             _login(client)
-            resp = client.post("/dashboard/data-portability/export/zip", data={"_csrf_token": "x"})
+            resp = client.post(
+                "/dashboard/data-portability/export/zip",
+                data={"_csrf_token": "x", "password": "test-pass"},
+            )
             assert resp.status_code == 500
             assert resp.content_type == "application/x-ndjson"
             lines = [l for l in resp.data.decode("utf-8").strip().splitlines() if l.strip()]

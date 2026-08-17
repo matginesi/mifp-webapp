@@ -22,7 +22,7 @@ from .assets import (
     store_asset,
     store_external_asset,
 )
-from .data_quality.normalizers import clean_boilerplate
+from .data_quality.normalizers import clean_boilerplate, person_name
 
 TYPE_TO_TABLE = {
     "event": "events",
@@ -1135,6 +1135,12 @@ def _identity_keys(typ: str, data: dict[str, Any], urls: list[str] | None = None
         email = str(data.get("email") or "").strip().casefold()
         if email:
             keys.append((f"member:email:{email}", "same email address"))
+        parsed_name = person_name(title)
+        if len(parsed_name.normal) >= 2:
+            # Token order is deliberately ignored here because legacy member
+            # feeds alternate between "Given Surname" and "Surname Given".
+            name_key = "|".join(sorted(parsed_name.normal))
+            keys.append((f"member:name:{name_key}", "same complete person name"))
     elif typ == "publication":
         doi = _normalized_doi(data.get("doi"))
         if doi:
@@ -1211,11 +1217,34 @@ def _find_existing_entity(
     incoming_keys = {key for key, _reason in _identity_keys(typ, data, identity_urls)}
     if not incoming_keys:
         return None
+    member_candidates: list[sqlite3.Row] = []
+    incoming_email = str(data.get("email") or "").strip().casefold()
     for row in conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall():
         existing = dict(row)
         keys = {key for key, _reason in _identity_keys(typ, existing, _entity_urls(conn, typ, int(row["id"])))}
         if incoming_keys & keys:
+            if typ == "member":
+                existing_email = str(existing.get("email") or "").strip().casefold()
+                if incoming_email and existing_email and incoming_email != existing_email:
+                    continue
+                member_candidates.append(row)
+                continue
             return row
+    if typ == "member" and member_candidates:
+        if incoming_email:
+            exact_email = [
+                row for row in member_candidates
+                if str(row["email"] or "").strip().casefold() == incoming_email
+            ]
+            if len(exact_email) == 1:
+                return exact_email[0]
+        known_emails = {
+            str(row["email"] or "").strip().casefold()
+            for row in member_candidates if str(row["email"] or "").strip()
+        }
+        # Do not guess between homonyms already distinguished by email.
+        if len(known_emails) <= 1:
+            return member_candidates[0]
     return None
 
 

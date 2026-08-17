@@ -76,7 +76,7 @@ def _site_readiness(conn) -> list[dict]:
     try:
         db_ok = conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
     except Exception:
-        pass
+        current_app.logger.exception("control centre database quick check failed")
     checks.append(
         {
             "label": "Public database",

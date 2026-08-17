@@ -35,9 +35,12 @@
       <label class="transfer-drop" for="transferFiles">
         <i class="bi bi-cloud-arrow-up"></i>
         <strong>Add JSONL or ZIP files</strong>
-        <span>Select <code>records.jsonl</code>, per-type JSONL files, or a complete MIFP ZIP package</span>
+        <span>Select <code>records.jsonl</code>, per-type JSONL files, or one or more complete MIFP ZIP packages</span>
+        <span>Multiple large packages are uploaded automatically in a safe queue · {{ (config.MAX_CONTENT_LENGTH // (1024 * 1024)) }} MB per upload</span>
         <input id="transferFiles" type="file" name="data_file" accept=".json,.jsonl,.zip,application/json,application/x-ndjson,application/zip" multiple required>
       </label>
+      <p class="form-error" id="transferSelectionError" role="alert" hidden></p>
+      <p class="form-hint" id="transferBatchNotice" aria-live="polite" hidden></p>
       <div class="transfer-queue-head">
         <span><b id="transferFileCount">0 files</b> ready</span>
         <button type="button" class="btn-link transfer-clear-files" id="transferClearFiles" hidden>Clear all</button>
@@ -66,16 +69,78 @@
       </div>
     </div>
     <div class="portability-export-actions">
-      <button class="btn btn-primary transfer-export-button" data-export="jsonl" type="button">
-        <i class="bi bi-filetype-json"></i>
-        <span><b>Export data (JSONL)</b><small>Self-contained JSONL v2 package with the same records, state and local assets as the ZIP export.</small></span>
+      <p class="portability-export-intro"><b>Choose what you need</b><span>Both formats can be imported again. ZIP is the safest choice for a complete backup.</span></p>
+      <button class="transfer-export-button is-recommended" data-export="zip" type="button">
+        <span class="transfer-export-icon"><i class="bi bi-file-earmark-zip" aria-hidden="true"></i></span>
+        <span class="transfer-export-copy">
+          <span class="transfer-export-title"><b>Complete backup</b><em>Recommended</em></span>
+          <small>One ZIP with records, database state and every managed local asset.</small>
+          <span class="transfer-export-use"><i class="bi bi-arrow-repeat" aria-hidden="true"></i> Best for full restore or moving to another installation</span>
+        </span>
+        <i class="bi bi-download transfer-export-action" aria-hidden="true"></i>
       </button>
-      <button class="btn btn-primary transfer-export-button" data-export="zip" type="button">
-        <i class="bi bi-file-earmark-zip"></i>
-        <span><b>Export database (ZIP)</b><small>Complete, scraper-compatible package: canonical records, managed asset files, roles, links, settings and quality state. Ready for lossless re-import.</small></span>
+      <button class="transfer-export-button is-technical" data-export="jsonl" type="button">
+        <span class="transfer-export-icon"><i class="bi bi-braces" aria-hidden="true"></i></span>
+        <span class="transfer-export-copy">
+          <span class="transfer-export-title"><b>Portable JSONL</b><em>Advanced</em></span>
+          <small>A self-contained JSONL v2 file with the same portable data as the ZIP.</small>
+          <span class="transfer-export-use"><i class="bi bi-code-slash" aria-hidden="true"></i> Best for pipelines, inspection and versioned data</span>
+        </span>
+        <i class="bi bi-download transfer-export-action" aria-hidden="true"></i>
       </button>
     </div>
-  </section>
+</section>
+</div>
+
+<div class="modal fade" id="importAuthModal" tabindex="-1" aria-labelledby="importAuthTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form class="modal-content smart-modal export-auth-modal" id="importAuthForm">
+      <div class="modal-header">
+        <h5 class="modal-title" id="importAuthTitle"><i class="bi bi-shield-lock"></i> Authorize secure import</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="export-auth-notice">
+          <i class="bi bi-database-lock" aria-hidden="true"></i>
+          <div><b>Confirm this sensitive operation</b><span>The selected files can change database records and managed assets. Enter the administrator password to continue.</span></div>
+        </div>
+        <label class="form-label" for="importAuthPassword">Administrator password</label>
+        <input class="form-control" id="importAuthPassword" name="password" type="password" autocomplete="current-password" required>
+        <p class="export-auth-format">Requested operation: <b id="importAuthOperation">—</b></p>
+        <small class="export-auth-security"><i class="bi bi-check2-circle"></i> The password is verified by the server, never written to logs and discarded when the queue ends.</small>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="importAuthSubmit"><i class="bi bi-shield-check"></i> Verify and continue</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal fade" id="exportAuthModal" tabindex="-1" aria-labelledby="exportAuthTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form class="modal-content smart-modal export-auth-modal" id="exportAuthForm">
+      <div class="modal-header">
+        <h5 class="modal-title" id="exportAuthTitle"><i class="bi bi-shield-lock"></i> Authorize secure export</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="export-auth-notice">
+          <i class="bi bi-database-lock" aria-hidden="true"></i>
+          <div><b>Confirm this sensitive operation</b><span>The export may contain the complete database and managed files. Enter the administrator password to continue.</span></div>
+        </div>
+        <label class="form-label" for="exportAuthPassword">Administrator password</label>
+        <input class="form-control" id="exportAuthPassword" name="password" type="password" autocomplete="current-password" required>
+        <p class="export-auth-format">Requested format: <b id="exportAuthFormat">—</b></p>
+        <p class="form-error" id="exportAuthError" role="alert" hidden></p>
+        <small class="export-auth-security"><i class="bi bi-check2-circle"></i> The password is verified on the server and is never stored in the export or logs.</small>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="exportAuthSubmit"><i class="bi bi-shield-check"></i> Verify and export</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <section class="modern-card portability-history">
@@ -159,6 +224,7 @@
       </div>
       <div class="modal-footer" id="transferFooter">
         <button type="button" class="btn btn-outline" id="transferCancel"><i class="bi bi-x-circle"></i> Cancel</button>
+        <a class="btn btn-primary" id="transferDownload" href="#" download hidden><i class="bi bi-download"></i> Download export</a>
         <a class="btn btn-primary" id="transferSmartMerge" href="{{ url_for('dashboard.data_quality_page') }}" hidden><i class="bi bi-clipboard2-pulse"></i> Analyze imported data</a>
         <button type="button" class="btn btn-outline" id="transferClose" data-bs-dismiss="modal" hidden>Close</button>
       </div>
@@ -177,6 +243,8 @@
   'exportJsonlUrl': url_for('dashboard.data_portability_export_post', fmt='jsonl'),
   'exportZipUrl': url_for('dashboard.data_portability_export_post', fmt='zip'),
   'exportDlUrl': url_for('dashboard.data_portability_export_dl', token='TOKEN'),
-  'smartMergeUrl': url_for('dashboard.data_quality_page')
+  'smartMergeUrl': url_for('dashboard.data_quality_page'),
+  'maxUploadBytes': config.MAX_CONTENT_LENGTH,
+  'maxZipBytes': config.IMPORT_MAX_ZIP_BYTES
 }|tojson }}</script>
 {% endblock %}

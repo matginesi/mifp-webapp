@@ -42,6 +42,8 @@ _metric_buffer_lock = threading.Lock()
 _metric_db_path: str | None = None
 _metric_flusher_thread: threading.Thread | None = None
 _METRIC_FLUSH_INTERVAL_SECONDS = 5.0
+_throttled_events: dict[str, float] = {}
+_throttled_events_lock = threading.Lock()
 
 
 def _metric_accumulate(db_path: str, scope: str, metric_name: str, metric_key: str) -> None:
@@ -209,6 +211,15 @@ class RequestContextFilter(logging.Filter):
         if stream == "application" and record.levelno >= logging.ERROR:
             record.stream = "errors"
         record.event = getattr(record, "event", None)
+        if not record.event:
+            if record.exc_info:
+                record.event = "application.exception"
+            elif record.levelno >= logging.ERROR:
+                record.event = "application.error"
+            elif record.levelno >= logging.WARNING:
+                record.event = "application.warning"
+            else:
+                record.event = "application.message"
         record.extra_fields = redact(getattr(record, "extra_fields", {}))
         if has_request_context():
             record.endpoint = getattr(record, "endpoint", None) or request.endpoint
@@ -337,6 +348,10 @@ class ConsoleFormatter(logging.Formatter):
         request_id = getattr(record, "request_id", None)
         if request_id and request_id != "-":
             line += f"  rid={request_id}"
+        fields = redact(getattr(record, "extra_fields", {}))
+        if fields:
+            rendered = json.dumps(fields, ensure_ascii=False, default=str, sort_keys=True)
+            line += "  " + rendered[:1200]
         if record.exc_info:
             line += "\n" + str(redact(self.formatException(record.exc_info)))
         return line
@@ -449,11 +464,58 @@ def log_event(logger: logging.Logger, event: str, message: str, *, level: str | 
     _emit(logger, _level(level), event, message, "application", fields)
 
 
-def audit_event(event: str, message: str, *, outcome: str = "success", severity: str = "info", **fields: Any) -> None:
+def log_event_throttled(
+    logger: logging.Logger,
+    event: str,
+    message: str,
+    *,
+    interval_seconds: float = 60,
+    throttle_key: str = "",
+    level: str | int = "WARNING",
+    **fields: Any,
+) -> bool:
+    """Emit a recurring operational problem at a bounded rate.
+
+    Returns ``True`` when a record was emitted. This is intended for degraded
+    fallbacks that may execute on every request or progress tick.
+    """
+    key = f"{logger.name}:{event}:{throttle_key}"
+    now = time.monotonic()
+    with _throttled_events_lock:
+        previous = _throttled_events.get(key, 0.0)
+        if now - previous < max(0.0, float(interval_seconds)):
+            return False
+        _throttled_events[key] = now
+    log_event(logger, event, message, level=level, **fields)
+    return True
+
+
+def audit_event(
+    event: str,
+    message: str,
+    *,
+    outcome: str = "success",
+    severity: str | None = None,
+    **fields: Any,
+) -> None:
+    if severity is None:
+        severity = (
+            "warning"
+            if outcome in {"failure", "failed", "denied", "rejected", "cancelled"}
+            else "info"
+        )
     _emit(get_logger("audit"), _level(severity), event, message, "audit", {"outcome": outcome, **fields})
 
 
-def audit_log(event_type: str, action: str, *, category: str = "system", severity: str = "info", outcome: str = "success", **fields: Any) -> None:
+def audit_log(
+    event_type: str,
+    action: str,
+    *,
+    category: str = "system",
+    severity: str | None = None,
+    outcome: str = "success",
+    **fields: Any,
+) -> None:
     """Backward-compatible alias for the documented audit API."""
     audit_event(event_type, action, outcome=outcome, severity=severity, category=category, **fields)
 
@@ -491,6 +553,7 @@ def init_request_logging(app: Flask, db_path: str | None = None) -> None:
         _request_id.set(rid)
         g.request_id = rid
         g.request_started_at = time.perf_counter()
+        g.request_initial_flash_count = len(session.get("_flashes") or [])
         g.csp_nonce = uuid.uuid4().hex
 
     def _record_metrics(status_code: int, duration_ms: float) -> None:
@@ -552,6 +615,17 @@ def init_request_logging(app: Flask, db_path: str | None = None) -> None:
             # or credentials and must never enter the access log.
             "query_keys": sorted(request.args.keys())[:30],
         }
+        flashes = session.get("_flashes") or []
+        initial_flash_count = int(getattr(g, "request_initial_flash_count", 0) or 0)
+        new_flashes = flashes[initial_flash_count:]
+        error_feedback = any(
+            isinstance(item, (list, tuple))
+            and item
+            and str(item[0]).casefold() in {"error", "danger"}
+            for item in new_flashes
+        )
+        if error_feedback:
+            fields["error_feedback"] = True
         quiet = request.path.startswith("/static/") or request.path in {"/health", "/ready"}
         if app.config.get("LOG_ACCESS_ENABLED", True) and not quiet:
             expected_maintenance = (
@@ -573,6 +647,50 @@ def init_request_logging(app: Flask, db_path: str | None = None) -> None:
         threshold = float(app.config.get("LOG_SLOW_REQUEST_MS", 5000))
         if threshold > 0 and duration >= threshold and not quiet:
             _emit(access_logger, logging.WARNING, "request.slow", "Slow request", "access", fields)
+
+        sensitive_area = request.path in {"/login", "/logout"} or request.path.startswith("/dashboard")
+        if sensitive_area and (response.status_code >= 400 or error_feedback):
+            area = "dashboard" if request.path.startswith("/dashboard") else "auth"
+            log_event(
+                get_logger(area),
+                f"{area}.request_failed",
+                "Administrative request failed",
+                level="ERROR" if response.status_code >= 500 else "WARNING",
+                endpoint=request.endpoint,
+                method=request.method,
+                path=request.path,
+                status=response.status_code,
+                duration_ms=duration,
+                request_bytes=request.content_length,
+                error_feedback=error_feedback,
+            )
+
+        # Coverage safety net: every state-changing dashboard request gets an
+        # audit record even when an individual route forgets its domain event.
+        # Submitted values are intentionally never included.
+        if request.path.startswith("/dashboard") and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            if error_feedback:
+                outcome = "failure"
+            elif response.status_code < 400:
+                outcome = "success"
+            elif response.status_code in {401, 403, 429}:
+                outcome = "denied"
+            else:
+                outcome = "failure"
+            audit_event(
+                "dashboard.mutation",
+                "Dashboard state-changing request completed",
+                outcome=outcome,
+                severity="error" if response.status_code >= 500 else None,
+                category="dashboard",
+                endpoint=request.endpoint,
+                method=request.method,
+                path=request.path,
+                status=response.status_code,
+                duration_ms=duration,
+                request_bytes=request.content_length,
+                error_feedback=error_feedback,
+            )
         _record_metrics(response.status_code, duration)
         return response
 

@@ -2,6 +2,7 @@
 {% set plan = finding.plan or {} %}
 {% set records = plan.get('records') or (plan.get('record') and [plan.get('record')]) or [] %}
 {% set is_merge = finding.action_type == 'merge_records' %}
+{% set merge_is_informational = is_merge and finding.workflow == 'informational' %}
 {% set evidence = (finding.evidence or [])[0] or {} %}
 {% set status_class = finding.status if finding.status in ('new','bundled','accepted','rejected') else 'new' %}
 {% set canonical_records = records|selectattr('id', 'equalto', plan.get('canonical_id'))|list if is_merge else [] %}
@@ -32,7 +33,16 @@
       <span>{{ finding.workflow_reason }}</span>
     </div>
     <div class="dq-finding-solution">
-      {% if is_merge %}
+      {% if merge_is_informational %}
+        <div class="dq-merge-records">
+          {% for record in records %}
+          <span>{{ record.get('title') or record.get('display_name') or record.get('name') or ('#' ~ record.id) }}</span>
+          {% endfor %}
+        </div>
+        <div class="dq-merge-outcome">
+          <b>No merge proposed:</b> these records remain separate.
+        </div>
+      {% elif is_merge %}
         {% set labels = records|map(attribute='title')|map('default', '')|list %}
         {% set signals = (finding.evidence or [])|map(attribute='explanation')|list %}
         <div class="dq-merge-records">
@@ -45,7 +55,7 @@
             <b>Result:</b> {{ canonical.get('title') or canonical.get('display_name') or canonical.get('name') or ('record #' ~ plan.get('canonical_id')) }}
             <small>{{ (plan.get('assets') or [])|length }} assets, {{ (plan.get('links') or [])|length }} links</small>
           {% else %}
-            <b>Manual review:</b> choose a parent or canonical record before this finding can be applied.
+            <b>Decision needed:</b> choose a parent or canonical record before this finding can be applied.
           {% endif %}
         </div>
         {% if signals %}
@@ -64,10 +74,10 @@
     </div>
   </div>
   <div class="dq-finding-meta">
-    <span class="dq-badge dq-badge-type-{{ finding.action_type }}">{{ finding.action_type }}</span>
+    <span class="dq-badge dq-badge-type-{{ finding.action_type }}">{{ 'do not merge' if merge_is_informational else finding.action_type }}</span>
     <span class="dq-badge-entity">{{ finding.entity_type }}</span>
     <span class="dq-badge-status dq-badge-status-{{ status_class }}">{{ finding.status or 'new' }}</span>
-    <span class="dq-badge dq-workflow-{{ finding.workflow }}">{{ {'automatic':'automatic','manual':'manual review','informational':'informational'}.get(finding.workflow, finding.workflow) }}</span>
+    <span class="dq-badge dq-workflow-{{ finding.workflow }}">{{ {'automatic':'automatic','manual':'needs decision','informational':'informational'}.get(finding.workflow, finding.workflow) }}</span>
   </div>
   <div class="dq-finding-actions">
     {% if finding.status not in ('rejected','resolved') %}
@@ -81,7 +91,7 @@
     </button>
     {% elif manually_editable %}
     <button type="button" class="btn btn-sm btn-dq-manual" data-finding-id="{{ finding.id }}">
-      <i class="bi bi-person-check"></i> Review manually
+      <i class="bi bi-person-check"></i> Review decision
     </button>
     {% elif executable %}
     <button type="button" class="btn btn-sm btn-dq-accept" data-finding-id="{{ finding.id }}">

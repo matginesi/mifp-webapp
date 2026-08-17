@@ -896,8 +896,8 @@ class TestMergeDetectionAndApplication:
         merges = [f for f in findings if f["action_type"] == "merge_records"]
         assert not merges
 
-    def test_news_exact_body_is_deterministic_merge(self):
-        """Two news records with ==99% body text → EXACT merge."""
+    def test_news_exact_body_with_conflicting_identity_requires_review(self):
+        """Identical prose cannot override different titles and complete dates."""
         conn = self._conn()
         body = "Prof. Kavokin and Dr. Kavokina have published a new Science Perspective. " * 10
         conn.execute(
@@ -915,7 +915,8 @@ class TestMergeDetectionAndApplication:
         findings = list_findings(conn, result["run_id"])
         merges = [f for f in findings if f["action_type"] == "merge_records"]
         assert len(merges) >= 1
-        assert merges[0]["classification"] in ("exact_duplicate", "strong_candidate")
+        assert merges[0]["classification"] == "ambiguous"
+        assert merges[0]["workflow"] == "manual"
 
     def test_full_merge_pipeline_apply(self):
         """Full pipeline: detect duplicate members → bundle → apply."""

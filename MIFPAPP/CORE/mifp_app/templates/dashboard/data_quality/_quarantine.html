@@ -1,0 +1,39 @@
+<section class="dq-quarantine modern-card" id="dqQuarantine" aria-labelledby="dqQuarantineTitle">
+  <div class="dq-quarantine-head">
+    <span class="dq-quarantine-icon"><i class="bi bi-shield-lock" aria-hidden="true"></i></span>
+    <div>
+      <span class="panel-eyebrow">Protected records</span>
+      <h2 id="dqQuarantineTitle">Quarantine <em>{{ quarantined|length }}</em></h2>
+      <p>Nothing here is deleted. These records are stored intact and hidden from the public site until you decide what to do.</p>
+    </div>
+  </div>
+  {% if quarantined %}
+  <div class="dq-quarantine-list">
+    {% for item in quarantined %}
+    <article class="dq-quarantine-record">
+      <div class="dq-quarantine-record-main">
+        <span class="dq-quarantine-entity">{{ item.entity_type|replace('_', ' ') }}</span>
+        <b>{{ item.label or ('Record #' ~ item.id) }}</b>
+        <small>#{{ item.id }}{% if item.slug %} · {{ item.slug }}{% endif %}{% if item.quarantined_at %} · isolated {{ item.quarantined_at }}{% endif %}</small>
+        <p><i class="bi bi-info-circle" aria-hidden="true"></i>{{ item.reason }}</p>
+      </div>
+      <div class="dq-quarantine-actions">
+        {% if item.edit_url %}
+        <a class="btn btn-sm btn-outline" href="{{ item.edit_url }}"><i class="bi bi-pencil-square"></i> Open editor</a>
+        {% endif %}
+        <form method="post" action="{{ url_for('dashboard.data_quality_quarantine_action', entity_type=item.entity_type, record_id=item.id) }}">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="decision" value="restore">
+          <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-arrow-counterclockwise"></i> Restore as draft</button>
+        </form>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="dq-quarantine-empty">
+    <i class="bi bi-shield-check" aria-hidden="true"></i>
+    <div><b>Quarantine is empty</b><span>No records are currently isolated.</span></div>
+  </div>
+  {% endif %}
+</section>

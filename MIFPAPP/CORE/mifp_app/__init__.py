@@ -63,9 +63,29 @@ def _is_tmpfs(path) -> bool:
     candidate = Path(path)
     while not candidate.exists() and candidate != candidate.parent:
         candidate = candidate.parent
-    nodev = getattr(os, "ST_NODEV", 0)
+    mountinfo = Path("/proc/self/mountinfo")
+    if not mountinfo.is_file():
+        return False
     try:
-        return bool(os.statvfs(candidate).f_flag & nodev)
+        resolved = candidate.resolve()
+        matches: list[tuple[int, str]] = []
+        for line in mountinfo.read_text(encoding="utf-8", errors="replace").splitlines():
+            left, separator, right = line.partition(" - ")
+            if not separator:
+                continue
+            left_fields = left.split()
+            right_fields = right.split()
+            if len(left_fields) < 5 or not right_fields:
+                continue
+            mount_point = Path(left_fields[4].replace("\\040", " "))
+            try:
+                resolved.relative_to(mount_point)
+            except ValueError:
+                continue
+            matches.append((len(mount_point.parts), right_fields[0].casefold()))
+        if not matches:
+            return False
+        return max(matches)[1] in {"tmpfs", "ramfs"}
     except (OSError, ValueError):
         return False
 
@@ -89,6 +109,7 @@ def create_app():
         get_logger,
         init_request_logging,
         log_event,
+        log_event_throttled,
         log_exception,
         security_event,
         setup_logging,
@@ -219,14 +240,26 @@ def create_app():
                 with connect_readonly(Config.DATABASE_PATH) as conn:
                     rows = conn.execute("SELECT key, value FROM settings").fetchall()
                     site_settings.update({r["key"]: r["value"] for r in rows})
-            except Exception:
-                pass
+            except Exception as exc:
+                log_event_throttled(
+                    get_logger("runtime"),
+                    "runtime.settings_read_failed",
+                    "Runtime settings could not be read; defaults are in use",
+                    interval_seconds=60,
+                    error_type=type(exc).__name__,
+                )
         try:
             _banner_path = Path(app.config["BANNER_SETTINGS_PATH"])
             if _banner_path.exists():
                 site_settings.update(json.loads(_banner_path.read_text()))
-        except Exception:
-            pass
+        except Exception as exc:
+            log_event_throttled(
+                get_logger("runtime"),
+                "runtime.banner_settings_read_failed",
+                "Banner settings could not be read; database/default values are in use",
+                interval_seconds=60,
+                error_type=type(exc).__name__,
+            )
         return {
             "csrf_token": token, "csp_nonce": getattr(g, "csp_nonce", ""),
             "now": datetime.now(), "site_settings": site_settings,
@@ -362,8 +395,14 @@ def create_app():
                 with connect(db_path) as conn:
                     conn.execute("SELECT 1").fetchone()
                 db_ok = True
-            except Exception:
-                pass
+            except Exception as exc:
+                log_event_throttled(
+                    get_logger("health"),
+                    "health.database_check_failed",
+                    "Health database check failed",
+                    interval_seconds=60,
+                    error_type=type(exc).__name__,
+                )
         status = "degraded" if not db_ok else "ok"
         storage_free = {
             "database": available_bytes(db_path.parent),
@@ -456,10 +495,34 @@ def create_app():
     def too_large(exc):
         rid = getattr(g, "request_id", "-")
         max_mb = app.config.get("MAX_CONTENT_LENGTH", 32 * 1024 * 1024) // (1024 * 1024)
+        content_length = request.content_length
+        app.logger.warning(
+            "request rejected: payload too large path=%s bytes=%s max_mb=%s request_id=%s",
+            request.path, content_length, max_mb, rid,
+        )
+        if request.path == "/dashboard/data-portability/import":
+            audit_log(
+                "import.rejected_too_large",
+                "data portability import rejected before processing",
+                category="admin",
+                outcome="failure",
+                request_bytes=content_length,
+                max_bytes=app.config.get("MAX_CONTENT_LENGTH"),
+                request_id=rid,
+            )
+        message = (
+            f"This upload exceeds the {max_mb} MB limit. "
+            "Select the files together from Data portability: the dashboard will upload large packages sequentially."
+        )
         if _wants_json_response():
-            return jsonify({'error': 'file_too_large', 'max_mb': max_mb, 'request_id': rid}), 413
+            return jsonify({
+                'error': 'file_too_large',
+                'message': message,
+                'max_mb': max_mb,
+                'request_id': rid,
+            }), 413
         return render_template("errors/error.html", code=413, title="File Too Large",
-                               message=f"The file exceeds the {max_mb} MB limit.",
+                               message=message,
                                request_id=rid), 413
 
     @app.errorhandler(418)

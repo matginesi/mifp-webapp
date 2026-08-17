@@ -8,6 +8,30 @@ cd "$ROOT_DIR"
 # Override explicitly only for a deliberate integration test of dotenv loading.
 export MIFP_LOAD_DOTENV="${MIFP_TEST_LOAD_DOTENV:-0}"
 
+# Importing Config freezes runtime paths for the lifetime of the pytest
+# process.  Give every test invocation an isolated storage root before test
+# modules are collected, otherwise a route that reads Config directly can
+# mutate the developer database even when an individual fixture later changes
+# os.environ.
+TEST_RUNTIME_DIR="$(mktemp -d "$ROOT_DIR/.mifp-test-runtime.XXXXXX")"
+cleanup_test_runtime() {
+  rm -rf -- "$TEST_RUNTIME_DIR"
+}
+trap cleanup_test_runtime EXIT
+mkdir -p \
+  "$TEST_RUNTIME_DIR/assets" \
+  "$TEST_RUNTIME_DIR/exports" \
+  "$TEST_RUNTIME_DIR/conferences" \
+  "$TEST_RUNTIME_DIR/logs"
+export TESTING=1
+export SECRET_KEY="mifp-test-suite-secret"
+export DATABASE_PATH="$TEST_RUNTIME_DIR/mifp.db"
+export ASSETS_DIR="$TEST_RUNTIME_DIR/assets"
+export EXPORT_DIR="$TEST_RUNTIME_DIR/exports"
+export CONFERENCES_DIR="$TEST_RUNTIME_DIR/conferences"
+export LOG_DIR="$TEST_RUNTIME_DIR/logs"
+export AUTO_SYNC_CONFERENCES_ON_STARTUP=0
+
 SUITE=quick
 BASE_URL="${MIFP_TEST_BASE_URL:-http://127.0.0.1:8000}"
 BASE_URL_EXPLICIT=0

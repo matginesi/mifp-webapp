@@ -180,6 +180,22 @@ def test_browser_tests_use_standard_pytest_progress_output() -> None:
     assert 'pytest TESTS/browser "${PYTEST_ARGS[@]}"' in runner
 
 
+def test_test_runner_isolates_persistent_paths_before_pytest() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    runner = (repo_root / "test_all.sh").read_text(encoding="utf-8")
+
+    pytest_call = runner.index('"$PYTHON_BIN" -m pytest')
+    for assignment in (
+        'export DATABASE_PATH="$TEST_RUNTIME_DIR/mifp.db"',
+        'export ASSETS_DIR="$TEST_RUNTIME_DIR/assets"',
+        'export EXPORT_DIR="$TEST_RUNTIME_DIR/exports"',
+        'export CONFERENCES_DIR="$TEST_RUNTIME_DIR/conferences"',
+        'export LOG_DIR="$TEST_RUNTIME_DIR/logs"',
+    ):
+        assert assignment in runner
+        assert runner.index(assignment) < pytest_call
+
+
 def test_zip_it_includes_source_and_excludes_generated_data(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[2]
     shutil.copy2(repo_root / "zip_it.sh", tmp_path / "zip_it.sh")

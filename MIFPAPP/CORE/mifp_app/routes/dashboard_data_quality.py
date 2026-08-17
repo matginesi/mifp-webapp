@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from flask import current_app, jsonify, render_template, request, session
+from flask import current_app, flash, jsonify, redirect, render_template, request, session, url_for
 
 from ..db.connection import connect
 from ..services.data_quality import (
@@ -24,6 +24,7 @@ from ..services.data_quality import (
 from ..services.data_quality.analyzer import database_fingerprint, finding_review_only, finding_workflow
 from ..services.data_quality.planner import LABELS, TABLES, records_for
 from ..services.data_quality.policies import similarity
+from ..services.data_quality.quarantine import list_quarantined_records, transition_quarantined_record
 from ..services.job_manager import JobQueueFull, get_job_manager
 from ..services.operation_maintenance import maintenance_guarded
 from ..utils.logger import audit_log
@@ -61,6 +62,24 @@ def data_quality_page():
     current_app.logger.info("data_quality page load")
     workflow_counts = {"automatic": 0, "manual": 0, "informational": 0}
     with connect(Path(current_app.config["DATABASE_PATH"])) as conn:
+        quarantined = list_quarantined_records(conn)
+        content_sections = {
+            "member": "members",
+            "news": "news",
+            "publication": "publications",
+            "research_area": "research",
+        }
+        for item in quarantined:
+            if item["entity_type"] == "event":
+                item["edit_url"] = url_for("dashboard.events", edit=item["id"])
+            elif item["entity_type"] in content_sections:
+                item["edit_url"] = url_for(
+                    "dashboard.content",
+                    section=content_sections[item["entity_type"]],
+                    edit=item["id"],
+                )
+            else:
+                item["edit_url"] = None
         latest, bundle, total = _workspace_state(conn)
         run = None
         if latest:
@@ -74,8 +93,29 @@ def data_quality_page():
     current_app.logger.info("data_quality page loaded run_id=%s bundle_id=%s open=%s workflow=%s", run["id"] if run else None, bundle["id"] if bundle else None, total, workflow_counts)
     return render_template(
         "dashboard/data_quality.html", run=run, bundle=bundle, total=total,
-        workflow_counts=workflow_counts,
+        workflow_counts=workflow_counts, quarantined=quarantined,
     )
+
+
+@bp.post("/data-quality/quarantine/<entity_type>/<int:record_id>")
+@login_required
+def data_quality_quarantine_action(entity_type: str, record_id: int):
+    decision = str(request.form.get("decision") or "").strip()
+    try:
+        with connect(Path(current_app.config["DATABASE_PATH"])) as conn:
+            result = transition_quarantined_record(conn, entity_type, record_id, decision)
+            conn.commit()
+    except (ValueError, LookupError) as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("dashboard.data_quality_page", _anchor="dqQuarantine"))
+    audit_log(
+        f"data_quality.quarantine_{decision}",
+        "administrator changed a quarantined record",
+        **result,
+        admin=str(session.get("admin_username") or "admin"),
+    )
+    flash("Record restored as draft. Review it in the editor before publishing.", "success")
+    return redirect(url_for("dashboard.data_quality_page", _anchor="dqQuarantine"))
 
 
 @bp.get("/data-quality/state")

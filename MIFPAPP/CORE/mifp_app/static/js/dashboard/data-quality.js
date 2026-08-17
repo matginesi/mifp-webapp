@@ -60,7 +60,7 @@
         var safeAutomatic = workflow === 'automatic';
         bulk.disabled = !safeAutomatic || Number(d.total || 0) === 0;
         bulk.textContent = safeAutomatic ? 'Queue all automatic fixes' : 'Automatic bulk queue is available only in the Automatic fixes view';
-        bulk.title = safeAutomatic ? 'Queue every currently filtered deterministic/high-confidence fix' : 'Switch to Automatic fixes, or review these items manually';
+        bulk.title = safeAutomatic ? 'Queue every currently filtered deterministic/high-confidence fix' : 'Switch to Automatic fixes, or review the items that need a decision';
       }
       return d;
     } catch (error) {
@@ -162,7 +162,7 @@
   async function acceptFinding(findingId) {
     var response = await window.MIFP.request(u(C.decisionUrl, findingId), { method: 'POST', json: { decision: 'accept' } });
     if (response.data && response.data.reviewed_without_change) {
-      toast('Manual review completed. No database change was required.', 'success');
+      toast('Review completed. No database change was required.', 'success');
       await Promise.all([reloadFindings(), renderQueue()]);
       return;
     }
@@ -209,7 +209,7 @@
         } else {
           summary = applied + ' automatic fixes queued';
           if (skippedReview) {
-            summary += ', ' + skippedReview + ' require manual review';
+            summary += ', ' + skippedReview + ' need a decision';
             tone = 'warning';
           }
           if (failed) {
@@ -291,7 +291,7 @@
         await reloadFindings();
         await renderQueue();
         $('dqPhase2').scrollIntoView({ behavior: 'smooth', block: 'start' });
-        toast('Scan complete. Review the findings, then accept the changes you want to queue.', 'success');
+        toast('Scan complete: no records changed yet. Queue the automatic fixes, then Apply changes to consolidate duplicates.', 'success');
       } else {
         txt.textContent = 'Scan failed on server.';
         fill.classList.remove('is-active');

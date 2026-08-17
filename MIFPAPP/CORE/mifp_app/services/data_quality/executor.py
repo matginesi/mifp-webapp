@@ -415,6 +415,8 @@ def _apply_clean(conn: sqlite3.Connection, plan: dict, bundle_id: int | None = N
         assignments.append(f'"{name}"=?')
         values.append(proposed)
     if plan.get("operation") == "quarantine":
+        if "review_status" not in {col["name"] for col in conn.execute(f'PRAGMA table_info("{table}")')}:
+            raise ValueError(f"{entity_type} records do not support quarantine")
         assignments.append('"review_status"=?')
         values.append("quarantined")
     if assignments:

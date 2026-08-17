@@ -17,8 +17,13 @@ from .normalizers import (
 )
 
 _NEWS_STOP = frozenset({"mifp", "professor", "dr", "the", "and", "prof",
-                         "on", "to", "for", "in", "its", "their", "her",
+                         "on", "to", "for", "in", "of", "its", "their", "her",
                          "his", "our", "with", "from", "after", "before"})
+_NEWS_TEMPLATE_WORDS = frozenset({
+    "award", "awards", "congratulations", "federation", "government",
+    "grant", "grants", "megagrant", "megagrants", "member", "members",
+    "russian", "win", "wins", "won",
+})
 
 
 def _e(code: str, strength: str, explanation: str, values: list[Any] | None = None) -> Evidence:
@@ -59,6 +64,17 @@ def evaluate_member(a: dict, b: dict, context: dict) -> tuple[Classification, fl
         evidence.append(_e("same_email", "deterministic", "Email addresses match", [email_a]))
         return Classification.EXACT, 1, evidence, contradictions
 
+    import_hashes = context.get("import_hashes", {})
+    shared_imports = set(import_hashes.get(a.get("id"), set())) & set(import_hashes.get(b.get("id"), set()))
+    if shared_imports:
+        evidence.append(_e(
+            "same_imported_member_record",
+            "deterministic",
+            "Both rows originate from the same imported member payload",
+            sorted(shared_imports),
+        ))
+        return Classification.EXACT, 1, evidence, contradictions
+
     urls_a = {normalize_url(row["url"]) for row in context.get("links", {}).get(a.get("id"), [])}
     urls_b = {normalize_url(row["url"]) for row in context.get("links", {}).get(b.get("id"), [])}
     shared_detail = _shared_urls(urls_a, urls_b, "entity_detail")
@@ -77,6 +93,11 @@ def evaluate_member(a: dict, b: dict, context: dict) -> tuple[Classification, fl
         evidence.append(_e("compatible_affiliation", "supporting",
                            "Affiliations are compatible",
                            [a.get("affiliation"), b.get("affiliation")]))
+        if aff >= .95:
+            evidence.append(_e("same_affiliation", "strong",
+                               "Affiliations match",
+                               [a.get("affiliation"), b.get("affiliation")]))
+            score = .97
 
     country_a, country_b = comparison_text(a.get("country")), comparison_text(b.get("country"))
     if country_a and country_b and country_a == country_b:
@@ -194,27 +215,6 @@ def evaluate_news(a: dict, b: dict, context: dict) -> tuple[Classification, floa
                    for row in context.get("assets", {}).get(b["id"], []) if row.get("checksum")}
     shared_assets = sorted(checksums_a & checksums_b) if checksums_a & checksums_b else []
 
-    if body_score >= .99:
-        ev = [_e("equivalent_article_text", "deterministic",
-                 "Article content is essentially the same body text")]
-        if shared_assets:
-            ev.append(_e("same_asset_checksum", "deterministic",
-                         "The news records reference the same binary asset", shared_assets))
-        return Classification.EXACT, body_score, ev, []
-
-    if body_score >= .88:
-        ev = [_e("equivalent_article_text", "strong",
-                 "Article content matches even though headlines may differ")]
-        if shared_assets:
-            ev.append(_e("same_asset_checksum", "deterministic",
-                         "The news records reference the same binary asset", shared_assets))
-        return Classification.STRONG, body_score, ev, []
-
-    if title_a in generic or title_b in generic:
-        return Classification.BLOCKED, 0, [], [_e("insufficient_identity", "blocking",
-                                                  "A generic headline cannot identify an article",
-                                                  [a.get("title"), b.get("title")])]
-
     urls_a = {normalize_url(row["url"]) for row in context.get("links", {}).get(a.get("id"), [])}
     urls_b = {normalize_url(row["url"]) for row in context.get("links", {}).get(b.get("id"), [])}
     shared_detail = _shared_urls(urls_a, urls_b, "entity_detail")
@@ -224,6 +224,62 @@ def evaluate_news(a: dict, b: dict, context: dict) -> tuple[Classification, floa
         if shared_assets:
             ev.append(_e("same_asset_checksum", "deterministic", "Same binary asset", shared_assets))
         return Classification.EXACT, 1, ev, []
+
+    # Award/announcement pages often reuse almost the same sentence while
+    # naming entirely different people. Distinct meaningful title subjects
+    # override fuzzy body similarity so templated prose cannot erase a story.
+    subject_stop = _NEWS_STOP | _NEWS_TEMPLATE_WORDS
+    subjects_a = set(tokens(title_a)) - subject_stop
+    subjects_b = set(tokens(title_b)) - subject_stop
+    if len(subjects_a) >= 2 and len(subjects_b) >= 2 and not (subjects_a & subjects_b):
+        conflict = _e(
+            "different_named_subjects",
+            "blocking",
+            "Headlines identify different people or subjects despite similar template wording",
+            [sorted(subjects_a), sorted(subjects_b)],
+        )
+        if body_score >= .99:
+            return Classification.AMBIGUOUS, body_score, [
+                _e("equivalent_article_text", "strong", "Article body text matches")
+            ], [conflict]
+        return Classification.RELATED, max(similarity(title_a, title_b), body_score), [conflict], []
+
+    if body_score >= .99:
+        ev = [_e("equivalent_article_text", "deterministic",
+                 "Article content is essentially the same body text")]
+        if not _news_dates_compatible(a.get("date"), b.get("date")):
+            return Classification.AMBIGUOUS, body_score, ev, [
+                _e("different_publication_date", "review",
+                   "Identical article text has different complete publication dates",
+                   [a.get("date"), b.get("date")])
+            ]
+        if shared_assets:
+            ev.append(_e("same_asset_checksum", "deterministic",
+                         "The news records reference the same binary asset", shared_assets))
+        return Classification.EXACT, body_score, ev, []
+
+    if body_score >= .88:
+        ev = [_e("equivalent_article_text", "strong",
+                 "Article content matches even though headlines may differ")]
+        if _news_dates_compatible(a.get("date"), b.get("date")):
+            ev.append(_e("compatible_publication_date", "supporting",
+                         "Publication dates match or one date is only partially known",
+                         [a.get("date"), b.get("date")]))
+        else:
+            return Classification.AMBIGUOUS, body_score, ev, [
+                _e("different_publication_date", "review",
+                   "Similar article text has different complete publication dates",
+                   [a.get("date"), b.get("date")])
+            ]
+        if shared_assets:
+            ev.append(_e("same_asset_checksum", "deterministic",
+                         "The news records reference the same binary asset", shared_assets))
+        return Classification.STRONG, body_score, ev, []
+
+    if title_a in generic or title_b in generic:
+        return Classification.BLOCKED, 0, [], [_e("insufficient_identity", "blocking",
+                                                  "A generic headline cannot identify an article",
+                                                  [a.get("title"), b.get("title")])]
 
     title_score = similarity(title_a, title_b)
     if title_a and title_a == title_b and _news_dates_compatible(a.get("date"), b.get("date")):
@@ -235,19 +291,22 @@ def evaluate_news(a: dict, b: dict, context: dict) -> tuple[Classification, floa
                "Same headline with compatible complete/partial publication date",
                [a.get("date"), b.get("date")])
         ], []
-    subjects_a = set(tokens(a.get("title"))) - _NEWS_STOP
-    subjects_b = set(tokens(b.get("title"))) - _NEWS_STOP
+    subjects_a = set(tokens(a.get("title"))) - subject_stop
+    subjects_b = set(tokens(b.get("title"))) - subject_stop
 
     years_a = years(" ".join(str(a.get(k) or "") for k in ("title", "body", "date")))
     years_b = years(" ".join(str(b.get(k) or "") for k in ("title", "body", "date")))
     different_years = bool(years_a and years_b and years_a != years_b)
 
-    if different_years and title_score < .92:
+    if different_years:
         ct = _e("different_news_year", "blocking", "Different years indicate different facts",
                 [sorted(years_a), sorted(years_b)])
-        if max(title_score, body_score) >= .75:
-            return Classification.BLOCKED, max(title_score, body_score), [], [ct]
-        return Classification.RELATED, max(title_score, body_score), [], []
+        # Repeated editorial formats (book announcements, agreements, awards)
+        # can produce extremely similar headlines in different years.  Once
+        # the deterministic URL and near-identical-body checks above have
+        # failed, title similarity is not merge evidence: these are separate
+        # stories and should not create a misleading "merge records" finding.
+        return Classification.RELATED, max(title_score, body_score), [], [ct]
 
     evidence: list[Evidence] = []
     if shared_assets:
@@ -357,6 +416,9 @@ def evaluate_publication(a: dict, b: dict, context: dict) -> tuple[Classificatio
 
     if title_score >= .88 and author_score >= .65 and year_compatible:
         evidence.append(_e("same_title_authors", "strong", "Title and authors match"))
+        if year_a and year_b and int(year_a) == int(year_b):
+            evidence.append(_e("same_publication_year", "supporting",
+                               "Publication years match", [int(year_a)]))
         if journal_score >= .6:
             evidence.append(_e("same_journal", "supporting", "Same journal", [a.get("journal")]))
             return Classification.STRONG, min(.98, (title_score + author_score + journal_score) / 3), evidence, []
@@ -419,6 +481,16 @@ def evaluate_structured_content(a: dict, b: dict, context: dict) -> tuple[Classi
     content_a = a.get("body") or a.get("description") or a.get("summary")
     content_b = b.get("body") or b.get("description") or b.get("summary")
     content_score = similarity(content_a, content_b)
+    if (
+        comparison_text(a.get("title"))
+        and comparison_text(a.get("title")) == comparison_text(b.get("title"))
+        and comparison_text(content_a)
+        and comparison_text(content_a) == comparison_text(content_b)
+    ):
+        return Classification.EXACT, 1, [
+            _e("same_editorial_payload", "deterministic",
+               "Normalized title and editorial content are identical")
+        ], []
     if title_score >= .9 and content_a and content_b and content_score >= .9:
         return Classification.STRONG, min(.98, (title_score + content_score) / 2), [
             _e("same_editorial_content", "strong", "Title and editorial content match")

@@ -1,6 +1,7 @@
 {% set plan = finding.plan or {} %}
 {% set records = plan.get('records') or (plan.get('record') and [plan.get('record')]) or (plan.get('source_record') and [plan.get('source_record')]) or [] %}
 {% set is_merge = finding.action_type == 'merge_records' %}
+{% set merge_is_informational = is_merge and finding.workflow == 'informational' %}
 {% set manually_editable = finding.workflow == 'manual' %}
 {% set review_only = finding.review_only %}
 {% set primary = records[0] if records else {} %}
@@ -14,7 +15,7 @@
   </div>
   <div class="dq-review-facts">
     <span class="dq-badge-status dq-badge-status-{{ finding.status or 'new' }}">{{ finding.status or 'new' }}</span>
-    <span>{{ finding.action_type|replace('_', ' ') }}</span>
+    <span>{{ 'do not merge' if merge_is_informational else finding.action_type|replace('_', ' ') }}</span>
     <b>{{ '%.0f'|format((finding.score or 0) * 100) }}% confidence</b>
     <small>Finding #{{ finding.id }}</small>
   </div>
@@ -39,7 +40,9 @@
 <div class="dq-detail-section">
   <h6>{{ 'Records under review' if records|length > 1 else 'Original record' }}</h6>
   <p class="dq-manual-help">
-    {% if records|length > 1 %}
+    {% if merge_is_informational %}
+    This comparison is informational. The records will remain separate; dismiss it to close the finding.
+    {% elif records|length > 1 %}
     Compare every candidate before choosing the canonical record. Nothing is changed until the reviewed plan is queued and applied.
     {% else %}
     Review the original content and the proposed values before accepting this change.
@@ -105,7 +108,7 @@
 </div>
 {% endif %}
 
-{% if plan.get('fields') %}
+{% if plan.get('fields') and not merge_is_informational %}
 <div class="dq-detail-section">
   <h6>Field-by-field comparison</h6>
   <div class="dq-comparison-scroll">
@@ -155,7 +158,7 @@
 {% if finding.status == 'open' and manually_editable and not review_only %}
 <form class="dq-manual-editor" id="dqManualEditor" data-finding-id="{{ finding.id }}">
   <div class="dq-detail-section">
-    <h6>Manual decision</h6>
+    <h6>Your decision</h6>
     <p class="dq-manual-help">Only the choices shown here can be changed. Source IDs and the analyzed record set remain locked.</p>
     {% if is_merge and records|length >= 2 %}
     <fieldset class="dq-canonical-options">
@@ -212,7 +215,11 @@
 {% endif %}
 
 <div class="dq-detail-actions mt-3 d-flex gap-2">
-  {% if finding.status not in ('rejected','resolved') and review_only %}
+  {% if finding.status not in ('rejected','resolved') and finding.workflow == 'informational' %}
+  <button type="button" class="btn btn-sm btn-dq-ignore" data-finding-id="{{ finding.id }}">
+    <i class="bi bi-check2"></i> Dismiss
+  </button>
+  {% elif finding.status not in ('rejected','resolved') and review_only %}
   <button type="button" class="btn btn-sm btn-dq-accept" data-finding-id="{{ finding.id }}">
     <i class="bi bi-check2"></i> Mark reviewed
   </button>

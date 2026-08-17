@@ -63,7 +63,7 @@ from ..services.metrics_service import (
 )
 from ..services.operation_maintenance import force_clear_maintenance, operation_maintenance
 from ..utils.logger import audit_log
-from ..utils.security import get_client_ip
+from ..utils.security import get_client_ip, ip_rate_allowed
 from ._shared import (
     admin_error_text,
 )
@@ -130,10 +130,11 @@ def index():
             LIMIT 8
             """
         ).fetchall()]
-        alerts = dashboard_alerts(conn)
+        alerts = dashboard_alerts(conn, current_app.config["LOG_DIR"])
         try:
             log_entries = search_logs(current_app.config["LOG_DIR"], q=None, level="ALL", limit=6)
         except Exception:
+            current_app.logger.exception("dashboard recent log preview failed")
             log_entries = []
     return render_template(
         "dashboard/index.html",
@@ -721,6 +722,7 @@ def _cache_export_file(
     filename: str,
     mimetype: str,
     owner: str | None,
+    session_key: str,
 ) -> None:
     _prune_export_cache()
     _evict_export_cache_for_new()
@@ -739,6 +741,7 @@ def _cache_export_file(
         "bytes": data_path.stat().st_size,
         "created_at": time.time(),
         "owner": owner,
+        "session_key": session_key,
     }
     temp_meta = meta_path.with_suffix(f".{secrets.token_hex(4)}.tmp")
     try:
@@ -759,7 +762,10 @@ def _claim_export_cache_entry(token: str) -> tuple[dict[str, Any], Path, Path] |
     entry = _read_export_cache_meta(meta_path)
     if not entry:
         return None
-    if entry.get("owner") != session.get("admin_username"):
+    if (
+        entry.get("owner") != session.get("admin_username")
+        or entry.get("session_key") != _export_session_key()
+    ):
         return None
     data_name = str(entry.get("data_name") or "")
     if Path(data_name).name != expected_data_path.name or not expected_data_path.is_file():
@@ -771,6 +777,56 @@ def _claim_export_cache_entry(token: str) -> tuple[dict[str, Any], Path, Path] |
     except OSError:
         return None
     return entry, expected_data_path, claim_path
+
+
+def _export_session_key() -> str:
+    """Bind a cached export to this exact authenticated browser session."""
+    material = "\0".join((
+        str(session.get("admin_username") or ""),
+        str(session.get("_csrf_token") or ""),
+        str(session.get("admin_login_at") or ""),
+    ))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _export_denied(message: str, status: int) -> Response:
+    payload = json.dumps({
+        "event": "error",
+        "ok": False,
+        "title_text": "Export authorization failed",
+        "message": message,
+        "icon_class": "bi-shield-x",
+        "icon_modifier": "is-error",
+    })
+    return Response(payload + "\n", mimetype="application/x-ndjson", status=status, headers={
+        "X-Accel-Buffering": "no",
+        "Cache-Control": "no-store, max-age=0",
+        "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+    })
+
+
+def _import_denied(message: str, status: int, *, is_xhr: bool) -> Response:
+    if not is_xhr:
+        flash(message, "error")
+        return redirect(url_for("dashboard.data_portability"))
+    payload = json.dumps({
+        "event": "result",
+        "ok": False,
+        "outcome": "authorization_denied",
+        "title_text": "Import authorization failed",
+        "message": message,
+        "icon_class": "bi-shield-x",
+        "icon_modifier": "is-error",
+    })
+    return Response(payload + "\n", mimetype="application/x-ndjson", status=status, headers={
+        "X-Accel-Buffering": "no",
+        "Cache-Control": "no-store, max-age=0",
+        "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+    })
 
 
 def _safe_upload_name(name: str, fallback_suffix: str = ".jsonl") -> str:
@@ -793,11 +849,8 @@ def _validate_import_selection(files: list[Any]) -> None:
     ]
     if invalid:
         raise ValueError(
-            "Unsupported import file type. Use JSON/JSONL and optionally one MIFP ZIP bundle."
+            "Unsupported import file type. Use JSON/JSONL files or MIFP ZIP bundles."
         )
-    zip_files = [file for file in files if str(file.filename or "").lower().endswith(".zip")]
-    if len(zip_files) > 1:
-        raise ValueError("Import at most one ZIP bundle per request. JSON/JSONL files may be queued with it.")
 
 
 def _stage_import_uploads(files: list[Any]) -> tuple[Path, list[tuple[str, Path]]]:
@@ -868,6 +921,38 @@ def data_portability_export_post(fmt: str):
     started = time.monotonic()
     if fmt not in {"jsonl", "zip"}:
         return jsonify({"ok": False, "message": "Invalid export format"}), 400
+    password = request.form.get("password", "")
+    expected_hash = str(current_app.config.get("ADMIN_PASSWORD_HASH") or "")
+    identity = {
+        "username": session.get("admin_username"),
+        "ip": get_client_ip(),
+        "format": fmt,
+    }
+    if not expected_hash or not password or not check_password_hash(expected_hash, password):
+        within_limit = ip_rate_allowed(
+            "portable_export_password_failure",
+            f"{get_client_ip()}:{session.get('admin_username') or '-'}",
+            limit=5,
+            window_seconds=300,
+        )
+        audit_log(
+            "export.authorization_denied",
+            "portable export password verification failed",
+            category="security",
+            outcome="denied",
+            rate_limited=not within_limit,
+            **identity,
+        )
+        if not within_limit:
+            return _export_denied("Too many failed attempts. Try again in a few minutes.", 429)
+        return _export_denied("Password verification failed. No export was created.", 403)
+    audit_log(
+        "export.authorization_success",
+        "portable export password verified",
+        category="security",
+        outcome="success",
+        **identity,
+    )
     scope = "all"
     current_app.logger.info(
         "data portability export started format=%s scope=%s", fmt, scope
@@ -876,7 +961,7 @@ def data_portability_export_post(fmt: str):
     record_counts: dict[str, int] = {}
     mimetype = "application/zip" if fmt == "zip" else "application/x-ndjson"
     filename = f"MIFP_EXPORT_{date.today().isoformat()}.zip" if fmt == "zip" else "records.jsonl"
-    token = secrets.token_urlsafe(16)
+    token = secrets.token_urlsafe(32)
     export_dir = _export_cache_dir()
     with tempfile.NamedTemporaryFile(
         mode="wb", prefix=f"{_EXPORT_CACHE_PREFIX}write-", suffix=".tmp",
@@ -913,7 +998,7 @@ def data_portability_export_post(fmt: str):
         expired = _prune_export_cache()
         _cache_export_file(
             token, temp_export_path, filename=filename, mimetype=mimetype,
-            owner=session.get("admin_username"),
+            owner=session.get("admin_username"), session_key=_export_session_key(),
         )
     except Exception:
         temp_export_path.unlink(missing_ok=True)
@@ -959,6 +1044,8 @@ def data_portability_export_post(fmt: str):
         "X-Accel-Buffering": "no",
         "Cache-Control": "no-store, max-age=0",
         "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
     })
 
 
@@ -977,7 +1064,10 @@ def data_portability_export_dl(token: str):
             reason="missing_or_expired",
         )
         return Response("Download link expired or invalid. Please re-export.", status=404)
-    if entry.get("owner") != session.get("admin_username"):
+    if (
+        entry.get("owner") != session.get("admin_username")
+        or entry.get("session_key") != _export_session_key()
+    ):
         audit_log(
             "export.download_rejected",
             "data portability download token rejected",
@@ -1027,6 +1117,8 @@ def data_portability_export_dl(token: str):
     response.headers["Cache-Control"] = "no-store, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
 
     def cleanup_export_download() -> None:
         cache_path.unlink(missing_ok=True)
@@ -1041,9 +1133,49 @@ def data_portability_export_dl(token: str):
 def data_portability_import():
     started = time.monotonic()
     scope = request.form.get("scope", "").strip() or "all"
+    is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    password = request.form.get("password", "")
+    expected_hash = str(current_app.config.get("ADMIN_PASSWORD_HASH") or "")
+    identity = {
+        "username": session.get("admin_username"),
+        "ip": get_client_ip(),
+        "scope": scope,
+    }
+    if not expected_hash or not password or not check_password_hash(expected_hash, password):
+        within_limit = ip_rate_allowed(
+            "portable_import_password_failure",
+            f"{get_client_ip()}:{session.get('admin_username') or '-'}",
+            limit=5,
+            window_seconds=300,
+        )
+        audit_log(
+            "import.authorization_denied",
+            "portable import password verification failed",
+            category="security",
+            outcome="denied",
+            rate_limited=not within_limit,
+            **identity,
+        )
+        if not within_limit:
+            return _import_denied(
+                "Too many failed attempts. Try again in a few minutes.", 429,
+                is_xhr=is_xhr,
+            )
+        return _import_denied(
+            "Password verification failed. No file was processed and the database was not changed.",
+            403,
+            is_xhr=is_xhr,
+        )
+    audit_log(
+        "import.authorization_success",
+        "portable import password verified",
+        category="security",
+        outcome="success",
+        **identity,
+    )
     files = [f for f in request.files.getlist("data_file") if f and f.filename]
     if not files:
-        flash("Upload one or more JSON/JSONL files, optionally together with one ZIP bundle.", "error")
+        flash("Upload one or more JSON/JSONL files or ZIP bundles.", "error")
         return redirect(url_for("dashboard.data_portability"))
     try:
         dry_run = request.form.get("dry_run") == "1"
@@ -1055,7 +1187,6 @@ def data_portability_import():
             scope, len(files), dry_run, skip_assets, force_import,
         )
 
-        is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
         if not is_xhr:
             return _import_postback(scope, files, dry_run, skip_assets, started, force_import=force_import)
 
@@ -1175,7 +1306,20 @@ def data_portability_import():
         audit_log("import.failed", "data portability import failed", category="admin",
                   outcome="failure", scope=scope, files=len(files),
                   error_type=type(exc).__name__)
-        flash(f"Import error: {_safe_import_error(exc)}", "error")
+        message = _safe_import_error(exc)
+        if is_xhr:
+            payload = {
+                "event": "result", "ok": False, "outcome": "rejected",
+                "title_text": "Import rejected", "message": message,
+                "icon_class": "bi-x-lg", "icon_modifier": "is-error",
+            }
+            return Response(
+                json.dumps(payload, ensure_ascii=False) + "\n",
+                mimetype="application/x-ndjson",
+                status=400,
+                headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+            )
+        flash(f"Import error: {message}", "error")
         return redirect(url_for("dashboard.data_portability"))
 
 
@@ -1292,10 +1436,6 @@ def _perform_import_unprotected(
             })
 
         event_sink({"event": "phase", "phase": "importing", "label": "Importing records…", "current_step": 1, "total_steps": 5, "percent": 20})
-
-        zip_count = sum(1 for name, _ in file_data if name.lower().endswith(".zip"))
-        if zip_count > 1:
-            raise ValueError("Import at most one ZIP bundle per request. JSON/JSONL files may be queued with it.")
 
         file_count = len(file_data)
         for file_index, (filename, payload) in enumerate(file_data):

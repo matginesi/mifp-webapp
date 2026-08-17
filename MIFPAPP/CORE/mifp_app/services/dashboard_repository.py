@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ..db.connection import begin_immediate
+from ..utils.logger import get_logger, log_event_throttled
 from .metrics_service import get_public_traffic_summary
 
 PUBLIC_TABLES = {
@@ -630,7 +631,7 @@ def unused_assets(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [r for r in asset_usage(conn) if int(r.get("usage_count") or 0) == 0]
 
 
-def dashboard_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def dashboard_alerts(conn: sqlite3.Connection, log_dir: Path | None = None) -> list[dict[str, Any]]:
     """Return a list of alerts (editorial + technical) for the dashboard hub."""
     alerts: list[dict[str, Any]] = []
 
@@ -684,8 +685,8 @@ def dashboard_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
     # Technical: recent errors from audit log
     try:
-        log_dir = os.environ.get("MIFP_LOG_DIR", "logs")
-        errs = search_logs(Path(log_dir), q=None, level="ERROR", limit=5)
+        selected_log_dir = Path(log_dir) if log_dir is not None else Path(os.environ.get("MIFP_LOG_DIR", "logs"))
+        errs = search_logs(selected_log_dir, q=None, level="ERROR", limit=5)
         if errs:
             alerts.append({
                 "type": "error",
@@ -693,8 +694,14 @@ def dashboard_alerts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 "message": f"{len(errs)} errors in the last log entries",
                 "action_url": "/dashboard/logs",
             })
-    except Exception:
-        pass
+    except Exception as exc:
+        log_event_throttled(
+            get_logger("dashboard"),
+            "dashboard.alert_log_read_failed",
+            "Dashboard could not inspect recent log errors",
+            interval_seconds=60,
+            error_type=type(exc).__name__,
+        )
 
     return alerts
 

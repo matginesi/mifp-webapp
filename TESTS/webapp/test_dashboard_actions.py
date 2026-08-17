@@ -363,7 +363,9 @@ def test_data_portability_page_links_import_to_duplicate_cleanup(client):
 
     assert response.status_code == 200
     assert "Validate only" in body
-    assert "Export database (ZIP)" in body
+    assert "Complete backup" in body
+    assert "Recommended" in body
+    assert "Portable JSONL" in body
     assert "Content Archive" not in body
     assert "legacy" not in body.lower()
     assert "Analyze imported data" in body
@@ -399,11 +401,14 @@ def test_separate_import_requests_accumulate_records(app, client):
     def import_record(record, filename):
         response = client.post(
             "/dashboard/data-portability/import",
-            data={"data_file": (
-                io.BytesIO((json.dumps(record) + "\n").encode()),
-                filename,
-                "application/x-ndjson",
-            )},
+            data={
+                "password": "secret123",
+                "data_file": (
+                    io.BytesIO((json.dumps(record) + "\n").encode()),
+                    filename,
+                    "application/x-ndjson",
+                ),
+            },
             content_type="multipart/form-data",
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
@@ -440,6 +445,7 @@ def test_mixed_zip_and_jsonl_queue_is_processed_in_one_request(app, client):
     response = client.post(
         "/dashboard/data-portability/import",
         data={
+            "password": "secret123",
             "data_file": [
                 (io.BytesIO(zip_payload), "portable.zip", "application/zip"),
                 (io.BytesIO((json.dumps(record) + "\n").encode()), "additional.jsonl", "application/x-ndjson"),
@@ -1237,6 +1243,7 @@ def test_data_portability_jsonl_zip_merge_and_export_actions(app, client):
     dry_run = client.post(
         "/dashboard/data-portability/import",
         data={
+            "password": "secret123",
             "dry_run": "1",
             "data_file": (io.BytesIO((json.dumps(record) + "\n").encode()), "news.jsonl", "application/x-ndjson"),
         },
@@ -1252,7 +1259,10 @@ def test_data_portability_jsonl_zip_merge_and_export_actions(app, client):
 
     imported = client.post(
         "/dashboard/data-portability/import",
-        data={"data_file": (io.BytesIO((json.dumps(record) + "\n").encode()), "news.jsonl", "application/x-ndjson")},
+        data={
+            "password": "secret123",
+            "data_file": (io.BytesIO((json.dumps(record) + "\n").encode()), "news.jsonl", "application/x-ndjson"),
+        },
         content_type="multipart/form-data",
         headers={"X-Requested-With": "XMLHttpRequest"},
     )
@@ -1266,7 +1276,10 @@ def test_data_portability_jsonl_zip_merge_and_export_actions(app, client):
     assert _scalar(app, "SELECT COUNT(*) FROM news WHERE slug='imported-action-news'") == 1
 
     for fmt in ("jsonl", "zip"):
-        resp = client.post(f"/dashboard/data-portability/export/{fmt}", data={"_csrf_token": "x"})
+        resp = client.post(
+            f"/dashboard/data-portability/export/{fmt}",
+            data={"_csrf_token": "x", "password": "secret123"},
+        )
         assert resp.status_code == 200
         lines = [json.loads(l) for l in resp.data.decode("utf-8").strip().splitlines() if l.strip()]
         result = next(e for e in lines if e.get("event") == "result")
@@ -1278,13 +1291,18 @@ def test_data_portability_jsonl_zip_merge_and_export_actions(app, client):
         assert dl.status_code == 200
         assert "no-store" in dl.headers.get("Cache-Control", "")
         assert dl.headers.get("X-Content-Type-Options") == "nosniff"
+        assert dl.headers.get("Referrer-Policy") == "no-referrer"
+        assert dl.headers.get("Cross-Origin-Resource-Policy") == "same-origin"
         if fmt != "jsonl":
             assert dl.data
         if fmt == "zip":
             with zipfile.ZipFile(io.BytesIO(dl.data)) as archive:
                 assert {"manifest.json", "records.jsonl"} <= set(archive.namelist())
 
-    zip_resp2 = client.post("/dashboard/data-portability/export/zip", data={"_csrf_token": "x"})
+    zip_resp2 = client.post(
+        "/dashboard/data-portability/export/zip",
+        data={"_csrf_token": "x", "password": "secret123"},
+    )
     zip_lines = [json.loads(l) for l in zip_resp2.data.decode("utf-8").strip().splitlines() if l.strip()]
     zip_result = next(e for e in zip_lines if e.get("event") == "result")
     zip_token = zip_result.get("download_token")
@@ -1292,6 +1310,7 @@ def test_data_portability_jsonl_zip_merge_and_export_actions(app, client):
     zip_dry_run = client.post(
         "/dashboard/data-portability/import",
         data={
+            "password": "secret123",
             "dry_run": "1",
             "data_file": (io.BytesIO(zip_dl.data), "news.zip", "application/zip"),
         },
@@ -1316,6 +1335,7 @@ def _legacy_data_portability_staging_review_apply_and_reports(app, client):
     dry_run = client.post(
         "/dashboard/data-portability/import",
         data={
+            "password": "secret123",
             "dry_run": "1",
             "data_file": (io.BytesIO((json.dumps(record) + "\n").encode()), "stage-news.jsonl", "application/x-ndjson"),
         },
@@ -1333,6 +1353,7 @@ def _legacy_data_portability_staging_review_apply_and_reports(app, client):
     staged = client.post(
         "/dashboard/data-portability/import",
         data={
+            "password": "secret123",
             "data_file": (io.BytesIO((json.dumps(record) + "\n").encode()), "stage-news.jsonl", "application/x-ndjson"),
         },
         content_type="multipart/form-data",
@@ -1398,6 +1419,7 @@ def _legacy_data_portability_staging_duplicate_ambiguous_and_invalid_records(app
     response = client.post(
         "/dashboard/data-portability/import",
         data={
+            "password": "secret123",
             "data_file": (io.BytesIO(body.encode()), "mixed-stage.jsonl", "application/x-ndjson"),
         },
         content_type="multipart/form-data",
@@ -1432,7 +1454,10 @@ def _legacy_data_portability_staging_duplicate_ambiguous_and_invalid_records(app
 
 @pytest.mark.parametrize("fmt", ["jsonl", "zip"])
 def test_every_data_portability_export_button(app, client, fmt):
-    resp = client.post(f"/dashboard/data-portability/export/{fmt}", data={"_csrf_token": "x"})
+    resp = client.post(
+        f"/dashboard/data-portability/export/{fmt}",
+        data={"_csrf_token": "x", "password": "secret123"},
+    )
     assert resp.status_code == 200
     lines = [json.loads(l) for l in resp.data.decode("utf-8").strip().splitlines() if l.strip()]
     result = next(e for e in lines if e.get("event") == "result")
@@ -1515,6 +1540,7 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.data_quality_bundle_remove",
     "dashboard.data_quality_bundle_apply",
     "dashboard.data_quality_bundle_delete",
+    "dashboard.data_quality_quarantine_action",
     "dashboard.data_portability_import",
     "dashboard.data_portability_import_cancel",
     "dashboard.join_approve",
@@ -1562,9 +1588,10 @@ def test_data_quality_page_exposes_distinct_actions_and_bundle(client, app):
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Scan" in body
+    assert "A scan alone never changes record counts" in body
     assert "Review &amp; Apply" in body
     assert "Automatic fixes" in body
-    assert "Manual review" in body
+    assert "Needs decision" in body
     assert "Informational" in body
     assert "Clean record" in body
     assert "Split aggregated" in body
@@ -1572,9 +1599,51 @@ def test_data_quality_page_exposes_distinct_actions_and_bundle(client, app):
     assert "Merge candidates" in body
     assert "Queue all automatic fixes" in body
     # Manual work is a first-class workflow, not hidden behind a generic filter.
-    assert "Review manually" in body or "Review manual" in body
+    assert "Review decisions" in body
     assert "Accept all" not in body
     assert "Approve all" not in body
+
+
+def test_data_quality_page_manages_quarantined_records(client, app):
+    with _db(app) as conn:
+        news_id = conn.execute(
+            """INSERT INTO news(title,slug,review_status)
+               VALUES('XHR News','xhr-news-quarantine','quarantined')"""
+        ).lastrowid
+        run_id = conn.execute(
+            """INSERT INTO quality_runs(status,fingerprint,completed_at,summary_json)
+               VALUES('completed','quarantine-ui',CURRENT_TIMESTAMP,'{}')"""
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO quality_findings(
+                   run_id,action_type,entity_type,record_ids_json,classification,score,
+                   evidence_json,plan_json,status,fingerprint
+               ) VALUES(?,'clean_record','news',?,'invalid_record',1.0,?,?,'resolved','quarantine-ui-finding')""",
+            (
+                run_id,
+                json.dumps([news_id]),
+                json.dumps([{"explanation": "Technical response or explicit test record"}]),
+                json.dumps({"operation": "quarantine", "previous_review_status": "published"}),
+            ),
+        )
+        conn.commit()
+
+    response = client.get("/dashboard/data-quality")
+    body = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "Quarantine <span>1</span>" in body
+    assert "XHR News" in body
+    assert "Technical response or explicit test record" in body
+    assert "Restore as draft" in body
+    assert f"/dashboard/content/news?edit={news_id}" in body
+
+    restored = client.post(
+        f"/dashboard/data-quality/quarantine/news/{news_id}",
+        data={"decision": "restore"},
+    )
+    assert restored.status_code == 302
+    assert restored.headers["Location"].endswith("/dashboard/data-quality#dqQuarantine")
+    assert _scalar(app, "SELECT review_status FROM news WHERE id=?", (news_id,)) == "draft"
 
 
 def test_data_quality_bulk_accept_server_filters_out_manual_findings(client, app, monkeypatch):

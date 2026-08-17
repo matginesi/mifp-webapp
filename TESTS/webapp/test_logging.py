@@ -70,6 +70,68 @@ def test_console_formatter_has_no_ansi_when_colors_are_disabled():
     assert "plain warning" in rendered
 
 
+def test_console_formatter_includes_structured_fields_and_redacts_secrets():
+    from mifp_app.utils.logger import ConsoleFormatter
+
+    record = logging.LogRecord("mifp.web", logging.WARNING, __file__, 1, "operation rejected", (), None)
+    record.extra_fields = {
+        "operation": "import",
+        "password": "must-not-leak",
+    }
+    rendered = ConsoleFormatter(colors=False).format(record)
+
+    assert '"operation": "import"' in rendered
+    assert "must-not-leak" not in rendered
+    assert "[REDACTED]" in rendered
+
+
+def test_plain_logger_errors_receive_searchable_default_event(tmp_path):
+    from mifp_app.utils.logger import setup_logging, shutdown_logging
+
+    setup_logging(tmp_path, "DEBUG", json_logs=True)
+    logging.getLogger("mifp_app.routes.example").error("plain route failure")
+    shutdown_logging()
+
+    record = json.loads((tmp_path / "errors.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record["event"] == "application.error"
+    assert record["message"] == "plain route failure"
+
+
+def test_repeated_degraded_fallback_is_throttled(tmp_path):
+    from mifp_app.utils.logger import (
+        get_logger,
+        log_event_throttled,
+        setup_logging,
+        shutdown_logging,
+    )
+
+    setup_logging(tmp_path, "DEBUG", json_logs=True)
+    first = log_event_throttled(
+        get_logger("runtime"), "runtime.degraded", "degraded fallback", throttle_key="test"
+    )
+    second = log_event_throttled(
+        get_logger("runtime"), "runtime.degraded", "degraded fallback", throttle_key="test"
+    )
+    shutdown_logging()
+
+    assert first is True
+    assert second is False
+    records = (tmp_path / "mifp_app.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(records) == 1
+
+
+def test_failed_audit_outcome_defaults_to_warning(tmp_path):
+    from mifp_app.utils.logger import audit_log, setup_logging, shutdown_logging
+
+    setup_logging(tmp_path, "DEBUG", json_logs=True)
+    audit_log("data.failed", "data operation failed", outcome="failure")
+    shutdown_logging()
+
+    record = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record["level"] == "WARNING"
+    assert record["outcome"] == "failure"
+
+
 def test_json_logs_include_event_type(tmp_path):
     from mifp_app.utils.logger import audit_log, setup_logging, shutdown_logging
 
@@ -125,6 +187,29 @@ def test_logs_page_does_not_claim_file_logging_is_disabled(client):
     assert resp.status_code == 200
     assert b"File logging is disabled" not in resp.data
     assert b"Conference ops" not in resp.data
+
+
+def test_login_success_and_failure_are_logged_without_password(app, client):
+    from mifp_app.utils.logger import shutdown_logging
+
+    client.post(
+        "/login",
+        data={"login_username": "admin", "login_password": "never-log-this-password"},
+    )
+    client.post(
+        "/login",
+        data={"login_username": "admin", "login_password": "secret123"},
+    )
+    shutdown_logging()
+
+    log_dir = Path(app.config["LOG_DIR"])
+    security = next(log_dir.glob("security.*")).read_text(encoding="utf-8")
+    audit = next(log_dir.glob("audit.*")).read_text(encoding="utf-8")
+    combined = security + audit
+    assert "auth.login_failed" in security
+    assert "auth.login_success" in audit
+    assert "never-log-this-password" not in combined
+    assert "secret123" not in combined
 
 
 def test_paginated_log_counts_cover_the_filtered_scope(tmp_path):
@@ -263,6 +348,110 @@ def test_expected_maintenance_response_is_logged_as_info(tmp_path):
     assert record["event"] == "request.maintenance"
     assert record["status"] == 503
     assert record["expected_response"] is True
+
+
+def test_dashboard_mutation_fallback_logs_flash_error_without_form_values(tmp_path):
+    from flask import Flask, flash, redirect
+    from mifp_app.utils.logger import init_request_logging, setup_logging, shutdown_logging
+
+    setup_logging(tmp_path, "DEBUG", json_logs=True)
+    mini = Flask(__name__)
+    mini.secret_key = "test-secret"
+    mini.config.update(
+        LOG_ACCESS_ENABLED=False,
+        LOG_SLOW_REQUEST_MS=0,
+        PRIVACY_SAFE_METRICS_ENABLED=False,
+    )
+    init_request_logging(mini)
+
+    @mini.post("/dashboard/save")
+    def save():
+        flash("The submitted record could not be saved.", "error")
+        return redirect("/dashboard/save")
+
+    response = mini.test_client().post(
+        "/dashboard/save",
+        data={"password": "top-secret-value", "title": "private form value"},
+        headers={"X-Request-ID": "mutation-test"},
+    )
+    shutdown_logging()
+
+    assert response.status_code == 302
+    audit_records = [
+        json.loads(line)
+        for line in (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    app_records = [
+        json.loads(line)
+        for line in (tmp_path / "mifp_app.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    mutation = next(record for record in audit_records if record["event"] == "dashboard.mutation")
+    failure = next(record for record in app_records if record["event"] == "dashboard.request_failed")
+    assert mutation["outcome"] == "failure"
+    assert mutation["error_feedback"] is True
+    assert mutation["request_id"] == "mutation-test"
+    assert failure["level"] == "WARNING"
+    rendered = json.dumps([mutation, failure])
+    assert "top-secret-value" not in rendered
+    assert "private form value" not in rendered
+
+
+def test_successful_dashboard_mutation_has_generic_audit_fallback(tmp_path):
+    from flask import Flask
+    from mifp_app.utils.logger import init_request_logging, setup_logging, shutdown_logging
+
+    setup_logging(tmp_path, "DEBUG", json_logs=True)
+    mini = Flask(__name__)
+    mini.secret_key = "test-secret"
+    mini.config.update(
+        LOG_ACCESS_ENABLED=False,
+        LOG_SLOW_REQUEST_MS=0,
+        PRIVACY_SAFE_METRICS_ENABLED=False,
+    )
+    init_request_logging(mini)
+
+    @mini.post("/dashboard/save")
+    def save():
+        return {"ok": True}
+
+    response = mini.test_client().post("/dashboard/save", data={"value": "never logged"})
+    shutdown_logging()
+
+    assert response.status_code == 200
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    mutation = next(record for record in records if record["event"] == "dashboard.mutation")
+    assert mutation["outcome"] == "success"
+    assert mutation["method"] == "POST"
+    assert mutation["path"] == "/dashboard/save"
+    assert "never logged" not in json.dumps(mutation)
+
+
+def test_background_job_failure_is_written_to_error_stream(tmp_path):
+    from mifp_app.services.job_manager import JobManager
+    from mifp_app.utils.logger import setup_logging, shutdown_logging
+
+    setup_logging(tmp_path, "DEBUG", json_logs=True)
+    manager = JobManager(max_workers=1, max_pending=1, db_path=str(tmp_path / "content.db"))
+
+    def fail():
+        raise RuntimeError("simulated background failure")
+
+    _job_id, future = manager.submit("test-background-job", fail)
+    with pytest.raises(RuntimeError, match="simulated background failure"):
+        future.result(timeout=5)
+    manager.shutdown()
+    shutdown_logging()
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "errors.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    failure = next(record for record in records if record["event"] == "job.failed")
+    assert failure["job_name"] == "test-background-job"
+    assert failure["exception_type"] == "RuntimeError"
 
 
 def test_cleanup_helpers_remove_only_expired_rows(tmp_path):

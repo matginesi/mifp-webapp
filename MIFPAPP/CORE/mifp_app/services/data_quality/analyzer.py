@@ -53,7 +53,15 @@ def _context(conn: sqlite3.Connection, entity_type: str) -> dict:
         (entity_type,),
     ):
         assets[int(row["entity_id"])].append(dict(row))
-    return {"links": links, "assets": assets}
+    imports: dict[int, set[str]] = defaultdict(set)
+    for row in conn.execute(
+        "SELECT entity_id,content_hash FROM import_records WHERE entity_type=? AND content_hash IS NOT NULL",
+        (entity_type,),
+    ):
+        content_hash = str(row["content_hash"] or "").strip()
+        if content_hash:
+            imports[int(row["entity_id"])].add(content_hash)
+    return {"links": links, "assets": assets, "import_hashes": imports}
 
 
 def _invalid_findings(entity_type: str, rows: list[dict]) -> list[Finding]:
@@ -68,6 +76,7 @@ def _invalid_findings(entity_type: str, rows: list[dict]) -> list[Finding]:
             plan: dict[str, Any] = {
                 "action_type": "clean_record", "entity_type": entity_type, "record_ids": [row["id"]],
                 "operation": "quarantine", "requires_review": False,
+                "previous_review_status": str(row.get("review_status") or "draft"),
                 "source_fingerprint": stable_fingerprint(entity_type, [row], action="invalid_record"),
                 "source_state_fingerprint": stable_fingerprint(entity_type, [row]),
             }
@@ -83,6 +92,7 @@ def _invalid_findings(entity_type: str, rows: list[dict]) -> list[Finding]:
                 "action_type": "clean_record", "entity_type": entity_type, "record_ids": [row["id"]],
                 "operation": "derive_title_or_review" if usable else "quarantine",
                 "requires_review": False,
+                "previous_review_status": str(row.get("review_status") or "draft"),
                 "fields": [{
                     "field": "title",
                     "values_by_record": [{"record_id": row["id"], "value": row.get("title")}],
@@ -345,7 +355,9 @@ _JUNK_TITLE_PATTERNS = [
 
 def _check_junk_record(entity_type: str, row: dict) -> Finding | None:
     label_field = LABELS.get(entity_type, "title")
-    if entity_type not in TABLES:
+    # Sponsors use is_active rather than review_status and therefore cannot be
+    # placed in the reversible editorial quarantine.
+    if entity_type not in TABLES or entity_type == "sponsor":
         return None
     label = str(row.get(label_field) or "")
     for pattern in _JUNK_TITLE_PATTERNS:
@@ -361,6 +373,7 @@ def _check_junk_record(entity_type: str, row: dict) -> Finding | None:
                 "record_ids": [row["id"]],
                 "operation": "quarantine",
                 "requires_review": False,
+                "previous_review_status": str(row.get("review_status") or "draft"),
                 "source_fingerprint": stable_fingerprint(entity_type, [row], action="junk_record"),
                 "source_state_fingerprint": stable_fingerprint(entity_type, [row]),
             }
@@ -578,6 +591,7 @@ def analyze(
             pct = int((index - 1) * 80 / total_entities)
             _save_progress(conn, run_id, pct, f"Scanning {entity_type} records\u2026")
             rows = [dict(row) for row in conn.execute(f'SELECT * FROM "{TABLES[entity_type]}" ORDER BY id')]
+            entity_findings_start = len(all_findings)
             all_findings.extend(
                 _legacy_merged_duplicate_findings(conn, entity_type, rows)
             )
@@ -631,6 +645,27 @@ def analyze(
                 if resolved:
                     continue
                 all_findings.append(Finding(action, entity_type, [left_id, right_id], classification, evidence, contradictions, plan, plan["source_fingerprint"], score))
+            if entity_type == "member":
+                # When an inverted display name belongs to a viable duplicate
+                # pair, merging is the complete fix. Keeping a competing
+                # single-record cleanup would leave both member rows in place
+                # and creates overlapping queue actions.
+                member_findings = all_findings[entity_findings_start:]
+                merge_ids = {
+                    int(record_id)
+                    for finding in member_findings
+                    if finding.action_type == ActionType.MERGE
+                    and finding.classification in {Classification.EXACT, Classification.STRONG}
+                    for record_id in finding.record_ids
+                }
+                all_findings[entity_findings_start:] = [
+                    finding for finding in member_findings
+                    if not (
+                        finding.action_type == ActionType.CLEAN
+                        and finding.plan.get("operation") == "swap_name_fields"
+                        and any(int(record_id) in merge_ids for record_id in finding.record_ids)
+                    )
+                ]
         all_findings = _consolidate_exact_groups(conn, all_findings)
         if progress:
             progress(len(TABLES), len(TABLES) + 2, "relations", "Checking links and assets")
@@ -908,6 +943,31 @@ def finding_automatic_reason(finding: dict) -> str | None:
     # Keep lower-confidence strong candidates manual.
     if action == "merge_records" and classification == "strong_candidate" and score >= 0.97:
         return "Duplicate confidence is at least 97% with no review/blocking contradiction."
+
+    # Entity-specific evidence profiles safely cover common duplicates that a
+    # single global score misses. Every profile requires several independent
+    # identity signals and the blocking-contradiction guard above still wins.
+    if action == "merge_records" and classification == "strong_candidate":
+        entity_type = str(finding.get("entity_type") or plan.get("entity_type") or "")
+        if (
+            entity_type == "news"
+            and score >= 0.94
+            and {"equivalent_article_text", "compatible_publication_date"} <= evidence_codes
+        ):
+            return "Near-identical article text and compatible publication dates identify the same news item."
+        if (
+            entity_type == "publication"
+            and score >= 0.88
+            and {"same_title_authors", "same_publication_year"} <= evidence_codes
+            and ("same_journal" in evidence_codes or score >= 0.94)
+        ):
+            return "Title, authors and year match, with compatible journal evidence."
+        if (
+            entity_type == "member"
+            and score >= 0.90
+            and {"same_normalized_person_name", "compatible_affiliation", "similar_bio"} <= evidence_codes
+        ):
+            return "Name, affiliation and biography independently identify the same member."
 
     if action == "repair_relations_or_assets" and operation in {"deduplicate_primary_links", "deduplicate_primary_assets"}:
         return "Relationship repair is deterministic and does not require choosing content."
