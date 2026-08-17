@@ -23,7 +23,7 @@ IMPORT_DATA/
 NEW_IMPORT_DATA/
 
 # Persistent application data (never source code)
-MIFPAPP/DATABASE/
+# MIFPAPP/DATABASE/
 *.db
 *.db-shm
 *.db-wal
