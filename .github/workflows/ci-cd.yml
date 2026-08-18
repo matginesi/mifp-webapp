@@ -57,21 +57,3 @@ jobs:
           cache-from: type=gha,scope=mifp
           cache-to: type=gha,mode=max,scope=mifp
 
-  deploy:
-    name: Deploy to VPS
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          known_hosts: ${{ secrets.VPS_KNOWN_HOSTS }}
-          script: |
-            sudo -u mifp bash /opt/mifp/deploy.sh ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
-      - name: HTTPS smoke check
-        run: curl -fsS --retry 5 --retry-delay 10 "https://${{ secrets.VPS_DOMAIN }}/health"
