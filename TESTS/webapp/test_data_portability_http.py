@@ -133,7 +133,8 @@ class TestDataPortabilityHTTP:
             _login(client)
             events, token, result = self._export_post(client, "jsonl")
             assert len(events) >= 2
-            assert events[0]["event"] == "phase"
+            assert events[0]["event"] == "queued"
+            assert any(e["event"] == "phase" for e in events)
             assert result is not None
             assert result["ok"] is True
             assert result["filename"].endswith(".jsonl")
@@ -556,7 +557,7 @@ class TestDataPortabilityHTTP:
                 "/dashboard/data-portability/export/zip",
                 data={"_csrf_token": "x", "password": "test-pass"},
             )
-            assert resp.status_code == 500
+            assert resp.status_code == 200
             assert resp.content_type == "application/x-ndjson"
             lines = [l for l in resp.data.decode("utf-8").strip().splitlines() if l.strip()]
             events = [json.loads(l) for l in lines]
@@ -595,3 +596,107 @@ class TestDataPortabilityHTTP:
             assert result["ok"] is False
             assert "backup2026.zip" in result["message"]
             assert "No database changes from this failed batch were committed" in result["message"]
+
+    def test_import_progress_percent_is_never_decreasing(self, app_with_admin):
+        client = app_with_admin.test_client()
+        _login(client)
+        lines = [
+            {"title": "One"},
+            {"title": "Two"},
+            {"title": "Three"},
+        ]
+        payload = "".join(json.dumps(row) + "\n" for row in lines).encode("utf-8")
+        data = {"_csrf_token": "x", "password": "test-pass", "dry_run": "1"}
+        data["data_file"] = (io.BytesIO(payload), "records.jsonl")
+        resp = client.post(
+            "/dashboard/data-portability/import",
+            data=data,
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        assert resp.status_code == 200
+        events = [json.loads(l) for l in resp.data.decode("utf-8").splitlines() if l.strip()]
+        globals_seen = [
+            ev["global_percent"]
+            for ev in events
+            if ev.get("event") == "progress" and ev.get("global_percent") is not None
+        ]
+        assert globals_seen, "expected server-owned global_percent in progress stream"
+        all_values = [
+            ev.get("global_percent")
+            if ev.get("event") == "progress" and ev.get("global_percent") is not None
+            else ev.get("percent")
+            for ev in events
+            if (ev.get("event") == "progress" and ev.get("global_percent") is not None)
+            or (ev.get("event") == "phase" and ev.get("percent") is not None)
+        ]
+        assert all_values, "expected progress values in stream"
+        assert all_values == sorted(all_values), f"percent went backwards: {all_values}"
+
+    def test_import_phase_anchors_map_to_new_ranges(self, app_with_admin):
+        client = app_with_admin.test_client()
+        _login(client)
+        payload = b'{"title": "Solo"}\n'
+        data = {"_csrf_token": "x", "password": "test-pass", "dry_run": "1"}
+        data["data_file"] = (io.BytesIO(payload), "records.jsonl")
+        resp = client.post(
+            "/dashboard/data-portability/import",
+            data=data,
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        assert resp.status_code == 200
+        events = [json.loads(l) for l in resp.data.decode("utf-8").splitlines() if l.strip()]
+        phases = [ev for ev in events if ev.get("event") == "phase"]
+        assert phases, "expected phase events"
+        assert all(0 <= ev["percent"] <= 100 for ev in phases)
+
+    def test_import_dry_run_result_mentions_counts_and_no_changes(self, app_with_admin):
+        client = app_with_admin.test_client()
+        _login(client)
+        payload = (json.dumps({"type": "event", "data": {"title": "Dry"}, "links": [], "assets": [], "meta": {}}) + "\n").encode("utf-8")
+        data = {"_csrf_token": "x", "password": "test-pass", "dry_run": "1"}
+        data["data_file"] = (io.BytesIO(payload), "records.jsonl")
+        resp = client.post(
+            "/dashboard/data-portability/import",
+            data=data,
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        events = [json.loads(l) for l in resp.data.decode("utf-8").splitlines() if l.strip()]
+        result = next(ev for ev in events if ev.get("event") == "result")
+        assert result["ok"] is True
+        assert result["dry_run"] is True
+        assert "Validation completed" in result["title_text"]
+        assert "would be inserted" in result["message"]
+
+    def test_import_dry_run_with_issues_reports_issues_title(self, app_with_admin):
+        client = app_with_admin.test_client()
+        _login(client)
+        payload = (json.dumps({"type": "event", "data": {"bogus_field": "x"}, "links": [], "assets": [], "meta": {}}) + "\n").encode("utf-8")
+        data = {"_csrf_token": "x", "password": "test-pass", "dry_run": "1"}
+        data["data_file"] = (io.BytesIO(payload), "records.jsonl")
+        resp = client.post(
+            "/dashboard/data-portability/import",
+            data=data,
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        events = [json.loads(l) for l in resp.data.decode("utf-8").splitlines() if l.strip()]
+        result = next(ev for ev in events if ev.get("event") == "result")
+        assert result["ok"] is False
+        assert result["dry_run"] is True
+        assert "Validation completed with issues" in result["title_text"]
+        assert "Nothing was changed" in result["message"]
+
+    def test_import_real_result_reports_explicit_counts(self, app_with_admin):
+        client = app_with_admin.test_client()
+        _login(client)
+        payload = (json.dumps({"type": "event", "data": {"title": "Real"}, "links": [], "assets": [], "meta": {}}) + "\n").encode("utf-8")
+        data = {"_csrf_token": "x", "password": "test-pass", "dry_run": "0"}
+        data["data_file"] = (io.BytesIO(payload), "records.jsonl")
+        resp = client.post(
+            "/dashboard/data-portability/import",
+            data=data,
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        events = [json.loads(l) for l in resp.data.decode("utf-8").splitlines() if l.strip()]
+        result = next(ev for ev in events if ev.get("event") == "result")
+        assert result["ok"] is True
+        assert "1 inserted" in result["message"]

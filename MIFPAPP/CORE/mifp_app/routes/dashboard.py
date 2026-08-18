@@ -988,6 +988,8 @@ def data_portability_export_post(fmt: str):
     mimetype = "application/zip" if fmt == "zip" else "application/x-ndjson"
     filename = f"MIFP_EXPORT_{date.today().isoformat()}.zip" if fmt == "zip" else "records.jsonl"
     token = secrets.token_urlsafe(32)
+    export_owner = session.get("admin_username")
+    export_session_key = _export_session_key()
     export_dir = _export_cache_dir()
     with tempfile.NamedTemporaryFile(
         mode="wb", prefix=f"{_EXPORT_CACHE_PREFIX}write-", suffix=".tmp",
@@ -995,76 +997,97 @@ def data_portability_export_post(fmt: str):
     ) as handle:
         temp_export_path = Path(handle.name)
 
-    expired = 0
-    try:
-        with operation_maintenance(
-            current_app.config["DATABASE_PATH"], f"data export: {fmt}", logger=current_app.logger
-        ):
-            with connect(current_app.config["DATABASE_PATH"]) as conn:
-                if fmt == "zip":
-                    bundle_to_zip_file(
-                        conn, scope, current_app.config["ASSETS_DIR"], temp_export_path,
-                        app_version=str(current_app.config.get("APP_VERSION", "")),
-                    )
-                else:
-                    manifest = bundle_to_jsonl_file(
-                        conn, scope, current_app.config["ASSETS_DIR"], temp_export_path,
-                        app_version=str(current_app.config.get("APP_VERSION", "")),
-                    )
-                    record_counts = dict(manifest.get("counts") or {})
-                    current_app.logger.info(
-                        "data portability JSONL package written records=%d assets=%d state=%s",
-                        int(manifest.get("records") or 0), len(manifest.get("files") or []),
-                        bool(manifest.get("state_sha256")),
-                    )
-        total_bytes = temp_export_path.stat().st_size
-        max_export_bytes = int(current_app.config["EXPORT_MAX_BYTES"])
-        if total_bytes > max_export_bytes:
-            raise ValueError(f"Export exceeds configured maximum size: {max_export_bytes} bytes")
-        expired = _prune_export_cache()
-        _cache_export_file(
-            token, temp_export_path, filename=filename, mimetype=mimetype,
-            owner=session.get("admin_username"), session_key=_export_session_key(),
-        )
-    except Exception:
-        temp_export_path.unlink(missing_ok=True)
-        current_app.logger.exception("data portability export failed format=%s scope=%s", fmt, scope)
-        audit_log("export.data_portability", "data portability export", category="admin", outcome="failure",
-                  scope=scope, format=fmt)
-        error_payload = json.dumps({
-            "event": "error", "ok": False,
-            "title_text": "Export failed",
-            "message": "The export could not be generated. Check the server logs and try again.",
-            "icon_class": "bi-x-lg", "icon_modifier": "is-error",
-        })
-        return Response(error_payload + "\n", mimetype="application/x-ndjson", status=500, headers={
-            "X-Accel-Buffering": "no",
-            "Cache-Control": "no-store, max-age=0",
-            "Pragma": "no-cache",
-        })
+    import queue
 
-    duration_ms = int((time.monotonic() - started) * 1000)
-    size_str = f"{total_bytes/1024:.1f} KB" if total_bytes < 1048576 else f"{total_bytes/1048576:.1f} MB"
-    cached_exports = _export_cache_count()
+    from ..services.job_manager import JobQueueFull, get_job_manager
 
-    current_app.logger.info(
-        "data portability export ready format=%s bytes=%d duration_ms=%d expired_tokens=%d cached_exports=%d counts=%s",
-        fmt, total_bytes, duration_ms, expired, cached_exports, record_counts,
+    event_queue: queue.Queue[dict | None] = queue.Queue()
+    app = current_app._get_current_object()
+
+    def progress_cb(message: str, pct: int) -> None:
+        event_queue.put({"event": "phase", "phase": "bundle", "label": message, "percent": pct})
+
+    def run_export() -> None:
+        with app.app_context():
+            try:
+                with operation_maintenance(
+                    current_app.config["DATABASE_PATH"], f"data export: {fmt}", logger=app.logger
+                ):
+                    with connect(current_app.config["DATABASE_PATH"]) as conn:
+                        if fmt == "zip":
+                            bundle_to_zip_file(
+                                conn, "all", current_app.config["ASSETS_DIR"], temp_export_path,
+                                app_version=str(current_app.config.get("APP_VERSION", "")),
+                                progress_callback=progress_cb,
+                            )
+                        else:
+                            manifest = bundle_to_jsonl_file(
+                                conn, "all", current_app.config["ASSETS_DIR"], temp_export_path,
+                                app_version=str(current_app.config.get("APP_VERSION", "")),
+                                progress_callback=progress_cb,
+                            )
+                            record_counts.update(dict(manifest.get("counts") or {}))
+                            app.logger.info(
+                                "data portability JSONL package written records=%d assets=%d state=%s",
+                                int(manifest.get("records") or 0), len(manifest.get("files") or []),
+                                bool(manifest.get("state_sha256")),
+                            )
+                total_bytes = temp_export_path.stat().st_size
+                max_export_bytes = int(current_app.config["EXPORT_MAX_BYTES"])
+                if total_bytes > max_export_bytes:
+                    raise ValueError(f"Export exceeds configured maximum size: {max_export_bytes} bytes")
+                expired = _prune_export_cache()
+                _cache_export_file(
+                    token, temp_export_path, filename=filename, mimetype=mimetype,
+                    owner=export_owner, session_key=export_session_key,
+                )
+                size_str = f"{total_bytes/1024:.1f} KB" if total_bytes < 1048576 else f"{total_bytes/1048576:.1f} MB"
+                app.logger.info(
+                    "data portability export ready format=%s bytes=%d duration_ms=%d expired_tokens=%d cached_exports=%d counts=%s",
+                    fmt, total_bytes, int((time.monotonic() - started) * 1000), expired,
+                    _export_cache_count(), record_counts,
+                )
+                audit_log("export.data_portability", "data portability export", category="admin", outcome="success",
+                          scope="all", format=fmt, bytes=total_bytes, counts=json.dumps(record_counts, separators=(",", ":")) if record_counts else None)
+                event_queue.put({
+                    "event": "result", "ok": True,
+                    "title_text": "Export ready", "message": f"{fmt.upper()} export ({size_str}) ready for download.",
+                    "icon_class": "bi-check-lg", "icon_modifier": "is-success",
+                    "filename": filename, "bytes": total_bytes, "mimetype": mimetype,
+                    "download_token": token,
+                })
+            except Exception:
+                temp_export_path.unlink(missing_ok=True)
+                app.logger.exception("data portability export failed format=%s scope=%s", fmt, "all")
+                audit_log("export.data_portability", "data portability export", category="admin", outcome="failure",
+                          scope="all", format=fmt)
+                event_queue.put({
+                    "event": "error", "ok": False,
+                    "title_text": "Export failed",
+                    "message": "The export could not be generated. Check the server logs and try again.",
+                    "icon_class": "bi-x-lg", "icon_modifier": "is-error",
+                })
+            finally:
+                event_queue.put(None)
+
+    manager = get_job_manager(
+        int(current_app.config.get("BACKGROUND_JOB_WORKERS", 2)),
+        int(current_app.config.get("BACKGROUND_JOB_MAX_PENDING", 4)),
+        db_path=str(current_app.config["DATABASE_PATH"]),
     )
-    audit_log("export.data_portability", "data portability export", category="admin", outcome="success",
-              scope=scope, format=fmt, bytes=total_bytes, duration_ms=duration_ms,
-              counts=json.dumps(record_counts, separators=(",", ":")) if record_counts else None)
+    try:
+        job_id, _future = manager.submit(f"data-export:{fmt}", run_export)
+    except JobQueueFull:
+        temp_export_path.unlink(missing_ok=True)
+        return jsonify({"ok": False, "error": "job_queue_full"}), 503
 
     def generate() -> Generator[str, None, None]:
-        yield json.dumps({"event": "phase", "phase": "bundle", "label": "Building export bundle…", "percent": 0}) + "\n"
-        yield json.dumps({"event": "phase", "phase": "ready", "label": "Preparing download…", "percent": 80}) + "\n"
-        yield json.dumps({
-            "event": "result", "ok": True,
-            "title_text": "Export ready", "message": f"{fmt.upper()} export ({size_str}) ready for download.",
-            "icon_class": "bi-check-lg", "icon_modifier": "is-success",
-            "filename": filename, "bytes": total_bytes, "mimetype": mimetype,
-            "download_token": token,
-        }) + "\n"
+        yield json.dumps({"event": "queued", "job_id": job_id}) + "\n"
+        while True:
+            data = event_queue.get()
+            if data is None:
+                break
+            yield json.dumps(data, ensure_ascii=False, default=str) + "\n"
 
     return Response(generate(), mimetype="application/x-ndjson", headers={
         "X-Accel-Buffering": "no",
@@ -1158,7 +1181,8 @@ def data_portability_export_dl(token: str):
 @login_required
 def data_portability_import():
     started = time.monotonic()
-    scope = request.form.get("scope", "").strip() or "all"
+    scope = "all"
+    force_import = False
     is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     password = request.form.get("password", "")
     expected_hash = str(current_app.config.get("ADMIN_PASSWORD_HASH") or "")
@@ -1206,11 +1230,10 @@ def data_portability_import():
     try:
         dry_run = request.form.get("dry_run") == "1"
         skip_assets = request.form.get("skip_assets") == "1"
-        force_import = request.form.get("force_import") == "1"
         _validate_import_selection(files)
         current_app.logger.info(
-            "data portability import request started scope=%s files=%d dry_run=%s skip_assets=%s force_import=%s",
-            scope, len(files), dry_run, skip_assets, force_import,
+            "data portability import request started scope=%s files=%d dry_run=%s skip_assets=%s",
+            scope, len(files), dry_run, skip_assets,
         )
 
         if not is_xhr:
@@ -1223,9 +1246,9 @@ def data_portability_import():
         file_data: list[tuple[str, bytes | Path]] = list(staged_files)
         total_bytes = sum(p.stat().st_size for _, p in file_data)
         current_app.logger.info(
-            "data portability import prepared scope=%s files=%s bytes=%d dry_run=%s skip_assets=%s force_import=%s",
+            "data portability import prepared scope=%s files=%s bytes=%d dry_run=%s skip_assets=%s",
             scope, _safe_upload_log_items(file_data), total_bytes,
-            dry_run, skip_assets, force_import,
+            dry_run, skip_assets,
         )
 
         import queue
@@ -1381,6 +1404,17 @@ def _safe_import_error(exc: Exception) -> str:
     return "The import could not be completed. Check the server log for details."
 
 
+class _MonotonicProgress:
+    """Track the highest percent emitted so far for one import request."""
+
+    def __init__(self) -> None:
+        self._last = 0.0
+
+    def __call__(self, pct: float) -> int:
+        self._last = max(self._last, min(100.0, max(0.0, pct)))
+        return round(self._last)
+
+
 def _perform_import(
     scope: str,
     file_data: list[tuple[str, bytes | Path]],
@@ -1422,11 +1456,12 @@ def _perform_import_unprotected(
 ) -> None:
     summaries: list[dict[str, Any]] = []
     backup_path = None
+    mono = _MonotonicProgress()
     if cancel_check and cancel_check():
         from ..services.job_manager import JobCancelled
         raise JobCancelled("Import cancelled by administrator")
     if not dry_run:
-        event_sink({"event": "phase", "phase": "backup", "label": "Creating database backup…", "current_step": 0, "total_steps": 5, "percent": 0})
+        event_sink({"event": "phase", "phase": "backup", "label": "Creating database backup…", "current_step": 0, "total_steps": 5, "percent": mono(5)})
         current_app.logger.info("Creating pre-import database backup")
         backup_path = backup_sqlite_database(current_app.config["DATABASE_PATH"], label="import")
         current_app.logger.info(
@@ -1435,6 +1470,7 @@ def _perform_import_unprotected(
     with connect(current_app.config["DATABASE_PATH"]) as conn:
         _per_file_totals: list[int] = []
         _total_records_aggregate = 0
+        _current_index = 0
         _completed_records = 0
         _completed_inserted = 0
         _completed_updated = 0
@@ -1443,11 +1479,13 @@ def _perform_import_unprotected(
         _completed_asset_errors = 0
 
         def progress(file_name: str, done: int, total: int) -> None:
-            nonlocal _per_file_totals, _total_records_aggregate
+            nonlocal _per_file_totals, _total_records_aggregate, _current_index
             pct = round((done / max(total, 1)) * 100)
+            global_pct = 10 + 80 * ((_current_index + (done / max(total, 1))) / max(file_count, 1))
             event_sink({
                 "event": "progress", "current": done, "total": total,
                 "file": file_name, "percent": pct,
+                "global_percent": mono(global_pct),
             })
             if not _per_file_totals or _per_file_totals[-1] != total:
                 _per_file_totals.append(total)
@@ -1464,10 +1502,11 @@ def _perform_import_unprotected(
                 "updated": _completed_updated,
             })
 
-        event_sink({"event": "phase", "phase": "importing", "label": "Importing records…", "current_step": 1, "total_steps": 5, "percent": 20})
-
         file_count = len(file_data)
+        event_sink({"event": "phase", "phase": "importing", "label": "Importing records…", "current_step": 1, "total_steps": 5, "percent": mono(10)})
+
         for file_index, (filename, payload) in enumerate(file_data):
+            _current_index = file_index
             if cancel_check and cancel_check():
                 from ..services.job_manager import JobCancelled
                 raise JobCancelled("Import cancelled by administrator")
@@ -1632,7 +1671,7 @@ def _perform_import_unprotected(
             from ..services.job_manager import JobCancelled
             raise JobCancelled("Import cancelled by administrator")
         if not dry_run:
-            event_sink({"event": "phase", "phase": "assets", "label": "Recovering assets…", "current_step": 2, "total_steps": 5, "percent": 60})
+            event_sink({"event": "phase", "phase": "assets", "label": "Recovering assets…", "current_step": 2, "total_steps": 5, "percent": mono(90)})
             recovery = recover_missing_assets(
                 conn, Path(current_app.config["ASSETS_DIR"]),
                 cancel_check=cancel_check, commit=False,
@@ -1654,7 +1693,7 @@ def _perform_import_unprotected(
                 "updated": _completed_updated,
             })
 
-    event_sink({"event": "phase", "phase": "result", "label": "Finalizing…", "current_step": 3, "total_steps": 5, "percent": 80})
+    event_sink({"event": "phase", "phase": "result", "label": "Finalizing…", "current_step": 3, "total_steps": 5, "percent": mono(98)})
 
     total_inserted = sum(_summary_count(s.get("inserted")) for s in summaries)
     total_updated = sum(_summary_count(s.get("updated")) for s in summaries)
@@ -1689,13 +1728,32 @@ def _perform_import_unprotected(
     duration_s = round(time.monotonic() - started, 1)
 
     _result_title = (
-        "Import completed with warnings" if outcome == "warning" else
-        "Files are valid" if (ok and dry_run) else
-        "Import complete" if ok else
-        "Import failed"
+        "Validation completed" if (ok and dry_run) else
+        "Validation completed with issues" if (dry_run and not ok) else
+        "Import completed with issues" if outcome == "warning" else
+        "Import complete"
     )
-    _result_icon = "bi-exclamation-lg" if outcome == "warning" else "bi-check-lg" if ok else "bi-x-lg"
-    _result_icon_class = "is-warning" if outcome == "warning" else "is-success" if ok else "is-error"
+    _result_icon = "bi-exclamation-lg" if outcome == "warning" or (dry_run and not ok) else "bi-check-lg"
+    _result_icon_class = "is-warning" if outcome == "warning" or (dry_run and not ok) else "is-success"
+
+    if dry_run:
+        _result_message = (
+            "Validation completed with "
+            f"{total_errors + total_asset_errors} issue(s). "
+            f"{total_inserted} record(s) would be inserted and {total_updated} updated. "
+            "Nothing was changed."
+            if total_errors + total_asset_errors
+            else f"The package is valid: {total_inserted} record(s) would be inserted "
+                 f"and {total_updated} updated. Nothing was changed."
+        )
+    else:
+        _result_message = (
+            f"Import completed in {duration_s}s: {total_inserted} inserted, "
+            f"{total_updated} updated, {total_errors + total_asset_errors} error(s)."
+            if ok
+            else f"Import completed with {total_errors + total_asset_errors} issue(s): "
+                 f"{total_inserted} inserted, {total_updated} updated."
+        )
 
     event_sink({
         "event": "result",
@@ -1704,7 +1762,7 @@ def _perform_import_unprotected(
         "title_text": _result_title,
         "icon_class": _result_icon,
         "icon_modifier": _result_icon_class,
-        "message": f"Import completed in {duration_s}s." if ok else f"Import completed with {total_errors + total_asset_errors} error(s).",
+        "message": _result_message,
         "inserted": total_inserted,
         "updated": total_updated,
         "linked_assets": total_linked_assets,

@@ -111,7 +111,7 @@
       <div class="modal-body">
         <div class="export-auth-notice">
           <i class="bi bi-database-lock" aria-hidden="true"></i>
-          <div><b>Confirm this sensitive operation</b><span>The selected files can change database records and managed assets. Enter the administrator password to continue.</span></div>
+          <div><b>Confirm this sensitive operation</b><span id="importAuthNotice">The selected files can change database records and managed assets. Enter the administrator password to continue.</span></div>
         </div>
         <label class="form-label" for="importAuthPassword">Administrator password</label>
         <input class="form-control" id="importAuthPassword" name="password" type="password" autocomplete="current-password" required>
@@ -197,7 +197,7 @@
               <p id="transferDetail"></p>
               <div class="import-progress-bar" role="progressbar"><span id="transferProgress"></span></div>
               <div class="transfer-progress-meta" aria-live="polite">
-                <span id="transferPercent">4%</span>
+                <span id="transferPercent">Waiting…</span>
                 <span id="transferElapsed">00:00</span>
               </div>
               <div class="transfer-metrics" id="transferMetrics">
@@ -254,6 +254,7 @@
   'exportDlUrl': url_for('dashboard.data_portability_export_dl', token='TOKEN'),
   'smartMergeUrl': url_for('dashboard.data_quality_page'),
   'maxUploadBytes': config.MAX_CONTENT_LENGTH,
-  'maxZipBytes': config.IMPORT_MAX_ZIP_BYTES
+  'maxZipBytes': config.IMPORT_MAX_ZIP_BYTES,
+  'maxJsonlBytes': config.IMPORT_MAX_JSONL_BYTES
 }|tojson }}</script>
 {% endblock %}

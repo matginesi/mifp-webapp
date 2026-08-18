@@ -14,6 +14,33 @@ SAMPLE = [
 ]
 
 
+@pytest.fixture
+def app_with_admin(tmp_path):
+    import os
+    from werkzeug.security import generate_password_hash
+    os.environ["TESTING"] = "1"
+    os.environ["DATABASE_PATH"] = str(tmp_path / "test.db")
+    os.environ["EXPORT_DIR"] = str(tmp_path / "exports")
+    os.environ["ASSETS_DIR"] = str(tmp_path / "assets")
+    os.environ["LOG_DIR"] = str(tmp_path / "logs")
+    os.environ["SECRET_KEY"] = "test-secret-key-not-for-prod"
+    os.environ["LOG_ACCESS_ENABLED"] = "0"
+    from mifp_app import create_app
+
+    app = create_app()
+    app.config["TESTING"] = True
+    app.config["WTF_CSRF_ENABLED"] = False
+    app.config["ADMIN_USERNAME"] = "admin"
+    app.config["ADMIN_PASSWORD_HASH"] = generate_password_hash("test-pass")
+    app.config["EXPORT_DIR"] = tmp_path / "exports"
+    app.config["ASSETS_DIR"] = tmp_path / "assets"
+    app.config["EXPORT_DIR"].mkdir(parents=True, exist_ok=True)
+    app.config["ASSETS_DIR"].mkdir(parents=True, exist_ok=True)
+    yield app
+    for key in ("DATABASE_PATH", "EXPORT_DIR", "ASSETS_DIR", "LOG_DIR", "SECRET_KEY", "LOG_ACCESS_ENABLED", "TESTING"):
+        os.environ.pop(key, None)
+
+
 class TestExporters:
     def test_rows_to_json_output(self):
         from mifp_app.services.exporters import rows_to_json
@@ -119,3 +146,43 @@ class TestExporters:
 
         csv_raw = rows_to_csv([])
         assert csv_raw.startswith(b"\xef\xbb\xbf")
+
+
+def test_bundle_to_zip_file_reports_progress(app_with_admin):
+    from mifp_app.services.data_portability import bundle_to_zip_file
+
+    app = app_with_admin
+    events = []
+
+    def cb(message: str, pct: int) -> None:
+        events.append((message, pct))
+
+    with app.app_context():
+        from mifp_app.db.connection import connect
+        with connect(app.config["DATABASE_PATH"]) as conn:
+            bundle_to_zip_file(conn, "all", app.config["ASSETS_DIR"],
+                               app.config["EXPORT_DIR"] / "progress.zip",
+                               app_version="test", progress_callback=cb)
+    assert events, "expected progress milestones"
+    percents = [pct for _, pct in events]
+    assert percents == sorted(percents), f"percent went backwards: {percents}"
+    assert events[-1][1] == 100
+
+
+def test_bundle_to_jsonl_file_reports_progress(app_with_admin):
+    from mifp_app.services.data_portability import bundle_to_jsonl_file
+
+    app = app_with_admin
+    events = []
+
+    def cb(message: str, pct: int) -> None:
+        events.append((message, pct))
+
+    with app.app_context():
+        from mifp_app.db.connection import connect
+        with connect(app.config["DATABASE_PATH"]) as conn:
+            bundle_to_jsonl_file(conn, "all", app.config["ASSETS_DIR"],
+                                 app.config["EXPORT_DIR"] / "progress.jsonl",
+                                 app_version="test", progress_callback=cb)
+    assert events, "expected progress milestones"
+    assert events[-1][1] == 100

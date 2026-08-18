@@ -44,6 +44,7 @@
   var importAuthForm = document.getElementById('importAuthForm');
   var importAuthPassword = document.getElementById('importAuthPassword');
   var importAuthOperation = document.getElementById('importAuthOperation');
+  var importAuthTitle = document.getElementById('importAuthTitle');
   var exportAuthForm = document.getElementById('exportAuthForm');
   var exportAuthPassword = document.getElementById('exportAuthPassword');
   var exportAuthFormat = document.getElementById('exportAuthFormat');
@@ -142,6 +143,14 @@
     });
     if (oversizedZip) {
       return oversizedZip.name + ' is ' + sizeLabel(oversizedZip.size) + '; the ZIP limit is ' + sizeLabel(Number(config.maxZipBytes)) + '.';
+    }
+    var oversizedJsonl = files.find(function (file) {
+      return /\.jsonl?$/i.test(String(file.name || ''))
+        && Number(config.maxJsonlBytes || 0) > 0
+        && file.size > Number(config.maxJsonlBytes);
+    });
+    if (oversizedJsonl) {
+      return oversizedJsonl.name + ' is ' + sizeLabel(oversizedJsonl.size) + '; each JSON/JSONL file is limited to ' + sizeLabel(Number(config.maxJsonlBytes)) + '.';
     }
     var oversizedFile = files.find(function (file) {
       return Number(config.maxUploadBytes || 0) > 0 && file.size > Number(config.maxUploadBytes);
@@ -423,7 +432,7 @@
         fileEl.querySelector('.file-bar-fill').style.width = msg.percent + '%';
         fileEl.querySelector('small').textContent = msg.percent + '%';
       }
-      if (msg.percent != null) setProgress(batchProgress(msg.percent));
+      if (msg.global_percent != null) setProgress(batchProgress(msg.global_percent));
       if (detail && msg.file) detail.textContent = msg.file + ': ' + msg.current + '/' + msg.total;
     } else if (msg.event === 'file_start') {
       var row = document.createElement('div');
@@ -645,7 +654,6 @@
     });
     xhr.upload.addEventListener('progress', function (upload) {
       if (!upload.lengthComputable) return;
-      setProgress(batchProgress(upload.loaded / upload.total * 100));
       status.textContent = 'Uploading package ' + (batchIndex + 1) + ' of ' + batchTotal + '…';
       detail.textContent = sizeLabel(upload.loaded) + ' of ' + sizeLabel(upload.total) + ' uploaded in this package';
     });
@@ -728,6 +736,11 @@
       failure.event = 'result';
       failure.ok = false;
       failure.dry_run = dryRun;
+      ['inserted', 'updated', 'skipped', 'rolled_back', 'linked_assets', 'asset_errors', 'errors', 'new_assets', 'downloaded_assets'].forEach(function (key) {
+        failure[key] = Number(failure[key] || 0) + Number(summary[key] || 0);
+      });
+      if (!failure.error_details) failure.error_details = summary.error_details;
+      if (!failure.by_type) failure.by_type = summary.by_type;
       failure.title_text = failure.title_text || 'Import queue stopped';
       var prefix = completed ? completed + ' of ' + batches.length + ' uploads completed. ' : '';
       failure.message = prefix + (failure.message || 'The next package could not be imported.');
@@ -751,7 +764,6 @@
       files: files.length, batches: batches.length,
       bytes: totalBytes, dry_run: dryRun,
       skip_assets: Boolean(form.querySelector('[name="skip_assets"]')?.checked),
-      force_import: Boolean(form.querySelector('[name="force_import"]')?.checked),
     });
     resetModal(dryRun ? 'Check import' : 'Import data', 'Preparing upload queue…');
     logEvent('Selected ' + files.length + ' file(s) · ' + sizeLabel(totalBytes) + ' · ' + batches.length + ' upload(s)', 'done');
@@ -784,6 +796,17 @@
     var dryRun = form.querySelector('[name="dry_run"]:checked')?.value === '1';
     pendingImportRequest = { files: files, dryRun: dryRun };
     if (importAuthOperation) importAuthOperation.textContent = dryRun ? 'Validate selected files' : 'Import selected data';
+    var notice = document.getElementById('importAuthNotice');
+    if (notice) {
+      notice.textContent = dryRun
+        ? 'Validation checks the files only. No records or assets will be changed. Enter the administrator password to continue.'
+        : 'The selected files can change database records and managed assets. Enter the administrator password to continue.';
+    }
+    if (importAuthTitle) {
+      var titleText = importAuthTitle.lastChild && importAuthTitle.lastChild.nodeType === Node.TEXT_NODE
+        ? importAuthTitle.lastChild : null;
+      if (titleText) titleText.textContent = dryRun ? ' Confirm validation' : ' Authorize secure import';
+    }
     if (importAuthModal) importAuthModal.show();
   });
 
@@ -866,7 +889,7 @@
         if (exportDlToken && exportDlFilename) {
           logEvent(exportDlFilename + ' is ready to download', 'done');
           transferLog.info('export.download_ready', { format: fmt, filename: exportDlFilename });
-        } else if (xhr.status >= 400) {
+        } else if (lastStreamError || xhr.status >= 400) {
           var serverMessage = lastStreamError && lastStreamError.message;
           var lines = streamBuffer.split('\n').filter(Boolean);
           try {

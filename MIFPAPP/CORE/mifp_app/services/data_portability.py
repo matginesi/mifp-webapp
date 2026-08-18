@@ -515,11 +515,18 @@ def _write_bundle_zip(
     target: BytesIO | Path,
     *,
     app_version: str = "",
+    progress_callback: Callable[[str, int], None] | None = None,
 ) -> dict[str, Any]:
+    def report(message: str, pct: int) -> None:
+        if progress_callback:
+            progress_callback(message, pct)
+
     bundle = build_export_bundle(conn, scope)
+    report("Collecting records…", 5)
     records = bundle.get("records") or []
     asset_rows = _asset_rows_for_scope(conn, scope, records)
     records_payload = _records_to_jsonl(records)
+    report("Serializing records…", 15)
     durable_state = _durable_state(conn) if scope == "all" else None
     state_payload = (
         json.dumps(durable_state, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
@@ -562,6 +569,7 @@ def _write_bundle_zip(
             if archive_path in seen_archive_paths:
                 continue
             seen_archive_paths.add(archive_path)
+            report(f"Packaging assets {len(seen_archive_paths)}/{len(asset_rows)}…", 15 + 70 * len(seen_archive_paths) // max(len(asset_rows), 1))
             zf.write(path, archive_path)
             manifest["files"].append({
                 "path": db_path,
@@ -569,10 +577,12 @@ def _write_bundle_zip(
                 "size": path.stat().st_size,
                 "sha256": sha256_file(path),
             })
+        report("Writing manifest…", 92)
         zf.writestr(
             ZIP_MANIFEST_NAME,
             json.dumps(manifest, ensure_ascii=False, indent=2, default=str),
         )
+    report("Finalizing…", 100)
     return manifest
 
 
@@ -592,11 +602,13 @@ def bundle_to_zip_file(
     destination: Path,
     *,
     app_version: str = "",
+    progress_callback: Callable[[str, int], None] | None = None,
 ) -> int:
     """Write a portable ZIP directly to disk and return its byte size."""
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    _write_bundle_zip(conn, scope, assets_dir, destination, app_version=app_version)
+    _write_bundle_zip(conn, scope, assets_dir, destination,
+                      app_version=app_version, progress_callback=progress_callback)
     return destination.stat().st_size
 
 
@@ -609,6 +621,7 @@ def bundle_to_jsonl_file(
     destination: Path,
     *,
     app_version: str = "",
+    progress_callback: Callable[[str, int], None] | None = None,
 ) -> dict[str, Any]:
     """Write a self-contained JSONL v2 package equivalent to the ZIP export.
 
@@ -617,13 +630,19 @@ def bundle_to_jsonl_file(
     importer can restore the same information without an accompanying folder.
     Legacy record-only JSONL files remain supported by ``import_jsonl_payload``.
     """
+    def report(message: str, pct: int) -> None:
+        if progress_callback:
+            progress_callback(message, pct)
+
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     bundle = build_export_bundle(conn, scope)
+    report("Collecting records…", 5)
     records = bundle.get("records") or []
     durable_state = _durable_state(conn) if scope == "all" else None
     asset_rows = _asset_rows_for_scope(conn, scope, records)
     records_payload = _records_to_jsonl(records)
+    report("Serializing records…", 15)
     packaged_assets: list[dict[str, Any]] = []
     for asset in asset_rows:
         db_path = str(asset.get("path") or "").strip()
@@ -641,6 +660,7 @@ def bundle_to_jsonl_file(
             "sha256": sha256_file(local_path),
             "source": local_path,
         })
+        report(f"Packaging assets {len(packaged_assets)}/{len(asset_rows)}…", 15 + 70 * len(packaged_assets) // max(len(asset_rows), 1))
 
     manifest = {
         "format": CANONICAL_FORMAT,
@@ -700,6 +720,7 @@ def bundle_to_jsonl_file(
         output.write(records_payload.decode("utf-8"))
     temporary.replace(destination)
     manifest["bytes"] = destination.stat().st_size
+    report("Finalizing…", 100)
     return manifest
 
 
