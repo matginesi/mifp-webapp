@@ -45,6 +45,12 @@
         <i class="bi bi-check-circle-fill safety-selected"></i>
       </label>
       <label class="safety-operation">
+        <input type="radio" name="operation" value="excel" required>
+        <span class="safety-operation-icon"><i class="bi bi-file-excel"></i></span>
+        <span><b>Export to Excel</b><small>Export users as Excel with first name, last name, email, affiliation, country.</small></span>
+        <i class="bi bi-check-circle-fill safety-selected"></i>
+      </label>
+      <label class="safety-operation">
         <input type="radio" name="operation" value="cleanup" required>
         <span class="safety-operation-icon is-warning"><i class="bi bi-database-gear"></i></span>
         <span><b>Clean storage and database</b><small>Creates a backup first, applies retention and compacts SQLite.</small></span>

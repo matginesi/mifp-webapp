@@ -1007,7 +1007,7 @@ def data_portability_export_post(fmt: str):
     def progress_cb(message: str, pct: int) -> None:
         event_queue.put({"event": "phase", "phase": "bundle", "label": message, "percent": pct})
 
-    def run_export() -> None:
+    def run_export(cancelled: Callable[[], bool]) -> None:
         with app.app_context():
             try:
                 with operation_maintenance(

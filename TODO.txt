@@ -1,13 +1,3 @@
 Correggi l'evidenziazione nella webapp: non copre bene le cose soprattutto gli inputs.
 Rifai la parte di join con exports e altre funzionalità utili. Anche un export excel con first name, last name, email, affiliation, country... sempre logica business sicura e python, no javascript.
 Sistema i totem di export: ora non si capisce cosa sta facendo il sistema, ma il resto va bene.
-
-
-
-00:49:39 ERROR    jobs               Background job failed  {"error_type": "TypeError", "job_id": "2bd6ce99640943ad93f5b2f5f144594c", "job_name": "data-export:zip"}
-Traceback (most recent call last):
-  File "/home/matteo/Projects/MifpWebNew/MIFPAPP/CORE/mifp_app/services/job_manager.py", line 204, in run
-    result = callback(cancelled)
-  File "/home/matteo/Projects/MifpWebNew/MIFPAPP/CORE/mifp_app/services/job_manager.py", line 152, in wrapped
-    return callback(cancel_event)
-TypeError: data_portability_export_post.<locals>.run_export() takes 0 positional arguments but 1 was given

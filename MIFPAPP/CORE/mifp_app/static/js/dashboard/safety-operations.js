@@ -68,11 +68,11 @@
     if (event.target.matches('input[name="operation"]')) render();
   });
   wizard.addEventListener('submit', async (event) => {
-    if (operation() !== 'export') return;
+    if (operation() !== 'export' && operation() !== 'excel') return;
     event.preventDefault();
     if (!wizard.reportValidity()) return;
     submit.disabled = true;
-    window.MIFPLog?.info('safety.export_started', { operation: 'export' });
+    window.MIFPLog?.info('safety.export_started', { operation: operation() });
     try {
       const response = await fetch(wizard.action, {
         method: 'POST',
@@ -81,16 +81,20 @@
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
       });
       const contentType = response.headers.get('Content-Type') || '';
-      if (!response.ok || !contentType.includes('application/zip')) {
+      if (!response.ok) {
+        const errorText = await response.text();
         throw new Error(response.status === 403
           ? 'Authorization failed. Check the administrator password.'
-          : 'The secure export was not authorized or could not be created.');
+          : contentType.includes('application/zip')
+            ? 'The secure export was not authorized or could not be created.'
+            : contentType.includes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+              ? 'Excel export ready for download.'
+              : 'An unexpected error occurred.');
       }
-      const blob = await response.blob();
       const disposition = response.headers.get('Content-Disposition') || '';
       const match = disposition.match(/filename="?([^";]+)"?/i);
-      const filename = match?.[1] || 'mifp-secure-export.zip';
-      const url = URL.createObjectURL(blob);
+      const filename = match?.[1] || (operation() === 'excel' ? 'mifp-users.xlsx' : 'mifp-secure-export.zip');
+      const url = URL.createObjectURL(response.response);
       const link = document.createElement('a');
       link.href = url;
       link.download = filename;
@@ -98,8 +102,8 @@
       link.click();
       link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      window.MIFPUI?.showToast('Secure export created and download started.', 'success');
-      window.MIFPLog?.info('safety.export_completed', { filename: filename, bytes: blob.size });
+      window.MIFPUI?.showToast(` ${operation()} export ready.', 'success');
+      window.MIFPLog?.info('safety.export_completed', { operation: operation(), filename: filename });
     } catch (error) {
       window.MIFPUI?.showToast(error.message || 'The protected operation failed.', 'error');
       window.MIFPLog?.error('safety.export_failed', { error: error });

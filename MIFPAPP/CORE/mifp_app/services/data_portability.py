@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import shutil
 import sqlite3
@@ -13,6 +14,13 @@ from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+try:
+    from openpyxl import Workbook
+    from openpyxl.utils import get_column_letter
+except ImportError:
+    Workbook = None  # type: ignore[assignment]
+    get_column_letter = None  # type: ignore[assignment]
 
 from ..config import Config
 from ..db.connection import table_exists, utc_now, sha256_file
@@ -2056,3 +2064,48 @@ def _validate_manifest_scope(scope: str, record_types: dict[str, int]) -> None:
         raise ValueError(
             f"ZIP scope {scope!r} contains unsupported record type(s): {', '.join(unexpected)}"
         )
+
+
+def export_users_excel(conn: sqlite3.Connection) -> bytes:
+    """Export users as Excel with first name, last name, email, affiliation, country.
+    
+    Returns the Excel file as bytes.
+    """
+    if Workbook is None:
+        raise ImportError("openpyxl is not installed. Install with: pip install openpyxl")
+    
+    import io
+    from django.db.models import Value as V
+    from django.db.models.functions import Concat
+    
+    # Query users with required fields through the connection
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT first_name, last_name, email, affiliation, country 
+        FROM auth_user 
+        WHERE first_name IS NOT NULL OR last_name IS NOT NULL
+        ORDER BY last_name, first_name
+    """)
+    rows = cursor.fetchall()
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Users Export"
+    
+    # Header row
+    ws.append(["First Name", "Last Name", "Email", "Affiliation", "Country"])
+    
+    # Data rows
+    for row in rows:
+        ws.append(list(row))
+    
+    # Set column widths for readability
+    ws.column_dimensions['A'].width = 20
+    ws.column_dimensions['B'].width = 20
+    ws.column_dimensions['C'].width = 30
+    ws.column_dimensions['D'].width = 30
+    ws.column_dimensions['E'].width = 25
+    
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
