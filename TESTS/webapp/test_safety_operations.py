@@ -181,17 +181,54 @@ def test_backup_cleanup_replaces_database_snapshot_and_removes_expired_portabili
     assert not meta_path.exists()
 
 
-def test_password_gated_export_is_import_compatible(client):
+def test_password_gated_export_is_import_compatible(client, app):
+    import json
+    import time
+
     from mifp_app.services.data_portability import parse_zip_payload
 
     response = _run(client, "export")
 
     assert response.status_code == 200
     assert response.headers["Cache-Control"].startswith("no-store")
-    assert response.headers["Content-Disposition"].startswith("attachment;")
-    parsed = parse_zip_payload(response.data)
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["job_id"]
+    status_url = payload["status_url"]
+    download_url = payload["download_url"]
+
+    status = None
+    for _ in range(200):
+        status_resp = client.get(status_url)
+        assert status_resp.status_code == 200
+        status = status_resp.get_json()
+        if status["status"] in {"ready", "failed"}:
+            break
+        time.sleep(0.02)
+    assert status["status"] == "ready", status
+
+    dl = client.get(download_url)
+    assert dl.status_code == 200
+    assert dl.headers["Content-Disposition"].startswith("attachment;")
+    parsed = parse_zip_payload(dl.data)
     assert parsed["manifest"]["format"] == "mifp-jsonl-v2"
     assert parsed["manifest"]["scope"] == "all"
+
+    # token is one-shot
+    assert client.get(download_url).status_code == 404
+
+
+def test_safety_export_status_rejects_unknown_job(client):
+    response = client.get("/dashboard/control/safety-operations/status/does-not-exist")
+    assert response.status_code == 404
+
+
+def test_safety_export_requires_valid_password_still(client, app):
+    response = client.post(
+        "/dashboard/control/safety-operations/run",
+        data={"operation": "export", "password": "wrong", "acknowledge": "1"},
+    )
+    assert response.status_code == 302  # flash + redirect, same as before
 
 
 def test_cleanup_requires_phrase_and_removes_only_retention_candidates(client, app):

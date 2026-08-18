@@ -4,7 +4,7 @@ from datetime import date
 from io import BytesIO
 from pathlib import Path
 
-from flask import current_app, flash, redirect, render_template, request, send_file, session, url_for
+from flask import current_app, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.security import check_password_hash
 
 from ..db.connection import connect
@@ -27,7 +27,8 @@ from ..services.control_center import (
     verify_backup,
 )
 from ..services.dashboard_repository import search_logs
-from ..services.data_portability import bundle_to_zip
+from ..services import download_jobs
+from ..services.data_portability import bundle_to_zip_file
 from ..services.job_manager import get_job_manager
 from ..services.operation_maintenance import operation_maintenance
 from ..services.safety_operations import execute_safe_cleanup, safety_operations_preview
@@ -501,35 +502,50 @@ def control_safety_operations_run():
             return redirect(url_for("dashboard.control_backup_verify", filename=path.name))
 
         if operation == "export":
-            with operation_maintenance(
-                current_app.config["DATABASE_PATH"],
-                "protected portable export",
-                logger=current_app.logger,
-            ), connect(Path(current_app.config["DATABASE_PATH"])) as conn:
-                payload = bundle_to_zip(
-                    conn,
-                    "all",
-                    Path(current_app.config["ASSETS_DIR"]),
-                    app_version=str(current_app.config.get("APP_VERSION", "")),
-                )
+            export_owner = session.get("admin_username")
+            export_session_key = download_jobs.session_key()
+            app = current_app._get_current_object()
+
+            def build(path, progress) -> dict:
+                def report(message: str, pct: int) -> None:
+                    progress(pct, message)
+                with operation_maintenance(
+                    current_app.config["DATABASE_PATH"],
+                    "protected portable export",
+                    logger=current_app.logger,
+                ), connect(Path(current_app.config["DATABASE_PATH"])) as conn:
+                    bundle_to_zip_file(
+                        conn, "all", Path(current_app.config["ASSETS_DIR"]), path,
+                        app_version=str(current_app.config.get("APP_VERSION", "")),
+                        progress_callback=report,
+                    )
+                return {
+                    "filename": f"mifp-secure-export-{date.today().isoformat()}.zip",
+                    "mimetype": "application/zip",
+                    "bytes": path.stat().st_size,
+                }
+
+            job_id, token = download_jobs.submit_download_job(
+                name="safety-export", owner=export_owner,
+                session_key=export_session_key, build=build,
+            )
             audit_log(
-                "safety_operation.export",
-                "protected portable export created",
+                "safety_operation.export_queued",
+                "protected portable export queued",
                 category="admin",
                 outcome="success",
-                bytes=len(payload),
+                job_id=job_id,
                 **identity,
             )
-            response = send_file(
-                BytesIO(payload),
-                mimetype="application/zip",
-                as_attachment=True,
-                download_name=f"mifp-secure-export-{date.today().isoformat()}.zip",
-                max_age=0,
-            )
-            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-            response.headers["Pragma"] = "no-cache"
-            return response
+            result = jsonify({
+                "ok": True,
+                "job_id": job_id,
+                "status_url": url_for("dashboard.control_safety_operations_status", job_id=job_id),
+                "download_url": url_for("dashboard.control_safety_operations_download", token=token),
+            })
+            result.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            result.headers["Pragma"] = "no-cache"
+            return result
 
         with operation_maintenance(
             current_app.config["DATABASE_PATH"],
@@ -563,6 +579,29 @@ def control_safety_operations_run():
         )
         flash("The protected operation failed. No unsafe retry was attempted; review the logs.", "error")
     return redirect(url_for("dashboard.control_safety_operations"))
+
+
+@bp.get("/control/safety-operations/status/<job_id>")
+@login_required
+def control_safety_operations_status(job_id: str):
+    status = download_jobs.get_download_job_status(job_id)
+    if status is None:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    return jsonify({"ok": True, **status})
+
+
+@bp.get("/control/safety-operations/dl/<token>")
+@login_required
+def control_safety_operations_download(token: str):
+    claimed = download_jobs.claim_download(token=token, owner=session.get("admin_username"))
+    if claimed is None:
+        return jsonify({"ok": False, "error": "claim_failed"}), 404
+    return send_file(
+        claimed[1],
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"mifp-secure-export-{date.today().isoformat()}.zip",
+    )
 
 
 @bp.get("/control/backups/verify")

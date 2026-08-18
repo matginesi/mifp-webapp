@@ -147,8 +147,10 @@ class JobManager:
         self._jobs: dict[str, JobState] = {}
         self._cancel_events: dict[str, threading.Event] = {}
 
-    def submit(self, name: str, callback: Callable[[], object]) -> tuple[str, Future]:
-        return self._submit(name, lambda _cancelled: callback())
+    def submit(self, name: str, callback: Callable[[Callable[[], bool]], object]) -> tuple[str, Future]:
+        def wrapped(cancel_event: Callable[[], bool]) -> object:
+            return callback(cancel_event)
+        return self._submit(name, wrapped)
 
     def submit_cancellable(
         self, name: str, callback: Callable[[Callable[[], bool]], object]
