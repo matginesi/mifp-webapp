@@ -1,0 +1,87 @@
+# Production Docker Compose. Runs on the VPS host only; never built here.
+# The image comes from GHCR (built and published by GitHub Actions).
+#
+# Run via deploy/deploy.sh on the server:
+#   docker compose --project-name mifp --env-file /opt/mifp/.env \
+#     -f /opt/mifp/compose.yaml up -d --remove-orphans
+name: mifp-production
+
+services:
+  storage-init:
+    image: "${MIFP_IMAGE:-ghcr.io/matginesi/mifp-webapp:latest}"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mkdir -p /app/data/assets /app/data/backups /app/data/conferences /app/data/exports
+        /app/data/logs /app/data/config /app/data/tmp && chown -R 10001:10001 /app/data && chmod 0750
+        /app/data /app/data/assets /app/data/backups /app/data/conferences /app/data/exports
+        /app/data/logs /app/data/config /app/data/tmp
+    volumes:
+      - /opt/mifp/data:/app/data
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  web:
+    image: "${MIFP_IMAGE:-ghcr.io/matginesi/mifp-webapp:latest}"
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MIFP_LOAD_DOTENV: "0"
+      FLASK_ENV: production
+      FLASK_DEBUG: "0"
+      SESSION_COOKIE_SECURE: "1"
+      SESSION_COOKIE_SAMESITE: Lax
+      CSRF_ENABLED: "1"
+      TRUST_PROXY: "1"
+      TRUSTED_HOSTS: "${TRUSTED_HOSTS:-mifp.eu,www.mifp.eu,127.0.0.1,localhost}"
+      ALLOW_DB_DUMP: "0"
+      ALLOW_DB_RESTORE: "0"
+      AUTO_MIGRATE_ON_STARTUP: "0"
+      DATABASE_PATH: /app/data/mifp.db
+      ASSETS_DIR: /app/data/assets
+      EXPORT_DIR: /app/data/exports
+      TMPDIR: /app/data/tmp
+      LOG_DIR: /app/data/logs
+      CONFERENCES_DIR: /app/data/conferences
+      BANNER_SETTINGS_PATH: /app/data/config/banner_settings.json
+      STORAGE_MIN_FREE_MB: "${STORAGE_MIN_FREE_MB:-1024}"
+      LOG_OUTPUT: both
+      LOG_FORMAT: "${LOG_FORMAT:-json}"
+      GUNICORN_BIND: 127.0.0.1:8000
+      GUNICORN_WORKERS: "${GUNICORN_WORKERS:-1}"
+      GUNICORN_THREADS: "${GUNICORN_THREADS:-4}"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - /opt/mifp/data:/app/data
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=${MIFP_TMP_SIZE:-256m},mode=1777,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: ${MIFP_MEMORY_LIMIT:-1g}
+    cpus: ${MIFP_CPU_LIMIT:-2.0}
+    stop_signal: SIGTERM
+    stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 8
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

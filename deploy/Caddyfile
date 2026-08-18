@@ -1,0 +1,8 @@
+# Caddy runs on the VPS host (not in a container). It terminates TLS and
+# proxies only to the loopback where the production web container listens.
+# Gunicorn inside the container binds 127.0.0.1:8000 and the compose stack
+# publishes on 127.0.0.1:8000, so Caddy is the only public entry point.
+{$MIFP_DOMAIN}, www.{$MIFP_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8000
+}

@@ -1,15 +1,34 @@
 # MIFP Web Platform
 
 Repository unico per sito pubblico, dashboard amministrativa, acquisizione dati
-e storage persistente MIFP. Il launcher `mifp` è l'unico punto di ingresso per
-le operazioni ordinarie.
+e storage persistente MIFP.
 
-## Avvio
+## Architettura di deploy
+
+Un solo percorso di produzione, tutto il resto è locale:
+
+```text
+GitHub Actions (test + build)        GitHub Actions (deploy via SSH)
+        |                                        |
+        v                                        v
+   MIFPAPP/CORE (context Docker) -> GHCR <--    /opt/mifp  (VPS Docker + dati)
+        |                                        |
+        +-------- CI/CD ------------+        Caddy (HTTPS) -> 127.0.0.1:8000
+```
+
+- **Locale** (sviluppo e manutenzione): il launcher `mifp` gestisce Flask,
+  Docker locale, scraper, database, test, backup ZIP e credenziali admin.
+- **Produzione**: un'immagine runtime minimale viene costruita e pubblicata su
+  GHCR da GitHub Actions, tirata sulla VPS da `deploy/deploy.sh` e servita da
+  Caddy sul host. Nessun comando `production` esiste nel launcher locale.
+- **Dashboard** = unica superficie amministrativa in produzione.
+
+## Avvio locale
 
 ```bash
-./mifp local       # Flask locale
-./mifp docker      # stack Docker locale
-./mifp production  # stack Gunicorn/production
+./mifp init       # prepara .env, virtualenv e storage
+./mifp local      # Flask locale
+./mifp docker-local  # stack Docker locale (alias: ./mifp docker)
 ```
 
 Configurare l'ambiente copiando `MIFPAPP/CORE/.env.example`; i file `.env`, le
@@ -23,7 +42,9 @@ SCRAPERS/              acquisizione e creazione JSONL/ZIP
   OUTPUTS/             soli artefatti finali importabili
 MIFPAPP/CORE/          applicazione Flask e contesto Docker
 MIFPAPP/DATABASE/      database, asset, log, backup ed export persistenti
-TESTS/                 test del repository
+TESTS/                 test del repository (suite webapp versionata)
+deploy/                artefatti di deploy della VPS (compose, Caddyfile, script)
+.github/workflows/     pipeline CI/CD (test -> GHCR -> VPS)
 ```
 
 Il flusso dei dati è intenzionalmente unidirezionale:
@@ -38,7 +59,10 @@ sorgenti -> SCRAPERS/OUTPUTS/*.jsonl + MIFP_IMPORT.zip
 Gli scraper non importano Flask, non aprono SQLite e non modificano
 `mifp.db`. Il CORE legge i percorsi persistenti dalla configurazione e non
 possiede dati generati. L'immagine Docker ha come contesto `MIFPAPP/CORE` e
-copia soltanto i file runtime dichiarati nel `Dockerfile`.
+copia soltanto i file runtime dichiarati nel `Dockerfile`. Il compose locale
+(`MIFPAPP/CORE/compose.local.yaml`) monta il codice in sola lettura; il compose
+di produzione (`deploy/compose.production.yaml`) non contiene `build:` e usa
+l'immagine GHCR con i dati persistenti su `/opt/mifp/data`.
 
 ## Dati e scraper
 
@@ -55,15 +79,13 @@ Il secondo è l'operazione separata che costruisce o aggiorna lo storage in
 
 ```bash
 ./mifp test
-python3 SCRAPERS/validate_import_data.py SCRAPERS/OUTPUTS
-python3 SCRAPERS/validate_artifacts.py SCRAPERS/OUTPUTS
+bash test_all.sh --suite webapp
 ```
 
 ## Documentazione mantenuta
 
+- [Deploy e CI/CD](DEPLOYMENT.md)
 - [Tema pubblico e dashboard](MIFPAPP/CORE/docs/THEME_SYSTEMS.md)
-- [Deploy](MIFPAPP/CORE/DEPLOYMENT.md)
-- [Sicurezza](MIFPAPP/CORE/SECURITY.md)
 - guida import per agenti/LLM: generata e scaricabile dalla pagina **Import / Export** della dashboard
 
 La documentazione specifica vive accanto al sottosistema che descrive. Questo

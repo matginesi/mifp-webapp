@@ -11,7 +11,7 @@ usage() {
 Crea uno ZIP del codebase completo, indipendentemente da .gitignore.
 
 Include:
-  MIFPAPP, SCRAPERS, TESTS, tools, docs e file di progetto.
+  MIFPAPP, SCRAPERS, TESTS, deploy, .github, docs e file di progetto.
 
 Esclude:
   IMPORT_DATA, database, asset/output generati, backup, log, export,
@@ -132,6 +132,11 @@ def is_excluded(rel: PurePosixPath, *, is_dir: bool) -> bool:
         if text == "MIFPAPP/CORE/.env" or text.startswith("MIFPAPP/CORE/.env."):
             # Keep only public templates, never local/runtime env files.
             if text in {"MIFPAPP/CORE/.env.example", "MIFPAPP/CORE/.env.production.example"}:
+                return False
+            return True
+        if text.startswith("deploy/.env."):
+            # Keep the public production template, never a real server .env.
+            if text == "deploy/.env.production.example":
                 return False
             return True
         if any(fnmatch.fnmatch(rel.name, pattern) for pattern in EXCLUDED_FILE_PATTERNS):

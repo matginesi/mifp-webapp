@@ -15,6 +15,9 @@ credentials.*.json
 *.pfx
 .htpasswd
 
+# Public deployment templates must remain versioned despite the rules above.
+!deploy/.env.production.example
+
 # Local scraper and legacy import trees
 SCRAPER/
 SCRAPERS/
@@ -46,6 +49,7 @@ backups/
 exports/
 uploads/
 instance/
+.mifp/
 *.log
 
 # Exported archives and backups
@@ -78,6 +82,7 @@ dist/
 .cache/
 node_modules/
 npm-debug.log*
+*.dockerbuild
 
 # Patch, merge and editor leftovers
 *.orig

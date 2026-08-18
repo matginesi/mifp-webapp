@@ -1,0 +1,55 @@
+Sei un agente AI che deve estrarre dati dal sito old.mifp.eu e produrre JSONL v2 per MIFP.
+
+Leggi `docs/import-format.md` prima di generare output.
+
+## Regole obbligatorie
+
+- Ogni riga e' un oggetto JSON valido.
+- Ogni riga ha solo: `type`, `data`, opzionali `links`, `assets`, `meta`.
+- Non produrre oggetti piatti.
+- Non usare `table`/`row`.
+- Non usare `status` per eventi.
+- Non usare `is_published`.
+- Non usare `external_link`.
+- Non mettere `source_url` come link pubblico. Se serve, usa `meta.source_url`.
+- La temporalita' eventi e' derivata dalle date, non importata.
+- I link HTML pubblici vanno in `links[]`.
+- Immagini, PDF e documenti vanno in `assets[]`.
+- Se un campo non e' certo, omettilo o usa `review_status:"review"`.
+- Non inventare email, DOI, autori, ORCID, luoghi, date precise o asset.
+
+## Pagine sorgente
+
+- https://old.mifp.eu -> news
+- https://old.mifp.eu/mifp-members -> member
+- https://old.mifp.eu/events-meetings -> event, `event_type:"meeting"`
+- https://old.mifp.eu/events-schools -> event, `event_type:"school"`
+- https://old.mifp.eu/events-workshops -> event, `event_type:"workshop"`
+- https://old.mifp.eu/events-conferences -> event, `event_type:"conference"`
+- https://old.mifp.eu/sponsors-max-brasserie -> sponsor
+- https://old.mifp.eu/sponsors-mifp-cocktail -> sponsor
+- https://old.mifp.eu/sponsors-how-to-become-a-sponsor -> page o sponsor solo se contiene dati utili
+
+## Esempi
+
+Evento:
+
+```json
+{"type":"event","data":{"title":"PLMCN 2026","slug":"plmcn-2026","start_date":"2026-06-01","end_date":"2026-06-05","date_precision":"range","location":"Lecce, Italy","description":"International conference.","event_type":"conference","review_status":"published"},"links":[{"url":"https://old.mifp.eu/events-plmcn-2026","role":"primary","label":"Website"}],"assets":[{"url":"https://old.mifp.eu/files/program.pdf","role":"document","caption":"Program"}],"meta":{"source":"old.mifp.eu","source_url":"https://old.mifp.eu/events-plmcn-2026"}}
+```
+
+News:
+
+```json
+{"type":"news","data":{"title":"MIFP agreement signed","slug":"mifp-agreement-signed","date":"2024-01-01","date_precision":"day","summary":"Short summary.","body":"Full text.","news_type":"agreement","review_status":"review"},"links":[{"url":"https://old.mifp.eu","role":"source","label":"Source"}],"meta":{"source":"old.mifp.eu"}}
+```
+
+Member:
+
+```json
+{"type":"member","data":{"display_name":"Mario Rossi","slug":"mario-rossi","affiliation":"University of Rome","country":"Italy","role":"member","field":"Nanophotonics","review_status":"published","is_active":true},"assets":[{"url":"https://old.mifp.eu/images/mario.jpg","role":"profile","alt_text":"Mario Rossi"}]}
+```
+
+## Output
+
+Produci solo JSONL. Niente markdown fences nel file finale, niente spiegazioni dentro il file.

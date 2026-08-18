@@ -14,7 +14,7 @@ def _prepare_launcher_tree(tmp_path: Path) -> None:
     (tmp_path / "MIFPAPP" / "CORE" / "manage.py").write_text("", encoding="utf-8")
 
 
-def test_help_exposes_only_three_start_modes(tmp_path: Path) -> None:
+def test_help_exposes_only_local_start_modes(tmp_path: Path) -> None:
     _prepare_launcher_tree(tmp_path)
     result = subprocess.run(
         ["bash", "mifp", "help"],
@@ -24,11 +24,25 @@ def test_help_exposes_only_three_start_modes(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+    assert "./mifp init" in result.stdout
     assert "./mifp local" in result.stdout
-    assert "./mifp docker" in result.stdout
-    assert "./mifp production [DOMINIO]" in result.stdout
+    assert "./mifp docker-local" in result.stdout
+    assert "./mifp production" not in result.stdout
+    assert "./mifp hash" in result.stdout
     assert "docker dev" not in result.stdout
     assert "docker prod" not in result.stdout
+
+
+def test_launcher_is_local_only_and_has_no_production_commands() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    launcher = (repo_root / "mifp").read_text(encoding="utf-8")
+
+    assert "docker-local|docker) docker_local" in launcher
+    assert "production|prod)" not in launcher
+    assert "start_production" not in launcher
+    assert "compose_production" not in launcher
+    assert "compose_public" not in launcher
+    assert "start_production" not in launcher
 
 
 def test_scraper_command_is_forwarded(tmp_path: Path) -> None:

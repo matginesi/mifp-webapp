@@ -166,6 +166,26 @@ def configure_admin(args: argparse.Namespace) -> int:
     print("Administrator credentials updated. Only the password hash was persisted.")
     return 0
 
+def print_password_hash(args: argparse.Namespace) -> int:
+    """Prompt for a password and print only a Werkzeug-compatible hash.
+
+    Intended for production administrator rotation: the hash is printed to
+    stdout and is never persisted by this command. Copy it into the server's
+    ``deploy/.env`` as ``ADMIN_PASSWORD_HASH``.
+    """
+    if args.min_length < 8:
+        raise SystemExit("--min-length must be at least 8")
+    first = getpass.getpass(f"New password (minimum {args.min_length} characters): ")
+    second = getpass.getpass("Repeat password: ")
+    if first != second:
+        raise SystemExit("Passwords do not match")
+    if len(first) < args.min_length:
+        raise SystemExit(f"Password must contain at least {args.min_length} characters")
+    print(password_hash(first))
+    print("Only the hash above was printed; nothing was persisted.", file=os.sys.stderr)
+    return 0
+
+
 def set_values(args: argparse.Namespace) -> int:
     updates: dict[str, str] = {}
     for item in args.assignments:
@@ -192,6 +212,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_admin.add_argument("--env-file", type=Path, required=True)
     p_admin.add_argument("--username", default=None)
     p_admin.set_defaults(func=configure_admin)
+
+    p_hash = sub.add_parser("password-hash")
+    p_hash.add_argument("--min-length", type=int, default=MIN_ADMIN_PASSWORD_LENGTH)
+    p_hash.set_defaults(func=print_password_hash)
 
     p_set = sub.add_parser("set")
     p_set.add_argument("--env-file", type=Path, required=True)

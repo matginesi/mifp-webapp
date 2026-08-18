@@ -28,12 +28,16 @@ run() { printf '  + '; printf '%q ' "$@"; printf '\n'; "$@"; }
 
 usage() {
   cat <<'USAGE'
-MIFP — un solo launcher.
+MIFP — un solo launcher locale.
+
+Il launcher gestisce solo lo sviluppo e la manutenzione locale. La webapp in
+produzione viene rilasciata esclusivamente tramite CI/CD (GitHub Actions ->
+GHCR -> VPS Docker) e amministrata dalla dashboard.
 
 Avvio:
+  ./mifp init                     Crea ambiente, .env e storage locali
   ./mifp local                    Webapp locale con Flask
-  ./mifp docker                   Webapp locale dentro Docker
-  ./mifp production [DOMINIO]     Docker production; con dominio abilita HTTPS
+  ./mifp docker-local             Webapp locale dentro Docker (alias: docker)
 
 Pipeline dati:
   ./mifp scrape [remote|local|all] [--threads N] [--local-root PATH]
@@ -42,14 +46,15 @@ Pipeline dati:
 
 Test e gestione:
   ./mifp test [quick|webapp|scraper|database|browser|all] [-- pytest args]
-  ./mifp admin [--username NOME]              Imposta password in modo interattivo (solo hash salvato)
+  ./mifp admin [--username NOME]   Imposta password locale in modo interattivo (solo hash salvato)
+  ./mifp hash                      Stampa un hash Werkzeug compatibile per la rotazione admin in produzione
   ./mifp status
-  ./mifp logs [local|docker|production]
-  ./mifp stop [local|docker|production|all]
+  ./mifp logs [local|docker]
+  ./mifp stop [local|docker|all]
   ./mifp clean [cache|logs|outputs|data|docker|all] [opzioni]
   ./mifp zip [opzioni zip_it.sh]
   ./mifp doctor
-  ./mifp setup
+  ./mifp setup (alias di init)
 
 Opzioni comuni di avvio:
   -d, --detach                  Solo local: avvio in background
@@ -186,7 +191,6 @@ parse_start_options() {
   DETACH=0
   BUILD=1
   PORT="${MIFP_PORT:-$DEFAULT_PORT}"
-  DOMAIN=""
   while (($#)); do
     case "$1" in
       -d|--detach) DETACH=1; shift ;;
@@ -195,11 +199,7 @@ parse_start_options() {
       --port) [[ $# -ge 2 ]] || die "--port richiede un valore"; PORT="$2"; shift 2 ;;
       --port=*) PORT="${1#*=}"; shift ;;
       --*) die "Opzione sconosciuta: $1" ;;
-      *)
-        [[ -z "$DOMAIN" ]] || die "Argomento inatteso: $1"
-        DOMAIN="$1"
-        shift
-        ;;
+      *) die "Argomento inatteso: $1 (il launcher è solo locale)" ;;
     esac
   done
   [[ "$PORT" =~ ^[0-9]+$ ]] && ((PORT >= 1 && PORT <= 65535)) || die "Porta non valida: $PORT"
@@ -279,7 +279,6 @@ local_command() {
 
 start_local() {
   parse_start_options "$@"
-  [[ -z "$DOMAIN" ]] || die "Il dominio è valido solo con ./mifp production"
   ensure_venv
   set_runtime_port "$PORT"
   if ((DETACH)); then
@@ -315,35 +314,16 @@ compose_local() {
   docker compose \
     --project-name mifp-local \
     --env-file "$ENV_FILE" \
-    -f "$CORE_DIR/compose.yaml" \
+    -f "$CORE_DIR/compose.local.yaml" \
     --project-directory "$CORE_DIR" "$@"
 }
 
-compose_production() {
-  docker compose \
-    --project-name mifp-production \
-    --env-file "$ENV_FILE" \
-    -f "$CORE_DIR/compose.production.yaml" \
-    --project-directory "$CORE_DIR" "$@"
-}
-
-compose_public() {
-  docker compose \
-    --project-name mifp-production \
-    --env-file "$ENV_FILE" \
-    -f "$CORE_DIR/compose.production.yaml" \
-    -f "$CORE_DIR/compose.public.yaml" \
-    --project-directory "$CORE_DIR" "$@"
-}
-
-start_docker() {
+docker_local() {
   parse_start_options "$@"
-  [[ -z "$DOMAIN" ]] || die "Usa ./mifp production DOMINIO per il deploy pubblico."
   ensure_env
   set_runtime_port "$PORT"
   require_docker
   stop_local
-  compose_public down --remove-orphans >/dev/null 2>&1 || compose_production down --remove-orphans >/dev/null 2>&1 || true
   step "Avvio Docker locale"
   local args=(up -d --remove-orphans)
   ((BUILD)) && args+=(--build)
@@ -359,62 +339,10 @@ start_docker() {
   show_login
 }
 
-valid_domain() {
-  [[ "$1" =~ ^[A-Za-z0-9.-]+$ && "$1" == *.* ]]
-}
-
-start_production() {
-  parse_start_options "$@"
-  ensure_env
-  set_runtime_port "$PORT"
-  require_docker
-  stop_local
-  compose_local down --remove-orphans >/dev/null 2>&1 || true
-
-  local compose_kind=production
-  if [[ -n "$DOMAIN" ]]; then
-    valid_domain "$DOMAIN" || die "Dominio non valido: $DOMAIN"
-    python3 "$MANAGER" set --env-file "$ENV_FILE" \
-      "MIFP_DOMAIN=$DOMAIN" \
-      "TRUSTED_HOSTS=$DOMAIN,www.$DOMAIN,localhost,127.0.0.1"
-    compose_kind=public
-    step "Avvio Docker production con HTTPS"
-  else
-    python3 "$MANAGER" set --env-file "$ENV_FILE" "TRUSTED_HOSTS=localhost,127.0.0.1"
-    step "Avvio Docker production"
-  fi
-
-  local args=(up -d --remove-orphans)
-  ((BUILD)) && args+=(--build)
-  if [[ "$compose_kind" == public ]]; then
-    if ! compose_public "${args[@]}"; then
-      compose_public logs --tail 260 >&2 || true
-      die "Avvio production fallito."
-    fi
-  else
-    if ! compose_production "${args[@]}"; then
-      compose_production logs --tail 260 >&2 || true
-      die "Avvio production fallito."
-    fi
-  fi
-
-  if ! wait_ready "$(local_url)" "Docker production" 120; then
-    if [[ "$compose_kind" == public ]]; then
-      compose_public ps >&2 || true
-      compose_public logs --tail 300 web storage-init caddy >&2 || true
-    else
-      compose_production ps >&2 || true
-      compose_production logs --tail 300 web storage-init >&2 || true
-    fi
-    die "La webapp production non è raggiungibile."
-  fi
-
-  if [[ "$compose_kind" == public ]]; then
-    say "Sito pubblico: https://$DOMAIN"
-    say "Readiness locale: $(local_url)/ready"
-  else
-    show_login
-  fi
+print_password_hash() {
+  ensure_python
+  [[ -f "$MANAGER" ]] || die "File mancante: $MANAGER"
+  python3 "$MANAGER" password-hash
 }
 
 has_forwarded_option() {
@@ -516,20 +444,6 @@ apply_admin_to_running_services() {
       }
       applied=1
     fi
-
-    if docker_service_running compose_production web; then
-      step "Applico le nuove credenziali al Docker production"
-      if docker_service_running compose_public caddy; then
-        compose_public up -d --no-deps --force-recreate web
-      else
-        compose_production up -d --no-deps --force-recreate web
-      fi
-      wait_ready "http://$DEFAULT_HOST:$current_port" "Docker production" 120 || {
-        compose_production logs --tail 260 web >&2 || true
-        die "Le credenziali sono state salvate, ma il Docker production non è tornato pronto."
-      }
-      applied=1
-    fi
   fi
 
   if ((applied == 0)); then
@@ -563,8 +477,6 @@ show_status() {
   if has docker && docker info >/dev/null 2>&1; then
     step "Docker locale"
     compose_local ps 2>/dev/null || true
-    step "Docker production"
-    compose_production ps 2>/dev/null || true
   fi
 }
 
@@ -577,12 +489,7 @@ show_logs() {
     docker)
       ensure_env; require_docker; compose_local logs --tail 200 -f web
       ;;
-    production)
-      ensure_env; require_docker
-      compose_public logs --tail 200 -f web storage-init caddy 2>/dev/null || \
-        compose_production logs --tail 200 -f web storage-init
-      ;;
-    *) die "Uso: ./mifp logs [local|docker|production]" ;;
+    *) die "Uso: ./mifp logs [local|docker]" ;;
   esac
 }
 
@@ -590,15 +497,13 @@ stop_mode() {
   case "${1:-all}" in
     local) stop_local ;;
     docker) require_docker; compose_local down --remove-orphans ;;
-    production) require_docker; compose_public down --remove-orphans 2>/dev/null || compose_production down --remove-orphans ;;
     all)
       stop_local
       if has docker && docker info >/dev/null 2>&1; then
         compose_local down --remove-orphans >/dev/null 2>&1 || true
-        compose_public down --remove-orphans >/dev/null 2>&1 || compose_production down --remove-orphans >/dev/null 2>&1 || true
       fi
       ;;
-    *) die "Uso: ./mifp stop [local|docker|production|all]" ;;
+    *) die "Uso: ./mifp stop [local|docker|all]" ;;
   esac
 }
 
@@ -619,7 +524,7 @@ Ambiti:
   logs      log webapp e launcher locale
   outputs   soltanto SCRAPERS/OUTPUTS
   data      database, asset, export, backup e workspace generati
-  docker    arresta gli stack; --volumes elimina anche il volume production
+  docker    arresta lo stack locale; --volumes elimina anche i volumi
   all       cache + logs + outputs + data; .env resta salvo senza --env
 USAGE
 }
@@ -662,8 +567,8 @@ append_data_targets() {
 clean_docker_stacks() {
   local remove_volumes="$1" dry_run="$2"
   if ((dry_run)); then
-    say "  - stack Docker locale e production"
-    ((remove_volumes)) && say "  - volume Docker production mifp-data"
+    say "  - stack Docker locale"
+    ((remove_volumes)) && say "  - volumi Docker locali"
     return 0
   fi
   require_docker
@@ -671,8 +576,6 @@ clean_docker_stacks() {
   ((remove_volumes)) && extra+=(--volumes)
   if [[ -f "$ENV_FILE" ]]; then
     compose_local down --remove-orphans "${extra[@]}" >/dev/null 2>&1 || true
-    compose_public down --remove-orphans "${extra[@]}" >/dev/null 2>&1 || \
-      compose_production down --remove-orphans "${extra[@]}" >/dev/null 2>&1 || true
   else
     say "Nessun .env: nessuno stack configurato da rimuovere."
   fi
@@ -781,8 +684,11 @@ doctor() {
   local failed=0
   step "File essenziali"
   for item in \
-    "$CORE_DIR/app.py" "$CORE_DIR/Dockerfile" "$CORE_DIR/compose.yaml" \
-    "$CORE_DIR/compose.production.yaml" "$CORE_DIR/docker-entrypoint.sh" \
+    "$CORE_DIR/app.py" "$CORE_DIR/Dockerfile" "$CORE_DIR/compose.local.yaml" \
+    "$CORE_DIR/docker-entrypoint.sh" "$ROOT_DIR/deploy/compose.production.yaml" \
+    "$ROOT_DIR/deploy/Caddyfile" "$ROOT_DIR/deploy/deploy.sh" \
+    "$ROOT_DIR/deploy/bootstrap-vps.sh" "$ROOT_DIR/deploy/.env.production.example" \
+    "$ROOT_DIR/.github/workflows/ci-cd.yml" \
     "$SCRAPERS_DIR/run_all.sh" "$DATABASE_DIR/build.sh" "$ROOT_DIR/test_all.sh" "$ROOT_DIR/zip_it.sh"; do
     if [[ -e "$item" ]]; then say "ok: ${item#$ROOT_DIR/}"; else say "manca: ${item#$ROOT_DIR/}"; failed=1; fi
   done
@@ -792,8 +698,10 @@ doctor() {
   say "Docker: $(docker --version 2>&1 || echo non disponibile)"
   if has docker && docker info >/dev/null 2>&1; then
     compose_local config --quiet || failed=1
-    compose_production config --quiet || failed=1
-    if [[ -n "$(env_get MIFP_DOMAIN '')" ]]; then compose_public config --quiet || failed=1; fi
+    docker compose \
+      --project-directory "$ROOT_DIR/deploy" \
+      --env-file "$ROOT_DIR/deploy/.env.production.example" \
+      -f "$ROOT_DIR/deploy/compose.production.yaml" config --quiet || failed=1
   fi
   ((failed == 0)) || die "Doctor ha trovato problemi."
   say "Configurazione valida."
@@ -803,20 +711,20 @@ command_name="${1:-local}"
 [[ $# -gt 0 ]] && shift || true
 case "$command_name" in
   local|start) start_local "$@" ;;
-  docker) start_docker "$@" ;;
-  production|prod) start_production "$@" ;;
+  docker-local|docker) docker_local "$@" ;;
   scrape|scrapers) run_scrapers "$@" ;;
   database|db) build_database "$@" ;;
   refresh|pipeline) refresh_data "$@" ;;
   test|tests) run_tests "$@" ;;
   admin) set_admin "$@" ;;
+  hash) print_password_hash ;;
   status) show_status ;;
   logs) show_logs "${1:-local}" ;;
   stop|down) stop_mode "${1:-all}" ;;
   clean|clear) clean_project "$@" ;;
   zip|archive) archive_codebase "$@" ;;
   doctor) doctor ;;
-  setup) ensure_venv; say "Ambiente locale pronto." ;;
+  init|setup) ensure_venv; say "Ambiente locale pronto." ;;
   help|-h|--help) usage ;;
   *) usage >&2; die "Comando sconosciuto: $command_name" ;;
 esac

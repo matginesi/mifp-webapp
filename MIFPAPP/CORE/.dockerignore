@@ -46,6 +46,7 @@ build/
 .dockerignore
 README.md
 compose*.yaml
+*.dockerbuild
 
 .DS_Store
 .idea/

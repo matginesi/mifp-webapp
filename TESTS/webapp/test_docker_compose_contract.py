@@ -11,7 +11,7 @@ def _repo_root() -> Path:
 
 def test_local_docker_uses_host_data_and_source_mounts() -> None:
     root = _repo_root()
-    compose = yaml.safe_load((root / "MIFPAPP/CORE/compose.yaml").read_text(encoding="utf-8"))
+    compose = yaml.safe_load((root / "MIFPAPP/CORE/compose.local.yaml").read_text(encoding="utf-8"))
     web = compose["services"]["web"]
     volumes = web["volumes"]
 
@@ -25,22 +25,37 @@ def test_local_docker_uses_host_data_and_source_mounts() -> None:
     assert all(volume.get("read_only") is True for volume in source_mounts)
 
 
-def test_production_uses_named_volume_and_non_root_web() -> None:
+def test_production_compose_has_no_build_and_uses_registry_image() -> None:
     root = _repo_root()
     compose = yaml.safe_load(
-        (root / "MIFPAPP/CORE/compose.production.yaml").read_text(encoding="utf-8")
+        (root / "deploy/compose.production.yaml").read_text(encoding="utf-8")
     )
     web = compose["services"]["web"]
     init = compose["services"]["storage-init"]
 
+    assert "build" not in web
+    assert web["image"] == "${MIFP_IMAGE:-ghcr.io/matginesi/mifp-webapp:latest}"
+    assert "ghcr.io/" in web["image"]
     assert init["user"] == "0:0"
-    assert "mifp-data:/data" in init["volumes"]
-    assert "mifp-data:/app/data" in web["volumes"]
+    assert "/opt/mifp/data:/app/data" in init["volumes"]
+    assert "/opt/mifp/data:/app/data" in web["volumes"]
     assert web["read_only"] is True
     assert web["environment"]["FLASK_ENV"] == "production"
     assert web["environment"]["AUTO_MIGRATE_ON_STARTUP"] == "0"
     assert web["environment"]["TMPDIR"] == "/app/data/tmp"
+    assert web["environment"]["SESSION_COOKIE_SECURE"] == "1"
+    assert web["environment"]["TRUST_PROXY"] == "1"
+    assert "127.0.0.1:8000:8000" in web["ports"]
+    assert web["cap_drop"] == ["ALL"]
+    assert "healthcheck" in web
     assert "/data/tmp" in " ".join(init["command"])
+
+
+def test_production_compose_never_builds_an_image() -> None:
+    root = _repo_root()
+    text = (root / "deploy/compose.production.yaml").read_text(encoding="utf-8")
+    assert "build:" not in text
+    assert "target: runtime" not in text
 
 
 def test_container_entrypoint_migrates_before_startup() -> None:
@@ -53,22 +68,23 @@ def test_container_entrypoint_migrates_before_startup() -> None:
     assert 'ENTRYPOINT ["/app/docker-entrypoint.sh"]' in dockerfile
 
 
-def test_launcher_has_exactly_three_start_commands() -> None:
+def test_launcher_has_only_local_start_commands() -> None:
     root = _repo_root()
     launcher = (root / "mifp").read_text(encoding="utf-8")
 
     assert "local|start) start_local" in launcher
-    assert "docker) start_docker" in launcher
-    assert "production|prod) start_production" in launcher
+    assert "docker-local|docker) docker_local" in launcher
+    assert "production|prod)" not in launcher
+    assert "start_production" not in launcher
     assert "docker dev" not in launcher
     assert "docker prod" not in launcher
 
 
-def test_admin_change_recreates_running_docker_web_service() -> None:
+def test_admin_change_recreates_only_local_docker_web_service() -> None:
     root = _repo_root()
     launcher = (root / "mifp").read_text(encoding="utf-8")
 
     assert "apply_admin_to_running_services" in launcher
     assert "compose_local up -d --no-deps --force-recreate web" in launcher
-    assert "compose_production up -d --no-deps --force-recreate web" in launcher
-    assert "compose_public up -d --no-deps --force-recreate web" in launcher
+    assert "compose_production up -d --no-deps --force-recreate web" not in launcher
+    assert "compose_public up -d --no-deps --force-recreate web" not in launcher
