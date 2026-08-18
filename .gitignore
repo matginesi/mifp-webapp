@@ -100,4 +100,4 @@ Thumbs.db
 # Local agent/tool state
 .codex/
 .agents/
-.superpowers/
+.superpowers/*
