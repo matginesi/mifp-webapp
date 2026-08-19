@@ -82,6 +82,7 @@
   var metricsErrors = document.getElementById('metricsErrors');
   var metricsRecordErrors = document.getElementById('metricsRecordErrors');
   var metricsAssetErrors = document.getElementById('metricsAssetErrors');
+  var metricsSkipped = document.getElementById('metricsSkipped');
   var startedAt = 0;
   var clockTimer = null;
   var streamBuffer = '';
@@ -248,8 +249,13 @@
     fileProgressEls = {};
     metricsRecords.textContent = '0';
     metricsRecordsTotal.textContent = '';
+    metricsInserted.textContent = '0';
+    metricsUpdated.textContent = '0';
     metricsAssets.textContent = '0';
     metricsErrors.textContent = '0';
+    metricsSkipped.textContent = '0';
+    var skippedRow = document.getElementById('metricsSkippedRow');
+    if (skippedRow) skippedRow.hidden = true;
     byTypeContainer.hidden = true;
     byTypeGrid.replaceChildren();
     streamBuffer = '';
@@ -504,6 +510,9 @@
       if (metricsErrors) metricsErrors.textContent = String(totalErrors);
       if (metricsRecordErrors) metricsRecordErrors.textContent = String(recordErrors);
       if (metricsAssetErrors) metricsAssetErrors.textContent = String(assetErrors);
+      if (metricsSkipped) metricsSkipped.textContent = String(msg.skipped || 0);
+      var skippedRow = document.getElementById('metricsSkippedRow');
+      if (skippedRow) skippedRow.hidden = !(msg.skipped > 0);
       var recordRow = document.getElementById('metricsRecordErrorsRow');
       var assetRow = document.getElementById('metricsAssetErrorsRow');
       if (recordRow) recordRow.hidden = recordErrors === 0;

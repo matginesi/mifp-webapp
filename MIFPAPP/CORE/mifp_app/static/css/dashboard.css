@@ -691,6 +691,7 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .portability-summary strong { display: block; }
 .portability-summary span { overflow: hidden; color: var(--text-3); font-size: .62rem; font-weight: 800; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .portability-summary strong { margin-top: .08rem; color: var(--text-bright); font-size: .9rem; font-variant-numeric: tabular-nums; }
+.portability-summary .has-alert strong { color: var(--red); }
 .portability-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(18rem, .7fr); gap: .75rem; }
 .portability-panel { display: flex; flex-direction: column; gap: .75rem; min-width: 0; }
 .portability-safe-note { display: flex; align-items: flex-start; gap: .55rem; padding: .65rem .7rem; color: var(--blue); border: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border-soft)); border-radius: var(--radius-sm); background: var(--blue-bg); }
@@ -3647,10 +3648,13 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .safety-progress-percent { font-weight: 700; font-size: .9rem; color: var(--accent); min-width: 3rem; text-align: right; }
 .safety-progress-details { display: flex; flex-direction: column; gap: .5rem; }
 .safety-progress-phase { font-weight: 600; font-size: .85rem; color: var(--text-1); }
-.safety-progress-metrics { display: flex; gap: 1rem; }
+.safety-progress-metrics { display: flex; gap: 1rem; flex-wrap: wrap; }
 .safety-progress-metric { display: flex; align-items: center; gap: .3rem; font-size: .75rem; color: var(--text-3); }
 .safety-progress-label { font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .02em; }
 .safety-progress-value { font-weight: 700; color: var(--text-1); font-family: monospace; }
+.safety-progress-counts { display: flex; gap: .4rem; flex-wrap: wrap; padding-top: .35rem; border-top: 1px dashed var(--border-soft, var(--border)); }
+.safety-progress-chip { display: inline-flex; align-items: baseline; gap: .25rem; padding: .22rem .5rem; font-size: .62rem; color: var(--text-2); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; }
+.safety-progress-chip b { color: var(--text-1); font-family: monospace; font-weight: 700; }
 
 @media (max-width: 520px) {
   .safety-steps li { min-height: 2.8rem; }

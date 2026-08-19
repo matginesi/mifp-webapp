@@ -321,12 +321,12 @@ def research():
         areas = list_public_research(conn, lambda filename: url_for("public.media", filename=filename))
         pub_by_year = [
             dict(r) for r in conn.execute(
-                "SELECT COALESCE(year,'Unknown') AS year, COUNT(*) AS total FROM publications WHERE review_status='published' GROUP BY year ORDER BY year"
+                "SELECT CAST(year AS TEXT) AS year, COUNT(*) AS total FROM publications WHERE review_status='published' AND year IS NOT NULL AND TRIM(year) != '' GROUP BY year ORDER BY year"
             ).fetchall()
         ]
         members_by_country = [
             dict(r) for r in conn.execute(
-                "SELECT COALESCE(country,'Unknown') AS country, COUNT(*) AS total FROM members WHERE is_active=1 GROUP BY country ORDER BY total DESC LIMIT 10"
+                "SELECT NULLIF(TRIM(country), '') AS country, COUNT(*) AS total FROM members WHERE is_active=1 AND country IS NOT NULL AND TRIM(country) != '' AND country != 'Unknown' GROUP BY country ORDER BY total DESC LIMIT 10"
             ).fetchall()
         ]
         member_profile = conn.execute(
@@ -337,9 +337,12 @@ def research():
             WHERE is_active=1
             """
         ).fetchone()
+        published_total = conn.execute(
+            "SELECT COUNT(*) AS total FROM publications WHERE review_status='published'"
+        ).fetchone()
         research_stats = {
             "areas": len(areas),
-            "publications": sum(int(row["total"]) for row in pub_by_year),
+            "publications": int(published_total["total"] or 0),
             "active_members": int(member_profile["active_members"] or 0),
             "countries": int(member_profile["represented_countries"] or 0),
         }

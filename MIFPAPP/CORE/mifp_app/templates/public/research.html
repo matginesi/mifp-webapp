@@ -59,18 +59,12 @@
       {% if research_areas %}
       <ol class="research-grid" aria-label="Published research areas">
         {% for area in research_areas %}
-        <li class="research-card">
+        <li class="research-card{% if area.cover_url %} research-card--has-cover{% endif %}">
           <div class="research-card-index" aria-hidden="true">R&thinsp;{% if loop.index < 10 %}0{% endif %}{{ loop.index }}</div>
           {% if area.cover_url %}
           <figure class="research-cover">
             <img src="{{ area.cover_url }}" alt="" loading="lazy">
           </figure>
-          {% else %}
-          <div class="research-cover" aria-hidden="true">
-            <div class="research-cover-fallback">
-              <span></span><span></span><span></span>
-            </div>
-          </div>
           {% endif %}
           <div class="research-body">
             <span class="research-record-type">Research area</span>

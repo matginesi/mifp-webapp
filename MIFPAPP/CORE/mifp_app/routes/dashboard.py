@@ -562,6 +562,7 @@ def export_stats(fmt: str):
 def data_portability():
     with connect(current_app.config["DATABASE_PATH"]) as conn:
         counts = table_counts(conn)
+        import_export_summary = get_import_export_summary(conn)
         recent_import_rows = conn.execute(
             """
             SELECT id, name, status, started_at, completed_at, stats_json
@@ -596,6 +597,7 @@ def data_portability():
         counts=counts,
         portable_total=portable_total,
         recent_imports=recent_imports,
+        import_export_summary=import_export_summary,
         import_result=session.pop("data_portability_import_result", None),
     )
 
@@ -1477,6 +1479,7 @@ def _perform_import_unprotected(
         _completed_assets = 0
         _completed_record_errors = 0
         _completed_asset_errors = 0
+        _completed_skipped = 0
 
         def progress(file_name: str, done: int, total: int) -> None:
             nonlocal _per_file_totals, _total_records_aggregate, _current_index
@@ -1500,6 +1503,7 @@ def _perform_import_unprotected(
                 "record_errors": _completed_record_errors,
                 "inserted": _completed_inserted,
                 "updated": _completed_updated,
+                "skipped": _completed_skipped,
             })
 
         file_count = len(file_data)
@@ -1584,6 +1588,7 @@ def _perform_import_unprotected(
                 file_assets = _summary_count(summary.get("linked_assets"))
                 file_record_errors = _summary_count(summary.get("errors"))
                 file_asset_errors = _summary_count(summary.get("asset_errors"))
+                file_skipped = _summary_count(summary.get("skipped"))
                 summaries.append(summary)
                 current_app.logger.info(
                     "import ZIP completed file=%s inserted=%d updated=%d errors=%d asset_errors=%d linked_assets=%d",
@@ -1637,6 +1642,7 @@ def _perform_import_unprotected(
                     file_assets = counts.get("linked_assets", 0) if isinstance(counts.get("linked_assets"), int) else _summary_count(counts.get("linked_assets"))
                     file_record_errors = len(counts.get("errors") or [])
                     file_asset_errors = len(counts.get("asset_errors") or [])
+                    file_skipped = _summary_count(counts.get("skipped"))
                     current_app.logger.info(
                         "import JSON/JSONL completed file=%s inserted=%d updated=%d errors=%d asset_errors=%d linked_assets=%d",
                         filename, file_inserted, file_updated, file_record_errors, file_asset_errors, file_assets,
@@ -1651,6 +1657,7 @@ def _perform_import_unprotected(
             _completed_assets += file_assets
             _completed_record_errors += file_record_errors
             _completed_asset_errors += file_asset_errors
+            _completed_skipped += file_skipped
             event_sink({
                 "event": "file_done", "file": filename,
                 "file_index": file_index, "file_count": file_count,
@@ -1665,6 +1672,7 @@ def _perform_import_unprotected(
                 "record_errors": _completed_record_errors,
                 "inserted": _completed_inserted,
                 "updated": _completed_updated,
+                "skipped": _completed_skipped,
             })
 
         if cancel_check and cancel_check():
@@ -1691,6 +1699,7 @@ def _perform_import_unprotected(
                 "record_errors": _completed_record_errors,
                 "inserted": _completed_inserted,
                 "updated": _completed_updated,
+                "skipped": _completed_skipped,
             })
 
     event_sink({"event": "phase", "phase": "result", "label": "Finalizing…", "current_step": 3, "total_steps": 5, "percent": mono(98)})

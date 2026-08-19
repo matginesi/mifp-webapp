@@ -529,6 +529,8 @@ def _write_bundle_zip(
     asset_rows = _asset_rows_for_scope(conn, scope, records)
     records_payload = _records_to_jsonl(records)
     seen_archive_paths: set[str] = set()
+    counts = _record_counts(records)
+    total_assets = len(asset_rows)
 
     def report(message: str, pct: int) -> None:
         if progress_callback is None:
@@ -537,7 +539,9 @@ def _write_bundle_zip(
             arity = len(inspect.signature(progress_callback).parameters)
         except (TypeError, ValueError):
             arity = 2
-        if arity >= 5:
+        if arity >= 7:
+            progress_callback(message, pct, len(records), len(seen_archive_paths), 0, counts, total_assets)
+        elif arity >= 5:
             progress_callback(message, pct, len(records), len(seen_archive_paths), 0)
         else:
             progress_callback(message, pct)
@@ -559,7 +563,7 @@ def _write_bundle_zip(
         "scope": scope,
         "records": len(records),
         "records_sha256": hashlib.sha256(records_payload).hexdigest(),
-        "counts": _record_counts(records),
+        "counts": counts,
         "files": [],
     }
     if state_payload is not None and durable_state is not None:

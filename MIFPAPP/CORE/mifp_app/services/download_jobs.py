@@ -79,6 +79,9 @@ def get_download_job_status(job_id: str) -> dict[str, Any] | None:
             "records": state.get("records"),
             "assets": state.get("assets"),
             "errors": state.get("errors"),
+            "counts": state.get("counts"),
+            "total_assets": state.get("total_assets"),
+            "bytes": state.get("bytes"),
         }
 
 
@@ -105,8 +108,8 @@ def submit_download_job(
     temp_path = _cache_dir() / f"{_DL_CACHE_PREFIX}write-{job_id}.bin"
     _set_job(job_id, status="queued", percent=0, message="Waiting…")
 
-    def progress(pct: int, message: str, records: int | None = None, assets: int | None = None, errors: int | None = None) -> None:
-        _set_job(job_id, status="running", percent=pct, message=message, records=records, assets=assets, errors=errors)
+    def progress(pct: int, message: str, records: int | None = None, assets: int | None = None, errors: int | None = None, counts: dict[str, int] | None = None, total_assets: int | None = None) -> None:
+        _set_job(job_id, status="running", percent=pct, message=message, records=records, assets=assets, errors=errors, counts=counts, total_assets=total_assets)
 
     def run(cancel_event: Callable[[], bool]) -> None:
         with app.app_context():
@@ -128,7 +131,7 @@ def submit_download_job(
                     "session_key": session_key,
                 }), encoding="utf-8")
                 prune()
-                _set_job(job_id, status="ready", percent=100, message="Ready")
+                _set_job(job_id, status="ready", percent=100, message="Ready", bytes=int(meta["bytes"]))
             except Exception as exc:
                 temp_path.unlink(missing_ok=True)
                 _set_job(job_id, status="failed", message=str(exc))

@@ -4,11 +4,15 @@
 {% block content %}
 {% call page_header('Data portability', 'Import / Export', 'Move canonical MIFP JSONL records and asset packages between scrapers, databases and installations.') %}{% endcall %}
 
-<section class="operations-status-strip portability-summary status-strip" aria-label="Canonical dataset summary">
+<section class="operations-status-strip portability-summary status-strip" aria-label="Canonical dataset and import summary">
   <div class="operations-status-lead"><i class="bi bi-database" aria-hidden="true"></i><span><small>Canonical records</small><strong>{{ portable_total }}</strong><em>current database</em></span></div>
   {% for scope in scopes if scope.primary and counts.get(scope.primary) is not none %}
   <div><small>{{ scope.label }}</small><strong>{{ counts.get(scope.primary, 0) }}</strong><em>records</em></div>
   {% endfor %}
+  <div><small>Assets</small><strong>{{ counts.get('assets', 0) }}</strong><em>managed files</em></div>
+  <div><small>Imported</small><strong>{{ import_export_summary.records_imported }}</strong><em>cumulative</em></div>
+  <div><small>Skipped</small><strong>{{ import_export_summary.records_skipped }}</strong><em>rejected records</em></div>
+  <div class="{{ 'has-alert' if import_export_summary.import_errors else '' }}"><small>Errors</small><strong>{{ import_export_summary.import_errors }}</strong><em>across runs</em></div>
 </section>
 
 <ol class="transfer-workflow" aria-label="Import workflow">
@@ -208,6 +212,7 @@
                 <div><span>Errors</span><b id="metricsErrors">0</b></div>
                 <div id="metricsRecordErrorsRow" hidden><span>Record err</span><b id="metricsRecordErrors">0</b></div>
                 <div id="metricsAssetErrorsRow" hidden><span>Asset err</span><b id="metricsAssetErrors">0</b></div>
+                <div id="metricsSkippedRow" hidden><span>Skipped</span><b id="metricsSkipped">0</b></div>
               </div>
             </div>
             <div class="transfer-right">

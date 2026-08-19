@@ -151,7 +151,12 @@
             <span class="safety-progress-label">Errors</span>
             <span class="safety-progress-value">0</span>
           </span>
+          <span class="safety-progress-metric" data-safety-size hidden>
+            <span class="safety-progress-label">Size</span>
+            <span class="safety-progress-value">—</span>
+          </span>
         </div>
+        <div class="safety-progress-counts" data-safety-counts hidden></div>
       </div>
     `;
     container.hidden = false;
@@ -162,6 +167,33 @@
     if (container) container.hidden = true;
   }
 
+  const COUNT_LABELS = {
+    member: 'Members', news: 'News', event: 'Events', publication: 'Publications',
+    research_area: 'Research areas', sponsor: 'Sponsors', page: 'Pages',
+  };
+
+  function sizeLabel(bytes) {
+    if (!bytes || bytes <= 0) return '—';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+  }
+
+  function renderCounts(counts) {
+    const container = document.querySelector('[data-safety-progress] [data-safety-counts]');
+    if (!container) return;
+    container.replaceChildren();
+    Object.keys(counts || {}).forEach(function (type) {
+      const value = Number(counts[type]) || 0;
+      if (value <= 0) return;
+      const chip = document.createElement('span');
+      chip.className = 'safety-progress-chip';
+      chip.innerHTML = `<b>${value}</b> ${COUNT_LABELS[type] || type}`;
+      container.appendChild(chip);
+    });
+    container.hidden = container.childElementCount === 0;
+  }
+
   function updateProgress(progress) {
     const trackElement = document.querySelector('[data-safety-progress] .safety-progress-track');
     const fillElement = document.querySelector('[data-safety-progress] .safety-progress-fill');
@@ -170,6 +202,8 @@
     const recordsElement = document.querySelector('[data-safety-progress] .safety-progress-metric:nth-child(1) .safety-progress-value');
     const assetsElement = document.querySelector('[data-safety-progress] .safety-progress-metric:nth-child(2) .safety-progress-value');
     const errorsElement = document.querySelector('[data-safety-progress] .safety-progress-metric:nth-child(3) .safety-progress-value');
+    const sizeMetric = document.querySelector('[data-safety-progress] [data-safety-size]');
+    const sizeValue = document.querySelector('[data-safety-progress] [data-safety-size] .safety-progress-value');
     const percent = Math.min(100, Math.max(0, Number(progress.percent) || 0));
     
     if (fillElement) fillElement.style.width = `${percent}%`;
@@ -177,8 +211,15 @@
     if (percentElement) percentElement.textContent = `${percent}%`;
     if (phaseElement) phaseElement.textContent = progress.message || progress.phase || 'Collecting records…';
     if (recordsElement) recordsElement.textContent = progress.records || 0;
-    if (assetsElement) assetsElement.textContent = progress.assets || 0;
+    if (assetsElement) assetsElement.textContent = progress.total_assets != null && progress.total_assets > 0
+      ? `${progress.assets || 0} / ${progress.total_assets}`
+      : (progress.assets || 0);
     if (errorsElement) errorsElement.textContent = progress.errors || 0;
+    if (sizeValue && progress.bytes != null && progress.bytes > 0) {
+      sizeValue.textContent = sizeLabel(progress.bytes);
+      if (sizeMetric) sizeMetric.hidden = false;
+    }
+    renderCounts(progress.counts);
   }
 
   async function pollExportStatus(jobId, statusUrl, downloadUrl) {
@@ -200,6 +241,9 @@
             records: data.records || 0,
             assets: data.assets || 0,
             errors: data.errors || 0,
+            counts: data.counts,
+            total_assets: data.total_assets,
+            bytes: data.bytes,
           });
           setTimeout(() => {
             window.location.href = downloadUrl;
@@ -220,6 +264,9 @@
             records: data.records || 0,
             assets: data.assets || 0,
             errors: data.errors || 0,
+            counts: data.counts,
+            total_assets: data.total_assets,
+            bytes: data.bytes,
           });
         }
       } catch (error) {

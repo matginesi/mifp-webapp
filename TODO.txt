@@ -1,1 +1,0 @@
-togli l'evidenziazione azzurra che è doppia.

@@ -507,8 +507,8 @@ def control_safety_operations_run():
             app = current_app._get_current_object()
 
             def build(path, progress) -> dict:
-                def report(message: str, pct: int, records: int = 0, assets: int = 0, errors: int = 0) -> None:
-                    progress(pct, message, records, assets, errors)
+                def report(message: str, pct: int, records: int = 0, assets: int = 0, errors: int = 0, counts: dict | None = None, total_assets: int = 0) -> None:
+                    progress(pct, message, records, assets, errors, counts, total_assets)
                 with operation_maintenance(
                     current_app.config["DATABASE_PATH"],
                     "protected portable export",
