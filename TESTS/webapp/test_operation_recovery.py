@@ -171,6 +171,36 @@ def test_reaper_preserves_manual_maintenance_without_operation_owner(app):
     assert _maintenance_settings(app)["maintenance_enabled"] == "1"
 
 
+def test_public_gate_self_heals_orphaned_operation_after_timeout(app, monkeypatch):
+    """A public request must reap a crashed operation once the crash timeout
+    has passed, without waiting for a restart or another protected op."""
+    import mifp_app.routes.maintenance as maintenance_module
+
+    from mifp_app.services.operation_maintenance import maintenance_marker_path
+
+    marker = maintenance_marker_path(app.config["DATABASE_PATH"])
+    marker.write_text("stale", encoding="utf-8")
+    _stuck_operation(app, recent=True)
+
+    assert app.test_client().get("/").status_code == 503
+    assert marker.exists()
+
+    # Once the (60s) crash timeout passes, the next public request self-heals.
+    _setting(
+        app,
+        maintenance_operation_started_at=(
+            datetime.now(timezone.utc) - timedelta(minutes=5)
+        ).isoformat(),
+    )
+    monkeypatch.setattr(maintenance_module, "_last_reap_attempt", 0.0)
+    response = app.test_client().get("/")
+    assert response.status_code == 200
+    assert not marker.exists()
+    values = _maintenance_settings(app)
+    assert values.get("maintenance_enabled") == "0"
+    assert "maintenance_operation_count" not in values
+
+
 def test_begin_records_owner_pid_and_reaps_stale_operation_before_starting(app):
     from mifp_app.services.operation_maintenance import operation_maintenance
 

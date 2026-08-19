@@ -1,11 +1,1 @@
-1. Correggi l'evidenziazione nella webapp: non copre bene le cose soprattutto gli inputs.
-2. Rifai la parte di "join request" della dashboard con exports e altre funzionalità utili. Anche un export excel con first name, last name, email, affiliation, country... sempre logica business sicura e python, no javascript.
-3. Sistema i totem di import ed export: funziona tutto perfettamente ma non si capisce molto bene cosa sta facendo il sistema, ma il resto va bene: migliorali
-4. Le azioni github: solo la creazione dell'immagine per poi (io) fare il deploy sulla vps con docker
-5. Analizza il codice, senza rompere tutto, togli codice morto, codice inutilizzato, roba legacy inutile
-6. Commenta e documenta tutto, aggiorna documentazione e readme. 
-
-Non introdurre complessità strane, niente logica business nel javascript, niente refractoring totali.
-
-
-togli l'evidenziazione azzurra che è doppia. 
+togli l'evidenziazione azzurra che è doppia.
