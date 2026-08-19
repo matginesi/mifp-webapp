@@ -1,52 +1,351 @@
-# Mifp CLI Commands
+# Mifp CLI Commands Reference
+
+Il launcher `./mifp` gestisce solo lo sviluppo e la manutenzione locale. La webapp in
+produzione viene rilasciata esclusivamente tramite CI/CD (GitHub Actions -> GHCR -> VPS Docker).
 
 ## Local Development
-./mifp init                    # Initialize the application
-./mifp local                   # Start local development server
-./mifp docker-local            # Start local Docker container (alias: ./mifp docker)
 
-## Data Management
-./mifp database build          # Build/refresh the database (use --fresh for clean build)
-./mifp database refresh        # Fast refresh of the database
-./mifp database backup         # Backup current database state
-./mifp database restore        # Restore database from backup
+### Avvio
 
-## Scraping
-./mifp scrape all              # Run all scrapers (fresh export)
-./mifp scrape remote           # Run remote scrapers only
-./mifp scrape local            # Run local scrapers only
-./mifp scrape aruba            # Run Aruba scraper only
-./mifp scrape events           # Run Events scraper only
-./mifp scrape fresh            # Force refresh all scrapers
+```bash
+./mifp init                     # Crea ambiente, .env e storage locali (alias: setup)
+./mifp local                    # Avvia webapp Flask in locale
+./mifp docker-local             # Avvia webapp Docker locale (alias: docker)
+```
+
+#### Opzioni per local/docker
+
+```bash
+./mifp local -d --port 8080      # Avvia in background
+./mifp docker-local --no-build  # Non ricostruire l'immagine
+```
+
+### Status e Logs
+
+```bash
+./mifp status                    # Stato locale e Docker
+./mifp logs [local|docker]       # Mostra log in tempo reale
+./mifp stop [local|docker|all]  # Ferma stack locale/Docker
+```
+
+## Data Pipeline
+
+### Scraping
+
+```bash
+./mifp scrape [REMOTE|LOCAL|ALL|NONE]
+```
+
+Opzioni disponibili per scraper:
+- `--scrapers` (equivalente a `./mifp scrape`)
+- `--threads N` - Thread per scraper remoto (default: 16)
+- `--local-root PATH` - Directory mirror per scraping locale (default: /run/media/.../mifp.eu)
+- `--fresh` - Pulisci output precedenti prima di iniziare
+
+```bash
+./mifp scrape all --threads 32 --local-root /punto/mirror
+./mifp scrape remote --fresh
+./mifp scrape local --update-mirror
+```
+
+### Database Build
+
+```bash
+./mifp database [opzioni]
+```
+
+Opzioni:
+- `--input DIR` - JSONL input directory (default: SCRAPERS/OUTPUTS)
+- `--db PATH` - SQLite path (default: MIFPAPP/DATABASE/mifp.db)
+- `--assets-dir PATH` - Asset directory (default: MIFPAPP/DATABASE/assets)
+- `--fresh` - Ricrea il database da zero
+- `--skip-downloads` - Non scaricare asset remoti
+
+```bash
+./mifp database build --input SCRAPERS/OUTPUTS --fresh
+./mifp database build --db MIFPAPP/DATABASE/mifp.db --fresh
+```
+
+### Refresh Data
+
+```bash
+./mifp refresh [REMOTE|LOCAL|ALL|NONE]
+```
+
+Esegue scraping -> database build in un'unica pipeline:
+```bash
+./mifp refresh all --threads 24
+```
 
 ## Testing
-./mifp test                    # Run all tests
-./mifp test webapp             # Run webapp tests only
-./mifp test core               # Run core service tests
-./mifp test scrapers           # Run scraper tests
-./mifp test-all                # Run test_all.sh (legacy)
+
+### Test Suite
+
+```bash
+./mifp test [SUITE] [-- pytest args]
+```
+
+#### Suite disponibili:
+
+| Suite | Descrizione |
+|-------|-------------|
+| `quick` | Webapp + scraper + database tests (default) |
+| `all` | Quick suite + real-browser tests |
+| `webapp` | Flask/core tests only |
+| `scraper` | Scraper tests only |
+| `database` | Database/import tests only |
+| `browser` | Playwright browser tests only |
+| `smoke` | HTTP health checks against --base-url |
+
+#### Opzioni per test:
+
+- `--pytest-args` - Argomenti passati direttamente a pytest
+- `--base-url URL` - URL server di test (default: http://127.0.0.1:8000)
+- `--admin-user USER` - Username admin per browser tests
+- `--admin-password PASS` - Password admin per browser tests
+
+#### Esempi:
+
+```bash
+# Esegui solo test webapp
+./mifp test webapp
+
+# Esegui quick suite con pytest args
+./mifp test -- -x -v
+
+# Esegui browser tests
+./mifp test browser
+
+# Esegui smoke test su server remoto
+./mifp test smoke --base-url http://remote-host:8000
+
+# Esegui browser tests con credenziali
+./mifp test browser -- --admin-user admin --admin-password secret
+```
+
+### Comandi di Testing
+
+```bash
+# Alias per test
+./mifp test-all              # Legacy: esegue test_all.sh --suite all
+
+# Sintassi equivalente manualmente
+bash test_all.sh --suite webapp -- -x
+```
+
+## Amministrazione
+
+### Admin
+
+```bash
+./mifp admin [--username NOME]  # Imposta password admin in modo interattivo
+```
+
+Crea hash della password locale, non salva la password.
+```bash
+./mifp admin --username matteo
+```
+
+### Hash Password
+
+```bash
+./mifp hash   # Stampa hash Werkzeug per la rotazione admin
+```
+
+Uso:
+1. Esegui `./mifp admin` per ottenere hash locale
+2. Esegui `./mifp hash` per ottenere hash per produzione
+3. Modifica `.env.production.example` con hash per produzione
+
+### Doctor
+
+```bash
+./mifp doctor   # Health check configurazione e dipendenze
+```
+
+## Pulizia
+
+```bash
+./mifp clean [AMBITO] [opzioni]
+```
+
+#### Ambiti:
+
+| Ambito | Cosa pulisce |
+|--------|--------------|
+| `cache` | virtualenv, cache Python/test, report |
+| `logs` | log webapp e launcher locale |
+| `outputs` | soltanto SCRAPERS/OUTPUTS |
+| `data` | database, asset, export, backup |
+| `docker` | arresta stack locale; --volumes elimina volumi |
+| `all` | cache + logs + outputs + data |
+
+#### Opzioni:
+
+- `--dry-run` - Mostra cosa fare senza eseguire
+- `--yes` | `-y` - Assumi "yes" per non chiedere conferma
+- `--env` | `--docker` | `--volumes` - Opzioni speciali solo con `clean all`
+- `--help` | `-h` - Mostra help
+
+```bash
+# Dry run
+./mifp clean data --dry-run
+
+# Pulisci tutto con conferma automatica
+./mifp clean all --yes
+
+# Pulisci cache e database
+./mifp clean cache data
+```
+
+## Archivio
+
+### Zip Codebase
+
+```bash
+./mifp zip [opzioni]
+```
+
+#### Opzioni:
+
+- `--output DIR` - Directory output (default: root repo)
+- `--prefix NOME` - Prefix per il file (default: mifp-codebase)
+- `--dry-run` - Dry run
+
+```bash
+# Crea zip in ~/Backups
+./mifp zip --output ~/Backups
+
+# Crea con prefix personalizzato
+./mifp zip --prefix mifp-snapshot-$(date +%Y%m%d)
+```
 
 ## Deployment
-# Deployment is handled via CI/CD or manual on VPS
-# CI/CD: GitHub Actions builds and publishes to GHCR
-# Manual VPS deployment: ssh into VPS and run ./deploy/deploy.sh ghcr.io/owner/repo:latest
 
-## Maintenance
-./mifp admin                   # Admin utilities
-./mifp hash                    # Generate security hash for files
-./mifp status                  # Show current system status
-./mifp logs                    # View application logs
-./mifp stop                    # Stop running containers
-./mifp clean                   # Clean temporary files
-./mifp zip                     # Create export ZIP
-./mifp doctor                  # Health check
+### Deployment Process
 
-## Note
-The `./mifp` launcher is local-only. Production deployment is exclusively via:
-- GitHub Actions (CI/CD) which builds and publishes GHCR images
-- Manual deployment to VPS using deploy/deploy.sh
+**Non c'è comando `mifp deploy` per produzione.**
 
-For production deployment on VPS:
-ssh user@host
+Il deployment è esclusivamente:
+1. **CI/CD GitHub Actions** - Build, test, pubblica GHCR
+2. **Manuale sul VPS** - Deploy script sul server
+
+#### CI/CD GitHub Actions:
+
+Il workflow `.github/workflows/ci-cd.yml`:
+- Esegue test suite
+- Build immagine Docker
+- Pubblica GHCR
+- Non esegue deploy (SSH remote deployment rimosso)
+
+```bash
+# GitHub Actions si occupa di tutto:
+git push origin main
+# - GitHub Actions esegue test
+# - Build e pubblica GHCR
+# - Tu fai deploy manualmente sul VPS
+```
+
+#### Deployment Manuale su VPS:
+
+1. SSH nel VPS:
+```bash
+ssh user@your-vps
 cd /opt/mifp
+```
+
+2. Deploy l'ultima immagine:
+```bash
 sudo -u mifp bash deploy.sh ghcr.io/owner/repo:sha-xxxxx
+```
+
+3. Verifica health check:
+```bash
+curl https://your-domain/health
+```
+
+### File di Deploy
+
+- `deploy/compose.production.yaml` - Docker compose produzione
+- `deploy/deploy.sh` - Script deploy manuale
+- `deploy/bootstrap-vps.sh` - Bootstrap VPS (prima installazione)
+- `deploy/.env.production.example` - Template .env produzione
+
+## Utility
+
+```bash
+./mifp setup          # Alias di init
+./mifp help           # Mostra help del launcher
+./mifp doctor         # Health check configurazione
+```
+
+## Nota Importante
+
+- `./mifp` è locale-only
+- Production deployment è esclusivamente CI/CD + manual deploy su VPS
+- Import_DATA non viene mai toccata da scripts (legacy data)
+- Scritto interamente in Bash, non Python
+- Python 3.12+ richiesto per lo sviluppo locale
+
+## Esempi Pratici
+
+### Workflow tipico per sviluppatore:
+
+```bash
+# 1. Setup iniziale
+./mifp init
+
+# 2. Avvia webapp locale
+./mifp local -d --port 8000
+
+# 3. Esegui test webapp
+./mifp test webapp
+
+# 4. Esegui scraping e build
+./mifp refresh all --threads 24
+
+# 5. Esegui test completa
+./mifp test all
+
+# 6. Pulisci se necessario
+./mifp clean cache data
+
+# 7. Commit e push
+git add .
+git commit -m "description"
+git push origin main
+
+# 8. Deploy su VPS manualmente (non automatico)
+ssh user@vps
+cd /opt/mifp
+bash deploy.sh ghcr.io/owner/repo:sha-xxxxx
+```
+
+### Debug:
+
+```bash
+# Esegui test fallendo al primo errore
+./mifp test -- -x
+
+# Esegui test mostrando dettagli
+./mifp test -- -v
+
+# Esegui browser test
+./mifp test browser
+
+# Esegui smoke test su server
+./mifp test smoke --base-url http://prod:8000
+```
+
+## Environment Variables
+
+Variabili di ambiente per controllare comportamento:
+
+| Variabile | Default | Descrizione |
+|-----------|---------|-------------|
+| `MIFP_TEST_AUTO_INSTALL` | 1 | Auto-install dipendenze pytest |
+| `MIFP_TEST_LOAD_DOTENV` | 0 | Carica .env per test (isola da prod .env) |
+| `MIFP_TEST_BASE_URL` | http://127.0.0.1:8000 | URL server per smoke tests |
+| `MIFP_SCRAPER_THREADS` | 16 | Thread per scraper remoto |
+| `MIFP_SCRAPER_LOCAL_ROOT` | /run/media/.../mifp.eu | Root scraping locale |
+
