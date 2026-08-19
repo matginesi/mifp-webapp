@@ -102,4 +102,9 @@ Thumbs.db
 .agents/
 .superpowers/*
 
-MIFPAPP/DATABASE/assets/*
+*/DATABASE/assets/*
+*/DATABASE/exports/*
+*/DATABASE/backups/*
+*/DATABASE/logs/*
+*/DATABASE/uploads/*
+
