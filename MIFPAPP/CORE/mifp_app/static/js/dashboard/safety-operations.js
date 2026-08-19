@@ -106,7 +106,7 @@
         link.click();
         link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-        window.MIFPUI?.showToast(` ${operation()} export ready.', 'success');
+        window.MIFPUI?.showToast(`${operation()} export ready.`, 'success');
         window.MIFPLog?.info('safety.export_completed', { operation: operation(), filename: filename });
       } else {
         const jobData = await response.json();
@@ -131,6 +131,9 @@
     if (!container) return;
     container.innerHTML = `
       <div class="safety-progress-bar">
+        <div class="safety-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="safety-progress-fill"></div>
+        </div>
         <div class="safety-progress-percent">0%</div>
       </div>
       <div class="safety-progress-details">
@@ -160,14 +163,19 @@
   }
 
   function updateProgress(progress) {
+    const trackElement = document.querySelector('[data-safety-progress] .safety-progress-track');
+    const fillElement = document.querySelector('[data-safety-progress] .safety-progress-fill');
     const percentElement = document.querySelector('[data-safety-progress] .safety-progress-percent');
     const phaseElement = document.querySelector('[data-safety-progress] .safety-progress-phase');
-    const recordsElement = document.querySelector('[data-safety-progress] .safety-progress-metric:first .safety-progress-value');
-    const assetsElement = document.querySelector('[data-safety-progress] .safety-progress-metric:last .safety-progress-value');
-    const errorsElement = document.querySelector('[data-safety-progress] .safety-progress-metric:last .safety-progress-value');
+    const recordsElement = document.querySelector('[data-safety-progress] .safety-progress-metric:nth-child(1) .safety-progress-value');
+    const assetsElement = document.querySelector('[data-safety-progress] .safety-progress-metric:nth-child(2) .safety-progress-value');
+    const errorsElement = document.querySelector('[data-safety-progress] .safety-progress-metric:nth-child(3) .safety-progress-value');
+    const percent = Math.min(100, Math.max(0, Number(progress.percent) || 0));
     
-    if (percentElement) percentElement.textContent = \`${progress.percent}%\`;
-    if (phaseElement) phaseElement.textContent = progress.phase || 'Collecting records…';
+    if (fillElement) fillElement.style.width = `${percent}%`;
+    if (trackElement) trackElement.setAttribute('aria-valuenow', String(percent));
+    if (percentElement) percentElement.textContent = `${percent}%`;
+    if (phaseElement) phaseElement.textContent = progress.message || progress.phase || 'Collecting records…';
     if (recordsElement) recordsElement.textContent = progress.records || 0;
     if (assetsElement) assetsElement.textContent = progress.assets || 0;
     if (errorsElement) errorsElement.textContent = progress.errors || 0;
@@ -185,10 +193,10 @@
         });
         const data = await response.json();
         
-        if (data.ok && data.status === 'completed') {
+        if (data.ok && (data.status === 'ready' || data.status === 'completed')) {
           updateProgress({
             percent: 100,
-            phase: 'Export completed',
+            message: 'Export ready',
             records: data.records || 0,
             assets: data.assets || 0,
             errors: data.errors || 0,
@@ -205,10 +213,10 @@
           return;
         }
 
-        if (data.ok && data.status === 'running') {
+        if (data.ok && (data.status === 'running' || data.status === 'queued')) {
           updateProgress({
             percent: data.percent || 0,
-            phase: data.phase || 'Processing…',
+            message: data.message || data.phase || 'Processing…',
             records: data.records || 0,
             assets: data.assets || 0,
             errors: data.errors || 0,

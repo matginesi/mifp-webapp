@@ -450,7 +450,7 @@ def control_safety_operations():
 @login_required
 def control_safety_operations_run():
     operation = request.form.get("operation", "").strip()
-    allowed = {"backup", "export", "cleanup"}
+    allowed = {"backup", "export", "excel", "cleanup"}
     if operation not in allowed:
         flash("Select a valid protected operation.", "error")
         return redirect(url_for("dashboard.control_safety_operations"))
@@ -507,8 +507,8 @@ def control_safety_operations_run():
             app = current_app._get_current_object()
 
             def build(path, progress) -> dict:
-                def report(message: str, pct: int) -> None:
-                    progress(pct, message, 0, 0, 0)
+                def report(message: str, pct: int, records: int = 0, assets: int = 0, errors: int = 0) -> None:
+                    progress(pct, message, records, assets, errors)
                 with operation_maintenance(
                     current_app.config["DATABASE_PATH"],
                     "protected portable export",
@@ -553,23 +553,26 @@ def control_safety_operations_run():
             app = current_app._get_current_object()
 
             def build(path, progress) -> dict:
-                records = 0
+                member_count = 0
                 def report(message: str, pct: int) -> None:
-                    progress(pct, message, records, 0, 0)
+                    progress(pct, message, member_count, 0, 0)
                 with operation_maintenance(
                     current_app.config["DATABASE_PATH"],
                     "protected Excel export",
                     logger=current_app.logger,
                 ), connect(Path(current_app.config["DATABASE_PATH"])) as conn:
+                    report("Collecting members…", 20)
                     from mifp_app.services.data_portability import export_users_excel
                     try:
                         excel_bytes = export_users_excel(conn)
-                        records = len(excel_bytes)  # Rough estimate
                     except ImportError:
                         excel_bytes = None
+                    member_count = int(conn.execute("SELECT COUNT(*) FROM members").fetchone()[0])
+                    report("Writing spreadsheet…", 80)
                 if excel_bytes is None:
                     raise RuntimeError("openpyxl is not installed. Install with: pip install openpyxl")
                 path.write_bytes(excel_bytes)
+                report("Finalizing…", 100)
                 return {
                     "filename": f"mifp-users-{date.today().isoformat()}.xlsx",
                     "mimetype": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -647,11 +650,12 @@ def control_safety_operations_download(token: str):
     claimed = download_jobs.claim_download(token=token, owner=session.get("admin_username"))
     if claimed is None:
         return jsonify({"ok": False, "error": "claim_failed"}), 404
+    meta, data_path = claimed
     return send_file(
-        claimed[1],
-        mimetype="application/zip",
+        data_path,
+        mimetype=meta.get("mimetype", "application/zip"),
         as_attachment=True,
-        download_name=f"mifp-secure-export-{date.today().isoformat()}.zip",
+        download_name=meta.get("filename", f"mifp-secure-export-{date.today().isoformat()}.zip"),
     )
 
 

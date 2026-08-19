@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import os
 import sqlite3
 from pathlib import Path
@@ -510,3 +511,128 @@ class TestJoinRequestActions:
             response = anon_client.post(f"/dashboard/join-requests/{req_id}/{action}")
             assert response.status_code == 302
             assert response.headers["Location"].startswith("/login")
+
+
+class TestJoinRequestExports:
+
+    def test_export_csv_contains_all_expected_columns(self, app, client):
+        _insert_join_request(app, "Export", status="approved")
+
+        response = client.get("/dashboard/join-requests/export.csv")
+        assert response.status_code == 200
+        assert response.headers["Content-Type"].startswith("text/csv")
+        assert "attachment" in response.headers["Content-Disposition"]
+        assert "join_requests.csv" in response.headers["Content-Disposition"]
+
+        body = response.get_data(as_text=True)
+        for label in ("First name", "Last name", "Email", "Affiliation", "Country",
+                      "Position", "Field", "Status", "Submitted at", "Decision note"):
+            assert label in body
+        assert "ada-export@example.org" in body
+        assert "approved" in body
+
+    def test_export_csv_respects_status_filter(self, app, client):
+        _insert_join_request(app, "PendingOnly", status="pending")
+        _insert_join_request(app, "ApprovedOnly", status="approved")
+
+        response = client.get("/dashboard/join-requests/export.csv", query_string={"status": "approved"})
+        body = response.get_data(as_text=True)
+        assert "ada-approvedonly@example.org" in body
+        assert "ada-pendingonly@example.org" not in body
+
+    def test_export_csv_respects_search_filter(self, app, client):
+        _insert_join_request(app, "FindMe")
+        _insert_join_request(app, "IgnoreMe")
+
+        response = client.get("/dashboard/join-requests/export.csv", query_string={"q": "findme"})
+        body = response.get_data(as_text=True)
+        assert "ada-findme@example.org" in body
+        assert "ada-ignoreme@example.org" not in body
+
+    def test_export_xlsx_returns_spreadsheet_payload(self, app, client):
+        _insert_join_request(app, "XlsxRow", status="in_review")
+
+        response = client.get("/dashboard/join-requests/export.xlsx")
+        assert response.status_code == 200
+        assert response.headers["Content-Type"].startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        assert "join_requests.xlsx" in response.headers["Content-Disposition"]
+        assert response.data[:2] == b"PK"
+
+    def test_export_xlsx_respects_status_filter(self, app, client):
+        _insert_join_request(app, "ApprovedOnly", status="approved")
+        _insert_join_request(app, "PendingOnly", status="pending")
+
+        response = client.get("/dashboard/join-requests/export.xlsx", query_string={"status": "pending"})
+        assert response.status_code == 200
+        wb = pytest.importorskip("openpyxl").load_workbook(io.BytesIO(response.data))
+        sheet = wb.active
+        values = [list(row) for row in sheet.iter_rows(values_only=True)]
+        emails = [row[2] for row in values if len(row) > 2]
+        assert "ada-pendingonly@example.org" in emails
+        assert "ada-approvedonly@example.org" not in emails
+
+    def test_export_rejects_unknown_format(self, app, client):
+        response = client.get("/dashboard/join-requests/export.docx")
+        assert response.status_code == 400
+
+    def test_export_requires_login(self, app, anon_client):
+        response = anon_client.get("/dashboard/join-requests/export.csv")
+        assert response.status_code == 302
+
+
+class TestJoinRequestBulkActions:
+
+    def test_bulk_approve_updates_only_selected(self, app, client):
+        id_a = _insert_join_request(app, "BulkA", status="pending")
+        _insert_join_request(app, "BulkB", status="pending")
+
+        response = client.post(
+            "/dashboard/join-requests/bulk-approve",
+            data={"request_ids": [str(id_a)]},
+        )
+        assert response.status_code == 302
+        assert _scalar(app, "SELECT status FROM join_requests WHERE id=?", (id_a,)) == "approved"
+        assert _scalar(app, "SELECT COUNT(*) FROM join_requests WHERE status='approved'") == 1
+
+    def test_bulk_archive_updates_only_selected(self, app, client):
+        _insert_join_request(app, "KeepA", status="pending")
+        id_b = _insert_join_request(app, "ArchB", status="pending")
+
+        response = client.post(
+            "/dashboard/join-requests/bulk-archive",
+            data={"request_ids": [str(id_b)]},
+        )
+        assert response.status_code == 302
+        assert _scalar(app, "SELECT status FROM join_requests WHERE id=?", (id_b,)) == "archived"
+        assert _scalar(app, "SELECT COUNT(*) FROM join_requests WHERE status='archived'") == 1
+
+    def test_bulk_approve_skips_already_approved(self, app, client):
+        id_approved = _insert_join_request(app, "Already", status="approved")
+        id_pending = _insert_join_request(app, "Still", status="pending")
+
+        client.post("/dashboard/join-requests/bulk-approve", data={"request_ids": [str(id_approved), str(id_pending)]})
+        assert _scalar(app, "SELECT status FROM join_requests WHERE id=?", (id_approved,)) == "approved"
+        assert _scalar(app, "SELECT status FROM join_requests WHERE id=?", (id_pending,)) == "approved"
+
+    def test_bulk_without_selection_is_noop(self, app, client):
+        _insert_join_request(app, "Untouched", status="pending")
+
+        response = client.post("/dashboard/join-requests/bulk-approve", data={"request_ids": []})
+        assert response.status_code == 302
+        assert _scalar(app, "SELECT COUNT(*) FROM join_requests WHERE status='pending'") == 1
+
+    def test_bulk_preserves_return_filter(self, app, client):
+        _insert_join_request(app, "Filtered", status="pending")
+
+        response = client.post(
+            "/dashboard/join-requests/bulk-archive",
+            data={"request_ids": ["1"], "return_status": "approved", "return_q": "x"},
+        )
+        assert response.status_code == 302
+        assert "status=approved" in response.headers["Location"]
+        assert "q=x" in response.headers["Location"]
+
+    def test_bulk_requires_login(self, app, anon_client):
+        response = anon_client.post("/dashboard/join-requests/bulk-approve", data={"request_ids": ["1"]})
+        assert response.status_code == 302
+        assert response.headers["Location"].startswith("/login")

@@ -1544,6 +1544,8 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.data_portability_import_cancel",
     "dashboard.join_approve",
     "dashboard.join_archive",
+    "dashboard.join_bulk_approve",
+    "dashboard.join_bulk_archive",
     "dashboard.join_delete",
     "dashboard.join_reject",
     "dashboard.join_update",

@@ -2149,6 +2149,90 @@ def join_delete(request_id: int):
     return _join_return()
 
 
+_JOIN_EXPORT_COLUMNS = [
+    ("first_name", "First name"),
+    ("last_name", "Last name"),
+    ("email", "Email"),
+    ("affiliation", "Affiliation"),
+    ("country", "Country"),
+    ("position", "Position"),
+    ("field", "Field"),
+    ("orcid", "ORCID"),
+    ("website_url", "Website URL"),
+    ("status", "Status"),
+    ("created_at", "Submitted at"),
+    ("reviewed_at", "Reviewed at"),
+    ("decision_note", "Decision note"),
+]
+
+
+def _join_export_rows(status: str = "", q: str = "") -> list[dict[str, Any]]:
+    where = []
+    params: list[Any] = []
+    if status in JOIN_STATUSES:
+        where.append("status=?")
+        params.append(status)
+    if q:
+        where.append("(first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR affiliation LIKE ? OR field LIKE ?)")
+        params.extend([f"%{q}%"] * 5)
+    clause = " WHERE " + " AND ".join(where) if where else ""
+    with connect(current_app.config["DATABASE_PATH"]) as conn:
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT {', '.join(col for col, _ in _JOIN_EXPORT_COLUMNS)} FROM join_requests{clause} ORDER BY created_at DESC, id DESC",
+            params,
+        ).fetchall()]
+    return [
+        {label: row.get(col) for col, label in _JOIN_EXPORT_COLUMNS}
+        for row in rows
+    ]
+
+
+@bp.get("/join-requests/export.<fmt>")
+@login_required
+def join_export(fmt: str):
+    if fmt not in {"csv", "xlsx"}:
+        return Response("Invalid export format", status=400)
+    status = request.args.get("status", "").strip()
+    q = request.args.get("q", "").strip()
+    rows = _join_export_rows(status=status, q=q)
+    audit_log("join.export", "join request export", format=fmt, count=len(rows), status=status or None)
+    return _download_response(rows, fmt, "join_requests", "Join requests")
+
+
+@bp.post("/join-requests/bulk-approve")
+@login_required
+def join_bulk_approve():
+    ids = [int(i) for i in request.form.getlist("request_ids") if str(i).isdigit()]
+    with connect(current_app.config["DATABASE_PATH"]) as conn:
+        placeholders = ",".join("?" for _ in ids)
+        if ids:
+            conn.execute(
+                f"UPDATE join_requests SET status='approved', reviewed_at=CURRENT_TIMESTAMP, reviewed_by=? WHERE id IN ({placeholders}) AND status NOT IN ('approved','archived')",
+                (session.get("admin_username"), *ids),
+            )
+            conn.commit()
+    audit_log("join.bulk_approve", "join requests bulk approved", count=len(ids))
+    flash(f"{len(ids)} join request(s) approved.", "success")
+    return _join_return()
+
+
+@bp.post("/join-requests/bulk-archive")
+@login_required
+def join_bulk_archive():
+    ids = [int(i) for i in request.form.getlist("request_ids") if str(i).isdigit()]
+    with connect(current_app.config["DATABASE_PATH"]) as conn:
+        placeholders = ",".join("?" for _ in ids)
+        if ids:
+            conn.execute(
+                f"UPDATE join_requests SET status='archived', reviewed_at=CURRENT_TIMESTAMP, reviewed_by=? WHERE id IN ({placeholders}) AND status NOT IN ('archived')",
+                (session.get("admin_username"), *ids),
+            )
+            conn.commit()
+    audit_log("join.bulk_archive", "join requests bulk archived", count=len(ids))
+    flash(f"{len(ids)} join request(s) archived.", "success")
+    return _join_return()
+
+
 from . import (  # noqa: E402,F401
     dashboard_assets,
     dashboard_conferences,

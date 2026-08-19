@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import os
 import sqlite3
 import time
@@ -216,6 +217,107 @@ def test_password_gated_export_is_import_compatible(client, app):
 
     # token is one-shot
     assert client.get(download_url).status_code == 404
+
+
+def test_export_progress_reports_real_records_and_assets(client, app):
+    from mifp_app.db.connection import connect
+    from mifp_app.db.migrations import migrate_content_schema
+
+    with connect(app.config["DATABASE_PATH"]) as conn:
+        migrate_content_schema(conn)
+        conn.execute(
+            "INSERT INTO assets(id, filename, path, kind, checksum) "
+            "VALUES(1, 'paper.pdf', 'pdf/paper.pdf', 'pdf', 'sha')"
+        )
+        conn.execute(
+            "INSERT INTO news(id, title, slug, review_status) "
+            "VALUES(1, 'Seed news', 'seed', 'published')"
+        )
+        conn.execute(
+            "INSERT INTO asset_links(asset_id, entity_type, entity_id, role) "
+            "VALUES(1, 'news', 1, 'document')"
+        )
+        conn.execute(
+            "INSERT INTO events(id, title, slug, start_date, review_status) "
+            "VALUES(2, 'Seed event', 'seed-event', '2026-06-01', 'published')"
+        )
+        assets_dir = Path(app.config["ASSETS_DIR"]) / "pdf"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        (assets_dir / "paper.pdf").write_bytes(b"%PDF-1.4\n")
+
+    response = _run(client, "export")
+    payload = response.get_json()
+    status_url = payload["status_url"]
+
+    counts = {}
+    for _ in range(300):
+        status = client.get(status_url).get_json()
+        if status["status"] == "ready":
+            counts = status
+            break
+        time.sleep(0.02)
+    assert counts["status"] == "ready"
+    assert int(counts["records"] or 0) >= 2
+    assert int(counts["assets"] or 0) >= 1
+    assert "message" in counts and counts["message"]
+
+
+def test_excel_operation_exports_members(client, app):
+    pytest.importorskip("openpyxl")
+    from mifp_app.db.connection import connect
+    from mifp_app.db.migrations import migrate_content_schema
+
+    with connect(app.config["DATABASE_PATH"]) as conn:
+        migrate_content_schema(conn)
+        conn.execute(
+            "INSERT INTO members(id, slug, display_name, first_name, last_name, email, affiliation, country) "
+            "VALUES(1, 'grace', 'Grace Hopper', 'Grace', 'Hopper', 'grace@example.org', 'MIFP', 'USA')"
+        )
+
+    response = _run(client, "excel")
+    assert response.status_code == 200
+    payload = response.get_json()
+    status_url = payload["status_url"]
+    download_url = payload["download_url"]
+
+    status = None
+    for _ in range(300):
+        status = client.get(status_url).get_json()
+        if status["status"] in {"ready", "failed"}:
+            break
+        time.sleep(0.02)
+    assert status["status"] == "ready", status
+    assert int(status["records"] or 0) >= 1
+
+    dl = client.get(download_url)
+    assert dl.status_code == 200
+    assert dl.headers["Content-Type"].startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    assert "mifp-users" in dl.headers["Content-Disposition"]
+
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(dl.data))
+    sheet = wb.active
+    values = [list(row) for row in sheet.iter_rows(values_only=True)]
+    emails = [row[2] for row in values if len(row) > 2]
+    assert "grace@example.org" in emails
+
+
+def test_excel_operation_preview_lists_member_count(client, app):
+    from mifp_app.db.connection import connect
+    from mifp_app.db.migrations import migrate_content_schema
+
+    with connect(app.config["DATABASE_PATH"]) as conn:
+        migrate_content_schema(conn)
+        conn.execute(
+            "INSERT INTO members(id, slug, display_name, email) "
+            "VALUES(1, 'ada', 'Ada Lovelace', 'ada@example.org')"
+        )
+
+    response = client.get("/dashboard/control/safety-operations")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert 'data-operation-review="excel"' in body
+    assert "Members Excel export" in body
 
 
 def test_safety_export_status_rejects_unknown_job(client):

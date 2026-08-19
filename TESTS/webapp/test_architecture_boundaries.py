@@ -79,6 +79,9 @@ def test_ci_cd_workflow_tests_builds_only() -> None:
     assert "ghcr.io" in text
     assert "docker/build-push-action" in text
     # Deployment to VPS has been removed - users deploy manually
+    assert "ssh-action" not in text
+    assert "appleboy" not in text
+    assert "ssh_deploy" not in text
 
 
 def test_ci_workflow_runs_the_versioned_webapp_suite() -> None:

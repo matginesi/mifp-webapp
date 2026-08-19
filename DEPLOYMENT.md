@@ -1,16 +1,19 @@
 # Deployment MIFP
 
 Un solo percorso di produzione: **GitHub Actions → GHCR → VPS Docker → Caddy**.
+Il deploy sulla VPS è **manuale**: la pipeline CI/CD si ferma alla pubblicazione
+dell'immagine su GHCR.
 
 ## Architettura
 
 ```text
 push su main
    ├─ test     bash test_all.sh --suite webapp
-   ├─ build    docker buildx (context MIFPAPP/CORE) -> ghcr.io/<owner>/mifp-webapp:sha-<commit> + :latest
-   └─ deploy   appleboy/ssh-action -> sudo -u mifp bash /opt/mifp/deploy.sh ghcr.io/...:sha-<commit>
+   └─ build    docker buildx (context MIFPAPP/CORE) -> ghcr.io/<owner>/mifp-webapp:sha-<commit> + :latest
 
-VPS:
+VPS (deploy manuale):
+   sudo -u mifp bash /opt/mifp/deploy.sh ghcr.io/<owner>/mifp-webapp:sha-<commit>
+
    Caddy (host, porte 80/443, TLS automatico)
      └-> 127.0.0.1:8000
            └-> docker compose (mifp-production)
@@ -18,8 +21,9 @@ VPS:
                  storage-init (root, prepara/chown /opt/mifp/data)
 ```
 
-Il launcher locale (`./mifp`) non ha comandi di produzione: il deploy avviene
-solo tramite la pipeline CI/CD.
+Il launcher locale (`./mifp`) non ha comandi di produzione: la pubblicazione
+dell'immagine avviene tramite CI/CD, il rilascio sulla VPS tramite
+`deploy/deploy.sh` eseguito manualmente.
 
 ## Sviluppo locale
 
@@ -59,7 +63,8 @@ sudo rsync -avz ./MIFPAPP/DATABASE/ user@host:/opt/mifp/data/
 sudo chown -R mifp:mifp /opt/mifp
 
 # 4. Pubblica la prima immagine e avvia lo stack
-#    (in locale) git push origin main   -> la pipeline build+deploy si occupa di tutto
+#    (in locale) git push origin main   -> la pipeline testa e pubblica l'immagine
+#    (sul server) sudo -u mifp bash /opt/mifp/deploy.sh ghcr.io/<owner>/mifp-webapp:sha-<commit>
 
 # 5. Avvia Caddy
 sudo systemctl start caddy
@@ -74,22 +79,16 @@ docker buildx build --platform linux/amd64 -t ghcr.io/<owner>/mifp-webapp:sha-<c
 sudo -u mifp bash /opt/mifp/deploy.sh ghcr.io/<owner>/mifp-webapp:sha-<commit>
 ```
 
-## Segreti GitHub necessari
-
-Nelle **Settings → Secrets and variables → Actions** del repository:
-
-| Secret            | Uso                                  |
-|-------------------|--------------------------------------|
-| `VPS_HOST`        | IP o hostname della VPS              |
-| `VPS_USER`        | utente con sudo (non `mifp`)         |
-| `VPS_SSH_KEY`     | chiave privata SSH                   |
-| `VPS_KNOWN_HOSTS` | fingerprint host (per evitare MITM)  |
-| `VPS_DOMAIN`      | dominio pubblico (es. `mifp.eu`)     |
-
 ## Rilascio e rollback
 
-Un push su `main` testa, costruisce, pubblica su GHCR e fa il deploy in
-automatico. Lo script sul server ricorda la release precedente:
+La CI/CD testa il webapp e pubblica `sha-<commit>` e `:latest` su GHCR. Il
+rilascio in produzione è un passo manuale sulla VPS:
+
+```bash
+sudo -u mifp bash /opt/mifp/deploy.sh ghcr.io/<owner>/mifp-webapp:sha-<commit>
+```
+
+Lo script sul server ricorda la release precedente:
 
 ```bash
 sudo -u mifp bash /opt/mifp/deploy.sh status

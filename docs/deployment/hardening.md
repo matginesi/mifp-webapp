@@ -81,15 +81,17 @@ Recommended:
 ```bash
 sudo chown -R mifp:mifp /opt/mifp
 sudo chmod 750 /opt/mifp /opt/mifp/data /opt/mifp/logs /opt/mifp/backups
-sudo chmod 600 /opt/mifp/source/MIFPAPP/CORE/.env
+sudo chmod 600 /opt/mifp/.env
 sudo chmod 640 /opt/mifp/data/mifp.db
 ```
 
 Secrets, databases, assets, logs, exports, and backups must remain outside Git.
+The container runs as a non-root user and mounts `/opt/mifp/data` read-write;
+container rebuilds never touch the host bind mount.
 
 ## Application Settings
 
-Production `.env` must include:
+Production `/opt/mifp/.env` must include:
 
 ```env
 FLASK_ENV='production'
@@ -100,5 +102,5 @@ TRUST_PROXY='1'
 ALLOW_DB_DUMP='0'
 ```
 
-`TRUST_PROXY=1` is safe only when Nginx is the trusted reverse proxy in front of
-Gunicorn.
+`TRUST_PROXY=1` is safe only when Caddy is the trusted reverse proxy in front of
+the application inside the container.

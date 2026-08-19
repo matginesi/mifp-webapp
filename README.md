@@ -8,19 +8,22 @@ e storage persistente MIFP.
 Un solo percorso di produzione, tutto il resto è locale:
 
 ```text
-GitHub Actions (test + build)        GitHub Actions (deploy via SSH)
-        |                                        |
-        v                                        v
-   MIFPAPP/CORE (context Docker) -> GHCR <--    /opt/mifp  (VPS Docker + dati)
-        |                                        |
-        +-------- CI/CD ------------+        Caddy (HTTPS) -> 127.0.0.1:8000
+GitHub Actions (test + build)
+        |
+        v
+   MIFPAPP/CORE (context Docker) -> GHCR
+        |
+        v
+   /opt/mifp (VPS Docker + dati)  -- Caddy (HTTPS) -> 127.0.0.1:8000
 ```
 
 - **Locale** (sviluppo e manutenzione): il launcher `mifp` gestisce Flask,
   Docker locale, scraper, database, test, backup ZIP e credenziali admin.
 - **Produzione**: un'immagine runtime minimale viene costruita e pubblicata su
-  GHCR da GitHub Actions, tirata sulla VPS da `deploy/deploy.sh` e servita da
-  Caddy sul host. Nessun comando `production` esiste nel launcher locale.
+  GHCR da GitHub Actions. La VPS tira l'immagine e la serve con
+  `deploy/deploy.sh` (compose + Caddy). Il deploy non avviene via CI: va
+  lanciato manualmente sulla VPS. Nessun comando `production` esiste nel
+  launcher locale.
 - **Dashboard** = unica superficie amministrativa in produzione.
 
 ## Avvio locale
@@ -44,7 +47,7 @@ MIFPAPP/CORE/          applicazione Flask e contesto Docker
 MIFPAPP/DATABASE/      database, asset, log, backup ed export persistenti
 TESTS/                 test del repository (suite webapp versionata)
 deploy/                artefatti di deploy della VPS (compose, Caddyfile, script)
-.github/workflows/     pipeline CI/CD (test -> GHCR -> VPS)
+.github/workflows/     pipeline CI/CD (test + build immagine GHCR, nessun deploy)
 ```
 
 Il flusso dei dati è intenzionalmente unidirezionale:

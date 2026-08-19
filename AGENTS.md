@@ -58,9 +58,9 @@ bash MIFPAPP/DATABASE/build.sh --fresh
 - `deploy/` holds the VPS release artifacts: `compose.production.yaml` (no
   `build:`; GHCR image, `127.0.0.1:8000`, host data at `/opt/mifp/data`),
   `Caddyfile`, `.env.production.example`, `deploy.sh`, and `bootstrap-vps.sh`.
-- `.github/workflows/ci-cd.yml` is the only path to production: test the
-  versioned webapp suite, build/publish the GHCR image from `MIFPAPP/CORE`,
-  then SSH-deploy to the VPS.
+- `.github/workflows/ci-cd.yml` publishes the GHCR image only: it tests the
+  versioned webapp suite and builds/pushes the image from `MIFPAPP/CORE`.
+  Releasing to the VPS is a manual `deploy/deploy.sh` step, never a CI job.
 
 Rules:
 - never add a `build:` section back to the production compose;

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import io
 import json
 import shutil
@@ -17,10 +18,8 @@ from typing import Any
 
 try:
     from openpyxl import Workbook
-    from openpyxl.utils import get_column_letter
 except ImportError:
     Workbook = None  # type: ignore[assignment]
-    get_column_letter = None  # type: ignore[assignment]
 
 from ..config import Config
 from ..db.connection import table_exists, utc_now, sha256_file
@@ -525,16 +524,25 @@ def _write_bundle_zip(
     app_version: str = "",
     progress_callback: Callable[[str, int], None] | None = None,
 ) -> dict[str, Any]:
-    def report(message: str, pct: int) -> None:
-        if progress_callback:
-            progress_callback(message, pct)
-
     bundle = build_export_bundle(conn, scope)
-    report("Collecting records…", 5)
     records = bundle.get("records") or []
     asset_rows = _asset_rows_for_scope(conn, scope, records)
     records_payload = _records_to_jsonl(records)
-    report("Serializing records…", 15)
+    seen_archive_paths: set[str] = set()
+
+    def report(message: str, pct: int) -> None:
+        if progress_callback is None:
+            return
+        try:
+            arity = len(inspect.signature(progress_callback).parameters)
+        except (TypeError, ValueError):
+            arity = 2
+        if arity >= 5:
+            progress_callback(message, pct, len(records), len(seen_archive_paths), 0)
+        else:
+            progress_callback(message, pct)
+
+    report("Collecting records…", 5)
     durable_state = _durable_state(conn) if scope == "all" else None
     state_payload = (
         json.dumps(durable_state, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
@@ -560,11 +568,11 @@ def _write_bundle_zip(
             key: len(value) for key, value in durable_state.items() if isinstance(value, list)
         }
 
+    report("Serializing records…", 15)
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         zf.writestr(ZIP_RECORDS_NAME, records_payload)
         if state_payload is not None:
             zf.writestr(ZIP_STATE_NAME, state_payload)
-        seen_archive_paths: set[str] = set()
         for asset in asset_rows:
             db_path = str(asset.get("path") or "").strip()
             if not db_path:
@@ -2067,45 +2075,37 @@ def _validate_manifest_scope(scope: str, record_types: dict[str, int]) -> None:
 
 
 def export_users_excel(conn: sqlite3.Connection) -> bytes:
-    """Export users as Excel with first name, last name, email, affiliation, country.
-    
+    """Export members as Excel with first name, last name, email, affiliation, country.
+
     Returns the Excel file as bytes.
     """
     if Workbook is None:
         raise ImportError("openpyxl is not installed. Install with: pip install openpyxl")
-    
-    import io
-    from django.db.models import Value as V
-    from django.db.models.functions import Concat
-    
-    # Query users with required fields through the connection
+
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT first_name, last_name, email, affiliation, country 
-        FROM auth_user 
-        WHERE first_name IS NOT NULL OR last_name IS NOT NULL
+        SELECT first_name, last_name, email, affiliation, country
+        FROM members
+        WHERE first_name IS NOT NULL OR last_name IS NOT NULL OR email IS NOT NULL
         ORDER BY last_name, first_name
     """)
     rows = cursor.fetchall()
-    
+
     wb = Workbook()
     ws = wb.active
-    ws.title = "Users Export"
-    
-    # Header row
+    ws.title = "Members Export"
+
     ws.append(["First Name", "Last Name", "Email", "Affiliation", "Country"])
-    
-    # Data rows
+
     for row in rows:
         ws.append(list(row))
-    
-    # Set column widths for readability
-    ws.column_dimensions['A'].width = 20
-    ws.column_dimensions['B'].width = 20
-    ws.column_dimensions['C'].width = 30
-    ws.column_dimensions['D'].width = 30
-    ws.column_dimensions['E'].width = 25
-    
+
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 30
+    ws.column_dimensions["D"].width = 30
+    ws.column_dimensions["E"].width = 25
+
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()

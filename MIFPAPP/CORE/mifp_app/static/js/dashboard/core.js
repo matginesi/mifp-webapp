@@ -578,6 +578,21 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     });
   }
+
+  var selectAll = document.getElementById('joinSelectAll');
+  if (selectAll) {
+    var requestBoxes = document.querySelectorAll('input[name="request_ids"][form="joinBulkForm"]');
+    selectAll.addEventListener('change', function () {
+      requestBoxes.forEach(function (box) {
+        box.checked = selectAll.checked;
+      });
+    });
+    requestBoxes.forEach(function (box) {
+      box.addEventListener('change', function () {
+        selectAll.checked = Array.prototype.every.call(requestBoxes, function (b) { return b.checked; });
+      });
+    });
+  }
 });
 
 document.addEventListener('click', async function (ev) {

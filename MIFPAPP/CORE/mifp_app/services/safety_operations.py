@@ -44,6 +44,7 @@ def safety_operations_preview(config: dict[str, Any]) -> dict[str, Any]:
         quick_check = str(conn.execute("PRAGMA quick_check").fetchone()[0])
         page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
         free_pages = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
+        member_count = int(conn.execute("SELECT COUNT(*) FROM members").fetchone()[0])
         retention = int(config.get("PRIVACY_SAFE_METRICS_RETENTION_DAYS", 730))
         expired_metrics = int(conn.execute(
             "SELECT COUNT(*) FROM metrics_daily WHERE date < date('now', ?)",
@@ -70,6 +71,7 @@ def safety_operations_preview(config: dict[str, Any]) -> dict[str, Any]:
             "format": "mifp-jsonl-v2 ZIP",
             "includes_assets": True,
         },
+        "members": member_count,
         "storage": {
             "exports_prunable": len(exports),
             "exports_prunable_bytes": _size(exports),

@@ -32,15 +32,29 @@
     </select>
     <button class="btn btn-primary btn-sm"><i class="bi bi-funnel"></i> Filter</button>
     {% if q or current_status %}<a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.join_requests') }}">Clear</a>{% endif %}
+    <span class="toolbar-sep" aria-hidden="true"></span>
+    <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.join_export', fmt='csv', status=current_status, q=q) }}"><i class="bi bi-filetype-csv"></i> Export CSV</a>
+    <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.join_export', fmt='xlsx', status=current_status, q=q) }}"><i class="bi bi-file-earmark-spreadsheet"></i> Export Excel</a>
   </form>
 </section>
 
 {% if not requests %}
 <section class="modern-card"><div class="empty is-spacious">No join requests found.</div></section>
 {% else %}
+<form method="post" id="joinBulkForm" class="join-bulk-form">
+  <section class="join-bulk-toolbar" aria-label="Bulk actions">
+    <label class="inline-check"><input type="checkbox" id="joinSelectAll"> select page</label>
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="return_status" value="{{ current_status }}">
+    <input type="hidden" name="return_q" value="{{ q }}">
+    <button type="submit" formaction="{{ url_for('dashboard.join_bulk_approve') }}" class="btn btn-outline-success btn-sm" data-confirm="Approve all selected requests?"><i class="bi bi-person-check"></i> Approve selected</button>
+    <button type="submit" formaction="{{ url_for('dashboard.join_bulk_archive') }}" class="btn btn-outline btn-sm" data-confirm="Archive all selected requests?"><i class="bi bi-archive"></i> Archive selected</button>
+  </section>
+</form>
 <section class="join-admin-list">
   {% for r in requests %}
   <article class="join-admin-card status-{{ r.status }}">
+    <label class="join-bulk-check" aria-label="Select {{ r.first_name }} {{ r.last_name }}"><input type="checkbox" name="request_ids" value="{{ r.id }}" form="joinBulkForm"></label>
     <div class="join-admin-top">
       <div class="join-applicant">
         <span class="join-avatar" aria-hidden="true">{{ r.first_name[:1] }}{{ r.last_name[:1] }}</span>

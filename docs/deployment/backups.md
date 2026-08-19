@@ -7,7 +7,7 @@ MIFP production data lives outside Git. Back up these required data groups:
 /opt/mifp/data/assets/
 ```
 
-Also keep `/opt/mifp/source/MIFPAPP/CORE/.env` in a secure password manager or
+Also keep `/opt/mifp/.env` in a secure password manager or
 encrypted backup.
 
 ## Main Database Backup
@@ -74,15 +74,15 @@ committed.
 
 ## Restore
 
-Stop the app before replacing SQLite files:
+Stop the container before replacing SQLite files:
 
 ```bash
-cd /opt/mifp/source
-sudo -u mifp bash deploy.sh native stop
+cd /opt/mifp
+sudo -u mifp bash deploy.sh stop
 sudo install -o mifp -g mifp -m 640 backup-mifp.db /opt/mifp/data/mifp.db
 rsync -avz --delete ./backups/assets/ user@host:/opt/mifp/data/assets/
 sudo chown -R mifp:mifp /opt/mifp/data/assets
-sudo -u mifp bash deploy.sh native start
+sudo -u mifp bash deploy.sh start ghcr.io/<owner>/mifp-webapp:latest
 curl -fsS http://127.0.0.1:8000/ready
 ```
 
@@ -96,16 +96,14 @@ sudo chown -R mifp:mifp /opt/mifp/data/assets
 ## Full Recovery Procedure
 
 1. Install Ubuntu and harden SSH/firewall.
-2. Install Python, Git, SQLite, Nginx, Certbot.
-3. Create the `mifp` service user.
-4. Clone the repository into `/opt/mifp/source`.
-5. Restore `MIFPAPP/CORE/.env` with mode `600`.
-6. Restore `mifp.db`.
-7. Restore `assets/`.
-9. Recreate the Python virtualenv and install requirements.
-10. Start the native service with `bash deploy.sh native start`.
-11. Restore Nginx config and certificates or rerun Certbot.
-12. Check `/ready`, logs, and public pages.
+2. Run `bootstrap-vps.sh` on the VPS (installs Docker Engine, Compose v2,
+   Caddy, and creates the `mifp` user and `/opt/mifp/{data,...}`).
+3. Restore `/opt/mifp/.env` with mode `600`.
+4. Restore `mifp.db`.
+5. Restore `assets/`.
+6. Pull the release image and start the stack with
+   `sudo -u mifp bash /opt/mifp/deploy.sh ghcr.io/<owner>/mifp-webapp:sha-<commit>`.
+7. Start Caddy and check `/ready`, logs, and public pages.
 
 ## Backup Verification
 
@@ -113,6 +111,5 @@ Periodically verify backups on a separate machine:
 
 ```bash
 sqlite3 mifp-backup.db "PRAGMA integrity_check;"
-sqlite3 conference-backup.db "PRAGMA integrity_check;"
 find assets -type f | wc -l
 ```

@@ -78,6 +78,14 @@
         <li><span>Managed asset files</span><b>{{ 'Included' if preview.export.includes_assets else 'Excluded' }}</b></li>
       </ul>
     </div>
+    <div class="safety-review" data-operation-review="excel">
+      <div class="safety-review-title"><i class="bi bi-file-excel"></i><div><b>Members Excel export</b><small>Read-only snapshot of the member directory.</small></div></div>
+      <ul>
+        <li><span>Rows</span><b>{{ preview.members }}</b></li>
+        <li><span>Format</span><b>XLSX spreadsheet</b></li>
+        <li><span>Content</span><b>First name, last name, email, affiliation, country</b></li>
+      </ul>
+    </div>
     <div class="safety-review" data-operation-review="cleanup">
       <div class="safety-review-title is-warning"><i class="bi bi-database-gear"></i><div><b>Conservative cleanup</b><small>A verified snapshot is created before database writes.</small></div></div>
       <ul>
