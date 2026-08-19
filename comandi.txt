@@ -1,0 +1,52 @@
+# Mifp CLI Commands
+
+## Local Development
+./mifp init                    # Initialize the application
+./mifp local                   # Start local development server
+./mifp docker-local            # Start local Docker container (alias: ./mifp docker)
+
+## Data Management
+./mifp database build          # Build/refresh the database (use --fresh for clean build)
+./mifp database refresh        # Fast refresh of the database
+./mifp database backup         # Backup current database state
+./mifp database restore        # Restore database from backup
+
+## Scraping
+./mifp scrape all              # Run all scrapers (fresh export)
+./mifp scrape remote           # Run remote scrapers only
+./mifp scrape local            # Run local scrapers only
+./mifp scrape aruba            # Run Aruba scraper only
+./mifp scrape events           # Run Events scraper only
+./mifp scrape fresh            # Force refresh all scrapers
+
+## Testing
+./mifp test                    # Run all tests
+./mifp test webapp             # Run webapp tests only
+./mifp test core               # Run core service tests
+./mifp test scrapers           # Run scraper tests
+./mifp test-all                # Run test_all.sh (legacy)
+
+## Deployment
+# Deployment is handled via CI/CD or manual on VPS
+# CI/CD: GitHub Actions builds and publishes to GHCR
+# Manual VPS deployment: ssh into VPS and run ./deploy/deploy.sh ghcr.io/owner/repo:latest
+
+## Maintenance
+./mifp admin                   # Admin utilities
+./mifp hash                    # Generate security hash for files
+./mifp status                  # Show current system status
+./mifp logs                    # View application logs
+./mifp stop                    # Stop running containers
+./mifp clean                   # Clean temporary files
+./mifp zip                     # Create export ZIP
+./mifp doctor                  # Health check
+
+## Note
+The `./mifp` launcher is local-only. Production deployment is exclusively via:
+- GitHub Actions (CI/CD) which builds and publishes GHCR images
+- Manual deployment to VPS using deploy/deploy.sh
+
+For production deployment on VPS:
+ssh user@host
+cd /opt/mifp
+sudo -u mifp bash deploy.sh ghcr.io/owner/repo:sha-xxxxx

@@ -70,7 +70,7 @@ def test_local_and_production_env_templates_are_separate() -> None:
     assert "MIFP_PORT" in local
 
 
-def test_ci_cd_workflow_tests_builds_and_deploys() -> None:
+def test_ci_cd_workflow_tests_builds_only() -> None:
     root = _repo_root()
     workflow = root / ".github/workflows/ci-cd.yml"
     assert workflow.is_file()
@@ -78,9 +78,7 @@ def test_ci_cd_workflow_tests_builds_and_deploys() -> None:
     assert "test" in text.lower()
     assert "ghcr.io" in text
     assert "docker/build-push-action" in text
-    assert "appleboy/ssh-action" in text
-    assert "secrets.VPS_HOST" in text
-    assert "secrets.VPS_SSH_KEY" in text
+    # Deployment to VPS has been removed - users deploy manually
 
 
 def test_ci_workflow_runs_the_versioned_webapp_suite() -> None:
