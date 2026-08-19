@@ -101,3 +101,5 @@ Thumbs.db
 .codex/
 .agents/
 .superpowers/*
+
+MIFPAPP/DATABASE/assets/*
