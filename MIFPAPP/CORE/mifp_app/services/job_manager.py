@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import sqlite3
 import threading
@@ -9,6 +10,7 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Optional
 
 from ..utils.logger import get_logger, log_event, log_exception
 
@@ -148,15 +150,28 @@ class JobManager:
         self._cancel_events: dict[str, threading.Event] = {}
 
     def submit(self, name: str, callback: Callable[[Callable[[], bool]], object]) -> tuple[str, Future]:
-        def wrapped(cancel_event: Callable[[], bool]) -> object:
-            return callback(cancel_event)
+        sig = inspect.signature(callback)
+        if len(sig.parameters) == 0:
+            wrapped = lambda: callback()
+        else:
+            def wrapped(cancel_event: Optional[Callable[[], bool]] = None) -> object:
+                if cancel_event is None:
+                    return callback(cancelled)
+                return callback(cancel_event)
         return self._submit(name, wrapped)
 
     def submit_cancellable(
         self, name: str, callback: Callable[[Callable[[], bool]], object]
     ) -> tuple[str, Future]:
-        """Submit a cooperative job whose callback can poll cancellation safely."""
-        return self._submit(name, callback)
+        sig = inspect.signature(callback)
+        if len(sig.parameters) == 0:
+            wrapped = lambda: callback()
+        else:
+            def wrapped(cancel_event: Optional[Callable[[], bool]] = None) -> object:
+                if cancel_event is None:
+                    return callback(cancelled)
+                return callback(cancel_event)
+        return self._submit(name, wrapped)
 
     def _submit(
         self, name: str, callback: Callable[[Callable[[], bool]], object]
@@ -187,6 +202,15 @@ class JobManager:
                 return True
             return False
 
+        sig = inspect.signature(callback)
+        if len(sig.parameters) == 0:
+            wrapped = lambda: callback()
+        else:
+            def wrapped(cancel_event: Optional[Callable[[], bool]] = None) -> object:
+                if cancel_event is None:
+                    return callback(cancelled)
+                return callback(cancel_event)
+
         def run():
             with self._lock:
                 if cancelled():
@@ -201,7 +225,7 @@ class JobManager:
             try:
                 if raise_cancelled:
                     raise JobCancelled("Job cancelled before execution")
-                result = callback(cancelled)
+                result = wrapped()
                 if cancelled():
                     raise JobCancelled("Job cancelled")
                 with self._lock:
