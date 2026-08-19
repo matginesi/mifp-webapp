@@ -67,12 +67,14 @@
   wizard.addEventListener('change', (event) => {
     if (event.target.matches('input[name="operation"]')) render();
   });
+
   wizard.addEventListener('submit', async (event) => {
     if (operation() !== 'export' && operation() !== 'excel') return;
     event.preventDefault();
     if (!wizard.reportValidity()) return;
     submit.disabled = true;
     window.MIFPLog?.info('safety.export_started', { operation: operation() });
+
     try {
       const response = await fetch(wizard.action, {
         method: 'POST',
@@ -91,19 +93,30 @@
               ? 'Excel export ready for download.'
               : 'An unexpected error occurred.');
       }
-      const disposition = response.headers.get('Content-Disposition') || '';
-      const match = disposition.match(/filename="?([^";]+)"?/i);
-      const filename = match?.[1] || (operation() === 'excel' ? 'mifp-users.xlsx' : 'mifp-secure-export.zip');
-      const url = URL.createObjectURL(response.response);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      window.MIFPUI?.showToast(` ${operation()} export ready.', 'success');
-      window.MIFPLog?.info('safety.export_completed', { operation: operation(), filename: filename });
+
+      if (contentType.includes('application/zip') || contentType.includes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')) {
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^";]+)"?/i);
+        const filename = match?.[1] || (operation() === 'excel' ? 'mifp-users.xlsx' : 'mifp-secure-export.zip');
+        const url = URL.createObjectURL(response.response);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        window.MIFPUI?.showToast(` ${operation()} export ready.', 'success');
+        window.MIFPLog?.info('safety.export_completed', { operation: operation(), filename: filename });
+      } else {
+        const jobData = await response.json();
+        const jobId = jobData.job_id;
+        const statusUrl = jobData.status_url;
+        const downloadUrl = jobData.download_url;
+
+        showProgress();
+        pollExportStatus(jobId, statusUrl, downloadUrl);
+      }
     } catch (error) {
       window.MIFPUI?.showToast(error.message || 'The protected operation failed.', 'error');
       window.MIFPLog?.error('safety.export_failed', { error: error });
@@ -112,5 +125,106 @@
       window.MIFPUI?.clearFormLoading(wizard);
     }
   });
+
+  function showProgress() {
+    const container = document.querySelector('[data-safety-progress]');
+    if (!container) return;
+    container.innerHTML = `
+      <div class="safety-progress-bar">
+        <div class="safety-progress-percent">0%</div>
+      </div>
+      <div class="safety-progress-details">
+        <div class="safety-progress-phase">Collecting records…</div>
+        <div class="safety-progress-metrics">
+          <span class="safety-progress-metric">
+            <span class="safety-progress-label">Records</span>
+            <span class="safety-progress-value">0</span>
+          </span>
+          <span class="safety-progress-metric">
+            <span class="safety-progress-label">Assets</span>
+            <span class="safety-progress-value">0</span>
+          </span>
+          <span class="safety-progress-metric">
+            <span class="safety-progress-label">Errors</span>
+            <span class="safety-progress-value">0</span>
+          </span>
+        </div>
+      </div>
+    `;
+    container.hidden = false;
+  }
+
+  function hideProgress() {
+    const container = document.querySelector('[data-safety-progress]');
+    if (container) container.hidden = true;
+  }
+
+  function updateProgress(progress) {
+    const percentElement = document.querySelector('[data-safety-progress] .safety-progress-percent');
+    const phaseElement = document.querySelector('[data-safety-progress] .safety-progress-phase');
+    const recordsElement = document.querySelector('[data-safety-progress] .safety-progress-metric:first .safety-progress-value');
+    const assetsElement = document.querySelector('[data-safety-progress] .safety-progress-metric:last .safety-progress-value');
+    const errorsElement = document.querySelector('[data-safety-progress] .safety-progress-metric:last .safety-progress-value');
+    
+    if (percentElement) percentElement.textContent = \`${progress.percent}%\`;
+    if (phaseElement) phaseElement.textContent = progress.phase || 'Collecting records…';
+    if (recordsElement) recordsElement.textContent = progress.records || 0;
+    if (assetsElement) assetsElement.textContent = progress.assets || 0;
+    if (errorsElement) errorsElement.textContent = progress.errors || 0;
+  }
+
+  async function pollExportStatus(jobId, statusUrl, downloadUrl) {
+    const maxAttempts = 60;
+    const interval = 1000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const response = await fetch(statusUrl, {
+          credentials: 'same-origin',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        const data = await response.json();
+        
+        if (data.ok && data.status === 'completed') {
+          updateProgress({
+            percent: 100,
+            phase: 'Export completed',
+            records: data.records || 0,
+            assets: data.assets || 0,
+            errors: data.errors || 0,
+          });
+          setTimeout(() => {
+            window.location.href = downloadUrl;
+          }, 500);
+          return;
+        }
+
+        if (data.ok && data.status === 'failed') {
+          hideProgress();
+          window.MIFPUI?.showToast('Export failed: ' + (data.error || 'Unknown error'), 'error');
+          return;
+        }
+
+        if (data.ok && data.status === 'running') {
+          updateProgress({
+            percent: data.percent || 0,
+            phase: data.phase || 'Processing…',
+            records: data.records || 0,
+            assets: data.assets || 0,
+            errors: data.errors || 0,
+          });
+        }
+      } catch (error) {
+        window.MIFPUI?.showToast('Failed to check export status', 'error');
+        return;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, interval));
+    }
+
+    hideProgress();
+    window.MIFPUI?.showToast('Export timed out', 'warning');
+  }
+
   render();
 })();

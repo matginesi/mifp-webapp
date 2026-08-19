@@ -109,9 +109,10 @@
         <small>This additional phrase is required only for cleanup.</small>
       </label>
     </div>
-    <div class="control-note note-danger" data-cleanup-warning><i class="bi bi-exclamation-octagon"></i><div><b>Cleanup removes retained generated files</b><span>The database snapshot is created first. Deleted export and old automatic-backup files cannot be recovered from this server.</span></div></div>
+    <div class="control-note note-danger" data-cleanup-warning><i class="bi bi-exclamation-octagon"></i><div><b>Cleanup removes retained generated files</b><span>The database snapshot is created first. Deleted export and old automatic-backup files cannot be recovered from this server.</span></div>    </div>
     <div class="safety-actions"><button class="btn btn-outline" type="button" data-wizard-back><i class="bi bi-arrow-left"></i> Back to review</button><button class="btn btn-primary" type="submit" data-wizard-submit><i class="bi bi-shield-check"></i> Run protected operation</button></div>
   </section>
+  <div class="safety-progress-container" data-safety-progress hidden></div>
 </form>
 {% endblock %}
 {% block extra_js %}

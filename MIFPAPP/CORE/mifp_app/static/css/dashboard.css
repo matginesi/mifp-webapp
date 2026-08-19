@@ -3619,13 +3619,16 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .safety-review li b { color: var(--text-1); text-align: right; }
 .safety-auth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; max-width: 48rem; margin: 0 auto; }
 .safety-auth-grid .field { display: grid; gap: .3rem; }
+.safety-auth-grid .field input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .safety-auth-grid .field > span { color: var(--text-2); font-size: .62rem; font-weight: 800; }
 .safety-auth-grid .field small { color: var(--text-3); font-size: .55rem; }
 .safety-ack { display: flex; align-items: center; gap: .65rem; padding: .7rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .safety-ack input { width: 1rem; height: 1rem; accent-color: var(--accent); }
+.safety-ack input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .safety-ack b, .safety-ack small { display: block; }
 .safety-ack b { color: var(--text-1); font-size: .64rem; }
 .safety-ack small { margin-top: .12rem; color: var(--text-3); font-size: .54rem; }
+.safety-cleanup-confirm input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .safety-cleanup-confirm { grid-column: 1 / -1; }
 .safety-panel .control-note { max-width: 48rem; margin: .8rem auto 0; }
 @media (max-width: 780px) {
@@ -3634,6 +3637,19 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   .safety-operation-grid, .safety-auth-grid { grid-template-columns: 1fr; }
   .safety-cleanup-confirm { grid-column: auto; }
 }
+
+/* ───── safety operations progress totem ───── */
+.safety-progress-container { margin: 1.5rem auto; max-width: 50rem; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); padding: 1rem; }
+.safety-progress-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: .8rem; }
+.safety-progress-percent { font-weight: 700; font-size: .9rem; color: var(--accent); min-width: 3rem; }
+.safety-progress-percent::before { content: ''; display: inline-block; width: 100%; height: 1px; background: var(--border); margin-right: 1rem; }
+.safety-progress-details { display: flex; flex-direction: column; gap: .5rem; }
+.safety-progress-phase { font-weight: 600; font-size: .85rem; color: var(--text-1); }
+.safety-progress-metrics { display: flex; gap: 1rem; }
+.safety-progress-metric { display: flex; align-items: center; gap: .3rem; font-size: .75rem; color: var(--text-3); }
+.safety-progress-label { font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .02em; }
+.safety-progress-value { font-weight: 700; color: var(--text-1); font-family: monospace; }
+
 @media (max-width: 520px) {
   .safety-steps li { min-height: 2.8rem; }
   .safety-steps li div { display: none; }

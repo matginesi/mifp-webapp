@@ -508,7 +508,7 @@ def control_safety_operations_run():
 
             def build(path, progress) -> dict:
                 def report(message: str, pct: int) -> None:
-                    progress(pct, message)
+                    progress(pct, message, 0, 0, 0)
                 with operation_maintenance(
                     current_app.config["DATABASE_PATH"],
                     "protected portable export",
@@ -532,6 +532,57 @@ def control_safety_operations_run():
             audit_log(
                 "safety_operation.export_queued",
                 "protected portable export queued",
+                category="admin",
+                outcome="success",
+                job_id=job_id,
+                **identity,
+            )
+            result = jsonify({
+                "ok": True,
+                "job_id": job_id,
+                "status_url": url_for("dashboard.control_safety_operations_status", job_id=job_id),
+                "download_url": url_for("dashboard.control_safety_operations_download", token=token),
+            })
+            result.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            result.headers["Pragma"] = "no-cache"
+            return result
+
+        if operation == "excel":
+            export_owner = session.get("admin_username")
+            export_session_key = download_jobs.session_key()
+            app = current_app._get_current_object()
+
+            def build(path, progress) -> dict:
+                records = 0
+                def report(message: str, pct: int) -> None:
+                    progress(pct, message, records, 0, 0)
+                with operation_maintenance(
+                    current_app.config["DATABASE_PATH"],
+                    "protected Excel export",
+                    logger=current_app.logger,
+                ), connect(Path(current_app.config["DATABASE_PATH"])) as conn:
+                    from mifp_app.services.data_portability import export_users_excel
+                    try:
+                        excel_bytes = export_users_excel(conn)
+                        records = len(excel_bytes)  # Rough estimate
+                    except ImportError:
+                        excel_bytes = None
+                if excel_bytes is None:
+                    raise RuntimeError("openpyxl is not installed. Install with: pip install openpyxl")
+                path.write_bytes(excel_bytes)
+                return {
+                    "filename": f"mifp-users-{date.today().isoformat()}.xlsx",
+                    "mimetype": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "bytes": path.stat().st_size,
+                }
+
+            job_id, token = download_jobs.submit_download_job(
+                name="safety-excel", owner=export_owner,
+                session_key=export_session_key, build=build,
+            )
+            audit_log(
+                "safety_operation.excel_queued",
+                "protected Excel export queued",
                 category="admin",
                 outcome="success",
                 job_id=job_id,

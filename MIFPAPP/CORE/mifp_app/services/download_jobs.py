@@ -76,6 +76,9 @@ def get_download_job_status(job_id: str) -> dict[str, Any] | None:
             "status": state.get("status", "queued"),
             "percent": int(state.get("percent") or 0),
             "message": str(state.get("message") or ""),
+            "records": state.get("records"),
+            "assets": state.get("assets"),
+            "errors": state.get("errors"),
         }
 
 
@@ -102,8 +105,8 @@ def submit_download_job(
     temp_path = _cache_dir() / f"{_DL_CACHE_PREFIX}write-{job_id}.bin"
     _set_job(job_id, status="queued", percent=0, message="Waiting…")
 
-    def progress(pct: int, message: str) -> None:
-        _set_job(job_id, status="running", percent=pct, message=message)
+    def progress(pct: int, message: str, records: int | None = None, assets: int | None = None, errors: int | None = None) -> None:
+        _set_job(job_id, status="running", percent=pct, message=message, records=records, assets=assets, errors=errors)
 
     def run(cancel_event: Callable[[], bool]) -> None:
         with app.app_context():
