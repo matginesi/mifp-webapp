@@ -137,7 +137,9 @@ def test_ready_503_when_durable_dir_below_reserve(app, monkeypatch):
     assert resp.status_code == 503
     assert data["status"] == "error"
     assert data["storage"] == "low"
-    assert set(data["storage_free_bytes"]) == {"database", "assets", "exports", "logs"}
+    assert set(data["storage_free_bytes"]) == {
+        "database", "assets", "conferences", "config", "exports", "logs", "temporary"
+    }
 
 
 def test_health_payload_does_not_expose_absolute_paths(app):

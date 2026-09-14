@@ -679,8 +679,6 @@ class TestDecisionAcceptIgnore:
         return conn
 
     def _seed_finding(self, conn, action_type="clean_record", entity_type="member", classification="needs_cleaning"):
-        conn.execute("ALTER TABLE quality_runs ADD COLUMN progress_pct INTEGER DEFAULT 0")
-        conn.execute("ALTER TABLE quality_runs ADD COLUMN progress_message TEXT DEFAULT ''")
         run_id = conn.execute(
             "INSERT INTO quality_runs(status, fingerprint, progress_pct, progress_message) VALUES('completed','fp1',100,'done')"
         ).lastrowid
@@ -728,8 +726,6 @@ class TestBulkDecision:
         conn.row_factory = sqlite3.Row
         schema = Path(__file__).resolve().parents[2] / "MIFPAPP" / "CORE" / "mifp_app" / "db" / "schema.sql"
         conn.executescript(schema.read_text(encoding="utf-8"))
-        conn.execute("ALTER TABLE quality_runs ADD COLUMN progress_pct INTEGER DEFAULT 0")
-        conn.execute("ALTER TABLE quality_runs ADD COLUMN progress_message TEXT DEFAULT ''")
         return conn
 
     def _seed(self, conn, extra_findings=0):
@@ -823,8 +819,6 @@ class TestMergeDetectionAndApplication:
         conn.row_factory = sqlite3.Row
         schema = Path(__file__).resolve().parents[2] / "MIFPAPP" / "CORE" / "mifp_app" / "db" / "schema.sql"
         conn.executescript(schema.read_text(encoding="utf-8"))
-        conn.execute("ALTER TABLE quality_runs ADD COLUMN progress_pct INTEGER DEFAULT 0")
-        conn.execute("ALTER TABLE quality_runs ADD COLUMN progress_message TEXT DEFAULT ''")
         return conn
 
     def _run_analyze(self, conn):
@@ -970,8 +964,6 @@ class TestMergeDetectionAndApplication:
             source_db.row_factory = sqlite3.Row
             schema = Path(__file__).resolve().parents[2] / "MIFPAPP" / "CORE" / "mifp_app" / "db" / "schema.sql"
             source_db.executescript(schema.read_text(encoding="utf-8"))
-            source_db.execute("ALTER TABLE quality_runs ADD COLUMN progress_pct INTEGER DEFAULT 0")
-            source_db.execute("ALTER TABLE quality_runs ADD COLUMN progress_message TEXT DEFAULT ''")
             # Copy data
             for table in ("members", "entity_links", "quality_runs", "quality_findings",
                           "quality_bundles", "quality_bundle_items", "resolved_pairs"):

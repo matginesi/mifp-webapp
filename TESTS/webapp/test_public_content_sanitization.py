@@ -78,11 +78,11 @@ def test_list_public_research_sanitizes_description_and_summary():
 
 def test_home_page_strips_script_from_sponsor_modal(app, tmp_path):
     from mifp_app.db.connection import connect
-    from mifp_app.db.migrations import migrate_content_schema
+    from mifp_app.db.manage import init_database
 
     db_path = tmp_path / "sanitized-home.db"
+    init_database(db_path)
     with connect(db_path) as conn:
-        migrate_content_schema(conn)
         conn.execute("ALTER TABLE sponsors ADD COLUMN body TEXT")
         conn.execute(
             "INSERT INTO sponsors(id, slug, name, body, is_active) VALUES (1, 'acme', 'Acme', ?, 1)",

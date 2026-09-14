@@ -188,7 +188,7 @@ def test_repository_keeps_one_readme_and_no_orphan_database_tools():
     ]
     assert readmes == [ROOT / "README.md"]
 
-    assert not (ROOT / "tools").exists()
+    assert sorted(path.name for path in (ROOT / "tools").iterdir()) == ["check_repo_hygiene.py"]
 
     root_readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "Non eseguire script Python ad hoc contro il database" in root_readme

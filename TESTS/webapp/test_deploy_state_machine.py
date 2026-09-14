@@ -41,6 +41,11 @@ ln -sfn "$stamp" "$root/snapshots/latest"
     state = tmp_path / "docker-state"
     state.mkdir()
     _write_executable(bin_dir / "id", "#!/bin/sh\n[ \"$1\" = -u ] && echo 0 || /usr/bin/id \"$@\"\n")
+    _write_executable(bin_dir / "chown", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        bin_dir / "install",
+        "#!/bin/bash\nmode=0755; directory=0; targets=()\nwhile (($#)); do case \"$1\" in -m) mode=$2; shift 2;; -o|-g) shift 2;; -d) directory=1; shift;; *) targets+=(\"$1\"); shift;; esac; done\nif ((directory)); then for target in \"${targets[@]}\"; do mkdir -p \"$target\"; chmod \"$mode\" \"$target\"; done; else cp \"${targets[-2]}\" \"${targets[-1]}\"; chmod \"$mode\" \"${targets[-1]}\"; fi\n",
+    )
     _write_executable(bin_dir / "systemctl", "#!/bin/sh\nexit 0\n")
     _write_executable(bin_dir / "caddy", "#!/bin/sh\nexit 0\n")
     _write_executable(bin_dir / "curl", "#!/bin/sh\nexit 0\n")

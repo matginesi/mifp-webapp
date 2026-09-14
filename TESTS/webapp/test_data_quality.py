@@ -8,7 +8,6 @@ import pytest
 
 import mifp_app.services.data_quality.executor as quality_executor
 from mifp_app.db.connection import connect
-from mifp_app.db.migrations import migrate_content_schema
 from mifp_app.services.data_quality import (
     add_to_bundle,
     analyze,
@@ -65,9 +64,10 @@ def test_blocked_finding_that_requires_review_is_manual_workflow():
 
 @pytest.fixture
 def database(tmp_path: Path) -> Path:
+    from mifp_app.db.manage import init_database
+
     path = tmp_path / "quality.db"
-    with connect(path) as conn:
-        migrate_content_schema(conn)
+    init_database(path)
     return path
 
 

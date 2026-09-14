@@ -29,7 +29,6 @@ def app(tmp_path: Path):
     })
     from mifp_app import create_app
     from mifp_app.db.connection import connect
-    from mifp_app.db.migrations import migrate_content_schema
 
     app = create_app()
     app.config.update(
@@ -45,8 +44,9 @@ def app(tmp_path: Path):
     )
     for key in ("ASSETS_DIR", "EXPORT_DIR", "LOG_DIR"):
         Path(app.config[key]).mkdir(parents=True, exist_ok=True)
-    with connect(app.config["DATABASE_PATH"]) as conn:
-        migrate_content_schema(conn)
+    from mifp_app.db.manage import init_database
+
+    init_database(Path(app.config["DATABASE_PATH"]))
     return app
 
 
@@ -281,6 +281,10 @@ def test_restore_is_atomic_and_removes_stale_wal_shm(tmp_path):
     db_path = tmp_path / "live.db"
 
     def build(state: str) -> None:
+        if not db_path.exists():
+            from mifp_app.db.manage import init_database
+
+            init_database(db_path)
         conn = app_connect(db_path)
         try:
             migrate_content_schema(conn)

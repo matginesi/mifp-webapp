@@ -122,7 +122,10 @@ def restore_sqlite_database(
             temporary_name = temporary.name
 
         incoming_path = Path(temporary_name)
-        _finalize_staging(incoming_path)
+        try:
+            _finalize_staging(incoming_path)
+        except sqlite3.Error as exc:
+            raise DatabaseRestoreError("The uploaded file is not a valid SQLite database.") from exc
         counts = _verify_database(incoming_path)
         backup_path = backup_sqlite_database(
             db_path, label="before-restore", _maintenance_guard=False

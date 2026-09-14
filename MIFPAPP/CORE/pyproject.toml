@@ -13,7 +13,7 @@ dependencies = [
     "pyyaml>=6.0.3,<7",
     "markdown>=3.10.2,<4",
     "bleach>=6.3.0,<7",
-    "weasyprint>=68.1,<70",
+    "weasyprint>=70.0,<71",
 ]
 
 [project.scripts]

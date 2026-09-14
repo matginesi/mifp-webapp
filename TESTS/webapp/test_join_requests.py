@@ -38,11 +38,9 @@ def app(tmp_path: Path):
     )
     for key in ("ASSETS_DIR", "EXPORT_DIR", "LOG_DIR"):
         Path(app.config[key]).mkdir(parents=True, exist_ok=True)
-    from mifp_app.db.connection import connect
-    from mifp_app.db.migrations import migrate_content_schema
+    from mifp_app.db.manage import init_database
 
-    with connect(app.config["DATABASE_PATH"]) as conn:
-        migrate_content_schema(conn)
+    init_database(Path(app.config["DATABASE_PATH"]))
     yield app
 
 

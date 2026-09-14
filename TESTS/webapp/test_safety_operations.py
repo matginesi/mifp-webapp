@@ -23,8 +23,6 @@ def app(tmp_path: Path):
         "STORAGE_MIN_FREE_MB": "0",
     })
     from mifp_app import create_app
-    from mifp_app.db.connection import connect
-    from mifp_app.db.migrations import migrate_content_schema
 
     app = create_app()
     app.config.update(
@@ -43,8 +41,9 @@ def app(tmp_path: Path):
     )
     for key in ("ASSETS_DIR", "EXPORT_DIR", "LOG_DIR"):
         Path(app.config[key]).mkdir(parents=True, exist_ok=True)
-    with connect(app.config["DATABASE_PATH"]) as conn:
-        migrate_content_schema(conn)
+    from mifp_app.db.manage import init_database
+
+    init_database(Path(app.config["DATABASE_PATH"]))
     return app
 
 

@@ -79,4 +79,6 @@ def test_ready_returns_503_before_persistent_storage_is_exhausted(client, monkey
     assert resp.status_code == 503
     assert data["database"] == "ok"
     assert data["storage"] == "low"
-    assert set(data["storage_free_bytes"]) == {"database", "assets", "exports", "logs"}
+    assert set(data["storage_free_bytes"]) == {
+        "database", "assets", "conferences", "config", "exports", "logs", "temporary"
+    }

@@ -40,6 +40,12 @@ for pkg in ("MIFPAPP/CORE", "SCRAPERS", "MIFPAPP/DATABASE/tools"):
 # first arbitrary fixture to decide its paths makes later tests share that
 # fixture's database and rate-limit store.
 from mifp_app.config import Config as _TEST_CONFIG  # noqa: E402
+from mifp_app.db.manage import init_database  # noqa: E402
+
+# Runtime connections are intentionally forbidden from creating SQLite files.
+# Tests therefore provision their process-wide fallback through the same
+# explicit lifecycle used by local/production setup before any app is built.
+init_database(_TEST_CONFIG.DATABASE_PATH)
 
 
 @pytest.fixture(autouse=True)

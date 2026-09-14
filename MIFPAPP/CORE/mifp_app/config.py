@@ -78,6 +78,10 @@ def _path_from_config(name: str, env_name: str | None = None, default: str | Non
         raise RuntimeError(f"Missing required config value: {name}")
     path = Path(value)
     if not path.is_absolute():
+        # Accept paths copied from the repository root without resolving them
+        # as CORE/CORE/... when this module already lives inside CORE.
+        if path.parts and path.parts[0].casefold() == BASE_DIR.name.casefold():
+            path = Path(*path.parts[1:])
         path = BASE_DIR / path
     return path.resolve()
 

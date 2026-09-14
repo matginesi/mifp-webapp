@@ -7,14 +7,19 @@ import pytest
 def app_with_admin(tmp_path):
     import os
     from werkzeug.security import generate_password_hash
+    db_path = tmp_path / "test.db"
     os.environ["TESTING"] = "1"
-    os.environ["DATABASE_PATH"] = str(tmp_path / "test.db")
+    os.environ["DATABASE_PATH"] = str(db_path)
     os.environ["LOG_DIR"] = str(tmp_path / "logs")
     os.environ["SECRET_KEY"] = "test-secret-key-not-for-prod"
     os.environ["LOG_ACCESS_ENABLED"] = "0"
     from mifp_app import create_app
+    from mifp_app.db.manage import init_database
+
     app = create_app()
+    init_database(db_path)
     app.config["TESTING"] = True
+    app.config["DATABASE_PATH"] = db_path
     app.config["WTF_CSRF_ENABLED"] = False
     app.config["ADMIN_USERNAME"] = "admin"
     app.config["ADMIN_PASSWORD_HASH"] = generate_password_hash("test-pass")

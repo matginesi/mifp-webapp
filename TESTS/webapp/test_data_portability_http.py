@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
@@ -275,7 +276,14 @@ class TestDataPortabilityHTTP:
         def package() -> io.BytesIO:
             payload = io.BytesIO()
             with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED) as archive:
-                archive.writestr("manifest.json", json.dumps({"scope": "all", "records": 0, "files": []}))
+                archive.writestr("manifest.json", json.dumps({
+                    "format": "mifp-content",
+                    "format_version": 1,
+                    "scope": "all",
+                    "records": 0,
+                    "records_sha256": hashlib.sha256(b"").hexdigest(),
+                    "files": [],
+                }))
                 archive.writestr("records.jsonl", "")
             payload.seek(0)
             return payload
