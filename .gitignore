@@ -16,6 +16,7 @@ credentials.*.json
 .htpasswd
 
 # Public deployment templates must remain versioned despite the rules above.
+!MIFPAPP/CORE/.env.example
 !deploy/.env.production.example
 
 # Generated scraper/import data. SCRAPERS/ itself is source code.
@@ -112,4 +113,3 @@ MIFPAPP/DATABASE/exports/
 MIFPAPP/DATABASE/logs/
 MIFPAPP/DATABASE/tmp/
 MIFPAPP/DATABASE/uploads/
-
