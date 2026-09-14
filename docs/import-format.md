@@ -81,7 +81,7 @@ In entrambi i package moderni `records.jsonl` è protetto da SHA-256 nel manifes
 
 L'export JSONL della dashboard è volutamente **record-only**: una riga JSON per record canonico, senza stato dell'installazione e senza asset binari in Base64. È il formato da usare per ispezione, pipeline e versionamento dei dati, non per un ripristino completo.
 
-La sola compatibilità storica mantenuta è per i vecchi ZIP: package `mifp-export` e ZIP scraper privi di identificatore di formato. I vecchi JSONL self-contained `_mifp` sono intenzionalmente rifiutati. I nuovi scraper emettono `mifp-content` v1 e i nuovi export ZIP della dashboard emettono `mifp-jsonl-v2` v2.
+Non è mantenuta compatibilità con i vecchi ZIP `mifp-export`, con ZIP privi di `format`/`format_version` o con i vecchi JSONL self-contained `_mifp`: sono tutti rifiutati. Gli scraper emettono `mifp-content` v1 e gli export ZIP della dashboard emettono `mifp-jsonl-v2` v2.
 
 ## Validazione
 

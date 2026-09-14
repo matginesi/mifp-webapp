@@ -49,7 +49,8 @@ Non copiare manualmente un DB sopra quello live. `restore-db` e
 `restore-snapshot` falliscono prima dello swap se il servizio non può essere
 fermato; il restore completo valida automaticamente `manifest.json` e crea una
 nuova snapshot di sicurezza prima di modificare DB o file. Per dati storici con
-schema vecchio crea un DB corrente e importa un vecchio ZIP.
+schema vecchio crea un DB corrente e rigenera/converti i contenuti in un package
+moderno `mifp-content` v1 o `mifp-jsonl-v2` v2 prima dell’import.
 
 ## Copia off-site opzionale
 

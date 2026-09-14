@@ -55,8 +55,8 @@ definisce gli invarianti che un DB deve rispettare per essere avviato.
 ```
 
 Non esistono migration implicite all'avvio. I vecchi DB non vengono riparati
-automaticamente: i dati storici entrano in un DB corrente tramite i vecchi ZIP,
-che restano l'unica compatibilità legacy intenzionale.
+automaticamente: i dati entrano nel DB corrente solo tramite package versionati
+`mifp-content` v1 o `mifp-jsonl-v2` v2; i vecchi ZIP non versionati sono rifiutati.
 
 JSONL è record-only. ZIP è il formato portabile per record/asset e, negli
 export completi della dashboard, stato durevole.
@@ -85,6 +85,21 @@ sudo mifpctl rollback
 ```
 
 Dettagli: [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## Repository hygiene
+
+Il repository contiene **codice e configurazione pubblica**, non i dati dell'istanza.
+Database SQLite, `SCRAPERS/OUTPUTS`, export, backup, upload, log e le directory
+runtime sotto `MIFPAPP/DATABASE/` restano fuori da Git. La CI esegue:
+
+```bash
+python3 tools/check_repo_hygiene.py
+```
+
+e fallisce se trova file runtime/generati tracciati, dump JSONL/NDJSON, archivi,
+secret-like files o singoli file sorgente oltre 5 MiB. `.gitignore` impedisce nuovi
+inserimenti; se dati di questo tipo sono già presenti nella **storia** Git, vanno
+rimossi separatamente con una riscrittura controllata della history.
 
 ## Test
 

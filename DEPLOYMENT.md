@@ -56,15 +56,17 @@ HTTPS, backup automatico, `SECRET_KEY` e amministratore. La password admin viene
 chiesta due volte, deve avere almeno **10 caratteri** e viene salvato solo
 l'hash. `/opt/mifp/.env` è `root:root` con permessi `0600`.
 
-Dopo che GitHub Actions ha pubblicato una release:
+La CI esegue in parallelo test e audit delle dipendenze; la build/publish GHCR
+parte solo se entrambi sono verdi. Dopo che GitHub Actions ha pubblicato una release:
 
 ```bash
 sudo mifpctl first-deploy sha-<commit>
 ```
 
 `first-deploy` crea un DB **schema-only v9**, lo verifica e avvia la webapp.
-Apri quindi la dashboard e importa lo ZIP prodotto dagli scraper. Anche i vecchi
-ZIP MIFP restano importabili; i vecchi JSONL self-contained non sono supportati.
+Apri quindi la dashboard e importa lo ZIP prodotto dagli scraper. Sono accettati
+solo package moderni esplicitamente versionati (`mifp-content` v1 oppure
+`mifp-jsonl-v2` v2); vecchi ZIP e vecchi JSONL self-contained sono rifiutati.
 
 ## Tre cicli separati
 
@@ -118,7 +120,8 @@ ferma il servizio solo per lo swap e ripristina DB+release precedenti se la
 nuova coppia non torna ready.
 
 I DB storici non vengono più "riparati" automaticamente: per dati precedenti a
-v9 crea un DB corrente e importa il vecchio ZIP.
+v9 crea un DB corrente e rigenera/converti i contenuti in un package moderno
+`mifp-content` v1 o `mifp-jsonl-v2` v2 prima dell’import.
 
 ## Rollback
 

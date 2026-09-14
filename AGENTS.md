@@ -79,7 +79,7 @@ MIFPAPP/DATABASE/mifp.db + assets
         ↓ configured read/write access (local/dashboard)
 MIFPAPP/CORE dashboard + webapp
         ↓ GitHub Actions
-GHCR image + prebuilt data -> VPS (deploy/) -> Caddy -> https
+GHCR immutable image -> VPS (deploy/) + persistent VPS data -> Caddy -> https
 ```
 
 Do not reintroduce `NEW_SCRAPER/`, `IMPORT_DATA/`, `NEW_IMPORT_DATA/`, a data
@@ -93,3 +93,10 @@ directory inside CORE, or database writes inside the scraper pipeline.
   `doctor`.
 - There is no production start mode in the launcher: production deployment is
   exclusively CI/CD + `deploy/deploy.sh` on the VPS.
+
+## Repository hygiene
+
+- Never commit scraper outputs, SQLite databases, exports, backups, uploads, logs, runtime configuration/state, or generated archives.
+- `SCRAPERS/OUTPUTS/` and the runtime subdirectories of `MIFPAPP/DATABASE/` are data, not source.
+- Run `python3 tools/check_repo_hygiene.py` before committing repository-structure changes; CI runs the same fail-closed check.
+- Do not weaken the hygiene checker to accommodate generated data. Move the data outside Git or clean the Git history instead.

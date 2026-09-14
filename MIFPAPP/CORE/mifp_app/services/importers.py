@@ -268,7 +268,7 @@ def _reject_retired_jsonl_envelope(record: dict[str, Any], *, line_no: int | Non
     where = f"Line {line_no}: " if line_no is not None else ""
     raise ImportValidationError(
         where + "retired self-contained MIFP JSONL packages are not supported; "
-        "import the old ZIP package instead"
+        "use a current mifp-content or mifp-jsonl-v2 ZIP package instead"
     )
 
 

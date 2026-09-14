@@ -80,9 +80,9 @@ def restore_sqlite_database(
 ) -> dict:
     """Validate and atomically restore a *current-schema* MIFP SQLite snapshot.
 
-    Historical database migration is deliberately not part of restore. Old data
-    is imported through the backward-compatible portable ZIP path into a fresh
-    current database.
+    Historical database migration is deliberately not part of restore. Restore
+    accepts only current-schema snapshots; content migration must use a current
+    versioned mifp-content or mifp-jsonl-v2 package.
     """
     db_path = Path(db_path)
     if payload is None:

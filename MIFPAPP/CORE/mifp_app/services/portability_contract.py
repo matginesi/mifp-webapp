@@ -61,14 +61,12 @@ ZIP_RECORDS_NAME = "records.jsonl"
 ZIP_MANIFEST_NAME = "manifest.json"
 ZIP_STATE_NAME = "state.json"
 ZIP_MAX_COMPRESSION_RATIO = 1000
-PORTABLE_FORMAT = "mifp-export"  # accepted for backward-compatible imports only
 PORTABLE_FORMAT_VERSION = 2
 CANONICAL_FORMAT = "mifp-jsonl-v2"
 # Content-only ZIP produced by the local scraper pipeline. It carries canonical
 # records and optional asset files, but never installation-owned durable state.
 CONTENT_FORMAT = "mifp-content"
 CONTENT_FORMAT_VERSION = 1
-SUPPORTED_FORMAT_VERSIONS = {CONTENT_FORMAT_VERSION, PORTABLE_FORMAT_VERSION}
 QUALITY_FINGERPRINT_ACTIONS = {
     "", "aggregated_event", "clean_record", "date_placeholder", "invalid_record",
     "inverted_date_range", "junk_record", "merge_records", "missing_asset_file",

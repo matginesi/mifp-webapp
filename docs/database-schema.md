@@ -13,8 +13,8 @@ SQLite è la fonte di verità runtime. Lo schema corrente è **v9**.
 1. Un DB nuovo deve essere equivalente a un DB portato alla versione corrente.
 2. Il runtime non crea e non migra schema.
 3. Un DB incompleto non viene autoriparato: viene rifiutato.
-4. La compatibilità storica dei dati passa dai vecchi ZIP importabili, non da
-   vecchi layout SQLite o vecchi JSONL.
+4. La migrazione dei dati passa solo da package ZIP moderni e versionati; vecchi
+   layout SQLite, vecchi ZIP e vecchi JSONL non sono supportati.
 5. Upgrade schema: sempre su una copia, validazione, poi swap esplicito.
 6. Import contenuti: transazionale e additivo; nessuna cancellazione implicita.
 7. Backup fisico e export dati sono concetti diversi.
@@ -106,5 +106,6 @@ portable ZIP       dashboard -> dashboard; record + asset + stato durevole
 host backup        DB SQLite + assets/conferences/config per disaster recovery
 ```
 
-Sono ancora accettati vecchi ZIP `mifp-export` e ZIP scraper senza identificatore
-di formato. I vecchi JSONL `_mifp` sono rifiutati intenzionalmente.
+Sono accettati soltanto package ZIP esplicitamente versionati: `mifp-content` v1
+o `mifp-jsonl-v2` v2. Vecchi ZIP `mifp-export`, ZIP senza identificatore di
+formato e JSONL `_mifp` sono rifiutati intenzionalmente.

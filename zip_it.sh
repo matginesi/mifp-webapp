@@ -94,6 +94,7 @@ EXCLUDED_PATH_PREFIXES = {
     "MIFPAPP/DATABASE/exports",
     "MIFPAPP/DATABASE/logs",
     "MIFPAPP/DATABASE/tmp",
+    "MIFPAPP/DATABASE/uploads",
     "SCRAPERS/OUTPUTS",
     "MIFPAPP/CORE/secrets",
 }
@@ -112,6 +113,7 @@ KEEP_GENERATED_PLACEHOLDERS = {
     "MIFPAPP/DATABASE/conferences/.gitkeep",
     "MIFPAPP/DATABASE/exports/.gitkeep",
     "MIFPAPP/DATABASE/logs/.gitkeep",
+    "MIFPAPP/DATABASE/uploads/.gitkeep",
     "SCRAPERS/OUTPUTS/.gitkeep",
 }
 

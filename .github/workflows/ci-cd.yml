@@ -9,17 +9,29 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Default workflow token is read-only. The publish job opts into packages:write.
+# Default workflow token is read-only. Only the GHCR publish job opts into
+# packages:write.
 permissions:
   contents: read
 
 jobs:
+  hygiene:
+    name: Reject runtime/generated repository data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Check tracked source hygiene
+        run: python tools/check_repo_hygiene.py
+
   test:
     name: Test runtime + data pipeline
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install tested dependencies
@@ -27,29 +39,40 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r MIFPAPP/CORE/requirements.lock
           python -m pip install -r SCRAPERS/requirements.txt -r MIFPAPP/DATABASE/requirements.txt pytest
-      - name: Audit Python dependencies
-        run: |
-          python -m pip install pip-audit
-          python -m pip_audit -r MIFPAPP/CORE/requirements.lock
-          python -m pip_audit -r SCRAPERS/requirements.txt
-          python -m pip_audit -r MIFPAPP/DATABASE/requirements.txt
       - name: Run non-browser repository tests
         env:
           MIFP_TEST_AUTO_INSTALL: "0"
         run: bash test_all.sh --suite quick
 
+  audit:
+    name: Audit Python dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install pinned audit tool
+        run: python -m pip install --disable-pip-version-check "pip-audit==2.10.1"
+      - name: Audit runtime dependencies
+        run: python -m pip_audit -r MIFPAPP/CORE/requirements.lock
+      - name: Audit scraper dependencies
+        run: python -m pip_audit -r SCRAPERS/requirements.txt
+      - name: Audit database pipeline dependencies
+        run: python -m pip_audit -r MIFPAPP/DATABASE/requirements.txt
+
   build-pr:
     name: Verify production Docker image
-    needs: test
+    needs: [hygiene, test, audit]
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Build without publishing
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: MIFPAPP/CORE
           push: false
@@ -58,22 +81,22 @@ jobs:
 
   build:
     name: Build and publish GHCR image
-    needs: test
+    needs: [hygiene, test, audit]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: MIFPAPP/CORE
           push: true

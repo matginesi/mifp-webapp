@@ -599,9 +599,14 @@ def test_import_keeps_valid_record_when_packaged_asset_is_invalid(tmp_path: Path
 
 
 def _raw_zip(*, manifest_files: list[dict] | None = None, files: dict[str, bytes] | None = None) -> bytes:
+    empty_records = b""
     manifest = {
+        "format": "mifp-content",
+        "format_version": 1,
         "scope": "news",
         "records": 0,
+        "records_sha256": hashlib.sha256(empty_records).hexdigest(),
+        "counts": {},
         "files": manifest_files or [],
     }
     out = BytesIO()
@@ -1055,8 +1060,16 @@ def test_parse_zip_rejects_oversized_records_member(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(Config, "IMPORT_MAX_JSONL_BYTES", 4)
     out = BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("records.jsonl", "12345")
-        zf.writestr("manifest.json", json.dumps({"scope": "news", "records": 0, "files": []}))
+        records = b"12345"
+        zf.writestr("records.jsonl", records)
+        zf.writestr("manifest.json", json.dumps({
+            "format": "mifp-content",
+            "format_version": 1,
+            "scope": "news",
+            "records": 0,
+            "records_sha256": hashlib.sha256(records).hexdigest(),
+            "files": [],
+        }))
 
     with pytest.raises(ValueError, match="records.jsonl exceeds maximum size"):
         parse_zip_payload(out.getvalue())
@@ -1337,12 +1350,12 @@ def test_retired_self_contained_jsonl_is_rejected(tmp_path: Path) -> None:
     )
 
     target = _conn()
-    with pytest.raises(ImportValidationError, match="old ZIP package"):
+    with pytest.raises(ImportValidationError, match="current mifp-content or mifp-jsonl-v2 ZIP package"):
         import_jsonl_payload(target, package, "news", tmp_path / "assets")
     assert target.execute("SELECT COUNT(*) FROM news").fetchone()[0] == 0
 
 
-def test_old_zip_without_format_remains_importable(tmp_path: Path) -> None:
+def test_old_zip_without_format_is_rejected(tmp_path: Path) -> None:
     from mifp_app.services.data_portability import import_zip_payload
 
     record = {"type": "news", "data": {"title": "Old ZIP", "slug": "old-zip"}}
@@ -1360,9 +1373,9 @@ def test_old_zip_without_format_remains_importable(tmp_path: Path) -> None:
         zf.writestr("manifest.json", json.dumps(manifest))
 
     target = _conn()
-    summary = import_zip_payload(target, out.getvalue(), "news", tmp_path / "assets")
-    assert summary["errors"] == []
-    assert target.execute("SELECT title FROM news WHERE slug='old-zip'").fetchone()[0] == "Old ZIP"
+    with pytest.raises(ValueError, match="Unsupported or missing package format"):
+        import_zip_payload(target, out.getvalue(), "news", tmp_path / "assets")
+    assert target.execute("SELECT COUNT(*) FROM news").fetchone()[0] == 0
 
 
 def test_zip_import_commit_false_rolls_back_records_and_durable_state(tmp_path: Path) -> None:

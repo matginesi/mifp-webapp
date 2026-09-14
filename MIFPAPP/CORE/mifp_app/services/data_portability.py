@@ -27,11 +27,9 @@ from .portability_contract import (
     CONTENT_FORMAT,
     CONTENT_FORMAT_VERSION,
     EXPORT_SCOPES,
-    PORTABLE_FORMAT,
     PORTABLE_FORMAT_VERSION,
     PORTABLE_TYPES,
     QUALITY_FINGERPRINT_ACTIONS,
-    SUPPORTED_FORMAT_VERSIONS,
     ZIP_MANIFEST_NAME,
     ZIP_MAX_COMPRESSION_RATIO,
     ZIP_RECORDS_NAME,
@@ -264,7 +262,7 @@ def import_jsonl_payload(
     """Import canonical record-only JSONL.
 
     Historical self-contained JSONL envelopes are intentionally no longer
-    supported. Backward compatibility is kept only for ZIP content packages.
+    supported. Import accepts only the current explicit package contracts.
     """
     del skip_assets  # JSONL never transports binary files.
     path = Path(raw)
@@ -309,7 +307,7 @@ def parse_zip_payload(raw: bytes | Path) -> dict[str, Any]:
         if ZIP_RECORDS_NAME not in names:
             raise ValueError(f"ZIP package is missing {ZIP_RECORDS_NAME}")
         manifest = _read_manifest(zf)
-        format_version = int(manifest.get("format_version") or 1)
+        format_version = int(manifest["format_version"])
         if format_version >= 2 and manifest.get("scope") == "all" and ZIP_STATE_NAME not in names:
             raise ValueError(f"ZIP package is missing {ZIP_STATE_NAME}")
         manifest_files = _manifest_asset_paths(manifest)
@@ -1197,11 +1195,12 @@ def _validate_manifest_object(manifest: Any) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         raise ValueError("package manifest must contain an object")
     package_format = manifest.get("format")
-    if package_format not in (None, PORTABLE_FORMAT, CANONICAL_FORMAT, CONTENT_FORMAT):
-        raise ValueError(f"Unsupported export format: {package_format!r}")
+    if package_format not in {CANONICAL_FORMAT, CONTENT_FORMAT}:
+        raise ValueError(
+            f"Unsupported or missing package format: {package_format!r}; "
+            f"expected {CONTENT_FORMAT!r} or {CANONICAL_FORMAT!r}"
+        )
     format_version = manifest.get("format_version")
-    if format_version is not None and format_version not in SUPPORTED_FORMAT_VERSIONS:
-        raise ValueError(f"Unsupported export format version: {format_version!r}")
     if package_format == CANONICAL_FORMAT and format_version != PORTABLE_FORMAT_VERSION:
         raise ValueError(
             f"{CANONICAL_FORMAT} packages must declare format_version={PORTABLE_FORMAT_VERSION}"
@@ -1332,8 +1331,8 @@ def _manifest_asset_paths(manifest: dict[str, Any]) -> set[str]:
         elif canonical_package:
             raise ValueError(f"manifest.files[{idx}].path is required")
         else:
-            # Older portable bundles only carried archive_path. Import them,
-            # but all newly generated v2 bundles must declare the DB path.
+            # Content packages produced by the scraper pipeline may carry only
+            # archive_path; canonical v2 dashboard exports always declare path.
             db_path = archive_path[len("assets/"):]
         expected_archive_path = db_path if db_path.startswith("assets/") else f"assets/{db_path}"
         if archive_path != expected_archive_path:

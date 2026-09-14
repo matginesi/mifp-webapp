@@ -18,8 +18,8 @@ credentials.*.json
 # Public deployment templates must remain versioned despite the rules above.
 !deploy/.env.production.example
 
-# Legacy/local import trees
-# SCRAPERS/ is source code and must remain versioned.
+# Generated scraper/import data. SCRAPERS/ itself is source code.
+SCRAPERS/OUTPUTS/
 SCRAPER/
 scrapers_/
 IMPORT_DATA/
@@ -102,12 +102,14 @@ Thumbs.db
 .agents/
 .superpowers/*
 
-*/DATABASE/assets/*
-*/DATABASE/exports/*
-*/DATABASE/backups/*
-*/DATABASE/logs/*
-*/DATABASE/uploads/*
-*/DATABASE/conferences/*
-*/DATABASE/config/*
-*/DATABASE/tmp/*
+# MIFP runtime state: code under MIFPAPP/DATABASE/tools stays versioned,
+# concrete application data never does.
+MIFPAPP/DATABASE/assets/
+MIFPAPP/DATABASE/backups/
+MIFPAPP/DATABASE/config/
+MIFPAPP/DATABASE/conferences/
+MIFPAPP/DATABASE/exports/
+MIFPAPP/DATABASE/logs/
+MIFPAPP/DATABASE/tmp/
+MIFPAPP/DATABASE/uploads/
 

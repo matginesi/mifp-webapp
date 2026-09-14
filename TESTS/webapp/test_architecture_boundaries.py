@@ -120,7 +120,7 @@ def test_tracked_log_files_are_removed_from_index() -> None:
     # makes the test fail simply because logging works.
     gitignore = _read(".gitignore")
     assert "*.log" in gitignore
-    assert "*/DATABASE/logs/*" in gitignore
+    assert "MIFPAPP/DATABASE/logs/" in gitignore
 
     # Source ZIPs intentionally do not ship .git metadata.  In a real checkout
     # additionally verify that Git tracks at most the placeholder file.
@@ -196,3 +196,45 @@ def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     assert '[[ -f "$MIFP_HOME/data/mifp.db"' in script
     assert "systemctl disable --now mifp-backup.timer" in script
     assert "--admin-if-missing" in script
+
+
+def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
+    root = _repo_root()
+    gitignore = _read(".gitignore")
+    workflow = _read(".github", "workflows", "ci-cd.yml")
+    packager = _read("zip_it.sh")
+    checker = root / "tools" / "check_repo_hygiene.py"
+
+    assert checker.is_file()
+    assert "SCRAPERS/OUTPUTS/" in gitignore
+    for relative in (
+        "assets",
+        "backups",
+        "config",
+        "conferences",
+        "exports",
+        "logs",
+        "tmp",
+        "uploads",
+    ):
+        assert f"MIFPAPP/DATABASE/{relative}/" in gitignore
+
+    assert "hygiene:" in workflow
+    assert "python tools/check_repo_hygiene.py" in workflow
+    assert workflow.count("needs: [hygiene, test, audit]") == 2
+
+    assert '"SCRAPERS/OUTPUTS"' in packager
+    assert '"MIFPAPP/DATABASE/uploads"' in packager
+
+
+def test_repository_hygiene_checker_accepts_the_source_tree() -> None:
+    root = _repo_root()
+    result = subprocess.run(
+        ["python3", "tools/check_repo_hygiene.py"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Repository hygiene OK" in result.stdout
