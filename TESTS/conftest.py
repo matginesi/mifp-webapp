@@ -20,14 +20,15 @@ _TEST_CACHE = Path(ROOT) / ".pytest_cache"
 _TEST_CACHE.mkdir(exist_ok=True)
 _TEST_RUNTIME = Path(tempfile.mkdtemp(prefix="mifp-runtime-", dir=_TEST_CACHE))
 atexit.register(shutil.rmtree, _TEST_RUNTIME, ignore_errors=True)
-for _name in ("assets", "exports", "logs", "conferences"):
+for _name in ("assets", "exports", "logs", "conferences", "config", "tmp"):
     (_TEST_RUNTIME / _name).mkdir()
 os.environ["DATABASE_PATH"] = str(_TEST_RUNTIME / "mifp.db")
 os.environ["ASSETS_DIR"] = str(_TEST_RUNTIME / "assets")
 os.environ["EXPORT_DIR"] = str(_TEST_RUNTIME / "exports")
 os.environ["LOG_DIR"] = str(_TEST_RUNTIME / "logs")
 os.environ["CONFERENCES_DIR"] = str(_TEST_RUNTIME / "conferences")
-os.environ["BANNER_SETTINGS_PATH"] = str(_TEST_RUNTIME / "banner_settings.json")
+os.environ["BANNER_SETTINGS_PATH"] = str(_TEST_RUNTIME / "config" / "banner_settings.json")
+os.environ["TMPDIR"] = str(_TEST_RUNTIME / "tmp")
 
 for pkg in ("MIFPAPP/CORE", "SCRAPERS", "MIFPAPP/DATABASE/tools"):
     path = os.path.join(ROOT, pkg)

@@ -18,7 +18,7 @@ from flask import (
 )
 from werkzeug.exceptions import HTTPException
 
-from ..db.connection import connect, connect_readonly
+from ..db.connection import connect, connect_readonly, write_transaction
 from ..services.mailer import send_mail
 from ..services.metrics_service import classify_asset_key, increment_daily
 from ..services.public_repository import (
@@ -95,6 +95,15 @@ def _page_or_md_html(page: dict | None, fallback_filename: str) -> str | None:
         return _markdown_html(page.get("body"))
     html, _ = _render_md(fallback_filename)
     return html
+
+
+def _institutional_html(slug: str, page_type: str | None, fallback_filename: str) -> str | None:
+    """Render the DB-managed page, with immutable packaged Markdown as fallback."""
+    with connect_readonly(current_app.config["DATABASE_PATH"]) as conn:
+        page = get_public_page_by_slug(conn, slug)
+        if page is None and page_type is not None:
+            page = get_public_page(conn, page_type)
+    return _page_or_md_html(page, fallback_filename)
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +187,7 @@ def _canonical_url() -> str:
 @bp.get("/events")
 def events():
     db_path = current_app.config["DATABASE_PATH"]
-    with connect(db_path) as conn:
+    with connect_readonly(db_path) as conn:
         upcoming, past = list_public_events(conn, lambda filename: url_for("public.media", filename=filename))
     return render_template("public/events.html", upcoming=upcoming, past=past)
 
@@ -187,7 +196,7 @@ def events():
 @bp.get("/events/<slug>/")
 def event_detail(slug: str):
     db_path = current_app.config["DATABASE_PATH"]
-    with connect(db_path) as conn:
+    with connect_readonly(db_path) as conn:
         if target := _alias_target(conn, "event", slug):
             return redirect(url_for("public.event_detail", slug=target), code=308)
         event = get_public_event(conn, slug, lambda filename: url_for("public.media", filename=filename, _external=True))
@@ -210,7 +219,7 @@ def news():
     page = max(1, request.args.get("page", 1, type=int))
     per_page = 12
     search = request.args.get("q", "").strip() or None
-    with connect(db_path) as conn:
+    with connect_readonly(db_path) as conn:
         result = list_news_page(
             conn,
             lambda filename: url_for("public.media", filename=filename),
@@ -240,7 +249,7 @@ def news():
 @bp.get("/news/<slug>")
 def news_detail(slug: str):
     db_path = current_app.config["DATABASE_PATH"]
-    with connect(db_path) as conn:
+    with connect_readonly(db_path) as conn:
         if target := _alias_target(conn, "news", slug):
             return redirect(url_for("public.news_detail", slug=target), code=308)
         article = get_public_news(conn, slug, lambda filename: url_for("public.media", filename=filename, _external=True))
@@ -252,7 +261,7 @@ def news_detail(slug: str):
 @bp.get("/publications")
 def publications():
     db_path = current_app.config["DATABASE_PATH"]
-    with connect(db_path) as conn:
+    with connect_readonly(db_path) as conn:
         pubs = list_public_publications(conn, lambda filename: url_for("public.media", filename=filename))
     return render_template("public/publications.html", publications=pubs)
 
@@ -264,7 +273,7 @@ def publications():
 @bp.get("/about")
 def about():
     db_path = current_app.config["DATABASE_PATH"]
-    with connect(db_path) as conn:
+    with connect_readonly(db_path) as conn:
         stats = {
             "members": conn.execute("SELECT COUNT(*) FROM members WHERE is_active=1").fetchone()[0],
             "events": conn.execute("SELECT COUNT(*) FROM events WHERE review_status='published'").fetchone()[0],
@@ -273,25 +282,26 @@ def about():
             "research_areas": conn.execute("SELECT COUNT(*) FROM research_areas WHERE review_status='published'").fetchone()[0],
             "sponsors": conn.execute("SELECT COUNT(*) FROM sponsors WHERE is_active=1").fetchone()[0],
         }
-    about_html, _ = _render_md("About.md")
+        page = get_public_page_by_slug(conn, "about") or get_public_page(conn, "about")
+    about_html = _page_or_md_html(page, "About.md")
     return render_template("public/about.html", about_html=about_html, stats=stats)
 
 
 _PDF_PAGES = {
-    "about":           ("about",           "About.md",           "About MIFP"),
-    "manifesto":       ("manifesto",       "Manifesto.md",       "Manifesto of Solidarity"),
-    "privacy":         ("privacy",         "Privacy.md",         "Privacy Policy"),
-    "code-of-conduct": ("code-of-conduct", "CodeOfConduct.md",   "Code of Conduct"),
-    "cookie-policy":   ("cookie-policy",   "cookie-policy.md",   "Cookie Policy"),
-    "sponsors-how-to": ("sponsors-how-to", "HowToBecomeASponsor.md", "How to Become a Sponsor"),
+    "about":           ("about",           "about",           "About.md",           "About MIFP"),
+    "manifesto":       ("manifesto",       "manifesto",       "Manifesto.md",       "Manifesto of Solidarity"),
+    "privacy":         ("privacy",         "privacy",         "Privacy.md",         "Privacy Policy"),
+    "code-of-conduct": ("code-of-conduct", "code_of_conduct", "CodeOfConduct.md",   "Code of Conduct"),
+    "cookie-policy":   ("cookie-policy",   "cookie_policy",   "cookie-policy.md",   "Cookie Policy"),
+    "sponsors-how-to": ("sponsors-how-to", None,              "HowToBecomeASponsor.md", "How to Become a Sponsor"),
 }
 
 @bp.get("/pdf/<page_name>")
 def pdf_page(page_name: str):
     if page_name not in _PDF_PAGES:
         abort(404)
-    slug, fallback_md, title = _PDF_PAGES[page_name]
-    content_html, _ = _render_md(fallback_md)
+    slug, page_type, fallback_md, title = _PDF_PAGES[page_name]
+    content_html = _institutional_html(slug, page_type, fallback_md)
     if not content_html:
         abort(404)
     try:
@@ -317,7 +327,7 @@ def pdf_page(page_name: str):
 @bp.get("/research")
 def research():
     db_path = current_app.config["DATABASE_PATH"]
-    with connect(db_path) as conn:
+    with connect_readonly(db_path) as conn:
         areas = list_public_research(conn, lambda filename: url_for("public.media", filename=filename))
         pub_by_year = [
             dict(r) for r in conn.execute(
@@ -359,7 +369,7 @@ def research():
 def pdf_research():
     db_path = current_app.config["DATABASE_PATH"]
     try:
-        with connect(db_path) as conn:
+        with connect_readonly(db_path) as conn:
             areas = list_public_research(conn, lambda fn: url_for("public.media", filename=fn, _external=True))
     except HTTPException:
         raise
@@ -397,7 +407,7 @@ def members():
     page = max(1, request.args.get("page", 1, type=int))
     per_page = 12
 
-    with connect(db_path) as conn:
+    with connect_readonly(db_path) as conn:
         result = list_members_page(conn, lambda filename: url_for("public.media", filename=filename), search, role_filter, page, per_page)
 
     return render_template(
@@ -414,32 +424,32 @@ def members():
 
 @bp.get("/manifesto")
 def manifesto():
-    md_html, _ = _render_md("Manifesto.md")
+    md_html = _institutional_html("manifesto", "manifesto", "Manifesto.md")
     return render_template("public/manifesto.html", md_html=md_html)
 
 
 @bp.get("/privacy")
 def privacy():
-    md_html, _ = _render_md("Privacy.md")
+    md_html = _institutional_html("privacy", "privacy", "Privacy.md")
     return render_template("public/privacy.html", md_html=md_html)
 
 
 @bp.get("/cookie-policy")
 def cookie_policy():
-    md_html, _ = _render_md("cookie-policy.md")
+    md_html = _institutional_html("cookie-policy", "cookie_policy", "cookie-policy.md")
     return render_template("public/cookie_policy.html", md_html=md_html)
 
 
 @bp.get("/code-of-conduct")
 def code_of_conduct():
-    md_html, _ = _render_md("CodeOfConduct.md")
+    md_html = _institutional_html("code-of-conduct", "code_of_conduct", "CodeOfConduct.md")
     return render_template("public/code_of_conduct.html", md_html=md_html)
 
 
 @bp.get("/sponsors")
 def sponsors():
     db_path = current_app.config["DATABASE_PATH"]
-    with connect(db_path) as conn:
+    with connect_readonly(db_path) as conn:
         sponsors_list = list_home_sponsors(conn, lambda filename: url_for("public.media", filename=filename))
         sponsor_how_to = get_public_page_by_slug(conn, "sponsors-how-to") or get_public_page(conn, "sponsor")
     return render_template("public/sponsors.html", sponsors=sponsors_list, sponsor_how_to=sponsor_how_to)
@@ -448,7 +458,7 @@ def sponsors():
 @bp.get("/sponsors/<slug>")
 def sponsor_detail(slug: str):
     db_path = current_app.config["DATABASE_PATH"]
-    with connect(db_path) as conn:
+    with connect_readonly(db_path) as conn:
         if target := _alias_target(conn, "sponsor", slug):
             return redirect(url_for("public.sponsor_detail", slug=target), code=308)
         sponsor = get_public_sponsor(conn, slug, lambda filename: url_for("public.media", filename=filename))
@@ -460,7 +470,7 @@ def sponsor_detail(slug: str):
 @bp.get("/sponsors/how-to-become-a-sponsor")
 def sponsor_how_to():
     db_path = current_app.config["DATABASE_PATH"]
-    with connect(db_path) as conn:
+    with connect_readonly(db_path) as conn:
         page = get_public_page_by_slug(conn, "sponsors-how-to") or get_public_page(conn, "sponsor")
     md_html = _page_or_md_html(page, "HowToBecomeASponsor.md")
     return render_template("public/sponsor_how_to.html", page=None if md_html else page, md_html=md_html)
@@ -519,7 +529,7 @@ def join():
                 }
                 if not _EMAIL_RE.match(form["email"]):
                     errors.append("Please enter a valid email address.")
-                with connect(db_path) as conn:
+                with connect(db_path) as conn, write_transaction(conn, operation="join request"):
                     duplicate = conn.execute(
                         "SELECT id, status FROM join_requests WHERE lower(email)=lower(?) AND status IN ('pending','in_review') LIMIT 1",
                         (form["email"],),
@@ -543,7 +553,6 @@ def join():
                                 None,
                             ),
                         )
-                        conn.commit()
                         request_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                         audit_log(
                             "join.submitted", "Join request submitted", category="join",
@@ -598,7 +607,7 @@ def sitemap_xml():
     urls = []
     for endpoint in ("public.home", "public.events", "public.news", "public.publications", "public.research", "public.about", "public.privacy", "public.cookie_policy", "public.manifesto", "public.members", "public.code_of_conduct", "public.sponsors", "public.sponsor_how_to"):
         urls.append({"loc": url_for(endpoint, _external=True), "lastmod": today, "changefreq": "weekly", "priority": "0.8"})
-    with connect(db_path) as conn:
+    with connect_readonly(db_path) as conn:
         for row in sitemap_dynamic_entries(conn):
             endpoint = "public.event_detail" if row["kind"] == "event" else "public.news_detail"
             urls.append({"loc": url_for(endpoint, slug=row["slug"], _external=True), "lastmod": row["lastmod"] or today, "changefreq": "monthly", "priority": "0.6"})

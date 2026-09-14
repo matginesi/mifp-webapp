@@ -31,24 +31,22 @@ def test_production_compose_has_no_build_and_uses_registry_image() -> None:
         (root / "deploy/compose.production.yaml").read_text(encoding="utf-8")
     )
     web = compose["services"]["web"]
-    init = compose["services"]["storage-init"]
 
+    assert set(compose["services"]) == {"web"}
     assert "build" not in web
-    assert web["image"] == "${MIFP_IMAGE:-ghcr.io/matginesi/mifp-webapp:latest}"
-    assert "ghcr.io/" in web["image"]
-    assert init["user"] == "0:0"
-    assert "/opt/mifp/data:/app/data" in init["volumes"]
-    assert "/opt/mifp/data:/app/data" in web["volumes"]
+    assert web["image"] == "${MIFP_IMAGE:?MIFP_IMAGE must be supplied by deploy.sh}"
+    assert "${MIFP_DATA_DIR:-/opt/mifp/data}:/app/data" in web["volumes"]
     assert web["read_only"] is True
     assert web["environment"]["FLASK_ENV"] == "production"
-    assert web["environment"]["AUTO_MIGRATE_ON_STARTUP"] == "0"
+    assert "AUTO_MIGRATE_ON_STARTUP" not in web["environment"]
     assert web["environment"]["TMPDIR"] == "/app/data/tmp"
     assert web["environment"]["SESSION_COOKIE_SECURE"] == "1"
     assert web["environment"]["TRUST_PROXY"] == "1"
+    assert web["environment"]["GUNICORN_BIND"] == "0.0.0.0:8000"
+    assert web["environment"]["LOG_OUTPUT"] == "stdout"
     assert "127.0.0.1:8000:8000" in web["ports"]
     assert web["cap_drop"] == ["ALL"]
     assert "healthcheck" in web
-    assert "/data/tmp" in " ".join(init["command"])
 
 
 def test_production_compose_never_builds_an_image() -> None:
@@ -58,12 +56,14 @@ def test_production_compose_never_builds_an_image() -> None:
     assert "target: runtime" not in text
 
 
-def test_container_entrypoint_migrates_before_startup() -> None:
+def test_container_entrypoint_verifies_production_database_without_migrating() -> None:
     root = _repo_root()
     entrypoint = (root / "MIFPAPP/CORE/docker-entrypoint.sh").read_text(encoding="utf-8")
     dockerfile = (root / "MIFPAPP/CORE/Dockerfile").read_text(encoding="utf-8")
 
-    assert "flask db-upgrade" in entrypoint
+    assert "python -m mifp_app.db.runtime_check" in entrypoint
+    assert "flask db-upgrade" not in entrypoint
+    assert "AUTO_MIGRATE_ON_STARTUP" not in entrypoint
     assert 'COPY --chown=10001:10001 mifp_archive ./mifp_archive' not in dockerfile
     assert 'ENTRYPOINT ["/app/docker-entrypoint.sh"]' in dockerfile
 

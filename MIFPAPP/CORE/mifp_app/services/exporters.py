@@ -550,6 +550,22 @@ def rows_to_pdf(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
 # Export dispatcher
 # ---------------------------------------------------------------------------
 
+
+def export_members_xlsx(conn) -> bytes:
+    """Export the member contact fields used by the Control Center."""
+    rows = [
+        dict(row)
+        for row in conn.execute(
+            """
+            SELECT first_name, last_name, email, affiliation, country
+            FROM members
+            WHERE first_name IS NOT NULL OR last_name IS NOT NULL OR email IS NOT NULL
+            ORDER BY last_name, first_name
+            """
+        ).fetchall()
+    ]
+    return rows_to_xlsx(rows, "Members")
+
 def export_response_payload(
     rows: list[dict[str, Any]],
     fmt: str,

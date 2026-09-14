@@ -1,33 +1,10 @@
-# Production Docker Compose. Runs on the VPS host only; never built here.
-# The image comes from GHCR (built and published by GitHub Actions).
-#
-# Run via deploy/deploy.sh on the server:
-#   docker compose --project-name mifp --env-file /opt/mifp/.env \
-#     -f /opt/mifp/compose.yaml up -d --remove-orphans
+# Production Docker Compose. The image is selected explicitly by deploy.sh;
+# production never builds application code on the VPS.
 name: mifp-production
 
 services:
-  storage-init:
-    image: "${MIFP_IMAGE:-ghcr.io/matginesi/mifp-webapp:latest}"
-    user: "0:0"
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >-
-        mkdir -p /app/data/assets /app/data/backups /app/data/conferences /app/data/exports
-        /app/data/logs /app/data/config /app/data/tmp && chown -R 10001:10001 /app/data && chmod 0750
-        /app/data /app/data/assets /app/data/backups /app/data/conferences /app/data/exports
-        /app/data/logs /app/data/config /app/data/tmp
-    volumes:
-      - /opt/mifp/data:/app/data
-    restart: "no"
-    security_opt:
-      - no-new-privileges:true
-
   web:
-    image: "${MIFP_IMAGE:-ghcr.io/matginesi/mifp-webapp:latest}"
-    depends_on:
-      storage-init:
-        condition: service_completed_successfully
+    image: "${MIFP_IMAGE:?MIFP_IMAGE must be supplied by deploy.sh}"
     env_file:
       - path: .env
         required: false
@@ -38,11 +15,16 @@ services:
       SESSION_COOKIE_SECURE: "1"
       SESSION_COOKIE_SAMESITE: Lax
       CSRF_ENABLED: "1"
+      # The only published application socket is host-loopback and Caddy is the
+      # single reverse proxy in front of it, so exactly one forwarded hop is
+      # trusted for client IP and HTTPS scheme normalization.
       TRUST_PROXY: "1"
+      PROXY_FIX_X_FOR: "1"
+      PROXY_FIX_X_PROTO: "1"
+      PROXY_FIX_X_HOST: "0"
       TRUSTED_HOSTS: "${TRUSTED_HOSTS:-mifp.eu,www.mifp.eu,127.0.0.1,localhost}"
       ALLOW_DB_DUMP: "0"
       ALLOW_DB_RESTORE: "0"
-      AUTO_MIGRATE_ON_STARTUP: "0"
       DATABASE_PATH: /app/data/mifp.db
       ASSETS_DIR: /app/data/assets
       EXPORT_DIR: /app/data/exports
@@ -51,15 +33,18 @@ services:
       CONFERENCES_DIR: /app/data/conferences
       BANNER_SETTINGS_PATH: /app/data/config/banner_settings.json
       STORAGE_MIN_FREE_MB: "${STORAGE_MIN_FREE_MB:-1024}"
-      LOG_OUTPUT: both
+      LOG_OUTPUT: stdout
       LOG_FORMAT: "${LOG_FORMAT:-json}"
-      GUNICORN_BIND: 127.0.0.1:8000
+      # Listen on the container interface; exposure is restricted by the host
+      # publish rule below to 127.0.0.1 only.
+      GUNICORN_BIND: 0.0.0.0:8000
       GUNICORN_WORKERS: "${GUNICORN_WORKERS:-1}"
       GUNICORN_THREADS: "${GUNICORN_THREADS:-4}"
+      BACKGROUND_JOB_WORKERS: "${BACKGROUND_JOB_WORKERS:-1}"
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - /opt/mifp/data:/app/data
+      - "${MIFP_DATA_DIR:-/opt/mifp/data}:/app/data"
     restart: unless-stopped
     init: true
     read_only: true
@@ -70,7 +55,7 @@ services:
     cap_drop:
       - ALL
     pids_limit: 256
-    mem_limit: ${MIFP_MEMORY_LIMIT:-1g}
+    mem_limit: ${MIFP_MEMORY_LIMIT:-1536m}
     cpus: ${MIFP_CPU_LIMIT:-2.0}
     stop_signal: SIGTERM
     stop_grace_period: 35s

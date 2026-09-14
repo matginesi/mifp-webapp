@@ -1,106 +1,59 @@
-# Security Hardening
+# Hardening VPS
 
-This checklist applies to both VPS and VM deployments.
+Il bootstrap configura il minimo necessario: Docker, Caddy, SQLite, firewall,
+utente dati e backup timer.
 
-## SSH
+## SSH e firewall
 
-Install your public key for the administrator account:
+Usa chiavi SSH, disabilita password/root login e mantieni una sessione aperta
+mentre modifichi SSH. Il bootstrap rileva la porta della sessione corrente se
+`--ssh-port` non è specificata.
 
-```bash
-ssh-copy-id user@host
-```
+Porte pubbliche: SSH, 80 e 443. La webapp è bindata solo su
+`127.0.0.1:8000` e non va esposta nel firewall.
 
-Edit `/etc/ssh/sshd_config`:
+## Identità
 
-```text
-PermitRootLogin no
-PasswordAuthentication no
-PubkeyAuthentication yes
-```
+- host data owner: UID/GID `10001:10001`;
+- processo Flask container: stesso UID/GID, non-root;
+- utente `mifp` non appartiene al gruppo Docker;
+- operazioni Docker host: solo `sudo mifpctl ...`;
+- `/opt/mifp/.env`: `root:root`, `0600`.
 
-Restart SSH:
 
-```bash
-sudo service ssh restart
-```
+## Storage runtime
 
-Keep one existing SSH session open while testing a new login.
+Tutti i tree persistenti usati dall'app (`database`, `assets`, `conferences`,
+`config`, `exports`, `logs`, `tmp`) appartengono a `10001:10001`. All'avvio la
+webapp rifiuta directory che siano symlink e prova realmente la scrittura;
+`/ready` controlla anche la riserva di spazio per tutti questi percorsi. La
+snapshot SQLite usata dal preflight del deploy è creata `0440` con ownership del
+runtime: il container non-root può leggerla senza rendere il DB scrivibile.
 
-## Sudo
+## Container
 
-Use a normal administrator account with sudo. Do not run the application as root.
-The web service should run as a dedicated `mifp` user.
+Produzione usa filesystem root read-only, `cap_drop: ALL`,
+`no-new-privileges`, limiti PID/RAM/CPU e un solo worker Gunicorn.
 
-```bash
-sudo usermod -aG sudo user
-sudo useradd --system --home /opt/mifp --shell /usr/sbin/nologin mifp
-```
+## Caddy
 
-## Firewall
-
-Minimal public rules:
-
-```bash
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw allow 22/tcp
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw enable
-sudo ufw status verbose
-```
-
-If SSH uses a non-standard port, allow that port before enabling UFW.
-
-## Fail2ban
+Caddy è installato dal repository ufficiale. `/ready` viene bloccato
+pubblicamente; `/health` espone soltanto lo stato minimo in produzione.
 
 ```bash
-sudo apt install -y fail2ban
-sudo service fail2ban start
-sudo fail2ban-client status
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo systemctl status caddy
 ```
 
-The default SSH jail is sufficient for a simple deployment. Add custom jails only
-when there is a concrete need.
+## Segreti
 
-## Unattended Security Updates
+Il bootstrap genera `SECRET_KEY` e chiede admin/password interattivamente. È
+salvato soltanto `ADMIN_PASSWORD_HASH`; minimo 10 caratteri. Rotazione:
 
 ```bash
-sudo apt install -y unattended-upgrades
-sudo dpkg-reconfigure unattended-upgrades
-sudo unattended-upgrade --dry-run --debug
+sudo mifpctl admin
 ```
 
-Review `/etc/apt/apt.conf.d/50unattended-upgrades` and keep security updates
-enabled.
-
-## File Permissions
-
-Recommended:
-
-```bash
-sudo chown -R mifp:mifp /opt/mifp
-sudo chmod 750 /opt/mifp /opt/mifp/data /opt/mifp/logs /opt/mifp/backups
-sudo chmod 600 /opt/mifp/.env
-sudo chmod 640 /opt/mifp/data/mifp.db
-```
-
-Secrets, databases, assets, logs, exports, and backups must remain outside Git.
-The container runs as a non-root user and mounts `/opt/mifp/data` read-write;
-container rebuilds never touch the host bind mount.
-
-## Application Settings
-
-Production `/opt/mifp/.env` must include:
-
-```env
-FLASK_ENV='production'
-FLASK_DEBUG='0'
-SESSION_COOKIE_SECURE='1'
-CSRF_ENABLED='1'
-TRUST_PROXY='1'
-ALLOW_DB_DUMP='0'
-```
-
-`TRUST_PROXY=1` is safe only when Caddy is the trusted reverse proxy in front of
-the application inside the container.
+Per una dashboard accessibile a pochissimi operatori, un secondo controllo
+esterno (VPN/Tailscale/Access/IP allowlist) resta un hardening opzionale, non un
+requisito architetturale.

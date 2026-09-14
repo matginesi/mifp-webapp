@@ -363,7 +363,7 @@ def test_data_portability_page_links_import_to_duplicate_cleanup(client):
 
     assert response.status_code == 200
     assert "Validate only" in body
-    assert "Complete backup" in body
+    assert "Portable ZIP" in body
     assert "Recommended" in body
     assert "Portable JSONL" in body
     assert "Content Archive" not in body
@@ -483,6 +483,44 @@ def test_force_cookie_banner_publishes_new_global_revision(app, client, monkeypa
     assert saved["cookie_banner_enabled"] == "1"
     assert saved["banner_force_show"] != "old-revision"
     assert saved["banner_force_show"].isdigit()
+
+
+def test_institutional_editor_persists_pages_in_database_and_public_routes_use_them(app, client):
+    manifesto = "Database-managed manifesto from the dashboard."
+    privacy = "Database-managed privacy policy."
+
+    response = client.post(
+        "/dashboard/institutional",
+        data={"slug": "manifesto", "body": manifesto},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    response = client.post(
+        "/dashboard/institutional/privacy",
+        data={"_action": "save_privacy", "body": privacy},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    with _db(app) as conn:
+        manifesto_row = conn.execute(
+            "SELECT type, body, review_status FROM pages WHERE slug='manifesto'"
+        ).fetchone()
+        privacy_row = conn.execute(
+            "SELECT type, body, review_status FROM pages WHERE slug='privacy'"
+        ).fetchone()
+    assert dict(manifesto_row) == {
+        "type": "manifesto",
+        "body": manifesto,
+        "review_status": "published",
+    }
+    assert dict(privacy_row) == {
+        "type": "privacy",
+        "body": privacy,
+        "review_status": "published",
+    }
+    assert manifesto.encode() in client.get("/manifesto").data
+    assert privacy.encode() in client.get("/privacy").data
 
 
 def test_privacy_workspace_has_force_banner_action(client):
@@ -877,9 +915,7 @@ def test_settings_vacuum_integrity_and_database_dump_actions(app, client):
     assert integrity.status_code == 200
     assert b"Integrity check passed" in integrity.data
 
-    vacuum = client.post("/dashboard/server/vacuum", follow_redirects=True)
-    assert vacuum.status_code == 200
-    assert b"requires the password-protected operations wizard" in vacuum.data
+    assert client.post("/dashboard/server/vacuum").status_code == 404
     assert _scalar(app, "SELECT value FROM settings WHERE key='last_vacuum'") is None
 
     dump = client.post("/dashboard/server/db-dump", data={"password": "secret123"})
@@ -1553,7 +1589,6 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.server_db_dump",
     "dashboard.server_db_restore",
     "dashboard.server_integrity_check",
-    "dashboard.server_vacuum",
     "dashboard.settings_save",
     "dashboard.assets_retry_external",
     "dashboard.institutional",

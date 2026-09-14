@@ -48,7 +48,7 @@ def test_admin_accepts_ten_character_password(monkeypatch, tmp_path: Path) -> No
         encoding="utf-8",
     )
     monkeypatch.setattr(builtins, "input", lambda _prompt: "matteo")
-    passwords = iter(["1234567890", "1234567890"])
+    passwords = iter(["admin_1234", "admin_1234"])
     monkeypatch.setattr(module.getpass, "getpass", lambda _prompt: next(passwords))
     assert module.configure_admin(_args(module, tmp_path)) == 0
     values = module.read_env(env_file)

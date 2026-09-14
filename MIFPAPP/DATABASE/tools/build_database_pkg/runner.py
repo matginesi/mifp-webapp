@@ -9,8 +9,8 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-from .config import WEBAPP, DATABASE_DIR, DEFAULT_JSONL_DIR, SINGLETON_CANONICAL, COUNTRY_HINTS, NOISE_LINES
-from .utils import clean, db_connect, exec_schema
+from .config import WEBAPP, DATABASE_DIR, DEFAULT_JSONL_DIR
+from .utils import db_connect
 from .assets import download_all_assets, prime_downloaded_asset_cache
 from .importers import (
     add_member, add_sponsor, add_event, add_page, add_news,
@@ -174,26 +174,19 @@ def load_all_jsonl_dirs(conn, jsonl_dirs, section='all', fresh=True):
 
 
 def apply_migrations(conn):
-    """Apply database migrations."""
-    migrations_dir = WEBAPP / 'mifp_app' / 'db' / 'migrations.py'
-    if not migrations_dir.exists():
-        log.warning("Warning: migrations.py not found")
-        return
-    
-    with open(migrations_dir, 'r') as f:
-        migrations_code = f.read()
-    
-    # Execute migrations in its own namespace so _schema_path() resolves correctly
-    ns = globals().copy()
-    ns['__file__'] = str(migrations_dir)
-    exec(compile(migrations_code, str(migrations_dir), 'exec'), ns)
-    
-    # Apply the migrations
-    changes = ns['migrate_content_schema'](conn)
-    if changes.get('created_tables'):
-        log.info(f"Created {len(changes['created_tables'])} tables")
-    if changes.get('changed_columns'):
-        log.info(f"Updated {len(changes['changed_columns'])} columns")
+    """Apply the webapp's canonical migration module through a normal import."""
+    import sys
+
+    webapp_path = str(WEBAPP)
+    if webapp_path not in sys.path:
+        sys.path.insert(0, webapp_path)
+    from mifp_app.db.migrations import migrate_content_schema
+
+    changes = migrate_content_schema(conn)
+    if changes.get("created_tables"):
+        log.info("Created %d tables", len(changes["created_tables"]))
+    if changes.get("columns_added"):
+        log.info("Added %d schema column(s)", changes["columns_added"])
 
 
 def main():
@@ -237,8 +230,7 @@ def main():
         conn.close()
         db_path.unlink(missing_ok=True)
         conn = db_connect(db_path)
-        exec_schema(conn)
-        log.info("Database recreated from scratch")
+        log.info("Database file recreated; canonical schema will be initialized next")
     
     # Apply migrations
     apply_migrations(conn)

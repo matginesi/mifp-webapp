@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
 import time
 from datetime import date
@@ -12,6 +14,7 @@ from werkzeug.wrappers.response import Response
 from ..db.connection import connect
 from ..services.admin_safety import backup_sqlite_database
 from ..services.assets import store_asset
+from ..services.entity_references import delete_entity_references
 from ..services.dashboard_repository import (
     PUBLIC_TABLES,
     display_columns,
@@ -138,34 +141,91 @@ _INSTITUTIONAL_FILES = {
     "cookie-policy": "cookie-policy.md",
 }
 
+_INSTITUTIONAL_TYPES = {
+    "about": "about",
+    "manifesto": "manifesto",
+    "code-of-conduct": "code_of_conduct",
+    "privacy": "privacy",
+    "cookie-policy": "cookie_policy",
+}
 
-def _read_md_file(filename: str) -> str:
+_INSTITUTIONAL_TITLES = {
+    **INSTITUTIONAL_SLUGS,
+    "privacy": "Privacy Policy",
+    "cookie-policy": "Cookie Policy",
+}
+
+
+def _fallback_md_body(filename: str) -> str:
+    """Read the immutable packaged Markdown used only as an initial fallback."""
     path = _MD_DIR / filename
-    if path.exists():
+    if path.is_file() and not path.is_symlink():
         return path.read_text(encoding="utf-8")
     return ""
 
 
-def _write_md_file(filename: str, content: str) -> None:
-    path = _MD_DIR / filename
-    path.write_text(content, encoding="utf-8")
+def _read_institutional_body(slug: str) -> str:
+    """Read editable institutional content from SQLite, falling back to package text."""
+    filename = _INSTITUTIONAL_FILES[slug]
+    with connect(current_app.config["DATABASE_PATH"]) as conn:
+        row = conn.execute("SELECT body FROM pages WHERE slug=? LIMIT 1", (slug,)).fetchone()
+    if row is not None and row["body"] is not None:
+        return str(row["body"])
+    return _fallback_md_body(filename)
+
+
+def _write_institutional_body(slug: str, content: str) -> None:
+    """Persist editable institutional pages in the canonical database."""
+    page_type = _INSTITUTIONAL_TYPES[slug]
+    title = _INSTITUTIONAL_TITLES[slug]
+    with connect(current_app.config["DATABASE_PATH"]) as conn:
+        conn.execute(
+            """
+            INSERT INTO pages(slug,title,type,body,review_status,updated_at)
+            VALUES(?,?,?,?, 'published', CURRENT_TIMESTAMP)
+            ON CONFLICT(slug) DO UPDATE SET
+              title=excluded.title,
+              type=excluded.type,
+              body=excluded.body,
+              review_status='published',
+              updated_at=CURRENT_TIMESTAMP
+            """,
+            (slug, title, page_type, content),
+        )
+        conn.commit()
 
 
 def _read_banner_config() -> dict[str, str]:
     path = Path(current_app.config["BANNER_SETTINGS_PATH"])
-    if path.exists():
-        import json
-        return json.loads(path.read_text(encoding="utf-8"))
-    return {}
+    if path.is_symlink():
+        raise RuntimeError("Banner settings path cannot be a symbolic link")
+    if not path.exists():
+        return {}
+    if not path.is_file():
+        raise RuntimeError("Banner settings path is not a regular file")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("Banner settings must contain a JSON object")
+    return {str(key): str(value) for key, value in payload.items()}
 
 
 def _write_banner_config(data: dict[str, str]) -> None:
-    import json
     path = Path(current_app.config["BANNER_SETTINGS_PATH"])
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise RuntimeError("Banner settings path cannot be a symbolic link")
     current = _read_banner_config()
     current.update(data)
-    path.write_text(json.dumps(current, indent=2), encoding="utf-8")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary.chmod(0o640)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def asset_capabilities(table: str) -> dict[str, Any]:
@@ -387,7 +447,7 @@ def _delete_record(section: str, record_id: int) -> Response:
     try:
         backup_path = backup_sqlite_database(current_app.config["DATABASE_PATH"], label=f"delete-{table}")
         with connect(current_app.config["DATABASE_PATH"]) as conn:
-            conn.execute("DELETE FROM asset_links WHERE entity_type=? AND entity_id=?", (entity_type, record_id))
+            delete_entity_references(conn, entity_type, record_id)
             conn.execute(f'DELETE FROM "{table}" WHERE id=?', (record_id,))
             conn.commit()
         audit_log("content.delete", "content delete", table=table, record_id=record_id, backup_path=str(backup_path) if backup_path else None)
@@ -633,16 +693,16 @@ def institutional():
         slug = request.form.get("slug", "")
         if slug in INSTITUTIONAL_SLUGS:
             body = request.form.get("body", "").strip()
-            filename = _INSTITUTIONAL_FILES.get(slug, slug + ".md")
-            _write_md_file(filename, body)
-            audit_log("institutional.update", "institutional page saved", slug=slug, file=filename)
+            filename = _INSTITUTIONAL_FILES[slug]
+            _write_institutional_body(slug, body)
+            audit_log("institutional.update", "institutional page saved", slug=slug, source="database")
             flash(f"{INSTITUTIONAL_SLUGS[slug]} saved.", "success")
         return redirect(url_for("dashboard.institutional"))
 
     pages = {}
     for slug, label in INSTITUTIONAL_SLUGS.items():
-        filename = _INSTITUTIONAL_FILES.get(slug, slug + ".md")
-        body = _read_md_file(filename)
+        filename = _INSTITUTIONAL_FILES[slug]
+        body = _read_institutional_body(slug)
         pages[slug] = {"body": body, "filename": filename}
     return render_template("dashboard/institutional.html", pages=pages, slugs=INSTITUTIONAL_SLUGS)
 
@@ -659,7 +719,7 @@ def institutional_cookie():
         action = request.form.get("_action", "")
         if action == "save_page":
             body = request.form.get("body", "").strip()
-            _write_md_file("cookie-policy.md", body)
+            _write_institutional_body("cookie-policy", body)
             audit_log("cookie.update", "cookie policy saved")
             flash("Cookie policy saved.", "success")
             return redirect(url_for("dashboard.institutional_privacy", tab="cookie"))
@@ -692,12 +752,12 @@ def institutional_privacy():
         action = request.form.get("_action", "")
         if action == "save_privacy":
             body = request.form.get("body", "").strip()
-            _write_md_file("Privacy.md", body)
+            _write_institutional_body("privacy", body)
             audit_log("privacy.update", "privacy page saved")
             flash("Privacy page saved.", "success")
         elif action == "save_cookie":
             body = request.form.get("cookie_body", "").strip()
-            _write_md_file("cookie-policy.md", body)
+            _write_institutional_body("cookie-policy", body)
             audit_log("cookie.update", "cookie policy saved from privacy page")
             flash("Cookie policy saved.", "success")
         elif action == "save_banner":
@@ -725,8 +785,8 @@ def institutional_privacy():
             return redirect(url_for("dashboard.institutional_privacy") + "#banner-settings-title")
         return redirect(url_for("dashboard.institutional_privacy"))
 
-    privacy_body = _read_md_file("Privacy.md")
-    cookie_body = _read_md_file("cookie-policy.md")
+    privacy_body = _read_institutional_body("privacy")
+    cookie_body = _read_institutional_body("cookie-policy")
     settings = _read_banner_config()
     return render_template("dashboard/institutional_privacy.html", privacy_body=privacy_body, cookie_body=cookie_body, settings=settings)
 

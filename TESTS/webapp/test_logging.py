@@ -514,13 +514,10 @@ def test_background_job_failure_is_written_to_error_stream(tmp_path):
 
 def test_cleanup_helpers_remove_only_expired_rows(tmp_path):
     import sqlite3
-    from mifp_app.utils.logger import cleanup_metrics_daily, cleanup_page_views
+    from mifp_app.utils.logger import cleanup_metrics_daily
 
     db_path = tmp_path / "metrics.db"
     with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE page_views(created_at TEXT)")
         conn.execute("CREATE TABLE metrics_daily(date TEXT)")
-        conn.executemany("INSERT INTO page_views VALUES (?)", [("2000-01-01",), ("2999-01-01",)])
         conn.executemany("INSERT INTO metrics_daily VALUES (?)", [("2000-01-01",), ("2999-01-01",)])
-    assert cleanup_page_views(str(db_path), 30) == 1
     assert cleanup_metrics_daily(str(db_path), 30) == 1

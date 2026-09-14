@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+MIFP_HOME="${MIFP_HOME:-/opt/mifp}"
+exec "$MIFP_HOME/deploy.sh" "$@"

@@ -68,7 +68,7 @@ def _invalid_findings(entity_type: str, rows: list[dict]) -> list[Finding]:
     findings: list[Finding] = []
     invalid_titles = {"authorization required", "http test event", "xhr event"}
     for row in rows:
-        if str(row.get("review_status") or "") in {"quarantined", "archived", "duplicate"}:
+        if str(row.get("review_status") or "") in {"quarantined", "duplicate"}:
             continue
         label = comparison_text(row.get(LABELS[entity_type]))
         if entity_type == "event" and (label in invalid_titles or label.startswith("404 view not found")):
@@ -595,7 +595,7 @@ def analyze(
             all_findings.extend(
                 _legacy_merged_duplicate_findings(conn, entity_type, rows)
             )
-            rows = [row for row in rows if str(row.get("review_status") or "") not in {"quarantined", "archived", "duplicate"}]
+            rows = [row for row in rows if str(row.get("review_status") or "") not in {"quarantined", "duplicate"}]
             context = _context(conn, entity_type)
             all_findings.extend(_quality_findings(entity_type, rows, context))
             by_id = {row["id"]: row for row in rows}

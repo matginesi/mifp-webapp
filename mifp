@@ -8,7 +8,7 @@ SCRAPERS_DIR="$ROOT_DIR/SCRAPERS"
 ENV_FILE="$CORE_DIR/.env"
 ENV_EXAMPLE="$CORE_DIR/.env.example"
 STATE_DIR="$ROOT_DIR/.mifp"
-VENV_DIR="$CORE_DIR/.venv"
+VENV_DIR="$ROOT_DIR/.venv"
 MANAGER="$CORE_DIR/manage.py"
 PID_FILE="$STATE_DIR/local.pid"
 LOG_FILE="$STATE_DIR/local.log"
@@ -35,13 +35,17 @@ produzione viene rilasciata esclusivamente tramite CI/CD (GitHub Actions ->
 GHCR -> VPS Docker) e amministrata dalla dashboard.
 
 Avvio:
-  ./mifp init                     Crea ambiente, .env e storage locali
+  ./mifp setup                    Crea/aggiorna l'unico .venv locale
+  ./mifp init                     Setup + .env/storage + admin guidato
   ./mifp local                    Webapp locale con Flask
   ./mifp docker-local             Webapp locale dentro Docker (alias: docker)
 
 Pipeline dati:
   ./mifp scrape [remote|local|all] [--threads N] [--local-root PATH]
   ./mifp database [opzioni build]
+  ./mifp db-init [PATH]            Crea un DB schema-only (non sovrascrive)
+  ./mifp db-check [PATH]           Verifica contratto/integrità DB
+  ./mifp db-upgrade-copy OLD NEW   Aggiorna una copia senza toccare OLD
   ./mifp refresh [remote|local|all] [opzioni scraper]
 
 Test e gestione:
@@ -54,7 +58,6 @@ Test e gestione:
   ./mifp clean [cache|logs|outputs|data|docker|all] [opzioni]
   ./mifp zip [opzioni zip_it.sh]
   ./mifp doctor
-  ./mifp setup (alias di init)
 
 Opzioni comuni di avvio:
   -d, --detach                  Solo local: avvio in background
@@ -95,7 +98,7 @@ ensure_storage() {
   mkdir -p \
     "$DATABASE_DIR/assets" "$DATABASE_DIR/backups" "$DATABASE_DIR/conferences" \
     "$DATABASE_DIR/exports" "$DATABASE_DIR/logs" "$DATABASE_DIR/config" \
-    "$SCRAPERS_DIR/OUTPUTS"
+    "$DATABASE_DIR/tmp" "$SCRAPERS_DIR/OUTPUTS"
   if [[ ! -f "$DATABASE_DIR/config/banner_settings.json" && -f "$CORE_DIR/config/banner_settings.json" ]]; then
     cp "$CORE_DIR/config/banner_settings.json" "$DATABASE_DIR/config/banner_settings.json"
   fi
@@ -119,49 +122,64 @@ ensure_env() {
   ensure_storage
 }
 
-requirements_hash() {
-  python3 - "$CORE_DIR/requirements.txt" <<'PY'
+install_local_dependencies() {
+  step "Installo/aggiorno le dipendenze locali"
+  if ! "$VENV_DIR/bin/python" -m pip --version >/dev/null 2>&1; then
+    "$VENV_DIR/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || \
+      die "pip non è disponibile nel virtualenv. Installa il pacchetto python3-venv della tua distribuzione."
+  fi
+  "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --prefer-binary \
+    -r "$CORE_DIR/requirements.lock" \
+    -r "$SCRAPERS_DIR/requirements.txt" \
+    -r "$DATABASE_DIR/requirements.txt" \
+    pytest || \
+    die "Installazione delle dipendenze fallita. Controlla rete/PyPI e riprova con: ./mifp setup"
+}
+
+local_dependencies_hash() {
+  python3 - "$CORE_DIR/requirements.lock" "$SCRAPERS_DIR/requirements.txt" "$DATABASE_DIR/requirements.txt" <<'PYHASH'
 from pathlib import Path
 import hashlib, sys
-path = Path(sys.argv[1])
-print(hashlib.sha256(path.read_bytes()).hexdigest())
-PY
+h = hashlib.sha256()
+for name in sys.argv[1:]:
+    path = Path(name)
+    h.update(path.name.encode())
+    h.update(b"\0")
+    h.update(path.read_bytes())
+    h.update(b"\0")
+h.update(b"pytest")
+print(h.hexdigest())
+PYHASH
 }
 
 venv_runtime_ready() {
   [[ -x "$VENV_DIR/bin/python" ]] || return 1
-  "$VENV_DIR/bin/python" - <<'PY' >/dev/null 2>&1
+  "$VENV_DIR/bin/python" - <<'PYCHECK' >/dev/null 2>&1
 import bleach
+import bs4
 import docx
 import dotenv
 import flask
 import markdown
 import openpyxl
+import pypdf
+import pytest
+import requests
 import reportlab
+import tqdm
 import werkzeug
 import yaml
-PY
-}
-
-install_local_dependencies() {
-  step "Installo le dipendenze della webapp"
-  if ! "$VENV_DIR/bin/python" -m pip --version >/dev/null 2>&1; then
-    "$VENV_DIR/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || \
-      die "pip non è disponibile nel virtualenv. Installa il pacchetto Python venv della tua distribuzione."
-  fi
-  "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --prefer-binary \
-    -r "$CORE_DIR/requirements.txt" || \
-    die "Installazione delle dipendenze fallita. Riprova con: ./mifp clean cache && ./mifp local"
+PYCHECK
 }
 
 ensure_venv() {
-  ensure_env
+  ensure_python
   local marker="$STATE_DIR/requirements.sha256"
   local expected needs_install=0
-  expected="$(requirements_hash)"
+  expected="$(local_dependencies_hash)"
 
   if [[ ! -x "$VENV_DIR/bin/python" ]]; then
-    step "Creo l'ambiente Python locale"
+    step "Creo l'unico ambiente Python locale: $VENV_DIR"
     rm -rf "$VENV_DIR"
     python3 -m venv "$VENV_DIR" || \
       die "Impossibile creare il virtualenv. Installa il pacchetto python3-venv della tua distribuzione."
@@ -171,10 +189,6 @@ ensure_venv() {
   if [[ ! -f "$marker" || "$(cat "$marker" 2>/dev/null || true)" != "$expected" ]]; then
     needs_install=1
   fi
-
-  # Un virtualenv copiato, interrotto o parzialmente pulito può conservare il
-  # marker anche se Flask (o un'altra dipendenza runtime) non è installato.
-  # Verifica quindi l'ambiente reale, non soltanto il checksum.
   if ! venv_runtime_ready; then
     needs_install=1
   fi
@@ -182,9 +196,32 @@ ensure_venv() {
   if ((needs_install)); then
     install_local_dependencies
     venv_runtime_ready || \
-      die "Il virtualenv è stato creato, ma le dipendenze runtime non risultano importabili."
+      die "Il virtualenv è stato creato, ma le dipendenze locali non risultano importabili."
     printf '%s\n' "$expected" > "$marker"
   fi
+}
+
+admin_hash_configured() {
+  local value
+  value="$(env_get ADMIN_PASSWORD_HASH '')"
+  [[ -n "$value" && "$value" != CHANGE-ME* && "$value" != change-me* ]]
+}
+
+require_local_admin() {
+  admin_hash_configured || die "Admin locale non configurato. Esegui una volta: ./mifp init"
+}
+
+init_local() {
+  ensure_env
+  if ! admin_hash_configured; then
+    [[ -t 0 ]] || die "Admin non configurato. Esegui interattivamente: ./mifp init oppure ./mifp admin"
+    step "Configuro l'amministratore locale"
+    python3 "$MANAGER" admin --env-file "$ENV_FILE"
+  fi
+  ensure_venv
+  ensure_local_database
+  say "Ambiente locale pronto."
+  say "Admin: $(env_get ADMIN_USERNAME admin)"
 }
 
 parse_start_options() {
@@ -265,9 +302,9 @@ local_command() {
     ASSETS_DIR="$DATABASE_DIR/assets" \
     EXPORT_DIR="$DATABASE_DIR/exports" \
     LOG_DIR="$DATABASE_DIR/logs" \
+    TMPDIR="$DATABASE_DIR/tmp" \
     CONFERENCES_DIR="$DATABASE_DIR/conferences" \
     BANNER_SETTINGS_PATH="$DATABASE_DIR/config/banner_settings.json" \
-    AUTO_MIGRATE_ON_STARTUP=1 \
     MAINTENANCE_CRASH_TIMEOUT_SECONDS=60 \
     STORAGE_MIN_FREE_MB=0 \
     SESSION_COOKIE_SECURE=0 \
@@ -281,6 +318,9 @@ local_command() {
 start_local() {
   parse_start_options "$@"
   ensure_venv
+  ensure_env
+  require_local_admin
+  ensure_local_database
   set_runtime_port "$PORT"
   if ((DETACH)); then
     stop_local
@@ -322,6 +362,8 @@ compose_local() {
 docker_local() {
   parse_start_options "$@"
   ensure_env
+  require_local_admin
+  ensure_local_database
   set_runtime_port "$PORT"
   require_docker
   stop_local
@@ -561,7 +603,8 @@ append_data_targets() {
     "$DATABASE_DIR/mifp.db" "$DATABASE_DIR/mifp.db-wal"
     "$DATABASE_DIR/mifp.db-shm" "$DATABASE_DIR/mifp.db-journal"
     "$DATABASE_DIR/assets" "$DATABASE_DIR/backups"
-    "$DATABASE_DIR/conferences" "$DATABASE_DIR/exports"
+    "$DATABASE_DIR/conferences" "$DATABASE_DIR/config"
+    "$DATABASE_DIR/exports" "$DATABASE_DIR/tmp"
   )
 }
 
@@ -660,10 +703,15 @@ clean_project() {
   if [[ "$scope" == data || "$scope" == all ]]; then
     for target in \
       "$DATABASE_DIR/assets" "$DATABASE_DIR/backups" \
-      "$DATABASE_DIR/conferences" "$DATABASE_DIR/exports"; do
+      "$DATABASE_DIR/conferences" "$DATABASE_DIR/exports" \
+      "$DATABASE_DIR/tmp"; do
       mkdir -p "$target"
       : > "$target/.gitkeep"
     done
+    mkdir -p "$DATABASE_DIR/config"
+    if [[ -f "$CORE_DIR/config/banner_settings.json" ]]; then
+      cp "$CORE_DIR/config/banner_settings.json" "$DATABASE_DIR/config/banner_settings.json"
+    fi
   fi
   if [[ "$scope" == logs || "$scope" == all ]]; then
     mkdir -p "$DATABASE_DIR/logs"
@@ -674,6 +722,38 @@ clean_project() {
     : > "$SCRAPERS_DIR/OUTPUTS/.gitkeep"
   fi
   say "Pulizia completata."
+}
+
+
+manage_database_contract() {
+  local action="$1"; shift
+  PYTHONPATH="$CORE_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 -m mifp_app.db.manage "$action" "$@"
+}
+
+ensure_local_database() {
+  local db="$DATABASE_DIR/mifp.db"
+  if [[ ! -f "$db" ]]; then
+    step "Creo il database locale schema-only"
+    manage_database_contract init "$db"
+  else
+    manage_database_contract check "$db" >/dev/null || \
+      die "Database locale incompatibile. Crea un DB nuovo e importa un vecchio ZIP: ./mifp db-init PATH"
+  fi
+}
+
+db_init() {
+  local path="${1:-$DATABASE_DIR/mifp.db}"
+  manage_database_contract init "$path"
+}
+
+db_check() {
+  local path="${1:-$DATABASE_DIR/mifp.db}"
+  manage_database_contract check "$path"
+}
+
+db_upgrade_copy() {
+  [[ $# -eq 2 ]] || die "Uso: ./mifp db-upgrade-copy OLD NEW"
+  manage_database_contract upgrade-copy "$1" "$2"
 }
 
 archive_codebase() {
@@ -699,7 +779,7 @@ doctor() {
   say "Docker: $(docker --version 2>&1 || echo non disponibile)"
   if has docker && docker info >/dev/null 2>&1; then
     compose_local config --quiet || failed=1
-    docker compose \
+    MIFP_IMAGE="ghcr.io/example/mifp-webapp:doctor" docker compose \
       --project-directory "$ROOT_DIR/deploy" \
       --env-file "$ROOT_DIR/deploy/.env.production.example" \
       -f "$ROOT_DIR/deploy/compose.production.yaml" config --quiet || failed=1
@@ -715,6 +795,9 @@ case "$command_name" in
   docker-local|docker) docker_local "$@" ;;
   scrape|scrapers) run_scrapers "$@" ;;
   database|db) build_database "$@" ;;
+  db-init) db_init "$@" ;;
+  db-check) db_check "$@" ;;
+  db-upgrade-copy) db_upgrade_copy "$@" ;;
   refresh|pipeline) refresh_data "$@" ;;
   test|tests) run_tests "$@" ;;
   admin) set_admin "$@" ;;
@@ -725,7 +808,8 @@ case "$command_name" in
   clean|clear) clean_project "$@" ;;
   zip|archive) archive_codebase "$@" ;;
   doctor) doctor ;;
-  init|setup) ensure_venv; say "Ambiente locale pronto." ;;
+  setup) ensure_venv; say "Ambiente Python locale pronto." ;;
+  init) init_local ;;
   help|-h|--help) usage ;;
   *) usage >&2; die "Comando sconosciuto: $command_name" ;;
 esac

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import zipfile
 from pathlib import Path
@@ -29,7 +30,10 @@ def test_canonical_zip_matches_jsonl_and_dashboard_import(tmp_path: Path):
         assert set(archive.namelist()) == {"manifest.json", "records.jsonl"}
         assert archive.read("records.jsonl") == (output / "records.jsonl").read_bytes()
         manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["format"] == "mifp-content"
+        assert manifest["format_version"] == 1
         assert manifest["counts"] == {"news": 1}
+        assert manifest["records_sha256"] == hashlib.sha256(archive.read("records.jsonl")).hexdigest()
     assert validate(output)["counts"] == {"news": 1}
 
 

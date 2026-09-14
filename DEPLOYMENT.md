@@ -1,134 +1,220 @@
-# Deployment MIFP
+# Deploy MIFP
 
-Un solo percorso di produzione: **GitHub Actions → GHCR → VPS Docker → Caddy**.
-Il deploy sulla VPS è **manuale**: la pipeline CI/CD si ferma alla pubblicazione
-dell'immagine su GHCR.
-
-## Architettura
+Produzione usa un solo percorso:
 
 ```text
-push su main
-   ├─ test     bash test_all.sh --suite webapp
-   └─ build    docker buildx (context MIFPAPP/CORE) -> ghcr.io/<owner>/mifp-webapp:sha-<commit> + :latest
-
-VPS (deploy manuale):
-   sudo -u mifp bash /opt/mifp/deploy.sh ghcr.io/<owner>/mifp-webapp:sha-<commit>
-
-   Caddy (host, porte 80/443, TLS automatico)
-     └-> 127.0.0.1:8000
-           └-> docker compose (mifp-production)
-                 web (immagine GHCR, read-only, non-root, /app/data bind da /opt/mifp/data)
-                 storage-init (root, prepara/chown /opt/mifp/data)
+GitHub Actions -> GHCR -> mifpctl sulla VPS -> Docker -> Caddy -> Flask/SQLite
 ```
 
-Il launcher locale (`./mifp`) non ha comandi di produzione: la pubblicazione
-dell'immagine avviene tramite CI/CD, il rilascio sulla VPS tramite
-`deploy/deploy.sh` eseguito manualmente.
+La VPS non compila codice, non esegue scraper e non migra il database durante
+l'avvio. Non serve un virtualenv Python sulla VPS.
 
-## Sviluppo locale
+## I 4 comandi da ricordare
+
+Dopo la prima installazione, normalmente bastano:
 
 ```bash
-./mifp init          # .env, virtualenv, storage
-./mifp local         # Flask locale
-./mifp docker-local  # Docker locale (alias: ./mifp docker)
-./mifp doctor        # verifica file essenziali e configurazioni compose
+sudo mifpctl deploy sha-<commit>   # nuova versione; NON modifica il DB
+sudo mifpctl status
+sudo mifpctl logs
+sudo mifpctl rollback              # torna alla release precedente
 ```
 
-Il virtualenv non è considerato valido solo perché esiste: il launcher verifica
-gli import runtime e reinstalla se Flask o altri moduli mancano.
-
-## Prima installazione sulla VPS
-
-Prerequisiti: VPS Ubuntu 24.04/26.04 con IP pubblico, record DNS
-`A mifp.eu` e `A www.mifp.eu`, accesso SSH.
+Se qualcosa non torna:
 
 ```bash
-# 1. Copia gli artefatti di deploy sul server
-scp -r deploy user@host:/opt/mifp/deploy
-ssh user@host "sudo bash /opt/mifp/deploy/bootstrap-vps.sh --domain mifp.eu"
+sudo mifpctl doctor
 ```
 
-`bootstrap-vps.sh` è idempotente: installa Docker Engine, Docker Compose v2,
-Caddy, crea l'utente `mifp`, la struttura `/opt/mifp/{data,...}` e copia
-`compose.production.yaml`, `Caddyfile`, `deploy.sh` e il template `.env`.
+Backup manuale immediato:
 
 ```bash
-# 2. Compila i segreti (sul server, file /opt/mifp/.env)
-sudo nano /opt/mifp/.env
-#   SECRET_KEY=$(openssl rand -hex 32)            -> valore reale
-#   ADMIN_PASSWORD_HASH=<hash generato in locale> -> ./mifp hash
-
-# 3. Copia i dati iniziali (dal backup o da una build locale)
-sudo rsync -avz ./MIFPAPP/DATABASE/ user@host:/opt/mifp/data/
-sudo chown -R mifp:mifp /opt/mifp
-
-# 4. Pubblica la prima immagine e avvia lo stack
-#    (in locale) git push origin main   -> la pipeline testa e pubblica l'immagine
-#    (sul server) sudo -u mifp bash /opt/mifp/deploy.sh ghcr.io/<owner>/mifp-webapp:sha-<commit>
-
-# 5. Avvia Caddy
-sudo systemctl start caddy
+sudo mifpctl backup
 ```
 
-Per la prima immagine senza aspettare la pipeline:
+## Prima installazione, una volta sola
+
+Prerequisiti: Ubuntu, DNS del dominio puntato alla VPS, accesso SSH con `sudo`.
+
+Dal PC:
 
 ```bash
-# in locale, nel repo
-docker buildx build --platform linux/amd64 -t ghcr.io/<owner>/mifp-webapp:sha-<commit> MIFPAPP/CORE
-# push alla GHCR, poi sul server:
-sudo -u mifp bash /opt/mifp/deploy.sh ghcr.io/<owner>/mifp-webapp:sha-<commit>
+scp -r deploy user@host:/tmp/mifp-deploy
+ssh user@host
 ```
 
-## Rilascio e rollback
-
-La CI/CD testa il webapp e pubblica `sha-<commit>` e `:latest` su GHCR. Il
-rilascio in produzione è un passo manuale sulla VPS:
+Sulla VPS:
 
 ```bash
-sudo -u mifp bash /opt/mifp/deploy.sh ghcr.io/<owner>/mifp-webapp:sha-<commit>
+sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
+  --domain mifp.eu \
+  --image-repository ghcr.io/OWNER/REPO
 ```
 
-Lo script sul server ricorda la release precedente:
+Il bootstrap installa Docker/Caddy/SQLite, crea `/opt/mifp`, configura firewall,
+HTTPS, backup automatico, `SECRET_KEY` e amministratore. La password admin viene
+chiesta due volte, deve avere almeno **10 caratteri** e viene salvato solo
+l'hash. `/opt/mifp/.env` è `root:root` con permessi `0600`.
+
+Dopo che GitHub Actions ha pubblicato una release:
 
 ```bash
-sudo -u mifp bash /opt/mifp/deploy.sh status
-sudo -u mifp bash /opt/mifp/deploy.sh --rollback
+sudo mifpctl first-deploy sha-<commit>
 ```
 
-I dati (`/opt/mifp/data`) non vengono mai toccati dagli aggiornamenti: vivono
-su un bind mount del host e sono indipendenti dall'immagine.
+`first-deploy` crea un DB **schema-only v9**, lo verifica e avvia la webapp.
+Apri quindi la dashboard e importa lo ZIP prodotto dagli scraper. Anche i vecchi
+ZIP MIFP restano importabili; i vecchi JSONL self-contained non sono supportati.
 
-## Credenziali amministratore
+## Tre cicli separati
 
-Locale (salva solo l'hash in `MIFPAPP/CORE/.env`):
+### 1. Nuovo codice
 
 ```bash
-./mifp admin
-./mifp admin --username matteo
+sudo mifpctl deploy sha-<commit>
 ```
 
-Produzione (rotazione): genera un hash in locale senza mai persistirlo e copia
-il valore in `/opt/mifp/.env` come `ADMIN_PASSWORD_HASH`, poi ricrea il web
-service:
+Il deploy:
+
+1. valida configurazione, spazio e DB corrente;
+2. scarica il tag `sha-*` e lo fissa al digest OCI reale `@sha256:...`;
+3. crea una snapshot SQLite temporanea leggibile dal container non-root e prova la nuova immagine contro quella copia **prima dello switch**;
+4. avvia la nuova release e attende `/ready`;
+5. se serve un rollback automatico, verifica anche che la release precedente torni realmente `ready`;
+6. registra `CURRENT_IMAGE`/`PREVIOUS_IMAGE` solo dopo il successo;
+7. conserva localmente corrente e precedente, pulendo vecchie immagini MIFP.
+
+`latest` e altri tag mutabili sono rifiutati. Il deploy è protetto da `flock`,
+quindi due operazioni di manutenzione non possono sovrapporsi.
+
+### 2. Nuovi contenuti
+
+```text
+scraper locale -> MIFP_IMPORT.zip -> Dashboard -> Import
+```
+
+**Non** copiare o `rsync`-are `mifp.db` sopra il DB vivo. L'import è
+transazionale e conservativo: aggiorna/aggiunge i dati presenti nel package, ma
+non cancella implicitamente record, link o asset locali omessi dal package.
+
+### 3. Nuovo schema DB (raro)
+
+Il runtime non migra mai il DB automaticamente. Per una futura release che
+richiede un nuovo schema, prepara una copia localmente:
 
 ```bash
-./mifp hash
-sudo -u mifp bash /opt/mifp/deploy.sh status   # o nuovo rilascio
+./mifp db-upgrade-copy OLD.db NEW.db
+./mifp db-check NEW.db
 ```
 
-## Backup e hardening
-
-Vedi [backups](docs/deployment/backups.md) e
-[hardening](docs/deployment/hardening.md). In sintesi, i dati da salvare sono
-`/opt/mifp/data/mifp.db`, `/opt/mifp/data/assets/` e i valori di
-`/opt/mifp/.env`.
-
-## Diagnostica
+Poi sulla VPS:
 
 ```bash
-./mifp doctor
-./mifp status
-./mifp logs [local|docker]
-ssh user@host "systemctl status caddy"
-ssh user@host "sudo -u mifp bash /opt/mifp/deploy.sh status"
+sudo mifpctl upgrade-db sha-<commit> /path/NEW.db
 ```
+
+La VPS verifica nuova immagine + DB candidato, crea un backup del DB vivo,
+ferma il servizio solo per lo swap e ripristina DB+release precedenti se la
+nuova coppia non torna ready.
+
+I DB storici non vengono più "riparati" automaticamente: per dati precedenti a
+v9 crea un DB corrente e importa il vecchio ZIP.
+
+## Rollback
+
+```bash
+sudo mifpctl rollback
+```
+
+`release.env` contiene digest OCI immutabili. Il rollback usa prima l'immagine
+locale, quindi continua a funzionare anche se GHCR o Internet sono
+momentaneamente indisponibili. Il normale rollback applicativo non modifica il
+DB.
+
+## Backup e restore
+
+Un timer systemd esegue automaticamente `deploy/backup.sh`. I backup host-only
+sono snapshot point-in-time complete sotto `/var/backups/mifp/snapshots/`:
+
+```text
+snapshot-YYYYMMDD-HHMMSS-NNNNNNNNN/
+  mifp.db
+  mifp.db.sha256
+  manifest.json
+  assets/
+  conferences/
+  config/
+  README.txt
+```
+
+Il container viene brevemente messo in pausa durante la fotografia dei file;
+SQLite viene copiato con la Backup API e verificato. `manifest.json` registra
+l'SHA-256 dell'intero insieme ripristinabile (`mifp.db`, `assets/`, `conferences/`,
+`config/`) e il restore rifiuta file mancanti, extra, alterati o symlink. Le
+snapshot successive usano hardlink per i file invariati. Backup immediato:
+
+```bash
+sudo mifpctl backup
+```
+
+Restore del solo DB corrente:
+
+```bash
+sudo mifpctl restore-db /var/backups/mifp/snapshots/snapshot-.../mifp.db
+```
+
+Restore dell'intera fotografia DB + file:
+
+```bash
+sudo mifpctl restore-snapshot /var/backups/mifp/snapshots/snapshot-...
+```
+
+Entrambi pre-validano il DB e non effettuano alcuno swap se il servizio non
+si arresta correttamente. Il restore completo verifica prima anche il manifest
+di integrità; se la webapp non torna ready, viene ripristinata la fotografia
+precedente. Per disaster recovery conserva anche una copia **off-site**;
+se configuri restic, ogni snapshot completata viene replicata cifrata.
+
+## Admin e segreti
+
+Cambio password:
+
+```bash
+sudo mifpctl admin
+```
+
+Riconfigurazione guidata:
+
+```bash
+sudo mifpctl configure
+sudo mifpctl configure --admin
+```
+
+Non scrivere password in chiaro nel repository o in `/opt/mifp/.env`.
+
+## Sicurezza runtime
+
+```text
+Internet -> Caddy :443 -> 127.0.0.1:8000 -> container
+```
+
+- `/ready` è accessibile solo localmente;
+- `/health` pubblico espone solo lo stato essenziale;
+- container UID/GID `10001:10001`;
+- root filesystem read-only;
+- `cap_drop: ALL`, `no-new-privileges`;
+- limiti RAM/CPU/PID;
+- SQLite ha un solo worker Gunicorn in produzione.
+
+## GHCR privato
+
+Una volta sola:
+
+```bash
+docker login ghcr.io
+```
+
+Usa un token con solo `read:packages`.
+
+Ulteriori dettagli: [backup](docs/deployment/backups.md),
+[hardening](docs/deployment/hardening.md), [schema DB](docs/database-schema.md).

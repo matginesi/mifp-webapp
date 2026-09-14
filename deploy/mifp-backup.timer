@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily MIFP backup
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=mifp-backup.service
+
+[Install]
+WantedBy=timers.target

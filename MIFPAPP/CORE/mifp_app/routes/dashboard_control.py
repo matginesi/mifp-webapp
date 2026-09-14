@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from datetime import date
-from io import BytesIO
 from pathlib import Path
 
 from flask import current_app, flash, jsonify, redirect, render_template, request, send_file, session, url_for
-from werkzeug.security import check_password_hash
 
 from ..db.connection import connect
 from ..services.admin_safety import (
@@ -28,13 +26,14 @@ from ..services.control_center import (
 )
 from ..services.dashboard_repository import search_logs
 from ..services import download_jobs
+from ..services.exporters import export_members_xlsx
 from ..services.data_portability import bundle_to_zip_file
 from ..services.job_manager import get_job_manager
 from ..services.operation_maintenance import operation_maintenance
 from ..services.safety_operations import execute_safe_cleanup, safety_operations_preview
 from ..services.site_copy import copy_groups
 from ..utils.logger import audit_log
-from ..utils.security import get_client_ip, ip_rate_allowed
+from ..utils.security import admin_password_matches, get_client_ip, ip_rate_allowed
 from .auth import login_required
 from .dashboard import bp
 
@@ -366,7 +365,7 @@ def control_backups_cleanup():
     }
     password = request.form.get("password", "")
     expected_hash = str(current_app.config.get("ADMIN_PASSWORD_HASH") or "")
-    if not expected_hash or not password or not check_password_hash(expected_hash, password):
+    if not admin_password_matches(password, expected_hash):
         within_limit = ip_rate_allowed(
             "backup_cleanup_password_failure",
             f"{get_client_ip()}:{session.get('admin_username') or '-'}",
@@ -462,7 +461,7 @@ def control_safety_operations_run():
         "ip": get_client_ip(),
         "operation": operation,
     }
-    if not expected_hash or not check_password_hash(expected_hash, password):
+    if not admin_password_matches(password, expected_hash):
         audit_log(
             "safety_operation.denied",
             "protected safety operation denied",
@@ -562,9 +561,8 @@ def control_safety_operations_run():
                     logger=current_app.logger,
                 ), connect(Path(current_app.config["DATABASE_PATH"])) as conn:
                     report("Collecting members…", 20)
-                    from mifp_app.services.data_portability import export_users_excel
                     try:
-                        excel_bytes = export_users_excel(conn)
+                        excel_bytes = export_members_xlsx(conn)
                     except ImportError:
                         excel_bytes = None
                     member_count = int(conn.execute("SELECT COUNT(*) FROM members").fetchone()[0])

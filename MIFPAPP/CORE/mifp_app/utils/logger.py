@@ -712,9 +712,5 @@ def _cleanup_table(db_path: str, table: str, date_column: str, retention_days: i
         return 0
 
 
-def cleanup_page_views(db_path: str, retention_days: int = 365) -> int:
-    return _cleanup_table(db_path, "page_views", "created_at", retention_days)
-
-
 def cleanup_metrics_daily(db_path: str, retention_days: int = 730) -> int:
     return _cleanup_table(db_path, "metrics_daily", "date", retention_days)

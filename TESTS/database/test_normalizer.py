@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from build_database_pkg.normalizer import (
+from artifact_normalizer import (
     carry_asset_cache,
     normalize_events,
     normalize_news,
@@ -228,7 +228,7 @@ def test_normalize_news_preserves_aruba_remote_metadata(input_dir):
     result = normalize_news([input_dir])
     assert result[0]['source'] == 'aruba_remote_home'
     assert result[0]['source_url'] == 'https://old.mifp.eu/'
-    assert result[0]['review_status'] == 'needs_review'
+    assert result[0]['review_status'] == 'review'
     assert result[0]['is_published'] == 0
     assert result[0]['quality_flags_json'] == '{"confidence": 0.55}'
 

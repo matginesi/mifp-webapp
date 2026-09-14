@@ -511,13 +511,11 @@ def safe_settings(config: dict[str, Any], database_settings: dict[str, str]) -> 
         "LOG_FORMAT",
         "LOG_OUTPUT",
         "LOG_RETENTION_DAYS",
-        "PAGE_VIEWS_RETENTION_DAYS",
         "PRIVACY_SAFE_METRICS_ENABLED",
         "PRIVACY_SAFE_METRICS_RETENTION_DAYS",
         "SESSION_COOKIE_SECURE",
         "SESSION_COOKIE_SAMESITE",
         "TRUST_PROXY",
-        "AUTO_MIGRATE_ON_STARTUP",
         "ALLOW_DB_DUMP",
         "MAIL_PROVIDER",
     )

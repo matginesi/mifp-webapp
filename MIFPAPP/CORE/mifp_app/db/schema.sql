@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+INSERT OR IGNORE INTO schema_migrations(version,name,checksum)
+VALUES(9,'canonical schema v9','b26a754bed6ef4aa2af5c83b6fc6bfd8e9c94b340caf56b5fc69df0f3971bd85');
+
 CREATE TABLE IF NOT EXISTS source_systems (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     uid TEXT NOT NULL UNIQUE,
@@ -342,19 +345,6 @@ CREATE TABLE IF NOT EXISTS join_requests (
     FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE SET NULL
 );
 
-CREATE TABLE IF NOT EXISTS page_views (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    path TEXT NOT NULL,
-    method TEXT NOT NULL DEFAULT 'GET',
-    client_ip TEXT,
-    user_agent_hash TEXT,
-    user TEXT DEFAULT '-',
-    status INTEGER NOT NULL DEFAULT 200,
-    duration_ms REAL NOT NULL DEFAULT 0,
-    referrer TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS metrics_daily (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL,
@@ -393,8 +383,6 @@ CREATE INDEX IF NOT EXISTS idx_sponsors_active ON sponsors(is_active, sort_order
 CREATE INDEX IF NOT EXISTS idx_import_records_entity ON import_records(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_join_requests_status ON join_requests(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_join_requests_email ON join_requests(email);
-CREATE INDEX IF NOT EXISTS idx_page_views_created ON page_views(created_at);
-CREATE INDEX IF NOT EXISTS idx_page_views_path ON page_views(path);
 CREATE INDEX IF NOT EXISTS idx_metrics_daily_date ON metrics_daily(date);
 CREATE INDEX IF NOT EXISTS idx_metrics_daily_scope ON metrics_daily(scope, metric_name);
 CREATE INDEX IF NOT EXISTS idx_metrics_daily_key ON metrics_daily(metric_key);
@@ -408,7 +396,9 @@ CREATE TABLE IF NOT EXISTS quality_runs (
     error_message TEXT,
     started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT,
-    duration_ms INTEGER NOT NULL DEFAULT 0
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    progress_pct INTEGER NOT NULL DEFAULT 0,
+    progress_message TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS quality_findings (
@@ -571,3 +561,49 @@ CREATE TABLE IF NOT EXISTS conference_assets (
 
 CREATE INDEX IF NOT EXISTS idx_conference_assets_site
     ON conference_assets(conference_id, role, sort_order, filename);
+
+-- Canonical stable identities used by import/export and provenance.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_uid ON assets(uid);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_members_uid ON members(uid);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_uid ON events(uid);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_news_uid ON news(uid);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_publications_uid ON publications(uid);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_research_areas_uid ON research_areas(uid);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_uid ON pages(uid);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sponsors_uid ON sponsors(uid);
+CREATE INDEX IF NOT EXISTS idx_assets_content_sha256 ON assets(content_sha256);
+CREATE INDEX IF NOT EXISTS idx_assets_source_url_sha256 ON assets(source_url_sha256);
+
+CREATE TRIGGER IF NOT EXISTS assign_assets_uid AFTER INSERT ON assets
+WHEN NEW.uid IS NULL OR TRIM(NEW.uid)='' BEGIN
+  UPDATE assets SET uid='asset_' || lower(hex(randomblob(16))) WHERE id=NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS assign_members_uid AFTER INSERT ON members
+WHEN NEW.uid IS NULL OR TRIM(NEW.uid)='' BEGIN
+  UPDATE members SET uid='member_' || lower(hex(randomblob(16))) WHERE id=NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS assign_events_uid AFTER INSERT ON events
+WHEN NEW.uid IS NULL OR TRIM(NEW.uid)='' BEGIN
+  UPDATE events SET uid='event_' || lower(hex(randomblob(16))) WHERE id=NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS assign_news_uid AFTER INSERT ON news
+WHEN NEW.uid IS NULL OR TRIM(NEW.uid)='' BEGIN
+  UPDATE news SET uid='news_' || lower(hex(randomblob(16))) WHERE id=NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS assign_publications_uid AFTER INSERT ON publications
+WHEN NEW.uid IS NULL OR TRIM(NEW.uid)='' BEGIN
+  UPDATE publications SET uid='publication_' || lower(hex(randomblob(16))) WHERE id=NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS assign_research_areas_uid AFTER INSERT ON research_areas
+WHEN NEW.uid IS NULL OR TRIM(NEW.uid)='' BEGIN
+  UPDATE research_areas SET uid='research_area_' || lower(hex(randomblob(16))) WHERE id=NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS assign_pages_uid AFTER INSERT ON pages
+WHEN NEW.uid IS NULL OR TRIM(NEW.uid)='' BEGIN
+  UPDATE pages SET uid='page_' || lower(hex(randomblob(16))) WHERE id=NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS assign_sponsors_uid AFTER INSERT ON sponsors
+WHEN NEW.uid IS NULL OR TRIM(NEW.uid)='' BEGIN
+  UPDATE sponsors SET uid='sponsor_' || lower(hex(randomblob(16))) WHERE id=NEW.id;
+END;
+

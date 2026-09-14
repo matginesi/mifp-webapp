@@ -20,6 +20,11 @@ def test_deploy_artifacts_are_complete() -> None:
         "deploy/.env.production.example",
         "deploy/deploy.sh",
         "deploy/bootstrap-vps.sh",
+        "deploy/configure.py",
+        "deploy/backup.sh",
+        "deploy/mifpctl",
+        "deploy/mifp-backup.service",
+        "deploy/mifp-backup.timer",
     )
     for relative in required:
         assert (root / relative).is_file(), f"missing deploy artifact: {relative}"
@@ -41,14 +46,17 @@ def test_deploy_compose_binds_only_loopback_and_host_data() -> None:
     ports = [str(port) for port in web["ports"]]
     assert "127.0.0.1:8000:8000" in ports
     assert not any(not port.startswith("127.0.0.1:") for port in ports)
-    assert all(volume.startswith("/opt/mifp/data:/app/data") for volume in web["volumes"])
+    assert all("MIFP_DATA_DIR" in volume and volume.endswith(":/app/data") for volume in web["volumes"])
     assert "image" in web
     assert "build" not in web
 
 
 def test_deploy_caddyfile_proxies_to_localhost() -> None:
     caddyfile = _read("deploy", "Caddyfile")
+    assert "__MIFP_DOMAIN__" in caddyfile
     assert "reverse_proxy 127.0.0.1:8000" in caddyfile
+    assert "@ready path /ready" in caddyfile
+    assert "respond @ready 404" in caddyfile
     assert "web:8000" not in caddyfile
 
 
@@ -56,7 +64,8 @@ def test_production_env_template_is_committed_and_secret_safe() -> None:
     template = _read("deploy", ".env.production.example")
     assert "SECRET_KEY" in template
     assert "ADMIN_PASSWORD_HASH" in template
-    assert "MIFP_IMAGE" in template
+    assert "MIFP_IMAGE=" not in template
+    assert "deploy.sh" in template
     assert "TRUSTED_HOSTS" in template
     assert "=" in template
     assert "$" not in template or "secrets" in template
@@ -78,17 +87,20 @@ def test_ci_cd_workflow_tests_builds_only() -> None:
     assert "test" in text.lower()
     assert "ghcr.io" in text
     assert "docker/build-push-action" in text
+    assert "build-pr:" in text
+    assert "push: false" in text
     # Deployment to VPS has been removed - users deploy manually
     assert "ssh-action" not in text
     assert "appleboy" not in text
     assert "ssh_deploy" not in text
 
 
-def test_ci_workflow_runs_the_versioned_webapp_suite() -> None:
+def test_ci_workflow_runs_the_non_browser_repository_suite() -> None:
     text = _read(".github", "workflows", "ci-cd.yml")
     assert "test_all.sh" in text
-    assert "--suite webapp" in text
-    assert "TESTS/scraper" not in text.split("--suite webapp")[0]
+    assert "--suite quick" in text
+    assert "requirements.lock" in text
+    assert "pip-audit" in text
 
 
 def test_docker_build_context_stays_in_core() -> None:
@@ -101,6 +113,27 @@ def test_docker_build_context_stays_in_core() -> None:
 
 def test_tracked_log_files_are_removed_from_index() -> None:
     root = _repo_root()
+
+    # Runtime logging is expected to create files here while tests or the local
+    # application are running.  The source-control contract is that those files
+    # are ignored and never tracked; requiring the directory itself to stay empty
+    # makes the test fail simply because logging works.
+    gitignore = _read(".gitignore")
+    assert "*.log" in gitignore
+    assert "*/DATABASE/logs/*" in gitignore
+
+    # Source ZIPs intentionally do not ship .git metadata.  In a real checkout
+    # additionally verify that Git tracks at most the placeholder file.
+    probe = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        return
+
     result = subprocess.run(
         ["git", "ls-files", "MIFPAPP/DATABASE/logs"],
         cwd=root,
@@ -120,7 +153,8 @@ def test_manage_py_exposes_password_hash_for_production_rotation() -> None:
 def test_launcher_exposes_hash_and_init_commands() -> None:
     launcher = _read("mifp")
     assert "hash) print_password_hash" in launcher
-    assert "init|setup) ensure_venv" in launcher
+    assert "setup) ensure_venv" in launcher
+    assert "init) init_local" in launcher
 
 
 def test_readme_keeps_required_architecture_statements() -> None:
@@ -135,3 +169,30 @@ def test_readme_and_deployment_docs_do_not_reference_native_runner() -> None:
     assert "deploy.sh native" not in readme
     assert "deploy.sh native" not in deployment
     assert "nginx" not in deployment.lower()
+
+
+def test_release_script_tracks_current_and_previous_images() -> None:
+    script = _read("deploy", "deploy.sh")
+    assert "CURRENT_IMAGE=" in script
+    assert "PREVIOUS_IMAGE=" in script
+    assert '@sha256:' in script
+    assert "flock -n 9" in script
+    assert "preflight_image_db" in script
+    assert 'MIFP_IMAGE="$image"' in script
+    assert "sudo -u mifp" not in script
+    assert "Esegui deploy.sh come root" in script
+
+
+def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
+    script = _read("deploy", "bootstrap-vps.sh")
+    assert 'MIFP_UID="10001"' in script
+    assert 'MIFP_GID="10001"' in script
+    assert "apt-get install -y docker-ce" in script
+    assert "docker-compose-plugin caddy" in script
+    assert "/etc/systemd/system/caddy.service" not in script
+    assert 'install -o root -g root -m 0750 "$SCRIPT_DIR/configure.py"' in script
+    assert 'install -o root -g root -m 0755 "$SCRIPT_DIR/mifpctl" /usr/local/sbin/mifpctl' in script
+    assert "mifp-backup.timer" in script
+    assert '[[ -f "$MIFP_HOME/data/mifp.db"' in script
+    assert "systemctl disable --now mifp-backup.timer" in script
+    assert "--admin-if-missing" in script

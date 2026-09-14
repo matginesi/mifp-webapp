@@ -57,30 +57,17 @@ python_is_ready() {
   "$1" -c 'import requests, tqdm, pypdf' >/dev/null 2>&1
 }
 
-PY=""
-for candidate in \
-  "${VIRTUAL_ENV:-}/bin/python" \
-  "$CORE_DIR/.venv/bin/python" \
-  "$DATABASE_DIR/.venv/bin/python" \
-  "$(command -v python3 2>/dev/null || true)"; do
-  if [[ -n "$candidate" && -x "$candidate" ]] && python_is_ready "$candidate"; then
-    PY="$candidate"
-    break
-  fi
-done
-
-if [[ -z "$PY" ]]; then
-  BASE_PY="$(command -v python3 || true)"
-  [[ -n "$BASE_PY" ]] || die "python3 is required"
-  ENV_DIR="$DATABASE_DIR/.venv"
-  [[ -x "$ENV_DIR/bin/python" ]] || run "$BASE_PY" -m venv "$ENV_DIR"
-  run "$ENV_DIR/bin/python" -m pip install --disable-pip-version-check --prefer-binary \
-    -r "$DATABASE_DIR/requirements.txt"
-  PY="$ENV_DIR/bin/python"
+PY="$PROJECT_ROOT/.venv/bin/python"
+if [[ ! -x "$PY" ]] || ! python_is_ready "$PY"; then
+  [[ -x "$PROJECT_ROOT/mifp" ]] || die "local environment missing; run ./mifp setup from the project root"
+  printf '\n==> Prepare the shared project Python environment\n'
+  run "$PROJECT_ROOT/mifp" setup
 fi
+[[ -x "$PY" ]] && python_is_ready "$PY" || die "shared environment is incomplete; run ./mifp setup"
 
 BUILD=(
-  "$PY" "$TOOLS_DIR/build_database.py"
+  env "PYTHONPATH=$TOOLS_DIR${PYTHONPATH:+:$PYTHONPATH}"
+  "$PY" -m build_database_pkg.runner
   --webapp-dir "$CORE_DIR"
   --jsonl-dir "$INPUT_DIR"
   --db "$DB_PATH"

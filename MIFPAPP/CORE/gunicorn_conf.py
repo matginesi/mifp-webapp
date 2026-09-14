@@ -10,7 +10,7 @@ load_dotenv(Path(__file__).resolve().with_name(".env"), override=False)
 
 from mifp_app.utils.runtime_capacity import configured_count
 
-bind = os.getenv("GUNICORN_BIND", f"{os.getenv('FLASK_HOST', '127.0.0.1')}:{os.getenv('FLASK_PORT', '8000')}")
+bind = os.getenv("GUNICORN_BIND", f"{os.getenv('FLASK_HOST', '0.0.0.0')}:{os.getenv('FLASK_PORT', '8000')}")
 # SQLite supports concurrent readers but serializes writes. One process avoids
 # independent connection pools competing for the same WAL during admin work.
 workers = configured_count("GUNICORN_WORKERS", automatic=1, maximum=2)

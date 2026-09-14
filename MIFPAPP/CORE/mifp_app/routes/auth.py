@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import time
 from functools import wraps
-from urllib.parse import urlsplit
-
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for
-from werkzeug.security import check_password_hash
 
+from ..utils.http import is_safe_relative_url, wants_json_response
 from ..utils.logger import audit_log, security_event
-from ..utils.security import get_client_ip, ip_rate_allowed
+from ..utils.security import admin_password_matches, get_client_ip, ip_rate_allowed
 
 bp = Blueprint("auth", __name__)
 
@@ -19,7 +17,7 @@ def login_required(view):
         if not session.get("admin_logged_in"):
             audit_log("auth.access_denied", "access denied to dashboard", category="auth", outcome="denied",
                       ip=get_client_ip(), path=request.path)
-            if _wants_json_response():
+            if wants_json_response():
                 return jsonify({"error": "login_required"}), 401
             return redirect(url_for("auth.login", next=request.path))
         login_at = float(session.get("admin_login_at", 0) or 0)
@@ -29,25 +27,13 @@ def login_required(view):
                       username=session.get("admin_username", "-"), ip=get_client_ip())
             session.clear()
             flash("Session expired. Please log in again.", "warning")
-            if _wants_json_response():
+            if wants_json_response():
                 return jsonify({"error": "session_expired"}), 401
             return redirect(url_for("auth.login", next=request.path))
         return view(*args, **kwargs)
     wrapped._login_required = True
     return wrapped
 
-
-def _wants_json_response() -> bool:
-    if request.path.startswith("/api") or request.path.endswith(".json"):
-        return True
-    if request.args.get("format") == "json":
-        return True
-    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-        return True
-    best = request.accept_mimetypes.best
-    return best == "application/json" and (
-        request.accept_mimetypes["application/json"] >= request.accept_mimetypes["text/html"]
-    )
 
 
 def _check_rate_limit() -> bool:
@@ -88,7 +74,7 @@ def login_post():
             username=request.form.get("login_username", "").strip(),
             ip=get_client_ip(),
         )
-        flash("Too many attempts. Please try again in 60 seconds.", "error")
+        flash(f"Too many attempts. Please try again in {int(current_app.config.get('LOGIN_LOCKOUT_SECONDS', 60))} seconds.", "error")
         return redirect(failure_url)
 
     username = request.form.get("login_username", "").strip()
@@ -96,7 +82,7 @@ def login_post():
     expected_user = current_app.config.get("ADMIN_USERNAME") or "admin"
     expected_hash = current_app.config.get("ADMIN_PASSWORD_HASH", "")
 
-    if username == expected_user and expected_hash and check_password_hash(expected_hash, password):
+    if username == expected_user and admin_password_matches(password, expected_hash):
         session.clear()
         import secrets
         session["admin_logged_in"] = True
@@ -106,16 +92,7 @@ def login_post():
         audit_log("auth.login_success", "admin login", category="auth", outcome="success", username=username, ip=get_client_ip())
         flash("Login successful.", "success")
         next_url = request.args.get("next") or ""
-        # Prevent open redirect: only allow same-origin relative paths. A
-        # leading backslash must be rejected too — browsers normalize "\" to
-        # "/", turning "/\evil.example.com" into a protocol-relative redirect.
-        parsed_next = urlsplit(next_url)
-        if (
-            not next_url.startswith("/")
-            or parsed_next.scheme != ""
-            or parsed_next.netloc != ""
-            or "\\" in next_url
-        ):
+        if not is_safe_relative_url(next_url):
             next_url = url_for("dashboard.index")
         return redirect(next_url)
 

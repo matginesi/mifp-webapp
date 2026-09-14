@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import zipfile
@@ -279,6 +280,44 @@ def test_import_rejects_review_status_not_supported_by_content_tables(tmp_path: 
     assert summary["inserted"] == {}
     assert summary["skipped"] == 1
     assert "Invalid review_status: archived" in summary["errors"][0]["error"]
+
+
+def test_import_contract_parses_boolean_strings_explicitly() -> None:
+    from mifp_app.services.importers import _validate_record
+
+    record = {
+        "type": "news",
+        "data": {
+            "title": "Boolean contract",
+            "news_type": "general",
+            "is_featured": "false",
+            "date_is_inferred": "true",
+        },
+        "links": [{"url": "https://example.test", "is_primary": "0"}],
+    }
+
+    _typ, data, links, _assets, _meta = _validate_record(record, 1)
+
+    assert data["is_featured"] == 0
+    assert data["date_is_inferred"] == 1
+    assert links[0]["is_primary"] == 0
+
+
+def test_import_contract_rejects_values_outside_database_enums() -> None:
+    from mifp_app.services.importers import ImportValidationError, _validate_record
+
+    with pytest.raises(ImportValidationError, match="Invalid event_type"):
+        _validate_record({
+            "type": "event",
+            "data": {"title": "Bad event", "event_type": "invented"},
+        }, 1)
+
+    with pytest.raises(ImportValidationError, match="invalid role: banner"):
+        _validate_record({
+            "type": "news",
+            "data": {"title": "Bad asset"},
+            "assets": [{"url": "https://example.test/a.png", "role": "banner"}],
+        }, 2)
 
 
 def test_parse_zip_rejects_tampered_durable_state(tmp_path: Path) -> None:
@@ -1240,7 +1279,7 @@ def test_roundtrip_preserves_scraper_provenance(tmp_path: Path) -> None:
     assert mapping["mapping_kind"] == "canonical"
 
 
-def test_jsonl_package_roundtrip_matches_zip_for_records_state_and_assets(tmp_path: Path) -> None:
+def test_jsonl_export_is_record_only_while_zip_preserves_state_and_assets(tmp_path: Path) -> None:
     from mifp_app.services.data_portability import (
         bundle_to_jsonl_file,
         bundle_to_zip,
@@ -1260,46 +1299,121 @@ def test_jsonl_package_roundtrip_matches_zip_for_records_state_and_assets(tmp_pa
     zip_payload = bundle_to_zip(source, "all", source_assets)
 
     assert manifest["format"] == "mifp-jsonl-v2"
-    assert manifest["container"] == "jsonl"
-    assert manifest["files"]
+    assert manifest["container"] == "records-jsonl"
+    assert manifest["files"] == []
     text = jsonl_path.read_text(encoding="utf-8")
-    assert '"kind": "asset_chunk"' in text
+    assert '"_mifp"' not in text
+    assert '"kind": "asset_chunk"' not in text
+    first = json.loads(next(line for line in text.splitlines() if line.strip()))
+    assert set(first) <= {"type", "data", "links", "assets", "meta"}
 
     jsonl_target = _conn()
-    zip_target = _conn()
-    jsonl_assets = tmp_path / "jsonl-assets"
-    zip_assets = tmp_path / "zip-assets"
-    jsonl_summary = import_jsonl_payload(jsonl_target, jsonl_path, "all", jsonl_assets)
-    zip_summary = import_zip_payload(zip_target, zip_payload, "all", zip_assets)
+    jsonl_summary = import_jsonl_payload(
+        jsonl_target, jsonl_path, "all", tmp_path / "jsonl-assets", skip_assets=True
+    )
+    assert jsonl_summary["errors"] == []
+    assert jsonl_target.execute("SELECT title FROM news WHERE slug='news'").fetchone()[0] == "News"
+    assert jsonl_target.execute("SELECT COUNT(*) FROM settings WHERE key='portable-test'").fetchone()[0] == 0
 
-    assert jsonl_summary["errors"] == zip_summary["errors"] == []
-    for conn in (jsonl_target, zip_target):
-        assert conn.execute("SELECT title FROM news WHERE slug='news'").fetchone()[0] == "News"
-        assert conn.execute("SELECT value FROM settings WHERE key='portable-test'").fetchone()[0] == "yes"
-    assert (jsonl_assets / "pdf" / "paper.pdf").read_bytes() == b"%PDF-1.4\nportable\n"
+    zip_target = _conn()
+    zip_assets = tmp_path / "zip-assets"
+    zip_summary = import_zip_payload(zip_target, zip_payload, "all", zip_assets)
+    assert zip_summary["errors"] == []
+    assert zip_target.execute("SELECT value FROM settings WHERE key='portable-test'").fetchone()[0] == "yes"
     assert (zip_assets / "pdf" / "paper.pdf").read_bytes() == b"%PDF-1.4\nportable\n"
 
 
-def test_jsonl_package_detects_tampered_asset_chunk(tmp_path: Path) -> None:
-    from mifp_app.services.data_portability import bundle_to_jsonl_file, import_jsonl_payload
+def test_retired_self_contained_jsonl_is_rejected(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import import_jsonl_payload
+    from mifp_app.services.importers import ImportValidationError
+
+    package = tmp_path / "retired-package.jsonl"
+    package.write_text(
+        json.dumps({"_mifp": {"kind": "manifest", "data": {"scope": "news"}}})
+        + "\n"
+        + json.dumps({"type": "news", "data": {"title": "Should not import", "slug": "nope"}})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    target = _conn()
+    with pytest.raises(ImportValidationError, match="old ZIP package"):
+        import_jsonl_payload(target, package, "news", tmp_path / "assets")
+    assert target.execute("SELECT COUNT(*) FROM news").fetchone()[0] == 0
+
+
+def test_old_zip_without_format_remains_importable(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import import_zip_payload
+
+    record = {"type": "news", "data": {"title": "Old ZIP", "slug": "old-zip"}}
+    records = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
+    manifest = {
+        "scope": "news",
+        "records": 1,
+        "records_sha256": hashlib.sha256(records).hexdigest(),
+        "counts": {"news": 1},
+        "files": [],
+    }
+    out = BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("records.jsonl", records)
+        zf.writestr("manifest.json", json.dumps(manifest))
+
+    target = _conn()
+    summary = import_zip_payload(target, out.getvalue(), "news", tmp_path / "assets")
+    assert summary["errors"] == []
+    assert target.execute("SELECT title FROM news WHERE slug='old-zip'").fetchone()[0] == "Old ZIP"
+
+
+def test_zip_import_commit_false_rolls_back_records_and_durable_state(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
 
     source = _conn()
-    source_assets = tmp_path / "source-assets"
-    (source_assets / "pdf").mkdir(parents=True)
-    (source_assets / "pdf" / "paper.pdf").write_bytes(b"%PDF-1.4\nportable\n")
-    _insert_news_with_document(source)
-    package = tmp_path / "export.jsonl"
-    bundle_to_jsonl_file(source, "news", source_assets, package)
+    source.execute("INSERT INTO news(title,slug,review_status) VALUES('Portable','portable','published')")
+    source.execute("INSERT INTO settings(key,value) VALUES('portable-setting','yes')")
+    payload = bundle_to_zip(source, "all", tmp_path / "source-assets")
 
-    lines = package.read_text(encoding="utf-8").splitlines()
-    for index, raw in enumerate(lines):
-        item = json.loads(raw)
-        meta = item.get("_mifp") or {}
-        if meta.get("kind") == "asset_chunk":
-            meta["data"] = "AAAA"
-            lines[index] = json.dumps(item, sort_keys=True)
-            break
-    package.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    target = _conn()
+    summary = import_zip_payload(
+        target, payload, "all", tmp_path / "target-assets", skip_assets=True, commit=False
+    )
+    assert summary["errors"] == []
+    assert target.execute("SELECT COUNT(*) FROM news WHERE slug='portable'").fetchone()[0] == 1
+    assert target.execute("SELECT value FROM settings WHERE key='portable-setting'").fetchone()[0] == "yes"
 
-    with pytest.raises(ValueError, match="integrity|declared size"):
-        import_jsonl_payload(_conn(), package, "news", tmp_path / "target-assets")
+    target.rollback()
+    assert target.execute("SELECT COUNT(*) FROM news WHERE slug='portable'").fetchone()[0] == 0
+    assert target.execute("SELECT COUNT(*) FROM settings WHERE key='portable-setting'").fetchone()[0] == 0
+
+
+def test_content_zip_import_is_additive_and_does_not_delete_local_data(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_zip, import_zip_payload
+
+    source = _conn()
+    source.execute("INSERT INTO news(title,slug,review_status) VALUES('Incoming','incoming','published')")
+    payload = bundle_to_zip(source, "news", tmp_path / "source-assets")
+
+    target = _conn()
+    target.execute("INSERT INTO news(id,title,slug,review_status) VALUES(10,'Local only','local-only','published')")
+    target.execute("INSERT INTO news(id,title,slug,review_status) VALUES(11,'Incoming old','incoming','published')")
+    target.execute(
+        "INSERT INTO entity_links(entity_type,entity_id,url,role) VALUES('news',11,'https://local.example','source')"
+    )
+    target.execute("INSERT INTO assets(id,filename,path,kind) VALUES(7,'local.pdf','local.pdf','pdf')")
+    target.execute(
+        "INSERT INTO asset_links(asset_id,entity_type,entity_id,role) VALUES(7,'news',11,'document')"
+    )
+    target.commit()
+
+    summary = import_zip_payload(target, payload, "news", tmp_path / "target-assets", skip_assets=True)
+    assert summary["errors"] == []
+    assert target.execute("SELECT COUNT(*) FROM news WHERE slug='local-only'").fetchone()[0] == 1
+    incoming_id = target.execute("SELECT id FROM news WHERE slug='incoming'").fetchone()[0]
+    assert target.execute(
+        "SELECT COUNT(*) FROM entity_links WHERE entity_type='news' AND entity_id=? AND url='https://local.example'",
+        (incoming_id,),
+    ).fetchone()[0] == 1
+    assert target.execute(
+        "SELECT COUNT(*) FROM asset_links WHERE entity_type='news' AND entity_id=? AND asset_id=7",
+        (incoming_id,),
+    ).fetchone()[0] == 1

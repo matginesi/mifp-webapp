@@ -22,15 +22,23 @@ mkdir -p \
   "$TEST_RUNTIME_DIR/assets" \
   "$TEST_RUNTIME_DIR/exports" \
   "$TEST_RUNTIME_DIR/conferences" \
-  "$TEST_RUNTIME_DIR/logs"
+  "$TEST_RUNTIME_DIR/config" \
+  "$TEST_RUNTIME_DIR/logs" \
+  "$TEST_RUNTIME_DIR/tmp"
 export TESTING=1
 export SECRET_KEY="mifp-test-suite-secret"
 export DATABASE_PATH="$TEST_RUNTIME_DIR/mifp.db"
 export ASSETS_DIR="$TEST_RUNTIME_DIR/assets"
 export EXPORT_DIR="$TEST_RUNTIME_DIR/exports"
 export CONFERENCES_DIR="$TEST_RUNTIME_DIR/conferences"
+export BANNER_SETTINGS_PATH="$TEST_RUNTIME_DIR/config/banner_settings.json"
 export LOG_DIR="$TEST_RUNTIME_DIR/logs"
+export TMPDIR="$TEST_RUNTIME_DIR/tmp"
 export AUTO_SYNC_CONFERENCES_ON_STARTUP=0
+
+# Data-only suites must not need TESTS/conftest.py (which imports Flask), but
+# they still need the repository source directories on sys.path.
+export PYTHONPATH="$ROOT_DIR/MIFPAPP/CORE:$ROOT_DIR/SCRAPERS:$ROOT_DIR/MIFPAPP/DATABASE/tools${PYTHONPATH:+:$PYTHONPATH}"
 
 SUITE=quick
 BASE_URL="${MIFP_TEST_BASE_URL:-http://127.0.0.1:8000}"
@@ -132,18 +140,12 @@ while (($#)); do
 done
 
 pick_python() {
-  local candidate
-  for candidate in \
-    "$ROOT_DIR/MIFPAPP/CORE/.venv/bin/python" \
-    "$ROOT_DIR/SCRAPERS/.venv/bin/python" \
-    "$ROOT_DIR/.venv/bin/python" \
-    "$(command -v python3 2>/dev/null || true)"; do
-    if [[ -n "$candidate" && -x "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
+  local root_venv="$ROOT_DIR/.venv/bin/python"
+  if [[ -x "$root_venv" ]]; then
+    printf '%s\n' "$root_venv"
+    return 0
+  fi
+  command -v python3 2>/dev/null || return 1
 }
 
 PYTHON_BIN="$(pick_python)" || die "Python 3 is required"
@@ -152,19 +154,24 @@ ensure_test_environment() {
   local profile="${1:-full}"
   local check_code
   case "$profile" in
-    data)
-      check_code='import bs4, pypdf, pytest, requests, yaml'
-      ;;
-    webapp)
-      check_code='import flask, pytest'
-      ;;
-    full)
-      check_code='import bs4, flask, pypdf, pytest'
-      ;;
+    data) check_code='import bs4, pypdf, pytest, requests, yaml' ;;
+    webapp) check_code='import flask, pytest' ;;
+    full) check_code='import bs4, flask, pypdf, pytest, requests, yaml' ;;
     *) die "unknown dependency profile: $profile" ;;
   esac
 
+  # Prefer an already-capable interpreter before touching the network. This
+  # keeps data-only suites usable in offline/recovery environments and avoids
+  # rebuilding the project virtualenv when the runner already has everything.
   if "$PYTHON_BIN" -c "$check_code" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local system_python
+  system_python="$(command -v python3 2>/dev/null || true)"
+  if [[ -n "$system_python" && "$system_python" != "$PYTHON_BIN" ]] \
+    && "$system_python" -c "$check_code" >/dev/null 2>&1; then
+    PYTHON_BIN="$system_python"
     return 0
   fi
 
@@ -173,26 +180,13 @@ ensure_test_environment() {
     return 1
   fi
 
-  if [[ ! -x "$ROOT_DIR/MIFPAPP/CORE/.venv/bin/python" ]]; then
-    "$ROOT_DIR/mifp" setup
-  fi
-  PYTHON_BIN="$ROOT_DIR/MIFPAPP/CORE/.venv/bin/python"
-  case "$profile" in
-    data)
-      "$PYTHON_BIN" -m pip install --disable-pip-version-check --prefer-binary \
-        -r "$ROOT_DIR/SCRAPERS/requirements.txt" pytest pypdf pyyaml requests
-      ;;
-    webapp)
-      "$PYTHON_BIN" -m pip install --disable-pip-version-check --prefer-binary \
-        -r "$ROOT_DIR/MIFPAPP/CORE/requirements.txt" pytest
-      ;;
-    full)
-      "$PYTHON_BIN" -m pip install --disable-pip-version-check --prefer-binary \
-        -r "$ROOT_DIR/MIFPAPP/CORE/requirements.txt" \
-        -r "$ROOT_DIR/SCRAPERS/requirements.txt" \
-        pytest
-      ;;
-  esac
+  # Only install when no available interpreter satisfies the selected suite.
+  "$ROOT_DIR/mifp" setup
+  PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+  "$PYTHON_BIN" -c "$check_code" >/dev/null 2>&1 || {
+    printf 'The local environment is still missing dependencies for profile: %s\n' "$profile" >&2
+    return 1
+  }
 }
 
 ensure_browser_environment() {
@@ -224,8 +218,9 @@ run_pytest_paths() {
 }
 
 run_quick() {
-  run_pytest_paths "webapp + scraper + database tests" full \
-    TESTS/webapp TESTS/scraper TESTS/database
+  run_webapp
+  run_scraper
+  run_database
 }
 
 run_webapp() {
@@ -233,11 +228,11 @@ run_webapp() {
 }
 
 run_scraper() {
-  run_pytest_paths "scraper tests" data TESTS/scraper
+  run_pytest_paths "scraper tests" data --confcutdir=TESTS/scraper TESTS/scraper
 }
 
 run_database() {
-  run_pytest_paths "database tests" data TESTS/database
+  run_pytest_paths "database tests" data --confcutdir=TESTS/database TESTS/database
 }
 
 run_browser() {

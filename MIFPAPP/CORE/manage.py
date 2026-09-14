@@ -169,9 +169,8 @@ def configure_admin(args: argparse.Namespace) -> int:
 def print_password_hash(args: argparse.Namespace) -> int:
     """Prompt for a password and print only a Werkzeug-compatible hash.
 
-    Intended for production administrator rotation: the hash is printed to
-    stdout and is never persisted by this command. Copy it into the server's
-    ``deploy/.env`` as ``ADMIN_PASSWORD_HASH``.
+    Compatibility helper for manual hash generation. Production VPS rotation is
+    normally handled directly by ``deploy.sh admin``.
     """
     if args.min_length < 8:
         raise SystemExit("--min-length must be at least 8")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ..entity_references import move_entity_references
 import json
 import logging
 import sqlite3
@@ -343,28 +344,6 @@ def validate_bundle(conn: sqlite3.Connection, bundle_id: int, *, persist: bool =
     return report
 
 
-def _move_references(conn: sqlite3.Connection, entity_type: str, old_id: int, canonical_id: int) -> None:
-    for row in conn.execute("SELECT * FROM entity_links WHERE entity_type=? AND entity_id=?", (entity_type, old_id)).fetchall():
-        conn.execute(
-            """INSERT OR IGNORE INTO entity_links(entity_type,entity_id,url,label,role,is_primary,sort_order)
-               VALUES(?,?,?,?,?,?,?)""",
-            (entity_type, canonical_id, row["url"], row["label"], row["role"], row["is_primary"], row["sort_order"]),
-        )
-    for row in conn.execute("SELECT * FROM asset_links WHERE entity_type=? AND entity_id=?", (entity_type, old_id)).fetchall():
-        conn.execute(
-            """INSERT OR IGNORE INTO asset_links(asset_id,entity_type,entity_id,role,is_primary,sort_order)
-               VALUES(?,?,?,?,?,?)""",
-            (row["asset_id"], entity_type, canonical_id, row["role"], row["is_primary"], row["sort_order"]),
-        )
-    conn.execute("DELETE FROM entity_links WHERE entity_type=? AND entity_id=?", (entity_type, old_id))
-    conn.execute("DELETE FROM asset_links WHERE entity_type=? AND entity_id=?", (entity_type, old_id))
-    conn.execute("UPDATE import_records SET entity_id=? WHERE entity_type=? AND entity_id=?", (canonical_id, entity_type, old_id))
-    conn.execute("UPDATE OR IGNORE entity_relations SET source_id=? WHERE source_type=? AND source_id=?", (canonical_id, entity_type, old_id))
-    conn.execute("UPDATE OR IGNORE entity_relations SET target_id=? WHERE target_type=? AND target_id=?", (canonical_id, entity_type, old_id))
-    conn.execute("DELETE FROM entity_relations WHERE (source_type=? AND source_id=?) OR (target_type=? AND target_id=?)", (entity_type, old_id, entity_type, old_id))
-    conn.execute("DELETE FROM entity_relations WHERE source_type=target_type AND source_id=target_id")
-
-
 def _write_resolved_pair(conn: sqlite3.Connection, entity_type: str, record: dict, action: str, finding_id: int | None = None, bundle_id: int | None = None) -> None:
     fp = content_fingerprint(record)
     conn.execute(
@@ -392,7 +371,7 @@ def _apply_clean(conn: sqlite3.Connection, plan: dict, bundle_id: int | None = N
             conn, entity_type, dict(record), "removed_legacy_duplicate",
             plan.get("finding_id"), bundle_id,
         )
-        _move_references(conn, entity_type, record_id, canonical_id)
+        move_entity_references(conn, entity_type, record_id, canonical_id)
         conn.execute(f'DELETE FROM "{table}" WHERE id=?', (record_id,))
         return
     if plan.get("operation") == "swap_name_fields":
@@ -537,7 +516,7 @@ def _apply_merge(conn: sqlite3.Connection, plan: dict, bundle_id: int) -> None:
                 conn, entity_type, dict(old), "merged",
                 plan.get("finding_id"), bundle_id,
             )
-        _move_references(conn, entity_type, old_id, canonical_id)
+        move_entity_references(conn, entity_type, old_id, canonical_id)
         conn.execute(f'DELETE FROM "{table}" WHERE id=?', (old_id,))
     _repair_primary_flags(conn, entity_type, canonical_id, plan.get("preferred_asset_id"))
     canonical_record = conn.execute(f'SELECT * FROM "{table}" WHERE id=?', (canonical_id,)).fetchone()

@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 from pypdf import PdfReader
 
-from .config import WEBAPP, DEFAULT_JSONL_DIR, FETCH_UA, ASSETS_DIR
+from .config import FETCH_UA, ASSETS_DIR
 
 
 class PermanentAssetDownloadError(Exception):

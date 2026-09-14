@@ -11,7 +11,7 @@ from .assets import add_asset
 from .utils import clean, slugify, insert_or_update, infer_country
 
 
-REVIEW_STATUSES = {"draft", "review", "published", "archived", "quarantined", "duplicate"}
+REVIEW_STATUSES = {"draft", "review", "published", "quarantined", "duplicate"}
 NEWS_INFERRED_DATE_RULE = "scraper_inferred"
 
 
@@ -307,7 +307,7 @@ def _looks_like_asset(url):
 
 def _review_status(data):
     raw = clean(data.get("review_status") or data.get("status") or "published").lower()
-    if raw in {"needs_review", "pending", "candidate"}:
+    if raw in {"needs_review", "pending", "candidate", "archived"}:
         raw = "review"
     return raw if raw in REVIEW_STATUSES else "published"
 

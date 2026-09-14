@@ -9,7 +9,7 @@ from typing import Any
 from ..db.connection import table_exists
 from .admin_safety import backup_sqlite_database
 from .assets import resolve_db_asset_path
-from .importers import TYPE_TO_TABLE
+from ..domain import ENTITY_TABLES
 
 
 @dataclass(frozen=True)
@@ -37,7 +37,7 @@ class MaintenancePlan:
         }
 
 
-_ENTITY_TABLES = {typ: table for typ, table in TYPE_TO_TABLE.items()}
+_ENTITY_TABLES = dict(ENTITY_TABLES)
 
 
 def _ids(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()) -> tuple[int, ...]:
@@ -53,6 +53,16 @@ def _entity_exists(conn: sqlite3.Connection, entity_type: str, entity_id: int) -
     if not table or not table_exists(conn, table):
         return False
     return conn.execute(f"SELECT 1 FROM {table} WHERE id=?", (entity_id,)).fetchone() is not None
+
+
+def _entity_uid_exists(conn: sqlite3.Connection, entity_type: str, entity_uid: str) -> bool:
+    table = _ENTITY_TABLES.get(entity_type)
+    if not table or not table_exists(conn, table):
+        return False
+    columns = {str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")')}
+    if "uid" not in columns:
+        return False
+    return conn.execute(f'SELECT 1 FROM "{table}" WHERE uid=?', (entity_uid,)).fetchone() is not None
 
 
 def analyze_database(conn: sqlite3.Connection, assets_dir: Path) -> MaintenancePlan:
@@ -103,6 +113,55 @@ def analyze_database(conn: sqlite3.Connection, assets_dir: Path) -> MaintenanceP
             safe.append(MaintenanceFinding("orphan_entity_relation", "safe", len(orphan_relations), tuple(orphan_relations)))
         if self_relations:
             safe.append(MaintenanceFinding("self_entity_relation", "safe", len(self_relations), tuple(self_relations)))
+
+    if table_exists(conn, "content_aliases"):
+        orphan_aliases = tuple(
+            int(row["id"])
+            for row in conn.execute(
+                "SELECT id,entity_type,canonical_entity_id FROM content_aliases"
+            ).fetchall()
+            if not _entity_exists(conn, str(row["entity_type"]), int(row["canonical_entity_id"]))
+        )
+        if orphan_aliases:
+            safe.append(MaintenanceFinding("orphan_content_alias", "safe", len(orphan_aliases), orphan_aliases))
+
+    if table_exists(conn, "canonical_mappings"):
+        orphan_mappings = tuple(
+            int(row["id"])
+            for row in conn.execute(
+                "SELECT id,entity_type,entity_uid FROM canonical_mappings"
+            ).fetchall()
+            if not _entity_uid_exists(conn, str(row["entity_type"]), str(row["entity_uid"]))
+        )
+        if orphan_mappings:
+            safe.append(MaintenanceFinding("orphan_canonical_mapping", "safe", len(orphan_mappings), orphan_mappings))
+
+    if table_exists(conn, "import_records"):
+        orphan_import_records = tuple(
+            int(row["id"])
+            for row in conn.execute(
+                "SELECT id,entity_type,entity_id FROM import_records "
+                "WHERE entity_type IS NOT NULL AND entity_id IS NOT NULL"
+            ).fetchall()
+            if not _entity_exists(conn, str(row["entity_type"]), int(row["entity_id"]))
+        )
+        if orphan_import_records:
+            safe.append(MaintenanceFinding("orphan_import_record_entity", "safe", len(orphan_import_records), orphan_import_records))
+
+    if table_exists(conn, "resolved_pairs"):
+        dangling_pairs = tuple(
+            int(row["id"])
+            for row in conn.execute(
+                "SELECT rp.id,rp.finding_id,rp.bundle_id,qf.id AS qf_id,qb.id AS qb_id "
+                "FROM resolved_pairs rp "
+                "LEFT JOIN quality_findings qf ON qf.id=rp.finding_id "
+                "LEFT JOIN quality_bundles qb ON qb.id=rp.bundle_id "
+                "WHERE (rp.finding_id IS NOT NULL AND qf.id IS NULL) "
+                "OR (rp.bundle_id IS NOT NULL AND qb.id IS NULL)"
+            ).fetchall()
+        )
+        if dangling_pairs:
+            safe.append(MaintenanceFinding("dangling_resolved_pair_reference", "safe", len(dangling_pairs), dangling_pairs))
 
     if table_exists(conn, "assets"):
         unused = _ids(
@@ -172,6 +231,29 @@ def apply_safe_fixes(
                 table = "entity_links"
             elif finding.code in {"orphan_entity_relation", "self_entity_relation"}:
                 table = "entity_relations"
+            elif finding.code == "orphan_content_alias":
+                table = "content_aliases"
+            elif finding.code == "orphan_canonical_mapping":
+                table = "canonical_mappings"
+            elif finding.code == "orphan_import_record_entity":
+                conn.execute(
+                    f"UPDATE import_records SET entity_id=NULL WHERE id IN ({placeholders})",
+                    finding.record_ids,
+                )
+                applied[finding.code] = conn.execute("SELECT changes()").fetchone()[0]
+                continue
+            elif finding.code == "dangling_resolved_pair_reference":
+                conn.execute(
+                    f"UPDATE resolved_pairs SET "
+                    f"finding_id=CASE WHEN finding_id IS NOT NULL AND NOT EXISTS("
+                    f"SELECT 1 FROM quality_findings qf WHERE qf.id=resolved_pairs.finding_id) THEN NULL ELSE finding_id END, "
+                    f"bundle_id=CASE WHEN bundle_id IS NOT NULL AND NOT EXISTS("
+                    f"SELECT 1 FROM quality_bundles qb WHERE qb.id=resolved_pairs.bundle_id) THEN NULL ELSE bundle_id END "
+                    f"WHERE id IN ({placeholders})",
+                    finding.record_ids,
+                )
+                applied[finding.code] = conn.execute("SELECT changes()").fetchone()[0]
+                continue
             elif finding.code == "interrupted_import_run":
                 conn.execute(
                     f"UPDATE import_runs SET status='failed', completed_at=CURRENT_TIMESTAMP "

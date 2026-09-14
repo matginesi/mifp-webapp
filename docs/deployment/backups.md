@@ -1,115 +1,65 @@
-# Backups And Restore
+# Backup e restore
 
-MIFP production data lives outside Git. Back up these required data groups:
-
-```text
-/opt/mifp/data/mifp.db
-/opt/mifp/data/assets/
-```
-
-Also keep `/opt/mifp/.env` in a secure password manager or
-encrypted backup.
-
-## Main Database Backup
-
-Use SQLite online backup when possible:
-
-```bash
-stamp="$(date +%Y%m%d-%H%M%S)"
-sudo -u mifp sqlite3 /opt/mifp/data/mifp.db ".backup '/opt/mifp/backups/mifp-$stamp.db'"
-```
-
-Copy it away from the server:
-
-```bash
-rsync -avz user@host:/opt/mifp/backups/mifp-YYYYMMDD-HHMMSS.db ./backups/
-```
-
-Conference operational tables are inside `mifp.db`; there is no separate
-conference runtime database to back up.
-
-## Assets Backup
-
-```bash
-rsync -avz user@host:/opt/mifp/data/assets/ ./backups/assets/
-```
-
-Use `--delete` only when you intentionally want the destination to become an
-exact mirror.
-
-## Retention And Cleanup
-
-Do not delete backups blindly. First inspect size and age:
-
-```bash
-du -sh /opt/mifp/backups
-find /opt/mifp/backups -maxdepth 1 -type f -printf '%TY-%Tm-%Td %TH:%TM %s %p\n' | sort
-```
-
-Recommended small-site retention:
+Il backup di sicurezza vive **fuori** da `/opt/mifp/data` e usa snapshot
+point-in-time complete:
 
 ```text
-Keep the newest 7 daily backups.
-Keep one backup before every schema/import/deploy operation.
-Move monthly archives off the server.
-Delete old local backups only after verifying an off-server copy.
+/var/backups/mifp/snapshots/
+  snapshot-YYYYMMDD-HHMMSS-NNNNNNNNN/
+    mifp.db
+    mifp.db.sha256
+    manifest.json
+    assets/
+    conferences/
+    config/
+    README.txt
 ```
 
-Dry-run files older than 30 days:
+`mifp-backup.timer` esegue automaticamente il backup. Per garantire che DB e filesystem appartengano alla stessa fotografia, il container web viene brevemente messo in pausa durante la copia (`MIFP_BACKUP_QUIESCE=1`, default). Manualmente:
 
 ```bash
-find /opt/mifp/backups -maxdepth 1 -type f -mtime +30 -print
+sudo mifpctl backup
 ```
 
-After confirming they are copied elsewhere, delete them explicitly:
+Il DB viene copiato tramite SQLite `.backup`, quindi verificato con
+`quick_check` e `foreign_key_check`. `mifp.db.sha256` resta disponibile per una
+verifica manuale rapida; `manifest.json` contiene invece SHA-256 e insieme
+esatto di **tutti** i file ripristinabili: DB, `assets/`, `conferences/` e
+`config/`. Symlink nei tree gestiti sono rifiutati. `rsync --link-dest` usa
+hardlink per i file invariati rispetto alla snapshot precedente, quindi non
+serve un mirror cumulativo ambiguo. La retention delle snapshot complete è
+`MIFP_BACKUP_KEEP` (default 14).
+
+Verifica manuale:
 
 ```bash
-find /opt/mifp/backups -maxdepth 1 -type f -mtime +30 -delete
+cd /var/backups/mifp/snapshots/snapshot-...
+sha256sum -c mifp.db.sha256
+python3 -m json.tool manifest.json >/dev/null
+sqlite3 mifp.db 'PRAGMA quick_check; PRAGMA foreign_key_check;'
 ```
 
-For a local development checkout such as `MIFPAPP/DATABASE/backups`, the same rule
-applies: inspect first, copy anything valuable away, then remove only confirmed
-old backups. The directory is excluded from code packaging and must not be
-committed.
-
-## Restore
-
-Stop the container before replacing SQLite files:
+Restore di un DB che rispetta lo schema corrente:
 
 ```bash
-cd /opt/mifp
-sudo -u mifp bash deploy.sh stop
-sudo install -o mifp -g mifp -m 640 backup-mifp.db /opt/mifp/data/mifp.db
-rsync -avz --delete ./backups/assets/ user@host:/opt/mifp/data/assets/
-sudo chown -R mifp:mifp /opt/mifp/data/assets
-sudo -u mifp bash deploy.sh start ghcr.io/<owner>/mifp-webapp:latest
-curl -fsS http://127.0.0.1:8000/ready
+sudo mifpctl restore-db /var/backups/mifp/snapshots/snapshot-.../mifp.db
 ```
 
-If restoring assets from the server itself:
+Non copiare manualmente un DB sopra quello live. `restore-db` e
+`restore-snapshot` falliscono prima dello swap se il servizio non può essere
+fermato; il restore completo valida automaticamente `manifest.json` e crea una
+nuova snapshot di sicurezza prima di modificare DB o file. Per dati storici con
+schema vecchio crea un DB corrente e importa un vecchio ZIP.
 
-```bash
-sudo rsync -av --delete /path/to/assets-backup/ /opt/mifp/data/assets/
-sudo chown -R mifp:mifp /opt/mifp/data/assets
+## Copia off-site opzionale
+
+Un backup sullo stesso server non protegge dalla perdita della VPS. Il bootstrap
+installa anche `restic`, ma non invia nulla all'esterno finché non configuri:
+
+```text
+MIFP_RESTIC_REPOSITORY=...
+MIFP_RESTIC_PASSWORD_FILE=/root/.config/mifp/restic-password
 ```
 
-## Full Recovery Procedure
-
-1. Install Ubuntu and harden SSH/firewall.
-2. Run `bootstrap-vps.sh` on the VPS (installs Docker Engine, Compose v2,
-   Caddy, and creates the `mifp` user and `/opt/mifp/{data,...}`).
-3. Restore `/opt/mifp/.env` with mode `600`.
-4. Restore `mifp.db`.
-5. Restore `assets/`.
-6. Pull the release image and start the stack with
-   `sudo -u mifp bash /opt/mifp/deploy.sh ghcr.io/<owner>/mifp-webapp:sha-<commit>`.
-7. Start Caddy and check `/ready`, logs, and public pages.
-
-## Backup Verification
-
-Periodically verify backups on a separate machine:
-
-```bash
-sqlite3 mifp-backup.db "PRAGMA integrity_check;"
-find assets -type f | wc -l
-```
+La password restic deve vivere fuori dal repository, con permessi root-only.
+Ogni snapshot completata viene quindi replicata cifrata da restic.

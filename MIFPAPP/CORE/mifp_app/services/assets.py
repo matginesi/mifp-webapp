@@ -6,6 +6,7 @@ import hashlib
 import http.client
 import ipaddress
 import mimetypes
+import os
 import shutil
 import socket
 import tempfile
@@ -21,6 +22,89 @@ from urllib.request import Request
 from ..config import Config
 from ..db.connection import sha256_file
 from ..utils.text_utils import slugify
+
+
+class AssetWriteSession:
+    """Track immutable asset files created by one higher-level operation.
+
+    Asset writes never replace an existing file with different bytes. Files
+    created during a failed DB savepoint/transaction can therefore be removed
+    safely without risking pre-existing content. A process crash can at worst
+    leave an unreferenced immutable file, which database maintenance can prune.
+    """
+
+    def __init__(self, assets_dir: Path):
+        self.root = Path(assets_dir).resolve()
+        self._created: list[Path] = []
+
+    def __enter__(self) -> "AssetWriteSession":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if exc_type is not None:
+            self.rollback()
+        return False
+
+    def checkpoint(self) -> int:
+        return len(self._created)
+
+    def install(self, source: Path, target: Path) -> bool:
+        source = Path(source).resolve()
+        target = Path(target).resolve()
+        try:
+            target.relative_to(self.root)
+        except ValueError as exc:
+            raise ValueError("Asset write target escapes the configured asset directory") from exc
+        if target.exists():
+            if not target.is_file():
+                raise ValueError(f"Asset target is not a regular file: {target}")
+            if sha256_file(target) == sha256_file(source):
+                return False
+            raise FileExistsError(f"Refusing to overwrite existing asset with different content: {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+        temp = Path(temp_name)
+        try:
+            with os.fdopen(fd, "wb") as out, source.open("rb") as inp:
+                shutil.copyfileobj(inp, out, length=1024 * 1024)
+                out.flush()
+                os.fsync(out.fileno())
+            os.chmod(temp, 0o640)
+            # Hard-link publication is atomic and fails instead of replacing an
+            # unexpectedly-created destination. Remove the temporary link after.
+            try:
+                os.link(temp, target)
+            except FileExistsError:
+                if target.is_file() and sha256_file(target) == sha256_file(source):
+                    return False
+                raise FileExistsError(f"Refusing to overwrite concurrently-created asset: {target}")
+            self._created.append(target)
+            return True
+        finally:
+            temp.unlink(missing_ok=True)
+
+    def rollback_to(self, checkpoint: int) -> None:
+        while len(self._created) > checkpoint:
+            path = self._created.pop()
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def rollback(self) -> None:
+        self.rollback_to(0)
+
+
+def conflict_safe_asset_target(assets_dir: Path, db_path: str, checksum: str) -> tuple[Path, str]:
+    """Return original target, or a content-addressed sibling on conflict."""
+    target = resolve_db_asset_path(assets_dir, db_path)
+    if not target.exists():
+        return target, db_path
+    suffix = target.suffix
+    stem = target.stem or "asset"
+    alternate = target.with_name(f"{stem}-{checksum[:12]}{suffix}")
+    relative = alternate.resolve().relative_to(Path(assets_dir).resolve())
+    return alternate, str(Path("assets") / relative)
 
 
 def infer_kind(path: Path, mime_type: str | None = None) -> str:
@@ -353,7 +437,7 @@ def _normalize_upload_source(source: Any) -> tuple[Path, str | None, bool]:
     return Path(source), None, False
 
 
-def store_asset(conn, source_path: Any, assets_dir: Path, kind: str | None = None, caption: str | None = None, alt_text: str | None = None, source_url: str | None = None, original_filename: str | None = None, *, commit: bool = True) -> int:
+def store_asset(conn, source_path: Any, assets_dir: Path, kind: str | None = None, caption: str | None = None, alt_text: str | None = None, source_url: str | None = None, original_filename: str | None = None, *, commit: bool = True, file_session: AssetWriteSession | None = None) -> int:
     source_path, uploaded_name, is_temp = _normalize_upload_source(source_path)
     source_path = source_path.resolve()
     if not source_path.exists() or not source_path.is_file():
@@ -378,7 +462,8 @@ def store_asset(conn, source_path: Any, assets_dir: Path, kind: str | None = Non
         subdir = assets_dir / final_kind
         subdir.mkdir(parents=True, exist_ok=True)
         dest = subdir / filename
-        shutil.copy2(source_path, dest)
+        writer = file_session or AssetWriteSession(assets_dir)
+        writer.install(source_path, dest)
 
         rel_path = str(Path("assets") / dest.relative_to(assets_dir))
         cur = conn.execute(
@@ -417,6 +502,7 @@ def replace_asset_file(
     mime_type: str | None = None,
     *,
     commit: bool = True,
+    file_session: AssetWriteSession | None = None,
 ) -> int:
     source_name = original_filename or source_path.name
     guessed_mime = mime_type or mimetypes.guess_type(source_name)[0] or mimetypes.guess_type(source_path.name)[0] or "application/octet-stream"
@@ -441,7 +527,8 @@ def replace_asset_file(
     subdir = assets_dir / final_kind
     subdir.mkdir(parents=True, exist_ok=True)
     dest = subdir / filename
-    shutil.copy2(source_path, dest)
+    writer = file_session or AssetWriteSession(assets_dir)
+    writer.install(source_path, dest)
     rel_path = str(Path("assets") / dest.relative_to(assets_dir))
 
     conn.execute(
@@ -581,6 +668,7 @@ def download_asset(
     max_retries: int | None = None,
     *,
     commit: bool = True,
+    file_session: AssetWriteSession | None = None,
 ) -> int:
     """Download a remote asset, store it locally, and register it in DB.
 
@@ -621,6 +709,7 @@ def download_asset(
                 original_filename=filename,
                 mime_type=content_type,
                 commit=commit,
+                file_session=file_session,
             )
         return store_asset(
             conn,
@@ -632,6 +721,7 @@ def download_asset(
             source_url=url,
             original_filename=filename,
             commit=commit,
+            file_session=file_session,
         )
     finally:
         if tmp_path is not None:
@@ -825,6 +915,7 @@ def recover_missing_assets(
     statuses: tuple[str, ...] = ("missing", "external", "local"),
     cancel_check: Callable[[], bool] | None = None,
     commit: bool = True,
+    file_session: AssetWriteSession | None = None,
 ) -> dict[str, Any]:
     """Recover a bounded batch and persist retry/cooldown state per asset."""
     log = __import__("logging").getLogger("mifp.assets")
@@ -865,7 +956,7 @@ def recover_missing_assets(
     now_text = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
     for row in rows:
         if cancel_check and cancel_check():
-            from .job_manager import JobCancelled
+            from .errors import JobCancelled
             raise JobCancelled("Import cancelled during asset recovery")
         asset_id = int(row["id"])
         url = str(row["source_url"] or "").strip()
@@ -902,6 +993,8 @@ def recover_missing_assets(
                 timeout=timeout,
                 max_bytes=max_bytes,
                 max_retries=max_retries,
+                commit=False,
+                file_session=file_session,
             )
             if new_id:
                 conn.execute("UPDATE assets SET storage_status='local' WHERE id=?", (asset_id,))

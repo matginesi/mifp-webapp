@@ -8,6 +8,9 @@ import unicodedata
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit, urlunsplit
 
+from ..fingerprints import stable_fingerprint
+
+
 _SPACE = re.compile(r"\s+")
 _PUNCT = re.compile(r"[^\w\s]+", re.UNICODE)
 _YEAR = re.compile(r"\b(19|20)\d{2}\b")
@@ -47,29 +50,6 @@ def tokens(value: object) -> tuple[str, ...]:
 def normalized_doi(value: object) -> str:
     return _DOI.sub("", comparison_text(value)).strip()
 
-
-def stable_fingerprint(entity_type: str, records: list[dict], *, action: str = "") -> str:
-    operational = {
-        "id", "uid", "created_at", "updated_at", "sort_order", "source_order", "display_order"
-    }
-    material = [
-        {
-            key: value
-            for key, value in sorted(row.items())
-            if key not in operational
-        }
-        for row in sorted(
-            records,
-            key=lambda item: json.dumps(
-                {key: value for key, value in item.items() if key not in operational},
-                sort_keys=True,
-                default=str,
-            ),
-        )
-    ]
-    return hashlib.sha256(
-        json.dumps([entity_type, action, material], ensure_ascii=False, sort_keys=True, default=str).encode()
-    ).hexdigest()
 
 
 def content_fingerprint(record: dict) -> str:

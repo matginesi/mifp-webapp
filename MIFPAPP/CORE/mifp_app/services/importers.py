@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
 import sqlite3
 import unicodedata
 from collections.abc import Callable
@@ -15,6 +14,8 @@ from ..config import Config
 from ..db.connection import table_columns
 from ..utils.text_utils import normalize_url, slugify
 from .assets import (
+    AssetWriteSession,
+    conflict_safe_asset_target,
     download_asset,
     infer_kind_from_url,
     resolve_db_asset_path,
@@ -24,82 +25,24 @@ from .assets import (
 )
 from .data_quality.normalizers import clean_boilerplate, person_name
 
-TYPE_TO_TABLE = {
-    "event": "events",
-    "news": "news",
-    "member": "members",
-    "publication": "publications",
-    "research_area": "research_areas",
-    "page": "pages",
-    "sponsor": "sponsors",
-}
-IMPORT_TYPES = {"event", "news", "member", "publication", "research_area", "page", "sponsor"}
-
-TABLE_TO_TYPE = {table: typ for typ, table in TYPE_TO_TABLE.items()}
+from ..domain import (
+    ASSET_KINDS,
+    ASSET_LINK_FIELDS,
+    ASSET_ROLES,
+    ASSET_STORAGE_STATUSES,
+    DATE_PRECISIONS,
+    ENTITY_DATA_FIELDS as DATA_FIELDS,
+    ENTITY_TABLES as TYPE_TO_TABLE,
+    EVENT_TYPES,
+    IMPORT_TYPES,
+    LINK_ROLES,
+    NEWS_TYPES,
+    PAGE_TYPES,
+    REQUIRED_FIELDS,
+    normalize_review_status,
+)
 
 TOP_KEYS = {"type", "data", "links", "assets", "meta"}
-REVIEW_STATUSES = {"draft", "review", "published", "quarantined", "duplicate"}
-LINK_ROLES = {"primary", "website", "source", "doi", "publisher", "registration", "program", "document", "social", "other"}
-ASSET_ROLES = {"cover", "gallery", "attachment", "logo", "document", "profile", "banner"}
-ASSET_KINDS = {"image", "document", "pdf", "video", "other"}
-ASSET_STORAGE_STATUSES = {"local", "external", "missing"}
-ASSET_DATA_FIELDS = {
-    "filename", "original_filename", "path", "mime_type", "size", "kind",
-    "alt_text", "caption", "source_url", "storage_status", "is_external",
-    "width", "height", "duration_seconds", "checksum",
-}
-# Identity/metadata carried by dashboard-produced exports so a re-import can
-# restore the same asset row (uid/checksum/path) instead of minting a new one.
-ASSET_LINK_FIELDS = {
-    "path", "url", "role", "kind", "caption", "alt_text", "is_primary", "sort_order",
-    "uid", "checksum", "content_sha256", "source_url_sha256", "storage_status",
-    "is_external", "filename", "original_filename", "mime_type", "size",
-    "width", "height", "duration_seconds",
-}
-
-DATA_FIELDS = {
-    "event": {
-        "slug", "title", "start_date", "end_date", "date_text", "date_precision",
-        "location", "description", "event_type", "series_key", "parent_event_id",
-        "parent_event_slug", "review_status", "is_featured", "sort_order", "remote_url",
-    },
-    "news": {
-        "slug", "title", "news_type", "card_layout", "date", "date_text",
-        "date_precision", "date_is_inferred", "date_inference_rule",
-        "original_date_text", "summary", "body", "review_status", "is_featured",
-        "source_kind", "source_priority", "source_order", "display_order", "sort_order",
-    },
-    "member": {
-        "slug", "first_name", "last_name", "display_name", "affiliation", "country",
-        "email", "role", "role_id", "field", "bio", "review_status", "is_active", "sort_order",
-        "normalized_affiliation", "normalized_name",
-    },
-    "publication": {
-        "slug", "title", "year", "authors", "journal", "doi", "abstract",
-        "date_text", "date_precision", "review_status", "sort_order",
-    },
-    "research_area": {"slug", "title", "summary", "description", "review_status", "sort_order"},
-    "page": {
-        "slug", "title", "type", "summary", "body", "version", "effective_date",
-        "nav_group", "menu_order", "review_status", "sort_order",
-    },
-    "sponsor": {"slug", "name", "description", "sponsor_type", "tier", "is_active", "sort_order"},
-}
-
-for _fields in DATA_FIELDS.values():
-    _fields.add("uid")
-ASSET_DATA_FIELDS.update({"uid", "content_sha256", "source_url_sha256"})
-
-REQUIRED_FIELDS = {
-    "event": {"title"},
-    "news": {"title"},
-    "member": {"display_name"},
-    "publication": {"title"},
-    "research_area": {"title"},
-    "page": {"title"},
-    "sponsor": {"name"},
-}
-
 COUNTRY_HINTS: dict[str, str] = {
     "uk": "United Kingdom", "united kingdom": "United Kingdom",
     "southampton": "United Kingdom", "england": "United Kingdom",
@@ -176,7 +119,7 @@ def infer_country(text: Any) -> str:
     return ""
 
 
-from .job_manager import JobCancelled
+from .errors import JobCancelled
 
 
 class ImportValidationError(ValueError):
@@ -197,6 +140,7 @@ def import_jsonl(
     source_name: str | None = None,
     cancel_check: Callable[[], bool] | None = None,
     commit: bool = True,
+    file_session: AssetWriteSession | None = None,
 ) -> dict[str, Any]:
     records = _read_records(Path(path))
     summary: dict[str, Any] = {
@@ -223,6 +167,7 @@ def import_jsonl(
         before_linked_assets = summary["linked_assets"]
         before_linked_links = summary["linked_links"]
         before_asset_errors = len(summary["asset_errors"])
+        file_checkpoint = file_session.checkpoint() if file_session is not None else 0
         if not dry_run:
             conn.execute(f"SAVEPOINT {savepoint}")
         try:
@@ -263,12 +208,12 @@ def import_jsonl(
                 portable_restore=portable_restore,
             )
             summary[action][typ] = summary[action].get(typ, 0) + 1
-            summary["linked_links"] += _replace_links(conn, typ, entity_id, links)
+            summary["linked_links"] += _merge_links(conn, typ, entity_id, links)
             if import_assets:
                 if asset_detail and assets:
                     asset_detail(f"Processing {len(assets)} asset(s) for record {idx}…")
                 asset_errors: list[str] = []
-                summary["linked_assets"] += _replace_assets(
+                summary["linked_assets"] += _merge_assets(
                     conn,
                     typ,
                     entity_id,
@@ -277,6 +222,7 @@ def import_jsonl(
                     asset_source_dir=asset_source_dir,
                     errors=asset_errors,
                     on_asset=(lambda a_i, a_t: asset_detail(f"Asset {a_i}/{a_t} for record {idx}")) if asset_detail else None,
+                    file_session=file_session,
                 )
                 summary["asset_errors"].extend(
                     {"line": idx, "error": message} for message in asset_errors
@@ -294,6 +240,8 @@ def import_jsonl(
             if not dry_run:
                 conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
                 conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                if file_session is not None:
+                    file_session.rollback_to(file_checkpoint)
                 summary["rolled_back"] += 1
             summary["skipped"] += 1
             summary["errors"].append({"line": idx, "error": str(exc)})
@@ -314,6 +262,16 @@ def import_jsonl(
     return summary
 
 
+def _reject_retired_jsonl_envelope(record: dict[str, Any], *, line_no: int | None = None) -> None:
+    if "_mifp" not in record:
+        return
+    where = f"Line {line_no}: " if line_no is not None else ""
+    raise ImportValidationError(
+        where + "retired self-contained MIFP JSONL packages are not supported; "
+        "import the old ZIP package instead"
+    )
+
+
 def _read_records(path: Path) -> list[dict[str, Any]]:
     try:
         size = path.stat().st_size
@@ -332,12 +290,15 @@ def _read_records(path: Path) -> list[dict[str, Any]]:
     except json.JSONDecodeError:
         document = None
     if isinstance(document, dict):
+        _reject_retired_jsonl_envelope(document)
         return [document]
     if isinstance(document, list):
         if len(document) > Config.IMPORT_MAX_JSONL_LINES:
             raise ImportValidationError(f"JSON import exceeds maximum record count: {Config.IMPORT_MAX_JSONL_LINES}")
         if not all(isinstance(item, dict) for item in document):
             raise ImportValidationError("JSON array must contain record objects")
+        for item in document:
+            _reject_retired_jsonl_envelope(item)
         return document
 
     records: list[dict[str, Any]] = []
@@ -352,6 +313,7 @@ def _read_records(path: Path) -> list[dict[str, Any]]:
             raise ImportValidationError(f"Line {line_no}: invalid JSON") from exc
         if not isinstance(item, dict):
             raise ImportValidationError(f"Line {line_no}: JSONL record must be an object")
+        _reject_retired_jsonl_envelope(item, line_no=line_no)
         records.append(item)
     return records
 
@@ -420,6 +382,23 @@ def _normalize_member_name(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _boolean_int(value: Any, *, field: str) -> int:
+    """Normalize portable booleans without treating non-empty strings as true."""
+    if value in (None, ""):
+        return 0
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int) and value in {0, 1}:
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized in {"1", "true", "yes", "on"}:
+            return 1
+        if normalized in {"0", "false", "no", "off"}:
+            return 0
+    raise ImportValidationError(f"Invalid boolean value for {field}: {value!r}")
+
+
 def _normalize_data(
     typ: str, data: dict[str, Any], *, portable_restore: bool = False
 ) -> dict[str, Any]:
@@ -428,14 +407,14 @@ def _normalize_data(
     title = data.get("name") if typ == "sponsor" else data.get("display_name") if typ == "member" else data.get("title")
     data["slug"] = slugify(str(data.get("slug") or title))
     if typ != "sponsor":
-        status = str(data.get("review_status") or "published").strip().lower()
-        if status not in REVIEW_STATUSES:
-            raise ImportValidationError(f"Invalid review_status: {status}")
+        raw_status = str(data.get("review_status") or "published").strip().lower()
+        status = normalize_review_status(raw_status, default="")
+        if not status:
+            raise ImportValidationError(f"Invalid review_status: {raw_status}")
         data["review_status"] = status
-    if "is_featured" in data:
-        data["is_featured"] = int(bool(data["is_featured"]))
-    if "is_active" in data:
-        data["is_active"] = int(bool(data["is_active"]))
+    for boolean_field in ("is_featured", "is_active", "date_is_inferred"):
+        if boolean_field in data:
+            data[boolean_field] = _boolean_int(data[boolean_field], field=boolean_field)
     if not portable_restore and typ == "member" and not data.get("country") and data.get("affiliation"):
         inferred = infer_country(data["affiliation"])
         if inferred:
@@ -467,6 +446,20 @@ def _normalize_data(
             "range": "range", "day_range": "range", "date_range": "range",
         }
         data["date_precision"] = PRECISION_ALIASES.get(raw, "unknown")
+        if data["date_precision"] not in DATE_PRECISIONS:
+            raise ImportValidationError(f"Invalid date_precision: {raw}")
+    enum_fields = {
+        "event": ("event_type", EVENT_TYPES, "other"),
+        "news": ("news_type", NEWS_TYPES, "general"),
+        "page": ("type", PAGE_TYPES, "custom"),
+    }
+    enum_spec = enum_fields.get(typ)
+    if enum_spec and enum_spec[0] in data:
+        field, allowed, default = enum_spec
+        value = str(data.get(field) or default).strip().casefold()
+        if value not in allowed:
+            raise ImportValidationError(f"Invalid {field}: {value}")
+        data[field] = value
     if (
         not portable_restore
         and
@@ -504,7 +497,7 @@ def _validate_links(raw: Any, line_no: int) -> list[dict[str, Any]]:
             "url": url,
             "role": role,
             "label": item.get("label"),
-            "is_primary": int(bool(item.get("is_primary", idx == 1))),
+            "is_primary": _boolean_int(item.get("is_primary", idx == 1), field="link.is_primary"),
             "sort_order": int(item.get("sort_order") or idx),
         })
     return links
@@ -527,14 +520,22 @@ def _validate_assets(raw: Any, line_no: int) -> list[dict[str, Any]]:
         role = str(item.get("role") or "attachment").strip().lower()
         if role not in ASSET_ROLES:
             raise ImportValidationError(f"Line {line_no}: assets[{idx}] invalid role: {role}")
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind and kind not in ASSET_KINDS:
+            raise ImportValidationError(f"Line {line_no}: assets[{idx}] invalid kind: {kind}")
+        storage_status = str(item.get("storage_status") or "").strip().lower()
+        if storage_status and storage_status not in ASSET_STORAGE_STATUSES:
+            raise ImportValidationError(
+                f"Line {line_no}: assets[{idx}] invalid storage_status: {storage_status}"
+            )
         spec = {
             "path": item.get("path"),
             "url": item.get("url"),
             "role": role,
-            "kind": item.get("kind"),
+            "kind": kind or None,
             "caption": item.get("caption"),
             "alt_text": item.get("alt_text"),
-            "is_primary": int(bool(item.get("is_primary", idx == 1))),
+            "is_primary": _boolean_int(item.get("is_primary", idx == 1), field="asset.is_primary"),
             "sort_order": int(item.get("sort_order") or idx),
         }
         for key in ASSET_LINK_FIELDS - {"path", "url", "role", "kind", "caption", "alt_text", "is_primary", "sort_order"}:
@@ -725,7 +726,7 @@ def _merge_asset_metadata(conn: sqlite3.Connection, asset_id: int, updates: dict
         )
 
 
-def _replace_links(conn: sqlite3.Connection, typ: str, entity_id: int, links: list[dict[str, Any]]) -> int:
+def _merge_links(conn: sqlite3.Connection, typ: str, entity_id: int, links: list[dict[str, Any]]) -> int:
     if not links:
         return 0
     linked = 0
@@ -762,7 +763,7 @@ def _replace_links(conn: sqlite3.Connection, typ: str, entity_id: int, links: li
     return linked
 
 
-def _replace_assets(
+def _merge_assets(
     conn: sqlite3.Connection,
     typ: str,
     entity_id: int,
@@ -772,6 +773,7 @@ def _replace_assets(
     asset_source_dir: Path | None = None,
     errors: list[str] | None = None,
     on_asset: Callable[[int, int], None] | None = None,
+    file_session: AssetWriteSession | None = None,
 ) -> int:
     if not assets:
         return 0
@@ -781,7 +783,8 @@ def _replace_assets(
             on_asset(idx, len(assets))
         try:
             asset_id = _materialize_asset(
-                conn, spec, assets_dir or Config.ASSETS_DIR, asset_source_dir=asset_source_dir
+                conn, spec, assets_dir or Config.ASSETS_DIR, asset_source_dir=asset_source_dir,
+                file_session=file_session,
             )
         except (ValueError, OSError, sqlite3.Error) as exc:
             if errors is None:
@@ -828,6 +831,7 @@ def _materialize_asset(
     assets_dir: Path,
     *,
     asset_source_dir: Path | None = None,
+    file_session: AssetWriteSession | None = None,
 ) -> int:
     kind = spec.get("kind")
     db_path = str(spec.get("path") or "").strip()
@@ -837,7 +841,9 @@ def _materialize_asset(
         or str(spec.get("content_sha256") or "").strip()
     )
     if has_identity and db_path:
-        return _restore_identity_asset(conn, spec, assets_dir, asset_source_dir=asset_source_dir)
+        return _restore_identity_asset(
+            conn, spec, assets_dir, asset_source_dir=asset_source_dir, file_session=file_session
+        )
     if db_path:
         path = Path(db_path)
         if not path.is_absolute():
@@ -846,7 +852,7 @@ def _materialize_asset(
         if not path.is_file():
             url = spec.get("url") or ""
             if url:
-                return _download_or_defer_asset(conn, str(url), assets_dir, spec, kind)
+                return _download_or_defer_asset(conn, str(url), assets_dir, spec, kind, file_session=file_session)
             return 0
         source_url = str(spec.get("url") or "").strip() or None
         original_filename = unquote(Path(urlparse(source_url).path).name) if source_url else None
@@ -855,10 +861,11 @@ def _materialize_asset(
             alt_text=spec.get("alt_text"), source_url=source_url,
             original_filename=original_filename or None,
             commit=False,
+            file_session=file_session,
         )
     url = str(spec.get("url") or "").strip()
     final_kind = kind or infer_kind_from_url(url)
-    return _download_or_defer_asset(conn, url, assets_dir, spec, final_kind)
+    return _download_or_defer_asset(conn, url, assets_dir, spec, final_kind, file_session=file_session)
 
 
 def _restore_identity_asset(
@@ -867,6 +874,7 @@ def _restore_identity_asset(
     assets_dir: Path,
     *,
     asset_source_dir: Path | None = None,
+    file_session: AssetWriteSession | None = None,
 ) -> int:
     """Restore an exported asset faithfully, preserving uid/checksum and DB path.
 
@@ -889,17 +897,26 @@ def _restore_identity_asset(
         local_file = source
     elif target.is_file():
         local_file = target
-    if local_file is not None and local_file.resolve() != target.resolve():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(local_file, target)
+    if local_file is not None:
+        file_checksum = sha256_file(local_file)
+        if local_file.resolve() != target.resolve():
+            target, db_path = conflict_safe_asset_target(assets_dir, db_path, file_checksum)
+            writer = file_session or AssetWriteSession(assets_dir)
+            writer.install(local_file, target)
+    else:
+        file_checksum = None
     storage_status = str(spec.get("storage_status") or "").strip().lower()
+    is_external = (
+        _boolean_int(spec.get("is_external"), field="asset.is_external")
+        if spec.get("is_external") not in (None, "")
+        else 0
+    )
     if storage_status not in ASSET_STORAGE_STATUSES:
-        storage_status = "local" if local_file is not None else "external" if spec.get("is_external") else "missing"
+        storage_status = "local" if local_file is not None else "external" if is_external else "missing"
     if local_file is None and storage_status == "local":
         storage_status = "missing"
     if local_file is not None and storage_status == "missing":
         storage_status = "local"
-    file_checksum = sha256_file(local_file) if local_file is not None else None
     checksum = str(spec.get("checksum") or "").strip() or file_checksum or None
     source_url = str(spec.get("url") or "").strip() or None
     payload = {
@@ -914,7 +931,7 @@ def _restore_identity_asset(
         "caption": spec.get("caption"),
         "source_url": source_url,
         "storage_status": storage_status,
-        "is_external": int(bool(spec.get("is_external")) or storage_status == "external"),
+        "is_external": int(is_external or storage_status == "external"),
         "width": spec.get("width") if isinstance(spec.get("width"), int) else None,
         "height": spec.get("height") if isinstance(spec.get("height"), int) else None,
         "duration_seconds": spec.get("duration_seconds") if isinstance(spec.get("duration_seconds"), (int, float)) else None,
@@ -935,6 +952,8 @@ def _download_or_defer_asset(
     assets_dir: Path,
     spec: dict[str, Any],
     kind: str | None,
+    *,
+    file_session: AssetWriteSession | None = None,
 ) -> int:
     """Try once during import, then preserve a recoverable external record.
 
@@ -951,6 +970,7 @@ def _download_or_defer_asset(
             alt_text=spec.get("alt_text"),
             max_retries=1,
             commit=False,
+            file_session=file_session,
         )
     except Exception:
         return store_external_asset(

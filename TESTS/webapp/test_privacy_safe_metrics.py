@@ -40,8 +40,7 @@ def _rows(app, table: str):
         return [dict(row) for row in conn.execute(f"SELECT * FROM {table}").fetchall()]
 
 
-def test_public_get_increments_aggregate_metrics_without_page_views_or_identifiers(app, client):
-    legacy_before = len(_rows(app, "page_views"))
+def test_public_get_increments_privacy_safe_aggregate_metrics(app, client):
     resp = client.get(
         "/events?email=test@example.com",
         headers={
@@ -52,7 +51,6 @@ def test_public_get_increments_aggregate_metrics_without_page_views_or_identifie
     )
 
     assert resp.status_code == 200
-    assert len(_rows(app, "page_views")) == legacy_before
     metrics = _rows(app, "metrics_daily")
     matching = [
         row for row in metrics
@@ -89,20 +87,6 @@ def test_dashboard_stats_does_not_show_unique_ips(app, client):
     assert "unique IPs" not in html
     assert "unique visitors" not in html.lower()
     assert "Privacy-safe statistics" in html
-
-
-def test_data_portability_counts_exclude_legacy_page_views(app):
-    from mifp_app.services.data_portability import table_counts
-
-    with sqlite3.connect(app.config["DATABASE_PATH"]) as conn:
-        conn.row_factory = sqlite3.Row
-        conn.execute(
-            "INSERT INTO page_views(path, method, client_ip, user_agent_hash, status, duration_ms) VALUES('/legacy','GET','hash','ua',200,1)"
-        )
-        conn.commit()
-        counts = table_counts(conn)
-
-    assert "page_views" not in counts
 
 
 def test_download_metrics_are_aggregated_by_asset_type(app, client):

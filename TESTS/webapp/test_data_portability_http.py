@@ -99,7 +99,8 @@ class TestDataPortabilityHTTP:
         assert "Agents should not generate `state.json`" in guide
         assert "Validate only" in guide
         assert "## Exact ZIP manifest contract" in guide
-        assert "## Self-contained JSONL v2 envelope" in guide
+        assert "## Dashboard JSONL export" in guide
+        assert "## Durable state: reserved for portable ZIP transfers" in guide
         assert "## What import actually does" in guide
         assert "## Per-type decision rules" in guide
         assert "## Failure modes the agent must prevent" in guide
@@ -146,10 +147,10 @@ class TestDataPortabilityHTTP:
             lines = [l for l in text.strip().splitlines() if l.strip()]
             if lines:
                 obj = json.loads(lines[0])
-                envelope = obj.get("_mifp") if isinstance(obj, dict) else None
-                assert isinstance(envelope, dict)
-                assert envelope.get("kind") == "manifest"
-                assert (envelope.get("data") or {}).get("format") == "mifp-jsonl-v2"
+                assert isinstance(obj, dict)
+                assert "_mifp" not in obj
+                assert obj.get("type")
+                assert isinstance(obj.get("data"), dict)
 
     def test_export_uses_explicit_user_download_control(self, app_with_admin):
         """The browser must not rely on an async synthetic click, which can
@@ -514,13 +515,7 @@ class TestDataPortabilityHTTP:
             assert dl.status_code == 200
             jsonl_bytes = dl.data
             exported = [json.loads(l) for l in jsonl_bytes.decode("utf-8").strip().splitlines() if l.strip()]
-            manifests = [
-                row.get("_mifp") for row in exported
-                if isinstance(row, dict) and isinstance(row.get("_mifp"), dict)
-                and row["_mifp"].get("kind") == "manifest"
-            ]
-            assert manifests
-            assert (manifests[0].get("data") or {}).get("format") == "mifp-jsonl-v2"
+            assert all("_mifp" not in row for row in exported if isinstance(row, dict))
             exported_types = {}
             for rec in exported:
                 if not isinstance(rec, dict) or "type" not in rec:
@@ -545,7 +540,7 @@ class TestDataPortabilityHTTP:
             assert res["errors"] == 0
 
     def test_export_http_error_streams_ndjson_error(self, app_with_admin, monkeypatch):
-        import mifp_app.routes.dashboard as dashboard_routes
+        import mifp_app.routes.dashboard_portability as dashboard_routes
 
         def boom(*args, **kwargs):
             raise RuntimeError("simulated export failure")
@@ -568,7 +563,7 @@ class TestDataPortabilityHTTP:
     def test_import_integrity_error_identifies_file_and_confirms_rollback(
         self, app_with_admin, monkeypatch
     ):
-        import mifp_app.routes.dashboard as dashboard_routes
+        import mifp_app.routes.dashboard_portability as dashboard_routes
 
         def reject_archive(*args, **kwargs):
             raise ValueError("state.json does not match the checksum in manifest.json")

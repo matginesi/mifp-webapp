@@ -1,96 +1,114 @@
 # MIFP Web Platform
 
-Repository unico per sito pubblico, dashboard amministrativa, acquisizione dati
-e storage persistente MIFP.
+Sito pubblico + dashboard amministrativa MIFP, con pipeline locale per scraping
+e gestione dati. La produzione resta volutamente semplice: Flask, SQLite,
+Docker Compose e Caddy.
 
-## Architettura di deploy
-
-Un solo percorso di produzione, tutto il resto è locale:
+## Modello mentale
 
 ```text
-GitHub Actions (test + build)
-        |
-        v
-   MIFPAPP/CORE (context Docker) -> GHCR
-        |
-        v
-   /opt/mifp (VPS Docker + dati)  -- Caddy (HTTPS) -> 127.0.0.1:8000
+CODICE:      GitHub -> GHCR -> VPS -> Docker
+CONTENUTI:   scraper -> ZIP -> Dashboard Import -> SQLite
+BACKUP:      SQLite + file persistenti -> /var/backups/mifp
 ```
 
-- **Locale** (sviluppo e manutenzione): il launcher `mifp` gestisce Flask,
-  Docker locale, scraper, database, test, backup ZIP e credenziali admin.
-- **Produzione**: un'immagine runtime minimale viene costruita e pubblicata su
-  GHCR da GitHub Actions. La VPS tira l'immagine e la serve con
-  `deploy/deploy.sh` (compose + Caddy). Il deploy non avviene via CI: va
-  lanciato manualmente sulla VPS. Nessun comando `production` esiste nel
-  launcher locale.
-- **Dashboard** = unica superficie amministrativa in produzione.
+Questi tre flussi non si mescolano. Un normale deploy non modifica i dati e un
+normale import non sostituisce fisicamente il DB.
 
-## Avvio locale
+## Locale
+
+Un solo virtualenv alla root:
 
 ```bash
-./mifp init       # prepara .env, virtualenv e storage
-./mifp local      # Flask locale
-./mifp docker-local  # stack Docker locale (alias: ./mifp docker)
+./mifp setup
+./mifp init          # .env + admin + DB schema-only se manca
+./mifp local
+# oppure
+./mifp docker-local
 ```
 
-Configurare l'ambiente copiando `MIFPAPP/CORE/.env.example`; i file `.env`, le
-credenziali, i database e gli export non devono essere versionati né inclusi
-nelle immagini.
-
-## Struttura e confini
-
-```text
-SCRAPERS/              acquisizione e creazione JSONL/ZIP
-  OUTPUTS/             soli artefatti finali importabili
-MIFPAPP/CORE/          applicazione Flask e contesto Docker
-MIFPAPP/DATABASE/      database, asset, log, backup ed export persistenti
-TESTS/                 test del repository (suite webapp versionata)
-deploy/                artefatti di deploy della VPS (compose, Caddyfile, script)
-.github/workflows/     pipeline CI/CD (test + build immagine GHCR, nessun deploy)
-```
-
-Il flusso dei dati è intenzionalmente unidirezionale:
-
-```text
-sorgenti -> SCRAPERS/OUTPUTS/*.jsonl + MIFP_IMPORT.zip
-         -> import esplicito
-         -> MIFPAPP/DATABASE/mifp.db + asset
-         -> MIFPAPP/CORE
-```
-
-Gli scraper non importano Flask, non aprono SQLite e non modificano
-`mifp.db`. Il CORE legge i percorsi persistenti dalla configurazione e non
-possiede dati generati. L'immagine Docker ha come contesto `MIFPAPP/CORE` e
-copia soltanto i file runtime dichiarati nel `Dockerfile`. Il compose locale
-(`MIFPAPP/CORE/compose.local.yaml`) monta il codice in sola lettura; il compose
-di produzione (`deploy/compose.production.yaml`) non contiene `build:` e usa
-l'immagine GHCR con i dati persistenti su `/opt/mifp/data`.
-
-## Dati e scraper
+Pipeline dati:
 
 ```bash
-./mifp scraper --scrapers all --fresh
+./mifp scrape all --fresh
+# importa SCRAPERS/OUTPUTS/MIFP_IMPORT.zip dalla dashboard
+```
+
+Il builder DB resta disponibile per ricostruzioni/analisi locali esplicite:
+
+```bash
 ./mifp database --fresh
+./mifp db-check
 ```
 
-Il primo comando produce JSONL canonici e un solo ZIP in `SCRAPERS/OUTPUTS/`.
-Il secondo è l'operazione separata che costruisce o aggiorna lo storage in
-`MIFPAPP/DATABASE/`. Non eseguire script Python ad hoc contro il database.
+Non eseguire script Python ad hoc contro il database.
 
-## Test e controlli
+## Database
+
+`schema.sql` è la fonte di verità fisica dello schema corrente; `db/contract.py`
+definisce gli invarianti che un DB deve rispettare per essere avviato.
 
 ```bash
-./mifp test
-bash test_all.sh --suite webapp
+./mifp db-init [PATH]
+./mifp db-check [PATH]
+./mifp db-upgrade-copy OLD NEW
 ```
 
-## Documentazione mantenuta
+Non esistono migration implicite all'avvio. I vecchi DB non vengono riparati
+automaticamente: i dati storici entrano in un DB corrente tramite i vecchi ZIP,
+che restano l'unica compatibilità legacy intenzionale.
 
-- [Deploy e CI/CD](DEPLOYMENT.md)
-- [Tema pubblico e dashboard](MIFPAPP/CORE/docs/THEME_SYSTEMS.md)
-- guida import per agenti/LLM: generata e scaricabile dalla pagina **Import / Export** della dashboard
+JSONL è record-only. ZIP è il formato portabile per record/asset e, negli
+export completi della dashboard, stato durevole.
 
-La documentazione specifica vive accanto al sottosistema che descrive. Questo
-file è l'unico README del repository: note temporanee, report di correzione e
-istruzioni una tantum appartengono alla cronologia Git o a documenti dedicati.
+Vedi [schema e lifecycle](docs/database-schema.md).
+
+## Produzione
+
+L'immagine Docker ha come contesto `MIFPAPP/CORE` e non contiene scraper,
+builder DB o CLI locali. Sulla VPS non serve un venv.
+
+Prima installazione:
+
+```bash
+sudo bash deploy/bootstrap-vps.sh --domain mifp.eu --image-repository ghcr.io/OWNER/REPO
+sudo mifpctl first-deploy sha-<commit>
+```
+
+Uso normale:
+
+```bash
+sudo mifpctl deploy sha-<commit>
+sudo mifpctl status
+sudo mifpctl logs
+sudo mifpctl rollback
+```
+
+Dettagli: [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## Test
+
+```bash
+./test_all.sh --suite quick
+./test_all.sh --suite all
+./test_all.sh --suite scraper
+./test_all.sh --suite database
+```
+
+I test non richiedono la password admin personale. La CI usa lo stesso
+`requirements.lock` dell'immagine, esegue le suite non-browser e costruisce
+anche l'immagine Docker sulle pull request senza pubblicarla.
+
+## Struttura
+
+```text
+SCRAPERS/            acquisizione + package importabili
+MIFPAPP/CORE/        runtime Flask / contesto Docker
+MIFPAPP/DATABASE/    storage e builder locali
+TESTS/               test
+ deploy/             bootstrap e operatore VPS
+ docs/               documentazione corrente
+```
+
+Questo è l'unico README del repository; documenti storici/temporanei non fanno
+parte del codebase operativo.

@@ -347,108 +347,44 @@ def test_restore_rejects_invalid_payload_without_touching_live_db(app):
 
 
 # ---------------------------------------------------------------------------
-# R3: a mid-migration failure rolls the whole step back
+# R3: historical DB layouts are not auto-repaired
 # ---------------------------------------------------------------------------
 
 
-def _legacy_database(tmp_path: Path, *, extra_column: bool = True) -> Path:
-    db_path = tmp_path / "legacy.db"
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    conn.execute("ALTER TABLE events DROP COLUMN remote_url")
-    conn.execute("DROP TABLE content_aliases")
-    conn.execute("DROP TABLE quality_findings")
-    conn.executescript("""
-        CREATE TABLE quality_findings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id INTEGER NOT NULL,
-            action_type TEXT NOT NULL CHECK(action_type IN ('clean_record','enrich_record','merge_records','split_aggregated_record','repair_relations_or_assets')),
-            entity_type TEXT NOT NULL CHECK(entity_type IN ('member','event','news','publication','page','sponsor')),
-            record_ids_json TEXT NOT NULL,
-            classification TEXT NOT NULL,
-            score REAL NOT NULL DEFAULT 0,
-            evidence_json TEXT NOT NULL DEFAULT '[]',
-            contradictions_json TEXT NOT NULL DEFAULT '[]',
-            plan_json TEXT NOT NULL DEFAULT '{}',
-            fingerprint TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'open',
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE content_aliases (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            entity_type TEXT NOT NULL CHECK(entity_type IN ('member','event','news','publication','page','sponsor')),
-            old_slug TEXT NOT NULL,
-            canonical_entity_id INTEGER NOT NULL,
-            canonical_slug TEXT NOT NULL,
-            bundle_id INTEGER,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(entity_type, old_slug)
-        );
-    """)
-    if extra_column:
-        conn.execute("ALTER TABLE quality_findings ADD COLUMN extra_column TEXT")
-    conn.execute(
-        "INSERT INTO quality_runs(id,status,fingerprint) VALUES(1,'completed','run-1')"
-    )
-    conn.execute(
-        "INSERT INTO quality_findings(id,run_id,action_type,entity_type,record_ids_json,classification,fingerprint) "
-        "VALUES(1,1,'clean_record','member','[1]','exact_duplicate','fp-1')"
-    )
-    conn.commit()
-    conn.close()
-    return db_path
+def test_incomplete_current_database_is_rejected_not_repaired(tmp_path):
+    from mifp_app.db.migrations import migrate_content_schema
+    from mifp_app.db.runtime_check import validate_runtime_database
+
+    db_path = tmp_path / "broken-current.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        conn.execute("DROP INDEX idx_news_uid")
+        conn.commit()
+
+    with sqlite3.connect(db_path) as conn:
+        report = migrate_content_schema(conn)
+        assert report["migrations_applied"] == []
+
+    with pytest.raises(RuntimeError, match="missing indexes"):
+        validate_runtime_database(db_path)
 
 
-def test_migration_partial_failure_rolls_back_to_pre_step_schema(tmp_path):
+def test_unversioned_legacy_database_is_refused_without_mutation(tmp_path):
     from mifp_app.db.migrations import migrate_content_schema
 
-    db_path = _legacy_database(tmp_path)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    with pytest.raises(sqlite3.Error):
-        migrate_content_schema(conn)
-    conn.close()
+    db_path = tmp_path / "legacy.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE old_content(id INTEGER PRIMARY KEY, title TEXT)")
+        conn.execute("INSERT INTO old_content(title) VALUES('keep')")
+        conn.commit()
+        with pytest.raises(RuntimeError, match="portable ZIP"):
+            migrate_content_schema(conn)
 
     with sqlite3.connect(db_path) as check:
-        events_columns = {row[1] for row in check.execute("PRAGMA table_info(events)")}
-        runs_columns = {row[1] for row in check.execute("PRAGMA table_info(quality_runs)")}
-        assert "remote_url" not in events_columns
-        assert "progress_pct" not in runs_columns
-        assert "progress_message" not in runs_columns
+        assert check.execute("SELECT title FROM old_content").fetchone()[0] == "keep"
         assert check.execute(
-            "SELECT COUNT(*) FROM quality_findings"
-        ).fetchone()[0] == 1
-        assert check.execute(
-            "SELECT COUNT(*) FROM content_aliases"
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='members'"
         ).fetchone()[0] == 0
-
-
-def test_migration_rebuild_succeeds_on_compatible_legacy_db(tmp_path):
-    from mifp_app.db.migrations import SCHEMA_VERSION, migrate_content_schema
-
-    db_path = _legacy_database(tmp_path, extra_column=False)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    report = migrate_content_schema(conn)
-    conn.commit()
-    conn.close()
-
-    assert report["schema_version"] == SCHEMA_VERSION
-    with sqlite3.connect(db_path) as check:
-        finding_sql = check.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='quality_findings'"
-        ).fetchone()[0]
-        alias_sql = check.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='content_aliases'"
-        ).fetchone()[0]
-        assert "research_area" in finding_sql
-        assert "research_area" in alias_sql
-        assert check.execute(
-            "SELECT COUNT(*) FROM quality_findings"
-        ).fetchone()[0] == 1
-        assert check.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
 # ---------------------------------------------------------------------------

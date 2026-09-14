@@ -108,19 +108,19 @@ def test_dashboard_repository_helpers_reject_unexpected_table_names():
     conn = _conn()
     bad = "members; DROP TABLE news"
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         repo.list_records(conn, bad)
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         repo.list_records_paginated(conn, bad)
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         repo.get_record(conn, bad, 1)
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         repo.save_record(conn, bad, {"title": "x"})
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         repo.count_table(conn, bad)
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         repo.recent_rows(conn, bad)
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         repo.table_schema(conn, bad)
 
 
@@ -129,9 +129,9 @@ def test_public_repository_table_columns_rejects_unexpected_table_name():
 
     conn = _conn()
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         _table_columns(conn, "members; DROP TABLE news")
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         _table_columns(conn, "user")
 
 

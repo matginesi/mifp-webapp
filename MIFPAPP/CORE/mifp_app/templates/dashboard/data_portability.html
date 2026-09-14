@@ -73,13 +73,13 @@
       </div>
     </div>
     <div class="portability-export-actions">
-      <p class="portability-export-intro"><b>Choose what you need</b><span>Both formats can be imported again. ZIP is the safest choice for a complete backup.</span></p>
+      <p class="portability-export-intro"><b>Choose what you need</b><span>JSONL exports canonical records only. ZIP also carries packaged local assets and durable dashboard state.</span></p>
       <button class="transfer-export-button is-recommended" data-export="zip" type="button">
         <span class="transfer-export-icon"><i class="bi bi-file-earmark-zip" aria-hidden="true"></i></span>
         <span class="transfer-export-copy">
-          <span class="transfer-export-title"><b>Complete backup</b><em>Recommended</em></span>
-          <small>One ZIP with records, database state and every managed local asset.</small>
-          <span class="transfer-export-use"><i class="bi bi-arrow-repeat" aria-hidden="true"></i> Best for full restore or moving to another installation</span>
+          <span class="transfer-export-title"><b>Portable ZIP</b><em>Recommended</em></span>
+          <small>Records, portable dashboard state and managed local assets in one verified package.</small>
+          <span class="transfer-export-use"><i class="bi bi-arrow-repeat" aria-hidden="true"></i> Best for moving canonical content between MIFP installations</span>
         </span>
         <i class="bi bi-download transfer-export-action" aria-hidden="true"></i>
       </button>
@@ -87,8 +87,8 @@
         <span class="transfer-export-icon"><i class="bi bi-braces" aria-hidden="true"></i></span>
         <span class="transfer-export-copy">
           <span class="transfer-export-title"><b>Portable JSONL</b><em>Advanced</em></span>
-          <small>A self-contained JSONL v2 file with the same portable data as the ZIP.</small>
-          <span class="transfer-export-use"><i class="bi bi-code-slash" aria-hidden="true"></i> Best for pipelines, inspection and versioned data</span>
+          <small>Canonical record-only JSONL: no Base64 files and no installation state.</small>
+          <span class="transfer-export-use"><i class="bi bi-code-slash" aria-hidden="true"></i> Best for inspection, pipelines and versioned data</span>
         </span>
         <i class="bi bi-download transfer-export-action" aria-hidden="true"></i>
       </button>
@@ -140,7 +140,7 @@
       <div class="modal-body">
         <div class="export-auth-notice">
           <i class="bi bi-database-lock" aria-hidden="true"></i>
-          <div><b>Confirm this sensitive operation</b><span>The export may contain the complete database and managed files. Enter the administrator password to continue.</span></div>
+          <div><b>Confirm this sensitive operation</b><span>ZIP exports may contain durable dashboard state and managed files; JSONL exports canonical records only. Enter the administrator password to continue.</span></div>
         </div>
         <label class="form-label" for="exportAuthPassword">Administrator password</label>
         <input class="form-control" id="exportAuthPassword" name="password" type="password" autocomplete="current-password" required>

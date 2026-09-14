@@ -57,9 +57,10 @@ bash MIFPAPP/DATABASE/build.sh --fresh
 
 - `deploy/` holds the VPS release artifacts: `compose.production.yaml` (no
   `build:`; GHCR image, `127.0.0.1:8000`, host data at `/opt/mifp/data`),
-  `Caddyfile`, `.env.production.example`, `deploy.sh`, and `bootstrap-vps.sh`.
-- `.github/workflows/ci-cd.yml` publishes the GHCR image only: it tests the
-  versioned webapp suite and builds/pushes the image from `MIFPAPP/CORE`.
+  `Caddyfile`, `.env.production.example`, `configure.py`, `deploy.sh`, and `bootstrap-vps.sh`.
+- `.github/workflows/ci-cd.yml` publishes the GHCR image only: it runs the
+  versioned webapp + scraper + database quick suite and builds/pushes the image
+  from `MIFPAPP/CORE`.
   Releasing to the VPS is a manual `deploy/deploy.sh` step, never a CI job.
 
 Rules:
@@ -75,10 +76,10 @@ SCRAPERS source sites
 SCRAPERS/OUTPUTS/*.jsonl + MIFP_IMPORT.zip
         ↓ explicit command only
 MIFPAPP/DATABASE/mifp.db + assets
-        ↓ configured read/write access
+        ↓ configured read/write access (local/dashboard)
 MIFPAPP/CORE dashboard + webapp
         ↓ GitHub Actions
-GHCR image -> VPS (deploy/) -> Caddy -> https
+GHCR image + prebuilt data -> VPS (deploy/) -> Caddy -> https
 ```
 
 Do not reintroduce `NEW_SCRAPER/`, `IMPORT_DATA/`, `NEW_IMPORT_DATA/`, a data
@@ -87,7 +88,7 @@ directory inside CORE, or database writes inside the scraper pipeline.
 ## Root command contract
 
 - `mifp` is the single public launcher for local development and maintenance:
-  `init`, `local`, `docker-local` (alias `docker`), `scrape`, `database`,
+  `setup`, `init`, `local`, `docker-local` (alias `docker`), `scrape`, `database`,
   `refresh`, `test`, `admin`, `hash`, `status`, `logs`, `stop`, `clean`, `zip`,
   `doctor`.
 - There is no production start mode in the launcher: production deployment is

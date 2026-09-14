@@ -5,6 +5,7 @@ import logging
 import os
 import sqlite3
 import time
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -26,17 +27,30 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _sqlite_file_uri(db_path: Path, *, mode: str) -> str:
+    resolved = Path(db_path).resolve()
+    return f"file:{quote(str(resolved), safe='/')}?mode={mode}"
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+    """Open an existing runtime database for read/write access.
+
+    Runtime code is deliberately fail-closed: this helper never creates the
+    database file or its parent directory. Database creation belongs only to
+    the explicit ``db-init``/``mifpctl first-deploy`` lifecycle.
+    """
+    path = Path(db_path)
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError(f"database must be an existing regular file: {path}")
+    conn = sqlite3.connect(
+        _sqlite_file_uri(path, mode="rw"),
+        uri=True,
+        timeout=10,
+        check_same_thread=False,
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.execute("PRAGMA foreign_keys = ON")
-    try:
-        conn.execute("PRAGMA journal_mode = WAL")
-    except sqlite3.OperationalError as exc:
-        if "locked" not in str(exc).lower():
-            raise
     return conn
 
 
@@ -46,8 +60,7 @@ def connect_readonly(db_path: Path, *, timeout: float = 0.25) -> sqlite3.Connect
     Public requests use this path so a dashboard writer cannot make them wait
     on ``PRAGMA journal_mode`` or accidentally start a write transaction.
     """
-    resolved = Path(db_path).resolve()
-    uri = f"file:{quote(str(resolved))}?mode=ro"
+    uri = _sqlite_file_uri(Path(db_path), mode="ro")
     conn = sqlite3.connect(uri, uri=True, timeout=timeout, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute(f"PRAGMA busy_timeout = {max(1, int(timeout * 1000))}")
@@ -97,6 +110,33 @@ def begin_immediate(
                 attempts,
             )
             time.sleep(min(0.25 * attempts, 1.0))
+
+
+
+
+@contextmanager
+def write_transaction(
+    conn: sqlite3.Connection,
+    *,
+    operation: str = "database write",
+    timeout: float | None = None,
+):
+    """Run one explicit write transaction with automatic rollback.
+
+    Existing transactions are respected, so services can safely compose this
+    helper without committing work owned by an outer operation.
+    """
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        begin_immediate(conn, operation=operation, timeout=timeout)
+    try:
+        yield conn
+        if owns_transaction:
+            conn.commit()
+    except Exception:
+        if owns_transaction and conn.in_transaction:
+            conn.rollback()
+        raise
 
 
 def table_exists(conn: sqlite3.Connection, table: str) -> bool:

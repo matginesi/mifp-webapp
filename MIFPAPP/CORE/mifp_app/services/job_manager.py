@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..utils.logger import get_logger, log_event, log_exception
+from .errors import JobCancelled, JobQueueFull
 
 _JOB_HISTORY_SECONDS = 24 * 3600
 
@@ -26,14 +27,6 @@ class JobState:
     started_at: float | None = None
     finished_at: float | None = None
     error: str | None = None
-
-
-class JobQueueFull(RuntimeError):
-    pass
-
-
-class JobCancelled(RuntimeError):
-    """Raised by cooperative background jobs after a cancellation request."""
 
 
 
@@ -149,29 +142,18 @@ class JobManager:
         self._jobs: dict[str, JobState] = {}
         self._cancel_events: dict[str, threading.Event] = {}
 
-    def submit(self, name: str, callback: Callable[[Callable[[], bool]], object]) -> tuple[str, Future]:
-        sig = inspect.signature(callback)
-        if len(sig.parameters) == 0:
-            wrapped = lambda: callback()
-        else:
-            def wrapped(cancel_event: Optional[Callable[[], bool]] = None) -> object:
-                if cancel_event is None:
-                    return callback(cancelled)
-                return callback(cancel_event)
-        return self._submit(name, wrapped)
+    def submit(self, name: str, callback: Callable[..., object]) -> tuple[str, Future]:
+        """Submit a bounded background job.
 
-    def submit_cancellable(
-        self, name: str, callback: Callable[[Callable[[], bool]], object]
-    ) -> tuple[str, Future]:
-        sig = inspect.signature(callback)
-        if len(sig.parameters) == 0:
-            wrapped = lambda: callback()
-        else:
-            def wrapped(cancel_event: Optional[Callable[[], bool]] = None) -> object:
-                if cancel_event is None:
-                    return callback(cancelled)
-                return callback(cancel_event)
-        return self._submit(name, wrapped)
+        Callbacks may either accept no arguments or one cooperative ``cancelled``
+        callable.  Signature adaptation lives in one place (``_submit``) so the
+        normal and explicitly-cancellable entry points cannot drift apart.
+        """
+        return self._submit(name, callback)
+
+    def submit_cancellable(self, name: str, callback: Callable[..., object]) -> tuple[str, Future]:
+        """Backward-compatible explicit name for jobs that use cancellation."""
+        return self._submit(name, callback)
 
     def _submit(
         self, name: str, callback: Callable[[Callable[[], bool]], object]

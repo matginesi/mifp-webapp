@@ -1,119 +1,163 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Idempotent first-time setup for the MIFP production VPS. Run as root on a
-# fresh Ubuntu 24.04/26.04 host. Safe to re-run.
-#
-#   sudo bash /opt/mifp/deploy/bootstrap-vps.sh --domain mifp.eu
-#
-# After this script, run the data install (data dir, initial .env values,
-# first import) and then trigger releases from GitHub Actions.
+# One-time, idempotent MIFP VPS bootstrap for supported Ubuntu hosts.
+# Run as root (normally via sudo). Application data uses the same numeric
+# UID/GID as the non-root process inside the production container.
 
-MIFP_HOME="/opt/mifp"
+MIFP_HOME="${MIFP_HOME:-/opt/mifp}"
 MIFP_USER="mifp"
+MIFP_GROUP="mifp"
+MIFP_UID="10001"
+MIFP_GID="10001"
 DOMAIN="${MIFP_DOMAIN:-}"
-MIFP_ADMIN_EMAIL="${MIFP_ADMIN_EMAIL:-admin@mifp.eu}"
+IMAGE_REPOSITORY="${MIFP_IMAGE_REPOSITORY:-ghcr.io/matginesi/mifp-webapp}"
+SSH_PORT="${MIFP_SSH_PORT:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+say() { printf '\n==> %s\n' "$*"; }
+die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+Uso:
+  sudo bash bootstrap-vps.sh --domain mifp.eu \
+    [--image-repository ghcr.io/OWNER/REPO] [--ssh-port 22]
+
+Il comando genera automaticamente SECRET_KEY e configura l'amministratore
+interattivamente se non è già presente. Nessuna password viene salvata in chiaro.
+EOF
+}
 
 while (($#)); do
   case "$1" in
-    --domain) DOMAIN="$2"; shift 2 ;;
+    --domain) [[ $# -ge 2 ]] || die "--domain richiede un valore"; DOMAIN="$2"; shift 2 ;;
     --domain=*) DOMAIN="${1#*=}"; shift ;;
-    *) echo "Opzione sconosciuta: $1" >&2; exit 2 ;;
+    --image-repository) [[ $# -ge 2 ]] || die "--image-repository richiede un valore"; IMAGE_REPOSITORY="$2"; shift 2 ;;
+    --image-repository=*) IMAGE_REPOSITORY="${1#*=}"; shift ;;
+    --ssh-port) [[ $# -ge 2 ]] || die "--ssh-port richiede un valore"; SSH_PORT="$2"; shift 2 ;;
+    --ssh-port=*) SSH_PORT="${1#*=}"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Opzione sconosciuta: $1" ;;
   esac
 done
 
-[[ -n "$DOMAIN" ]] || { echo "Uso: bootstrap-vps.sh --domain mifp.eu" >&2; exit 2; }
-[[ "$(id -u)" -eq 0 ]] || { echo "Esegui come root (sudo)." >&2; exit 1; }
+[[ "$(id -u)" -eq 0 ]] || die "Esegui come root (sudo)."
+[[ -r /etc/os-release ]] || die "Impossibile identificare il sistema operativo."
+# shellcheck disable=SC1091
+. /etc/os-release
+[[ "${ID:-}" == "ubuntu" ]] || die "Bootstrap supportato solo su Ubuntu (rilevato: ${ID:-unknown})."
 
-say() { printf '\n==> %s\n' "$*"; }
+[[ -n "$DOMAIN" ]] || { usage >&2; die "--domain è obbligatorio"; }
+DOMAIN="${DOMAIN,,}"
+[[ "$DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "$DOMAIN" == *.* ]] || die "Dominio non valido: $DOMAIN"
+[[ "$IMAGE_REPOSITORY" =~ ^ghcr\.io/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "Repository GHCR non valido: $IMAGE_REPOSITORY"
+if [[ -z "$SSH_PORT" ]]; then
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    SSH_PORT="$(awk '{print $4}' <<<"$SSH_CONNECTION")"
+  elif [[ -n "${SSH_CLIENT:-}" ]]; then
+    SSH_PORT="$(awk '{print $3}' <<<"$SSH_CLIENT")"
+  else
+    SSH_PORT=22
+  fi
+fi
+[[ "$SSH_PORT" =~ ^[0-9]+$ ]] && ((SSH_PORT >= 1 && SSH_PORT <= 65535)) || die "Porta SSH non valida: $SSH_PORT"
+[[ -f "$SCRIPT_DIR/configure.py" && -f "$SCRIPT_DIR/backup.sh" && -f "$SCRIPT_DIR/mifpctl" ]] || die "Cartella deploy incompleta: copia tutti i file deploy/."
 
-say "Aggiorno i pacchetti"
+say "Installo i pacchetti di base"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y curl ca-certificates gnupg
+apt-get install -y ca-certificates curl gnupg debian-keyring debian-archive-keyring apt-transport-https python3 sqlite3 rsync restic ufw util-linux
 
-say "Configuro Docker Engine"
+say "Configuro Docker Engine dal repository ufficiale"
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
-. /etc/os-release
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $VERSION_CODENAME stable" \
   > /etc/apt/sources.list.d/docker.list
+
+say "Configuro Caddy dal repository ufficiale"
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+  | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+  > /etc/apt/sources.list.d/caddy-stable.list
+chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
+
 apt-get update -y
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin caddy
+systemctl enable --now docker.service
 
-say "Configuro Caddy"
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://github.com/caddyserver/caddy/releases/download/v2.10.2/caddy_2.10.2_linux_amd64.tar.gz -o /tmp/caddy.tar.gz
-mkdir -p /tmp/caddy-bin
-tar -xzf /tmp/caddy.tar.gz -C /tmp/caddy-bin
-install -m 0755 /tmp/caddy-bin/caddy /usr/bin/caddy
-rm -rf /tmp/caddy-bin /tmp/caddy.tar.gz
-caddy version
+docker info >/dev/null 2>&1 || die "Docker è installato ma il daemon non risponde."
+docker compose version >/dev/null 2>&1 || die "Docker Compose v2 non è disponibile."
 
-if ! id "$MIFP_USER" >/dev/null 2>&1; then
-  say "Creo l'utente $MIFP_USER"
-  useradd --system --home "$MIFP_HOME" --shell /usr/sbin/nologin "$MIFP_USER"
+if getent group "$MIFP_GROUP" >/dev/null 2>&1; then
+  [[ "$(getent group "$MIFP_GROUP" | cut -d: -f3)" == "$MIFP_GID" ]] || die "Il gruppo $MIFP_GROUP esiste ma non ha GID $MIFP_GID."
+else
+  say "Creo il gruppo dati $MIFP_GROUP ($MIFP_GID)"
+  groupadd --system --gid "$MIFP_GID" "$MIFP_GROUP"
 fi
 
-say "Struttura /opt/mifp"
-mkdir -p \
-  "$MIFP_HOME/data/assets" "$MIFP_HOME/data/backups" \
-  "$MIFP_HOME/data/conferences" "$MIFP_HOME/data/exports" \
-  "$MIFP_HOME/data/logs" "$MIFP_HOME/data/config" "$MIFP_HOME/data/tmp"
-
-say "Copio i file di deploy"
-cp "$SCRIPT_DIR/compose.production.yaml" "$MIFP_HOME/compose.yaml"
-cp "$SCRIPT_DIR/Caddyfile" "$MIFP_HOME/Caddyfile.example"
-cp "$SCRIPT_DIR/deploy.sh" "$MIFP_HOME/deploy.sh"
-chmod 0750 "$MIFP_HOME/deploy.sh"
-cp "$SCRIPT_DIR/.env.production.example" "$MIFP_HOME/.env.example"
-
-if [[ ! -f "$MIFP_HOME/.env" ]]; then
-  say "Creo $MIFP_HOME/.env dal template (compila i segreti!)"
-  cp "$SCRIPT_DIR/.env.production.example" "$MIFP_HOME/.env"
-  sed -i "s/^MIFP_DOMAIN=.*/MIFP_DOMAIN='$DOMAIN'/" "$MIFP_HOME/.env"
-  sed -i "s/^TRUSTED_HOSTS=.*/TRUSTED_HOSTS='$DOMAIN,www.$DOMAIN,127.0.0.1,localhost'/" "$MIFP_HOME/.env"
+if id "$MIFP_USER" >/dev/null 2>&1; then
+  [[ "$(id -u "$MIFP_USER")" == "$MIFP_UID" && "$(id -g "$MIFP_USER")" == "$MIFP_GID" ]] || die "L'utente $MIFP_USER esiste ma non usa UID:GID $MIFP_UID:$MIFP_GID."
+else
+  say "Creo l'utente dati $MIFP_USER ($MIFP_UID:$MIFP_GID)"
+  useradd --system --uid "$MIFP_UID" --gid "$MIFP_GID" --home "$MIFP_HOME" --shell /usr/sbin/nologin "$MIFP_USER"
 fi
+
+say "Preparo $MIFP_HOME"
+install -d -o root -g root -m 0755 "$MIFP_HOME"
+install -d -o "$MIFP_UID" -g "$MIFP_GID" -m 0750 "$MIFP_HOME/data"
+for dir in assets backups conferences exports logs config tmp; do
+  install -d -o "$MIFP_UID" -g "$MIFP_GID" -m 0750 "$MIFP_HOME/data/$dir"
+done
+
+say "Installo i file di deploy"
+install -o root -g root -m 0644 "$SCRIPT_DIR/compose.production.yaml" "$MIFP_HOME/compose.yaml"
+install -o root -g root -m 0750 "$SCRIPT_DIR/deploy.sh" "$MIFP_HOME/deploy.sh"
+install -o root -g root -m 0750 "$SCRIPT_DIR/configure.py" "$MIFP_HOME/configure.py"
+install -o root -g root -m 0644 "$SCRIPT_DIR/.env.production.example" "$MIFP_HOME/.env.example"
+install -o root -g root -m 0644 "$SCRIPT_DIR/Caddyfile" "$MIFP_HOME/Caddyfile.example"
+install -o root -g root -m 0750 "$SCRIPT_DIR/backup.sh" "$MIFP_HOME/backup.sh"
+install -o root -g root -m 0755 "$SCRIPT_DIR/mifpctl" /usr/local/sbin/mifpctl
+install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-backup.service" /etc/systemd/system/mifp-backup.service
+install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-backup.timer" /etc/systemd/system/mifp-backup.timer
+systemctl daemon-reload
+if [[ -f "$MIFP_HOME/data/mifp.db" && ! -L "$MIFP_HOME/data/mifp.db" ]]; then
+  systemctl enable --now mifp-backup.timer
+else
+  systemctl disable --now mifp-backup.timer >/dev/null 2>&1 || true
+fi
+
+say "Configuro segreti e amministratore"
+python3 "$MIFP_HOME/configure.py" configure \
+  --env-file "$MIFP_HOME/.env" \
+  --example "$MIFP_HOME/.env.example" \
+  --domain "$DOMAIN" \
+  --image-repository "$IMAGE_REPOSITORY" \
+  --admin-if-missing
+chown root:root "$MIFP_HOME/.env"
 chmod 0600 "$MIFP_HOME/.env"
-chown -R "$MIFP_USER:$MIFP_USER" "$MIFP_HOME"
 
 say "Configuro Caddy per $DOMAIN"
-if [[ -d /etc/caddy ]]; then
-  sed "s/\$MIFP_DOMAIN/$DOMAIN/g" "$SCRIPT_DIR/Caddyfile" > /etc/caddy/Caddyfile
-fi
-cat > /etc/systemd/system/caddy.service <<EOF
-[Unit]
-Description=Caddy web server (MIFP reverse proxy)
-After=network.target docker.service
-Requires=docker.service
+sed "s/__MIFP_DOMAIN__/$DOMAIN/g" "$SCRIPT_DIR/Caddyfile" > /etc/caddy/Caddyfile
+chown root:caddy /etc/caddy/Caddyfile
+chmod 0644 /etc/caddy/Caddyfile
+caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+systemctl enable --now caddy.service
+systemctl reload caddy.service
 
-[Service]
-Type=notify
-ExecStart=/usr/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
-ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-Restart=on-failure
-RestartSec=5s
-LimitNOFILE=1048576
+say "Configuro firewall"
+ufw default deny incoming >/dev/null
+ufw default allow outgoing >/dev/null
+ufw allow "$SSH_PORT/tcp" >/dev/null
+ufw allow 80/tcp >/dev/null
+ufw allow 443/tcp >/dev/null
+ufw --force enable >/dev/null
 
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl daemon-reload
-systemctl enable caddy.service
-
-say "Firewall"
-if command -v ufw >/dev/null 2>&1; then
-  ufw allow 22/tcp >/dev/null
-  ufw allow 80/tcp >/dev/null
-  ufw allow 443/tcp >/dev/null
-  ufw --force enable >/dev/null || true
-fi
-
-say "Prossimi passi"
-echo "  1. Compila i segreti in $MIFP_HOME/.env: SECRET_KEY, ADMIN_PASSWORD_HASH (usa ./mifp hash in locale)"
-echo "  2. Copia i dati iniziali in $MIFP_HOME/data (mifp.db, assets/) con proprietario $MIFP_USER"
-echo "  3. Avvia lo stack: sudo -u $MIFP_USER bash $MIFP_HOME/deploy.sh ghcr.io/matginesi/mifp-webapp:sha-XXXX"
-echo "  4. Avvia Caddy: systemctl start caddy"
-echo "  5. Configura le secret GitHub: VPS_HOST, VPS_USER, VPS_SSH_KEY, VPS_KNOWN_HOSTS, VPS_DOMAIN"
+say "Bootstrap completato"
+printf '%s\n' \
+  "Primo avvio: sudo mifpctl first-deploy sha-<commit>" \
+  "Poi importa lo ZIP contenuti dalla dashboard." \
+  "Nuove versioni: sudo mifpctl deploy sha-<commit>" \
+  "Diagnostica: sudo mifpctl doctor" \
+  "Backup manuale: sudo mifpctl backup"

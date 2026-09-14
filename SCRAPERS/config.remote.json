@@ -1,0 +1,263 @@
+{
+  "project_name": "mifp_curated_archive_scrape",
+  "output_dir": "output/remote_jsonl",
+  "start_urls": [],
+  "event_seed_urls": [
+    "https://events.mifp.eu/PLMCN-2026/",
+    "https://events.mifp.eu/PLMCN-2025/",
+    "https://events.mifp.eu/QLIN-2024/",
+    "https://events.mifp.eu/ICP2DC-2024/",
+    "https://events.mifp.eu/march-meeting-2024/",
+    "https://events.mifp.eu/march-meeting-2023/",
+    "https://events.mifp.eu/PLMCN-2023/",
+    "https://events.mifp.eu/TERAMETANANO-2022/",
+    "https://events.mifp.eu/PLMCN-2022/",
+    "https://events.mifp.eu/terametanano-2019/",
+    "https://events.mifp.eu/PLMCN-2019/"
+  ],
+  "discover_sitemaps": true,
+  "crawl": {
+    "workers": 32,
+    "max_pages": 3000,
+    "max_depth": 6,
+    "request_timeout_seconds": 35,
+    "sleep_between_requests_seconds": 0.05,
+    "verify_ssl": false,
+    "respect_robots_txt": false,
+    "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 MIFP-Archival-Scraper/1.0",
+    "follow_old_internal_links": false,
+    "follow_event_internal_links": true,
+    "discover_events_from_old_links": true,
+    "restrict_event_internal_to_same_site": true,
+    "follow_external_event_sites": true
+  },
+  "external_event_allowed_domains": [],
+  "allowed_page_domains": [
+    "old.mifp.eu",
+    "events.mifp.eu"
+  ],
+  "asset_domains_keep_as_urls": [
+    "old.mifp.eu",
+    "events.mifp.eu",
+    "www.mifp.eu",
+    "mifp.eu",
+    "files.supersite.aruba.it"
+  ],
+  "asset_extensions": [
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".zip",
+    ".rar",
+    ".7z",
+    ".csv",
+    ".json",
+    ".jsonl",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".bmp",
+    ".tif",
+    ".tiff"
+  ],
+  "image_extensions": [
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".bmp",
+    ".tif",
+    ".tiff"
+  ],
+  "document_extensions": [
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".zip",
+    ".rar",
+    ".7z",
+    ".csv",
+    ".json",
+    ".jsonl"
+  ],
+  "text_cleanup": {
+    "min_line_chars": 2,
+    "deduplicate_lines": true,
+    "drop_exact_lines_case_insensitive": [
+      "home",
+      "read more",
+      "learn more",
+      "discover",
+      "to top",
+      "register now",
+      "registration",
+      "privacy policy",
+      "cookie policy",
+      "all rights reserved",
+      "scopri di più"
+    ]
+  },
+  "event_extraction": {
+    "enabled": true,
+    "prefer_logo_keywords": [
+      "logo",
+      "plmcn",
+      "terametanano",
+      "qlin",
+      "icp2dc",
+      "2dcp",
+      "march",
+      "mm23",
+      "mifp",
+      "conference"
+    ],
+    "place_keywords": [
+      "location",
+      "venue",
+      "place",
+      "address",
+      "will take place",
+      "will be held",
+      "held in"
+    ]
+  },
+  "downloads": {
+    "download_assets": true,
+    "max_asset_download_mb": 100,
+    "download_timeout_seconds": 15,
+    "download_retries": 2,
+    "download_only_asset_domains": [
+      "old.mifp.eu",
+      "events.mifp.eu",
+      "files.supersite.aruba.it"
+    ]
+  },
+  "rendering": {
+    "render_old_mifp": true,
+    "render_wait_ms": 2500,
+    "save_snapshots": true,
+    "snapshot_dir": "rendered_snapshots"
+  },
+  "excel": {
+    "filename": "mifp_scrape_export.xlsx",
+    "max_cell_chars": 32000
+  },
+  "crawl_mode": "curated_plus_event_sites",
+  "curated_pages": [
+    {
+      "section": "home",
+      "kind": "news_and_forthcoming_events",
+      "title": "News e Forthcoming events",
+      "url": "https://old.mifp.eu/"
+    },
+    {
+      "section": "code_of_conduct",
+      "kind": "policy",
+      "title": "Code of conduct",
+      "url": "https://old.mifp.eu/mifp-code-of-conduct"
+    },
+    {
+      "section": "privacy",
+      "kind": "policy",
+      "title": "Privacy policy",
+      "url": "https://old.mifp.eu/mifp-privacy-policy"
+    },
+    {
+      "section": "privacy",
+      "kind": "policy",
+      "title": "Join us privacy policy",
+      "url": "https://old.mifp.eu/join-us-privacy-policy"
+    },
+    {
+      "section": "members",
+      "kind": "members",
+      "title": "Members",
+      "url": "https://old.mifp.eu/mifp-members"
+    },
+    {
+      "section": "members",
+      "kind": "scientific_council",
+      "title": "Scientific Council",
+      "url": "https://old.mifp.eu/mifp-scientific-council"
+    },
+    {
+      "section": "old_events",
+      "kind": "old_events_meetings",
+      "title": "Old events - Meetings",
+      "url": "https://old.mifp.eu/events-meetings"
+    },
+    {
+      "section": "old_events",
+      "kind": "old_events_schools",
+      "title": "Old events - Schools",
+      "url": "https://old.mifp.eu/events-schools"
+    },
+    {
+      "section": "old_events",
+      "kind": "old_events_workshops",
+      "title": "Old events - Workshops",
+      "url": "https://old.mifp.eu/events-workshops"
+    },
+    {
+      "section": "old_events",
+      "kind": "old_events_conferences",
+      "title": "Old events - Conferences",
+      "url": "https://old.mifp.eu/events-conferences"
+    },
+    {
+      "section": "sponsor",
+      "kind": "sponsor_max_brasserie",
+      "title": "Sponsor - Max Brasserie",
+      "url": "https://old.mifp.eu/sponsors-max-brasserie"
+    },
+    {
+      "section": "sponsor",
+      "kind": "sponsor_how_to_become",
+      "title": "Sponsor - How to become",
+      "url": "https://old.mifp.eu/sponsors-how-to-become-a-sponsor"
+    },
+    {
+      "section": "sponsor",
+      "kind": "sponsor_mifp_cocktail",
+      "title": "Sponsor - MIFP Cocktail",
+      "url": "https://old.mifp.eu/sponsors-mifp-cocktail"
+    },
+    {
+      "section": "join_members",
+      "kind": "join_members",
+      "title": "Join members",
+      "url": "https://old.mifp.eu/join-us-how-to-become-a-member"
+    },
+    {
+      "section": "contacts",
+      "kind": "contacts",
+      "title": "Contacts",
+      "url": "https://old.mifp.eu/contacts"
+    },
+    {
+      "section": "manifesto",
+      "kind": "manifesto_of_solidarity",
+      "title": "Manifesto of Solidarity",
+      "url": "https://old.mifp.eu/manifesto-of-solidarity"
+    }
+  ],
+  "event_discovery": {
+    "discover_from_curated_old_pages": true,
+    "crawl_internal_event_pages": true,
+    "restrict_to_same_event_site": true,
+    "include_events_root": true
+  }
+}

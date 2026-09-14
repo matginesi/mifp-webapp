@@ -6,7 +6,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from .config import WEBAPP, DEFAULT_JSONL_DIR, COUNTRY_HINTS
+from .config import COUNTRY_HINTS
 
 
 def clean(t):
@@ -130,17 +130,10 @@ def infer_country(text):
     return ''
 
 def db_connect(db_path):
-    """Connect to SQLite database and create schema if not exists."""
+    """Open the builder database; canonical schema setup is explicit in runner."""
     import sqlite3
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=15)
     conn.execute('PRAGMA busy_timeout = 10000')
     conn.row_factory = sqlite3.Row
-    exec_schema(conn)
     return conn
-
-def exec_schema(conn):
-    """Create the canonical webapp v2 schema."""
-    schema_path = WEBAPP / "mifp_app" / "db" / "schema.sql"
-    conn.executescript(schema_path.read_text(encoding="utf-8"))
-    conn.commit()

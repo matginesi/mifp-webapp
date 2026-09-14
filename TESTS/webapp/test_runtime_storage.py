@@ -14,6 +14,9 @@ def _layout(root: Path):
         assets=root / "data" / "assets",
         exports=root / "data" / "exports",
         logs=root / "logs",
+        conferences=root / "data" / "conferences",
+        config_dir=root / "data" / "config",
+        temporary=root / "data" / "tmp",
     )
 
 
@@ -62,6 +65,33 @@ def test_runtime_storage_rejects_file_in_place_of_directory(tmp_path: Path) -> N
     with pytest.raises(RuntimeError, match="is not a directory"):
         prepare_runtime_storage(layout, require_database=False)
 
+
+
+
+def test_runtime_storage_rejects_symlinked_runtime_directory(tmp_path: Path) -> None:
+    from mifp_app.runtime_storage import prepare_runtime_storage
+
+    layout = _layout(tmp_path)
+    target = tmp_path / "outside-assets"
+    target.mkdir()
+    layout.assets.parent.mkdir(parents=True, exist_ok=True)
+    layout.assets.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="cannot be a symbolic link"):
+        prepare_runtime_storage(layout, require_database=False)
+
+
+def test_runtime_storage_rejects_symlinked_database(tmp_path: Path) -> None:
+    from mifp_app.runtime_storage import prepare_runtime_storage
+
+    layout = _layout(tmp_path)
+    layout.database.parent.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.db"
+    outside.write_bytes(b"not-owned-by-runtime")
+    layout.database.symlink_to(outside)
+
+    with pytest.raises(RuntimeError, match="DATABASE_PATH cannot be a symbolic link"):
+        prepare_runtime_storage(layout, require_database=True)
 
 def test_production_storage_permissions_are_hardened(tmp_path: Path) -> None:
     import sqlite3

@@ -17,7 +17,6 @@ services:
       TRUSTED_HOSTS: "localhost,127.0.0.1"
       ALLOW_DB_DUMP: "1"
       ALLOW_DB_RESTORE: "1"
-      AUTO_MIGRATE_ON_STARTUP: "0"
       MAINTENANCE_CRASH_TIMEOUT_SECONDS: "60"
       STORAGE_MIN_FREE_MB: "0"
       DATABASE_PATH: /app/data/mifp.db

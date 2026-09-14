@@ -27,7 +27,7 @@ Il nome file non determina il tipo. Ogni riga deve avere `type`.
 - I link pubblici vanno solo in `links[]`.
 - Gli asset vanno solo in `assets[]`.
 - La temporalita' evento `forthcoming/past` e' derivata da `start_date`/`end_date`; non importare status temporali.
-- `review_status` indica solo stato editoriale: `draft`, `review`, `published`, `archived`, `quarantined`, `duplicate`.
+- `review_status` indica solo stato editoriale: `draft`, `review`, `published`, `quarantined`, `duplicate`. Il valore legacy `archived` non appartiene al contratto canonico ed è rifiutato dall’import runtime; la pipeline locale può normalizzarlo prima di produrre il package.
 - Non usare `is_published`: la pubblicazione deriva da `review_status="published"`.
 
 ## Campi principali
@@ -71,17 +71,17 @@ Ruoli link consigliati: `primary`, `website`, `source`, `doi`, `publisher`, `reg
 
 Ruoli asset consigliati: `cover`, `gallery`, `attachment`, `logo`, `document`, `profile`.
 
-## Export canonici ZIP e JSONL
+## Package ZIP e JSONL
 
-Gli export della dashboard usano `format: "mifp-jsonl-v2"` e `format_version: 2`. ZIP e JSONL rappresentano lo stesso package logico e possono essere re-importati indistintamente.
+MIFP usa due package ZIP distinti perché hanno scopi diversi. La pipeline locale degli scraper produce un **content package** `mifp-content`/`format_version: 1`: contiene `manifest.json`, `records.jsonl` e gli eventuali file sotto `assets/`, ma non include stato operativo della webapp. È il formato normale per portare nella dashboard i dati raccolti localmente.
 
-Lo ZIP contiene `records.jsonl`, `manifest.json`, gli asset sotto `assets/` e, per lo scope completo, `state.json`; record, state e asset sono coperti da dimensioni/hash SHA-256 nel manifest.
+La dashboard può invece esportare un **portable package** `mifp-jsonl-v2`/`format_version: 2`. Contiene gli stessi record canonici e gli asset e, nello scope completo, può aggiungere `state.json` per preservare lo stato durevole supportato dall'import/export applicativo. Non è un backup byte-per-byte di SQLite.
 
-Il JSONL self-contained serializza lo stesso contenuto in un singolo file: una riga manifest riservata `_mifp`, i record canonici, l'eventuale stato durevole e gli asset in blocchi Base64 chunked verificati con SHA-256.
+In entrambi i package moderni `records.jsonl` è protetto da SHA-256 nel manifest; gli asset locali dichiarano percorso, dimensione e SHA-256. Il package portabile completo protegge anche `state.json`. Path ZIP, file inattesi, dimensioni, checksum e limiti di decompressione vengono validati prima dell'import.
 
-Per i pacchetti canonici v2, `format_version`, hash dei record e metadati di integrità degli asset sono obbligatori. L'import accetta ancora i vecchi pacchetti `mifp-export` per migrazione, ma ogni nuovo export viene prodotto esclusivamente nel formato canonico v2. I path ZIP e asset vengono validati e gli upload JSON/JSONL, manifest e state hanno limiti di dimensione separati.
+L'export JSONL della dashboard è volutamente **record-only**: una riga JSON per record canonico, senza stato dell'installazione e senza asset binari in Base64. È il formato da usare per ispezione, pipeline e versionamento dei dati, non per un ripristino completo.
 
-Nel formato JSONL self-contained, manifest e stato durevole sono righe riservate `_mifp` e i byte degli asset sono inclusi come blocchi Base64 chunked con dimensione e SHA-256 verificati. Il contenuto logico del round-trip è quindi equivalente allo ZIP; lo ZIP resta preferibile per grandi quantità di asset perché è più compatto ed efficiente. L'import mantiene compatibilità con i vecchi JSONL data-only e con i vecchi package ZIP `mifp-export`.
+La sola compatibilità storica mantenuta è per i vecchi ZIP: package `mifp-export` e ZIP scraper privi di identificatore di formato. I vecchi JSONL self-contained `_mifp` sono intenzionalmente rifiutati. I nuovi scraper emettono `mifp-content` v1 e i nuovi export ZIP della dashboard emettono `mifp-jsonl-v2` v2.
 
 ## Validazione
 

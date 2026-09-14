@@ -18,6 +18,7 @@ from flask import (
 )
 
 from ..db.connection import connect
+from ..domain import ASSET_KINDS, LINK_ROLES
 from ..runtime_storage import prune_runtime_exports
 from ..services.admin_safety import backup_sqlite_database
 from ..services.asset_cleanup import (
@@ -41,8 +42,6 @@ from ._shared import ENTITY_TYPES, SECTION_TABLES, admin_error_payload, admin_er
 from .auth import login_required
 from .dashboard import bp
 
-ENTITY_LINK_ROLES = {"primary", "website", "source", "doi", "publisher", "registration", "program", "document", "social", "other"}
-ASSET_KINDS = {"image", "document", "pdf", "video", "other"}
 
 
 def _asset_kind(value: str | None, *, allow_auto: bool = False) -> str | None:
@@ -855,7 +854,7 @@ def content_external_link_add(section, record_id):
         if not url:
             return jsonify({"error": "Invalid URL"}), 400
         role = str(request.form.get("role") or "primary").strip().lower()
-        if role not in ENTITY_LINK_ROLES:
+        if role not in LINK_ROLES:
             return jsonify({"error": f"Invalid role: {role}"}), 400
         label = request.form.get("label", "").strip() or None
         entity_type = ENTITY_TYPES.get(table, table)

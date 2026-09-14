@@ -19,7 +19,8 @@ if [ ! -f "$BANNER_SETTINGS_PATH" ] && [ -f /app/config/banner_settings.json ]; 
   cp /app/config/banner_settings.json "$BANNER_SETTINGS_PATH"
 fi
 
-# Run database migration using the app's built-in command
-FLASK_APP=mifp_app flask db-upgrade >/tmp/mifp-migrate.json
+# Database lifecycle is explicit in every environment.  The container never
+# creates or migrates schema as a startup side effect.
+python -m mifp_app.db.runtime_check
 
 exec "$@"

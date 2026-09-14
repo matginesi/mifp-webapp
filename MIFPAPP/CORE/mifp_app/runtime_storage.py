@@ -15,19 +15,28 @@ class RuntimeStorage:
     assets: Path
     exports: Path
     logs: Path
+    conferences: Path | None = None
+    config_dir: Path | None = None
+    temporary: Path | None = None
 
     @property
     def backups(self) -> Path:
         return self.database.parent / "backups"
 
     def directories(self) -> tuple[Path, ...]:
-        return (
+        paths: list[Path] = [
             self.database.parent,
             self.assets,
             self.exports,
             self.backups,
             self.logs,
+        ]
+        paths.extend(
+            path
+            for path in (self.conferences, self.config_dir, self.temporary)
+            if path is not None
         )
+        return tuple(paths)
 
 
 def available_bytes(path: Path) -> int:
@@ -112,6 +121,8 @@ def prune_runtime_exports(
 
 
 def _assert_safe_directory(path: Path, label: str) -> None:
+    if path.is_symlink():
+        raise RuntimeError(f"{label} cannot be a symbolic link: {path}")
     resolved = path.resolve()
     if resolved == Path(resolved.anchor):
         raise RuntimeError(f"{label} cannot be the filesystem root: {path}")
@@ -159,6 +170,29 @@ def _probe_sqlite_wal(directory: Path) -> None:
         Path(f"{probe}-shm").unlink(missing_ok=True)
 
 
+def _configure_runtime_database(path: Path) -> None:
+    """Configure persistent SQLite runtime pragmas once at startup.
+
+    Regular request connections do not renegotiate journal mode. This avoids
+    an unnecessary locking operation on every writer while keeping WAL an
+    explicit runtime invariant.
+    """
+    if not path.is_file() or path.is_symlink():
+        return
+    try:
+        connection = sqlite3.connect(f"file:{path.resolve()}?mode=rw", uri=True, timeout=10)
+        try:
+            connection.execute("PRAGMA foreign_keys=ON")
+            mode = str(connection.execute("PRAGMA journal_mode=WAL").fetchone()[0]).lower()
+            if mode != "wal":
+                raise RuntimeError(f"SQLite database could not enter WAL mode: {path}")
+            connection.execute("PRAGMA wal_autocheckpoint=1000")
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise RuntimeError(f"SQLite runtime configuration failed: {path}") from exc
+
+
 def prepare_runtime_storage(
     storage: RuntimeStorage,
     *,
@@ -175,6 +209,8 @@ def prepare_runtime_storage(
     The SQLite parent must be writable because WAL and SHM files live beside
     the database. Probes use disposable files and never mutate the real DB.
     """
+    if storage.database.is_symlink():
+        raise RuntimeError(f"DATABASE_PATH cannot be a symbolic link: {storage.database}")
     if storage.database.exists() and not storage.database.is_file():
         raise RuntimeError(f"DATABASE_PATH is not a regular file: {storage.database}")
     if require_database and not storage.database.is_file():
@@ -215,6 +251,10 @@ def prepare_runtime_storage(
         storage.assets.resolve(),
         storage.backups.resolve(),
     }
+    if storage.conferences is not None:
+        durable_directories.add(storage.conferences.resolve())
+    if storage.config_dir is not None:
+        durable_directories.add(storage.config_dir.resolve())
     for directory in unique_directories:
         if directory.resolve() in durable_directories:
             require_free_space(directory, reserve_bytes=minimum_free_bytes)
@@ -247,3 +287,4 @@ def prepare_runtime_storage(
             raise RuntimeError(f"Database is not writable: {storage.database}") from exc
         else:
             os.close(descriptor)
+        _configure_runtime_database(storage.database)

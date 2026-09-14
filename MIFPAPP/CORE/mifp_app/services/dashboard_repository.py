@@ -65,6 +65,12 @@ PUBLIC_TABLES = {
 }
 
 
+def _require_public_table(table: str, *, allow_assets: bool = False) -> None:
+    if table in PUBLIC_TABLES or (allow_assets and table == "assets"):
+        return
+    raise ValueError(f"Unsupported content table: {table}")
+
+
 def _where_clause(meta: dict[str, Any], q: str | None) -> tuple[str, list[Any]]:
     if not q:
         return "", []
@@ -73,14 +79,15 @@ def _where_clause(meta: dict[str, Any], q: str | None) -> tuple[str, list[Any]]:
 
 
 def list_records(conn: sqlite3.Connection, table: str, q: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
-    assert table in PUBLIC_TABLES
+    _require_public_table(table)
     meta = PUBLIC_TABLES[table]
     where, params = _where_clause(meta, q)
 
     if table == "events":
-        fetch_limit = max(limit * 5, 1000)
-        sql = f"SELECT * FROM {table}{where} ORDER BY id DESC LIMIT ?"
-        rows = [dict(r) for r in conn.execute(sql, (*params, fetch_limit)).fetchall()]
+        # Event ordering can fall back to free-text dates. Sort the complete
+        # filtered set so pagination/limits never silently omit older rows.
+        sql = f"SELECT * FROM {table}{where}"
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
         return temporal_sort_events(rows)[:limit]
 
     sql = f"SELECT * FROM {table}{where} ORDER BY {meta['order']} LIMIT ?"
@@ -92,7 +99,7 @@ def list_records_paginated(conn: sqlite3.Connection, table: str, q: str | None =
 
     Returns a dict with keys: records, total, page, per_page, total_pages, total_filtered.
     """
-    assert table in PUBLIC_TABLES
+    _require_public_table(table)
     meta = PUBLIC_TABLES[table]
     where, params = _where_clause(meta, q)
 
@@ -106,11 +113,11 @@ def list_records_paginated(conn: sqlite3.Connection, table: str, q: str | None =
     offset = (page - 1) * per_page
 
     if table == "events":
-        fetch_limit = max(per_page * 5, 1000)
-        sql = f"SELECT * FROM {table}{where} ORDER BY id DESC LIMIT ?"
-        all_rows = [dict(r) for r in conn.execute(sql, (*params, fetch_limit)).fetchall()]
-        sorted_rows = temporal_sort_events(all_rows)
-        records = sorted_rows[offset:offset + per_page]
+        # Temporal ordering is partly derived from text, so SQL cannot express
+        # it reliably. Sort all filtered events before applying page slicing.
+        sql = f"SELECT * FROM {table}{where}"
+        all_rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+        records = temporal_sort_events(all_rows)[offset:offset + per_page]
     else:
         sql = f"SELECT * FROM {table}{where} ORDER BY {meta['order']} LIMIT ? OFFSET ?"
         records = [dict(r) for r in conn.execute(sql, (*params, per_page, offset)).fetchall()]
@@ -221,7 +228,7 @@ def temporal_sort_events(rows: list[dict[str, Any]], today: date | None = None) 
 
 
 def get_record(conn: sqlite3.Connection, table: str, record_id: int) -> dict[str, Any] | None:
-    assert table in PUBLIC_TABLES
+    _require_public_table(table)
     row = conn.execute(f"SELECT * FROM {table} WHERE id=?", (record_id,)).fetchone()
     return dict(row) if row else None
 
@@ -234,7 +241,7 @@ def save_record(
     *,
     commit: bool = True,
 ) -> int:
-    assert table in PUBLIC_TABLES
+    _require_public_table(table)
     meta = PUBLIC_TABLES[table]
     fields = [f for f in meta["fields"] if f in data]
     cleaned = {f: (None if data.get(f) == "" else data.get(f)) for f in fields}
@@ -279,7 +286,7 @@ def save_record(
 
 
 def count_table(conn: sqlite3.Connection, table: str) -> int:
-    assert table in PUBLIC_TABLES or table == "assets"
+    _require_public_table(table, allow_assets=True)
     return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
@@ -355,7 +362,7 @@ def database_model_health(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 def recent_rows(conn: sqlite3.Connection, table: str, limit: int = 8) -> list[dict[str, Any]]:
-    assert table in PUBLIC_TABLES
+    _require_public_table(table)
     label = "title"
     if table == "members":
         label = "display_name"
@@ -622,14 +629,14 @@ def _guess_level(line: str) -> str:
 
 
 def table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
-    assert table in PUBLIC_TABLES
+    _require_public_table(table)
     return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
 
 
 
 
 def table_schema(conn: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
-    assert table in PUBLIC_TABLES
+    _require_public_table(table)
     return [
         {"name": r[1], "type": r[2], "notnull": bool(r[3]), "default": r[4], "pk": bool(r[5])}
         for r in conn.execute(f"PRAGMA table_info({table})").fetchall()

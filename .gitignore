@@ -18,9 +18,9 @@ credentials.*.json
 # Public deployment templates must remain versioned despite the rules above.
 !deploy/.env.production.example
 
-# Local scraper and legacy import trees
+# Legacy/local import trees
+# SCRAPERS/ is source code and must remain versioned.
 SCRAPER/
-SCRAPERS/
 scrapers_/
 IMPORT_DATA/
 NEW_IMPORT_DATA/
@@ -107,4 +107,7 @@ Thumbs.db
 */DATABASE/backups/*
 */DATABASE/logs/*
 */DATABASE/uploads/*
+*/DATABASE/conferences/*
+*/DATABASE/config/*
+*/DATABASE/tmp/*
 

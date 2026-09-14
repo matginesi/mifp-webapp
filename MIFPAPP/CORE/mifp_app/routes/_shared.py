@@ -1,13 +1,15 @@
 """Shared dashboard constants and helpers.
 
-These used to live in ``routes/dashboard.py`` and were imported by every
-sibling route module, coupling them to an 1800-line god module. Moving them
-here lets the sibling blueprints depend on a small, stable module instead.
+Dashboard route modules share these small presentation mappings and error
+helpers instead of importing one another. The canonical entity/table contract
+still lives in ``mifp_app.domain``.
 """
 
 from __future__ import annotations
 
 from flask import g, jsonify
+
+from ..domain import TABLE_ENTITY_TYPES
 
 
 def admin_error_payload(message: str, status: int = 500):
@@ -32,15 +34,7 @@ SECTION_TABLES = {
     "sponsors": "sponsors",
 }
 
-ENTITY_TYPES = {
-    "members": "member",
-    "news": "news",
-    "events": "event",
-    "publications": "publication",
-    "research_areas": "research_area",
-    "sponsors": "sponsor",
-    "pages": "page",
-}
+ENTITY_TYPES = dict(TABLE_ENTITY_TYPES)
 
 PRIMARY_ASSET_FIELDS = {
     "members": {"image": "profile"},

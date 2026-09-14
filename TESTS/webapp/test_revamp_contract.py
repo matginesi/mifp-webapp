@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+
+import pytest
 from pathlib import Path
 
 
@@ -37,20 +39,21 @@ def test_retired_assistant_and_graph_assets_are_absent():
     assert not any("chatbot" in name or "cytoscape" in name or "graph-editor" in name for name in names)
 
 
-def test_new_schema_omits_retired_assistant_tables_and_legacy_db_is_compatible(tmp_path):
+def test_new_schema_omits_retired_assistant_tables_and_unversioned_db_is_refused(tmp_path):
     from mifp_app.db.connection import connect
+    from mifp_app.db.manage import init_database
     from mifp_app.db.migrations import migrate_content_schema
 
     db_path = tmp_path / "legacy.db"
     with sqlite3.connect(db_path) as legacy:
         legacy.execute("CREATE TABLE chatbot_faq(id INTEGER PRIMARY KEY, question TEXT)")
     with connect(db_path) as conn:
-        migrate_content_schema(conn)
-        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert "chatbot_faq" in tables  # non-destructive legacy compatibility
+        with pytest.raises(RuntimeError, match="portable ZIP"):
+            migrate_content_schema(conn)
+
     clean_path = tmp_path / "clean.db"
+    init_database(clean_path)
     with connect(clean_path) as conn:
-        migrate_content_schema(conn)
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert not {"chatbot_faq", "chatbot_aliases", "chatbot_unanswered"} & tables
 

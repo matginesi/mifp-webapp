@@ -90,8 +90,10 @@ EXCLUDED_PATH_PREFIXES = {
     "MIFPAPP/DATABASE/assets",
     "MIFPAPP/DATABASE/backups",
     "MIFPAPP/DATABASE/conferences",
+    "MIFPAPP/DATABASE/config",
     "MIFPAPP/DATABASE/exports",
     "MIFPAPP/DATABASE/logs",
+    "MIFPAPP/DATABASE/tmp",
     "SCRAPERS/OUTPUTS",
     "MIFPAPP/CORE/secrets",
 }
@@ -125,18 +127,18 @@ def is_excluded(rel: PurePosixPath, *, is_dir: bool) -> bool:
         return True
     if text in KEEP_GENERATED_PLACEHOLDERS:
         return False
+    if is_dir and any(item.startswith(text + "/") for item in KEEP_GENERATED_PLACEHOLDERS):
+        # Traverse generated-data directories only far enough to retain their
+        # source-controlled placeholders. Their real contents stay excluded.
+        return False
     for prefix in EXCLUDED_PATH_PREFIXES:
         if text == prefix or text.startswith(prefix + "/"):
             return True
     if not is_dir:
-        if text == "MIFPAPP/CORE/.env" or text.startswith("MIFPAPP/CORE/.env."):
-            # Keep only public templates, never local/runtime env files.
-            if text in {"MIFPAPP/CORE/.env.example", "MIFPAPP/CORE/.env.production.example"}:
-                return False
-            return True
-        if text.startswith("deploy/.env."):
-            # Keep the public production template, never a real server .env.
-            if text == "deploy/.env.production.example":
+        if rel.name == ".env" or rel.name.startswith(".env."):
+            # Fail closed for credentials: only explicit public templates are
+            # ever allowed into a code snapshot.
+            if text in {"MIFPAPP/CORE/.env.example", "deploy/.env.production.example"}:
                 return False
             return True
         if any(fnmatch.fnmatch(rel.name, pattern) for pattern in EXCLUDED_FILE_PATTERNS):

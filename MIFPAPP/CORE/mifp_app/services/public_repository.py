@@ -37,6 +37,11 @@ NEWS_TYPE_LABELS = {
 }
 
 
+def _require_public_table(table: str) -> None:
+    if table not in PUBLIC_TABLES:
+        raise ValueError(f"Unsupported public table: {table}")
+
+
 def _media_filename(path: str | None) -> str | None:
     if not path:
         return None
@@ -116,7 +121,7 @@ def cover_url(conn, row: dict[str, Any], media_url: MediaUrl) -> str | None:
 
 
 def _table_columns(conn, table: str) -> set[str]:
-    assert table in PUBLIC_TABLES
+    _require_public_table(table)
     return {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 

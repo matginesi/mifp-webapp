@@ -71,9 +71,6 @@ def _cfg(name: str, default=None):
     return PROJECT_CONFIG.get(name, default)
 
 
-def _flask_cfg(name: str, default=None):
-    return (PROJECT_CONFIG.get("flask") or {}).get(name, default)
-
 
 def _path_from_config(name: str, env_name: str | None = None, default: str | None = None) -> Path:
     value = os.getenv(env_name or name.upper()) or default
@@ -81,17 +78,13 @@ def _path_from_config(name: str, env_name: str | None = None, default: str | Non
         raise RuntimeError(f"Missing required config value: {name}")
     path = Path(value)
     if not path.is_absolute():
-        # Relative runtime paths are resolved from CORE. A leading ``CORE/``
-        # segment is accepted for compatibility and stripped before resolution.
-        if path.parts and path.parts[0].casefold() == BASE_DIR.name.casefold():
-            path = Path(*path.parts[1:])
         path = BASE_DIR / path
     return path.resolve()
 
 
 class Config:
     CONFIG_PATH = Path(PROJECT_CONFIG["_config_path"])
-    ENV = os.getenv('FLASK_ENV', os.getenv('ENV', str(_flask_cfg("environment"))))
+    ENV = os.getenv('FLASK_ENV', os.getenv('ENV', 'development'))
     DEBUG = os.getenv('FLASK_DEBUG', '0').lower() in ('1', 'true')
     TESTING = os.getenv('TESTING', '0') in {'1','true','True','yes','on'}
     _secret = _secret_setting('SECRET_KEY')
@@ -110,7 +103,6 @@ class Config:
         'ALLOW_DB_RESTORE', os.getenv('ALLOW_DB_DUMP', '0')
     ) in {'1','true','True','yes','on'}
     ADMIN_SESSION_HOURS = int(os.getenv('ADMIN_SESSION_HOURS', '8'))
-    JOIN_REQUIRE_INVITATION_CODE = os.getenv('JOIN_REQUIRE_INVITATION_CODE', '1') in {'1','true','True','yes','on'}
     JOIN_MAX_PER_IP_HOUR = int(os.getenv('JOIN_MAX_PER_IP_HOUR', '5'))
     JOIN_STORE_RAW_IP = os.getenv('JOIN_STORE_RAW_IP', '0') in {'1','true','True','yes','on'}
     MAIL_PROVIDER = os.getenv('MAIL_PROVIDER', 'disabled').strip().lower()
@@ -129,10 +121,6 @@ class Config:
     EXPORT_RETENTION_DAYS = max(0, int(os.getenv('EXPORT_RETENTION_DAYS', '1')))
     EXPORT_MAX_FILES = max(1, int(os.getenv('EXPORT_MAX_FILES', '30')))
     EXPORT_MAX_BYTES = max(1, int(os.getenv('EXPORT_MAX_MB', '2048'))) * 1024 * 1024
-    AUTO_MIGRATE_ON_STARTUP = os.getenv(
-        'AUTO_MIGRATE_ON_STARTUP', '0' if ENV == 'production' else '1'
-    ) in {'1','true','True','yes','on'}
-    SITE_SETTINGS_CACHE_SECONDS = int(os.getenv('SITE_SETTINGS_CACHE_SECONDS', '30'))
     BANNER_SETTINGS_PATH = _path_from_config(
         "banner_settings_path",
         "BANNER_SETTINGS_PATH",
@@ -142,6 +130,7 @@ class Config:
         "conferences_dir", "CONFERENCES_DIR", "../DATABASE/conferences"
     )
     LOG_DIR = _path_from_config('log_dir', 'LOG_DIR', '../DATABASE/logs')
+    TMP_DIR = _path_from_config('tmp_dir', 'TMPDIR', '../DATABASE/tmp')
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
     LOG_FORMAT = os.getenv(
         'LOG_FORMAT',
@@ -159,18 +148,11 @@ class Config:
     LOG_INCLUDE_CLIENT_IP = os.getenv('LOG_INCLUDE_CLIENT_IP', '0') in {'1','true','True','yes','on'}
     LOG_HASH_CLIENT_IP = os.getenv('LOG_HASH_CLIENT_IP', '1') in {'1','true','True','yes','on'}
     LOG_RETENTION_DAYS = int(os.getenv('LOG_RETENTION_DAYS', '30'))
-    PAGE_VIEWS_RETENTION_DAYS = int(os.getenv('PAGE_VIEWS_RETENTION_DAYS', '365'))
     PRIVACY_SAFE_METRICS_ENABLED = os.getenv('PRIVACY_SAFE_METRICS_ENABLED', '1') in {'1','true','True','yes','on'}
     PRIVACY_SAFE_METRICS_RETENTION_DAYS = int(os.getenv('PRIVACY_SAFE_METRICS_RETENTION_DAYS', '730'))
     MAX_CONTENT_LENGTH = int(os.getenv('MAX_CONTENT_LENGTH_MB', '768')) * 1024 * 1024
     FLASK_HOST = os.getenv('FLASK_HOST', '127.0.0.1')
     FLASK_PORT = int(os.getenv('FLASK_PORT', '8000'))
-    FLASK_DEBUG = os.getenv('FLASK_DEBUG', '0').lower() in ('1', 'true')
-    INTERNAL_DOMAINS = {
-        d.strip() for d in os.getenv('INTERNAL_DOMAINS', 'mifp.eu,www.mifp.eu,old.mifp.eu,events.mifp.eu').split(',')
-        if d.strip()
-    }
-    MIRROR_DEFAULT_HOST = os.getenv('MIRROR_DEFAULT_HOST', 'www.mifp.eu')
     SITE_DEFAULTS = dict(_cfg("site_defaults", {}))
     HTTP_USER_AGENT = os.getenv('HTTP_USER_AGENT', 'MIFP-Webapp/1.0')
     CONTENT_SECURITY_POLICY = os.getenv('CONTENT_SECURITY_POLICY') or _cfg('content_security_policy', None)
@@ -189,12 +171,6 @@ class Config:
     _trusted_hosts = os.getenv('TRUSTED_HOSTS', '').strip()
     TRUSTED_HOSTS = [host.strip() for host in _trusted_hosts.split(',') if host.strip()] or None
     WTF_CSRF_ENABLED = os.getenv('CSRF_ENABLED', '1') in {'1','true','True','yes','on'}
-    UPLOAD_ALLOWED_EXTENSIONS = {
-        ext.strip().lower()
-        for ext in os.getenv('UPLOAD_ALLOWED_EXTENSIONS', 'jpg,jpeg,png,gif,webp,svg,pdf,doc,docx,xls,xlsx,ppt,pptx,zip,mp4,mov,txt,csv,json').split(',')
-        if ext.strip()
-    }
-    LOGIN_MAX_ATTEMPTS = int(os.getenv('LOGIN_MAX_ATTEMPTS', '5'))
     LOGIN_LOCKOUT_SECONDS = int(os.getenv('LOGIN_LOCKOUT_SECONDS', '60'))
     LOGIN_IP_MAX_ATTEMPTS = int(os.getenv('LOGIN_IP_MAX_ATTEMPTS', '10'))
     IMPORT_MAX_ZIP_BYTES = int(os.getenv('IMPORT_MAX_ZIP_BYTES', str(768 * 1024 * 1024)))
@@ -252,6 +228,9 @@ class Config:
                 "ASSETS_DIR": os.getenv("ASSETS_DIR", ""),
                 "EXPORT_DIR": os.getenv("EXPORT_DIR", ""),
                 "LOG_DIR": os.getenv("LOG_DIR", ""),
+                "CONFERENCES_DIR": os.getenv("CONFERENCES_DIR", ""),
+                "BANNER_SETTINGS_PATH": os.getenv("BANNER_SETTINGS_PATH", ""),
+                "TMPDIR": os.getenv("TMPDIR", ""),
             }
             missing = [f"{name} (missing value)" for name, value in required_values.items() if not value]
             if not cls.DATABASE_PATH.is_file():
@@ -272,6 +251,9 @@ class Config:
                 assets=cls.ASSETS_DIR,
                 exports=cls.EXPORT_DIR,
                 logs=cls.LOG_DIR,
+                conferences=cls.CONFERENCES_DIR,
+                config_dir=cls.BANNER_SETTINGS_PATH.parent,
+                temporary=cls.TMP_DIR,
             ),
             require_database=cls.ENV == "production",
             harden_permissions=cls.ENV == "production",

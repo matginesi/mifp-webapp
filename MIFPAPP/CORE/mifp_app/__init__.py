@@ -4,18 +4,16 @@ import hashlib
 import hmac
 import json
 import mimetypes
-import os
 import secrets
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from flask import current_app, request, session
-from werkzeug.middleware.proxy_fix import ProxyFix
 
 _CSRF_TIMEOUT = 7200  # stateless CSRF token expiry (seconds)
 def _stateless_csrf_token() -> str:
     """HMAC-signed CSRF token for anonymous visitors (no session cookie)."""
+    from flask import current_app
     ts = int(time.time())
     nonce = secrets.token_hex(8)
     secret_key = current_app.secret_key
@@ -25,15 +23,25 @@ def _stateless_csrf_token() -> str:
         secret_key,
         f"{nonce}:{ts}".encode(),
         hashlib.sha256,
-    ).hexdigest()[:16]
+    ).hexdigest()
     return f"{ts}:{nonce}:{sig}"
 
 
 def _validate_stateless_csrf(token: str) -> bool:
+    from flask import current_app
     try:
         ts_str, nonce, sig = token.split(":", 2)
         ts = int(ts_str)
-        if time.time() - ts > _CSRF_TIMEOUT:
+        now = time.time()
+        # Reject expired tokens and timestamps implausibly far in the future.
+        # A small skew allowance avoids failures on hosts whose clocks differ by
+        # a few seconds without turning a future timestamp into a non-expiring
+        # token.
+        if ts < 0 or now - ts > _CSRF_TIMEOUT or ts - now > 60:
+            return False
+        if len(nonce) != 16 or any(ch not in "0123456789abcdef" for ch in nonce):
+            return False
+        if len(sig) != 64 or any(ch not in "0123456789abcdef" for ch in sig):
             return False
         secret_key = current_app.secret_key
         if not isinstance(secret_key, bytes):
@@ -42,13 +50,14 @@ def _validate_stateless_csrf(token: str) -> bool:
             secret_key,
             f"{nonce}:{ts_str}".encode(),
             hashlib.sha256,
-        ).hexdigest()[:16]
+        ).hexdigest()
         return secrets.compare_digest(expected, sig)
-    except (ValueError, IndexError):
+    except (AttributeError, ValueError, IndexError):
         return False
 
 
 def _csrf_token() -> str:
+    from flask import session
     if session.get("admin_logged_in"):
         token = session.get("_csrf_token")
         if not token:
@@ -93,17 +102,18 @@ def _is_tmpfs(path) -> bool:
 def create_app():
     import logging
 
-    from flask import Flask, flash, g, jsonify, redirect, render_template, url_for
+    from flask import Flask, flash, g, jsonify, redirect, render_template, request, session, url_for
     from werkzeug.exceptions import HTTPException
+    from werkzeug.middleware.proxy_fix import ProxyFix
 
     from .config import Config
     from .db.connection import connect, connect_readonly
-    from .db.migrations import migrate_content_schema
     from .routes.auth import bp as auth_bp
     from .routes.dashboard import bp as dashboard_bp
     from .routes.maintenance import bp as maintenance_bp
     from .routes.maintenance import maintenance_gate
     from .routes.public import bp as public_bp
+    from .utils.http import wants_json_response
     from .utils.logger import (
         audit_log,
         get_logger,
@@ -135,15 +145,6 @@ def create_app():
         Config.DATABASE_PATH,
         logger=get_logger("startup"),
     )
-    if Config.AUTO_MIGRATE_ON_STARTUP:
-        try:
-            from .services.admin_safety import backup_sqlite_database
-            backup_sqlite_database(Config.DATABASE_PATH, label="pre-auto-migrate")
-            with connect(Config.DATABASE_PATH) as conn:
-                migrate_content_schema(conn)
-        except Exception:
-            log_exception(get_logger("startup"), "app.migration_failed", "Database migration failed")
-            raise
     app = Flask(__name__)
     mimetypes.add_type('font/woff2', '.woff2')
     app.config.from_object(Config)
@@ -160,35 +161,7 @@ def create_app():
     app.register_blueprint(auth_bp)
     app.register_blueprint(dashboard_bp)
 
-    @app.cli.command("db-upgrade")
-    def db_upgrade_command():
-        """Back up, migrate and verify the configured SQLite database."""
-        import click
-
-        from .services.admin_safety import backup_sqlite_database
-
-        backup = backup_sqlite_database(Config.DATABASE_PATH, label="pre-migration")
-        with connect(Config.DATABASE_PATH) as conn:
-            report = migrate_content_schema(conn)
-            integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
-        if integrity != "ok":
-            raise click.ClickException(f"SQLite integrity check failed: {integrity}")
-        click.echo(f"Database migration complete. Backup: {backup or 'not created'}")
-        click.echo(f"Migration report: {json.dumps(report, default=str, sort_keys=True)}")
-
     app.before_request(maintenance_gate)
-
-    def _wants_json_response() -> bool:
-        if request.path.startswith("/api") or request.path.endswith(".json"):
-            return True
-        if request.args.get("format") == "json":
-            return True
-        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-            return True
-        best = request.accept_mimetypes.best
-        return best == "application/json" and (
-            request.accept_mimetypes["application/json"] >= request.accept_mimetypes["text/html"]
-        )
 
     @app.before_request
     def ensure_csrf_token():
@@ -203,14 +176,14 @@ def create_app():
         trusted = app.config.get("TRUSTED_HOSTS")
         if not trusted:
             return None
-        if request.path.startswith(("/static/", "/media/", "/health", "/ready")):
+        # Parse the authority instead of splitting on ':' so IPv6 literals are
+        # handled correctly. Local hosts are not special-cased: health checks
+        # must be listed explicitly in TRUSTED_HOSTS like every other host.
+        host = (urlsplit(f"//{request.host}").hostname or "").casefold()
+        allowed = {str(value).strip().strip("[]").casefold() for value in trusted if str(value).strip()}
+        if host and host in allowed:
             return None
-        host = request.host.split(":")[0].lower()
-        if host in {"localhost", "127.0.0.1", "::1"}:
-            return None
-        if host in {h.strip().lower() for h in trusted}:
-            return None
-        security_event("host.rejected", "Host header not in TRUSTED_HOSTS", severity="warning", path=request.path, host=host)
+        security_event("host.rejected", "Host header not in TRUSTED_HOSTS", severity="warning", path=request.path, host=host or request.host)
         return "Forbidden", 403
 
     import os as _os
@@ -319,7 +292,7 @@ def create_app():
 
         security_event("csrf.failed", "CSRF validation failed", severity="warning", ip=get_client_ip(), path=request.path, method=request.method)
         rid = getattr(g, "request_id", "-")
-        if _wants_json_response():
+        if wants_json_response():
             return jsonify({"error": "csrf_failed", "request_id": rid}), 400
         return render_template("errors/error.html", code=400, title="Bad Request",
                                message="The form has expired or the session is invalid. Please go back and try again.",
@@ -378,21 +351,26 @@ def create_app():
         response.headers.setdefault("Permissions-Policy", app.config.get("PERMISSIONS_POLICY", "geolocation=(), microphone=(), camera=(), interest-cohort=()"))
         response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
-        # HSTS: only when behind real HTTPS (TRUST_PROXY or native HTTPS)
-        if app.config.get("TRUST_PROXY") or request.is_secure:
+        # ProxyFix normalizes request.is_secure from the trusted reverse proxy.
+        if request.is_secure:
             response.headers.setdefault("Strict-Transport-Security", app.config.get("HSTS_VALUE", "max-age=31536000; includeSubDomains"))
         return response
 
 
     @app.get('/health')
     def health():
+        # Public liveness endpoint: production intentionally exposes no storage
+        # or database internals.  /ready is a localhost-only deployment gate.
+        if app.config.get("ENV") == "production":
+            return jsonify({"status": "ok"})
+
         from .runtime_storage import available_bytes
 
         db_path = Config.DATABASE_PATH
         db_ok = False
         if db_path.exists():
             try:
-                with connect(db_path) as conn:
+                with connect_readonly(db_path, timeout=1.0) as conn:
                     conn.execute("SELECT 1").fetchone()
                 db_ok = True
             except Exception as exc:
@@ -407,8 +385,11 @@ def create_app():
         storage_free = {
             "database": available_bytes(db_path.parent),
             "assets": available_bytes(Config.ASSETS_DIR),
+            "conferences": available_bytes(Config.CONFERENCES_DIR),
+            "config": available_bytes(Config.BANNER_SETTINGS_PATH.parent),
             "exports": available_bytes(Config.EXPORT_DIR),
             "logs": available_bytes(Config.LOG_DIR),
+            "temporary": available_bytes(Config.TMP_DIR),
         }
         storage_ok = all(free >= Config.STORAGE_MIN_FREE_BYTES for free in storage_free.values())
         if not storage_ok:
@@ -418,9 +399,12 @@ def create_app():
             "database_exists": db_path.exists(),
             "database_ok": db_ok,
             "assets_dir_exists": Config.ASSETS_DIR.exists(),
+            "conferences_dir_exists": Config.CONFERENCES_DIR.exists(),
+            "config_dir_exists": Config.BANNER_SETTINGS_PATH.parent.exists(),
             "exports_dir_exists": Config.EXPORT_DIR.exists(),
             "backups_dir_exists": (Config.DATABASE_PATH.parent / "backups").exists(),
             "log_dir_exists": Config.LOG_DIR.exists(),
+            "tmp_dir_exists": Config.TMP_DIR.exists(),
             "storage_ok": storage_ok,
             "storage_free_bytes": storage_free,
             "storage_reserve_bytes": Config.STORAGE_MIN_FREE_BYTES,
@@ -432,13 +416,16 @@ def create_app():
 
         db_path = Config.DATABASE_PATH
         try:
-            with connect(db_path) as conn:
+            with connect_readonly(db_path, timeout=1.0) as conn:
                 conn.execute("SELECT 1").fetchone()
             storage_paths = {
                 "database": db_path.parent,
                 "assets": Config.ASSETS_DIR,
+                "conferences": Config.CONFERENCES_DIR,
+                "config": Config.BANNER_SETTINGS_PATH.parent,
                 "exports": Config.EXPORT_DIR,
                 "logs": Config.LOG_DIR,
+                "temporary": Config.TMP_DIR,
             }
             free = {name: available_bytes(path) for name, path in storage_paths.items()}
             # tmpfs directories are ephemeral and bounded independently, so
@@ -477,7 +464,7 @@ def create_app():
     @app.errorhandler(403)
     def forbidden(exc):
         rid = getattr(g, "request_id", "-")
-        if _wants_json_response():
+        if wants_json_response():
             return jsonify({'error': 'forbidden', 'request_id': rid}), 403
         return render_template("errors/error.html", code=403, title="Forbidden",
                                message="You do not have permission to access this resource.",
@@ -486,7 +473,7 @@ def create_app():
     @app.errorhandler(404)
     def not_found(exc):
         rid = getattr(g, "request_id", "-")
-        if _wants_json_response():
+        if wants_json_response():
             return jsonify({'error': 'not_found', 'request_id': rid}), 404
         return render_template("errors/error.html", code=404, title="Page Not Found",
                                message="The requested resource does not exist.", request_id=rid), 404
@@ -514,7 +501,7 @@ def create_app():
             f"This upload exceeds the {max_mb} MB limit. "
             "Select the files together from Data portability: the dashboard will upload large packages sequentially."
         )
-        if _wants_json_response():
+        if wants_json_response():
             return jsonify({
                 'error': 'file_too_large',
                 'message': message,
@@ -528,7 +515,7 @@ def create_app():
     @app.errorhandler(418)
     def teapot(exc):
         rid = getattr(g, "request_id", "-")
-        if _wants_json_response():
+        if wants_json_response():
             return jsonify({'error': 'teapot', 'request_id': rid}), 418
         return render_template("errors/error.html", code=418, title="I'm a Teapot",
                                message="The server refuses to brew coffee because it is, permanently, a teapot.",
@@ -538,14 +525,14 @@ def create_app():
     def handle_error(exc: Exception):
         rid = getattr(g, "request_id", "-")
         if isinstance(exc, HTTPException):
-            if _wants_json_response():
+            if wants_json_response():
                 return jsonify({'error': exc.name.lower().replace(" ", "_"), 'request_id': rid}), exc.code
             return render_template("errors/error.html", code=exc.code, title=exc.name, message=exc.description, request_id=rid), exc.code
         logging.getLogger('mifp.flask').error(
             f'Unhandled Flask error: {type(exc).__name__}: {exc}',
             exc_info=(type(exc), exc, exc.__traceback__),
         )
-        if _wants_json_response():
+        if wants_json_response():
             return jsonify({'error': 'internal_error', 'request_id': rid}), 500
         return render_template("errors/error.html", code=500, title="Internal Server Error",
                                message="Something went wrong. Details have been saved to the logs.",

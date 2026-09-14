@@ -1,0 +1,12 @@
+[Unit]
+Description=MIFP SQLite and file backup
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/mifp/backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+NoNewPrivileges=true
