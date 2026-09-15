@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -349,14 +350,23 @@ class TestDashboardRoutes:
     @screenshot_on_failure
     def test_data_portability_queues_multiple_zip_packages(self, live_server, page, tmp_path):
         packages = []
+        empty_records = b""
         for name in ("first.zip", "second.zip", "third.zip"):
             package = tmp_path / name
             with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as archive:
                 archive.writestr(
                     "manifest.json",
-                    json.dumps({"scope": "all", "records": 0, "files": []}),
+                    json.dumps({
+                        "format": "mifp-content",
+                        "format_version": 1,
+                        "scope": "all",
+                        "records": 0,
+                        "records_sha256": hashlib.sha256(empty_records).hexdigest(),
+                        "counts": {},
+                        "files": [],
+                    }),
                 )
-                archive.writestr("records.jsonl", "")
+                archive.writestr("records.jsonl", empty_records)
             packages.append(str(package))
 
         _login(page, live_server)

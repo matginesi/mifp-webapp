@@ -7,6 +7,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -14,6 +15,8 @@ import pytest
 
 from playwright.sync_api import sync_playwright
 from werkzeug.security import generate_password_hash
+
+from mifp_app.db.manage import init_database
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -57,13 +60,25 @@ def browser():
     )
     if not executable:
         raise RuntimeError("Chrome/Chromium is required for browser tests")
-    with sync_playwright() as pw:
-        chrom = pw.chromium.launch(
-            headless=True,
-            executable_path=executable,
-        )
-        yield chrom
-        chrom.close()
+    previous_tmpdir = os.environ.get("TMPDIR")
+    # Chrome creates a process-singleton Unix socket below TMPDIR. The regular
+    # isolated pytest path is intentionally descriptive, but can exceed the
+    # platform socket-path limit once Chrome appends its generated names.
+    with tempfile.TemporaryDirectory(prefix="mifp-pw-", dir="/tmp") as browser_tmp:
+        os.environ["TMPDIR"] = browser_tmp
+        try:
+            with sync_playwright() as pw:
+                chrom = pw.chromium.launch(
+                    headless=True,
+                    executable_path=executable,
+                )
+                yield chrom
+                chrom.close()
+        finally:
+            if previous_tmpdir is None:
+                os.environ.pop("TMPDIR", None)
+            else:
+                os.environ["TMPDIR"] = previous_tmpdir
 
 
 @pytest.fixture
@@ -122,7 +137,9 @@ def live_server(tmp_path_factory):
     env["SECRET_KEY"] = "browser-test-secret-key"
     env["ADMIN_USERNAME"] = user
     env["ADMIN_PASSWORD_HASH"] = generate_password_hash(password)
-    env["DATABASE_PATH"] = str(server_dir / "mifp.db")
+    database_path = server_dir / "mifp.db"
+    init_database(database_path)
+    env["DATABASE_PATH"] = str(database_path)
     env["ASSETS_DIR"] = str(assets_dir)
     env["EXPORT_DIR"] = str(server_dir / "exports")
     env["CONFERENCES_DIR"] = str(server_dir / "conferences")
@@ -134,53 +151,68 @@ def live_server(tmp_path_factory):
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
+    server_log_path = server_dir / "flask-server.log"
+    server_log = server_log_path.open("w", encoding="utf-8")
     proc = subprocess.Popen(
         [sys.executable, "-m", "flask", "run", "--host=127.0.0.1", f"--port={port}"],
         cwd=str(WEBAPP_DIR),
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=server_log,
+        stderr=subprocess.STDOUT,
     )
     try:
+        server_ready = False
         for _ in range(30):
+            if proc.poll() is not None:
+                break
             try:
                 import urllib.request
                 urllib.request.urlopen(f"{base}/health", timeout=2)
-                logo_source = WEBAPP_DIR / "mifp_app/static/img/logo-mifp.png"
-                logo_target = assets_dir / "browser-logo.png"
-                shutil.copy2(logo_source, logo_target)
-                with sqlite3.connect(server_dir / "mifp.db") as conn:
-                    conn.execute(
-                        "INSERT OR IGNORE INTO roles(id,name,label) VALUES(1,'member','Member')"
-                    )
-                    sponsor_id = conn.execute(
-                        "INSERT INTO sponsors(name,slug,description,is_active) VALUES('Browser Sponsor','browser-sponsor','Test sponsor',1)"
-                    ).lastrowid
-                    asset_id = conn.execute(
-                        """
-                        INSERT INTO assets(filename,original_filename,path,kind,mime_type)
-                        VALUES('browser-logo.png','browser-logo.png','browser-logo.png','image','image/png')
-                        """
-                    ).lastrowid
-                    conn.execute(
-                        """
-                        INSERT INTO asset_links(asset_id,entity_type,entity_id,role,is_primary)
-                        VALUES(?,'sponsor',?,'logo',1)
-                        """,
-                        (asset_id, sponsor_id),
-                    )
-                    conn.execute(
-                        "INSERT INTO publications(title,slug,year,authors,review_status) VALUES('Browser Publication','browser-publication',2026,'Test Author','published')"
-                    )
-                    conn.execute(
-                        "INSERT INTO research_areas(title,slug,summary,description,review_status) VALUES('Browser Research','browser-research','Summary','Description','published')"
-                    )
-                    conn.commit()
-                yield base
-                return
+                server_ready = True
+                break
             except Exception:
                 time.sleep(1)
-        raise RuntimeError("Server did not start in time")
+        if not server_ready:
+            server_log.flush()
+            output = server_log_path.read_text(encoding="utf-8", errors="replace")
+            detail = output[-8000:].strip() or "Flask produced no output."
+            raise RuntimeError(
+                f"Server did not start (exit code: {proc.poll()}).\n{detail}"
+            )
+
+        logo_source = WEBAPP_DIR / "mifp_app/static/img/logo-mifp.png"
+        logo_target = assets_dir / "browser-logo.png"
+        shutil.copy2(logo_source, logo_target)
+        with sqlite3.connect(database_path) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO roles(id,name,label) VALUES(1,'member','Member')"
+            )
+            sponsor_id = conn.execute(
+                "INSERT INTO sponsors(name,slug,description,is_active) VALUES('Browser Sponsor','browser-sponsor','Test sponsor',1)"
+            ).lastrowid
+            asset_id = conn.execute(
+                """
+                INSERT INTO assets(filename,original_filename,path,kind,mime_type)
+                VALUES('browser-logo.png','browser-logo.png','browser-logo.png','image','image/png')
+                """
+            ).lastrowid
+            conn.execute(
+                """
+                INSERT INTO asset_links(asset_id,entity_type,entity_id,role,is_primary)
+                VALUES(?,'sponsor',?,'logo',1)
+                """,
+                (asset_id, sponsor_id),
+            )
+            conn.execute(
+                "INSERT INTO publications(title,slug,year,authors,review_status) VALUES('Browser Publication','browser-publication',2026,'Test Author','published')"
+            )
+            conn.execute(
+                "INSERT INTO research_areas(title,slug,summary,description,review_status) VALUES('Browser Research','browser-research','Summary','Description','published')"
+            )
+            conn.commit()
+        yield base
     finally:
-        proc.kill()
-        proc.wait(timeout=5)
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        server_log.close()

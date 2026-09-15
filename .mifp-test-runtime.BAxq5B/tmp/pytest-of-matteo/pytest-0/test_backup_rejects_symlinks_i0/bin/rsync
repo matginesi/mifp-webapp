@@ -1,0 +1,5 @@
+#!/bin/bash
+set -eu
+src="${@: -2:1}"; dst="${@: -1}"
+mkdir -p "$dst"
+cp -a "$src". "$dst"/
