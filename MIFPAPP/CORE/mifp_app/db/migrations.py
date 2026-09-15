@@ -1,25 +1,93 @@
 """Explicit SQLite schema initialization and forward migration registry.
 
-MIFP supports one historical interchange path: old portable ZIP imports. Old
-runtime database layouts are deliberately not auto-repaired. Create a fresh
-current database and import a ZIP instead. Future database versions are upgraded
-only through explicit, versioned migration functions registered here.
+Legacy or unversioned runtime database layouts are deliberately not auto-repaired.
+Supported adjacent schema versions are upgraded only through explicit migration
+functions registered here; older data must be imported into a fresh current DB
+through the supported portable interchange formats.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from .contract import SCHEMA_VERSION
 from .schema_fingerprint import canonical_schema_fingerprint
 
 Migration = Callable[[sqlite3.Connection], None]
 
+
+def _historic_public_path(slug: str, canonical_url: str | None) -> str:
+    """Recover an existing events.mifp.eu path without changing its casing."""
+    raw_url = str(canonical_url or "").strip()
+    if raw_url:
+        try:
+            parsed = urlsplit(raw_url)
+        except ValueError:
+            parsed = None
+        if parsed is not None and (parsed.hostname or "").casefold() == "events.mifp.eu":
+            candidate = parsed.path.strip("/")
+            parts = candidate.split("/") if candidate else []
+            if parts and all(
+                re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._~-]*", part)
+                for part in parts
+            ):
+                return candidate
+    return slug
+
+
+def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
+    """Add conference-package deployment metadata without rewriting content.
+
+    The new columns are appended in the same order used by ``schema.sql`` so a
+    migrated database has the same structural fingerprint as a fresh database.
+    Existing conference workspaces recover the case-sensitive path from an
+    events.mifp.eu canonical URL when available, otherwise they fall back to
+    the lower-case internal slug.
+    """
+    additions = (
+        "event_id INTEGER REFERENCES events(id) ON DELETE SET NULL",
+        "public_path TEXT NOT NULL DEFAULT ''",
+        "source_format TEXT NOT NULL DEFAULT 'internal' "
+        "CHECK(source_format IN ('internal','legacy-static','conference-editor'))",
+        "source_version TEXT",
+        "package_schema_version INTEGER",
+        "package_sha256 TEXT",
+        "package_manifest_json TEXT NOT NULL DEFAULT '{}'",
+        "deploy_status TEXT NOT NULL DEFAULT 'unpublished' "
+        "CHECK(deploy_status IN ('unpublished','staged','published','failed'))",
+        "imported_at TEXT",
+        "published_at TEXT",
+    )
+    for definition in additions:
+        conn.execute(f"ALTER TABLE conference_sites ADD COLUMN {definition}")
+    rows = conn.execute(
+        "SELECT id,slug,canonical_url FROM conference_sites WHERE TRIM(public_path)=''"
+    ).fetchall()
+    for site_id, slug, canonical_url in rows:
+        conn.execute(
+            "UPDATE conference_sites SET public_path=? WHERE id=?",
+            (_historic_public_path(str(slug), canonical_url), site_id),
+        )
+    conn.execute(
+        "CREATE UNIQUE INDEX idx_conference_sites_event "
+        "ON conference_sites(event_id) WHERE event_id IS NOT NULL"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX idx_conference_sites_public_path "
+        "ON conference_sites(public_path) WHERE TRIM(public_path) <> ''"
+    )
+    conn.execute(
+        "CREATE INDEX idx_conference_sites_package_sha256 "
+        "ON conference_sites(package_sha256) WHERE package_sha256 IS NOT NULL"
+    )
+
+
 # Target-version -> migration from the immediately preceding supported version.
-# Example for a future v10: MIGRATIONS[10] = _migrate_v9_to_v10.
-MIGRATIONS: dict[int, Migration] = {}
-MIN_UPGRADABLE_VERSION = SCHEMA_VERSION
+MIGRATIONS: dict[int, Migration] = {10: _migrate_v9_to_v10}
+MIN_UPGRADABLE_VERSION = 9
 
 
 def _schema_path() -> Path:
@@ -119,7 +187,11 @@ def migrate_content_schema(conn: sqlite3.Connection) -> dict[str, Any]:
         conn.execute("BEGIN IMMEDIATE")
         try:
             migration(conn)
-            checksum = canonical_schema_fingerprint() if target == SCHEMA_VERSION else f"mifp-schema-v{target}"
+            checksum = (
+                canonical_schema_fingerprint()
+                if target == SCHEMA_VERSION
+                else f"mifp-schema-v{target}"
+            )
             conn.execute(
                 "INSERT INTO schema_migrations(version,name,checksum) VALUES(?,?,?)",
                 (target, f"schema v{target}", checksum),

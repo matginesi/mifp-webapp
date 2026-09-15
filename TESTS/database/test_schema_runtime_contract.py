@@ -113,3 +113,62 @@ def test_runtime_check_rejects_schema_definition_drift(tmp_path: Path) -> None:
         )
     with pytest.raises(RuntimeError, match="fingerprint"):
         validate_runtime_database(path)
+
+
+def test_v9_conference_metadata_migrates_to_v10_contract(tmp_path: Path) -> None:
+    path = tmp_path / "v9.db"
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute(
+            "CREATE TABLE schema_migrations("
+            "version INTEGER PRIMARY KEY,name TEXT NOT NULL,checksum TEXT,"
+            "applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        conn.execute("INSERT INTO schema_migrations(version,name) VALUES(9,'schema v9')")
+        conn.execute("CREATE TABLE events(id INTEGER PRIMARY KEY, title TEXT NOT NULL)")
+        conn.execute(
+            """CREATE TABLE conference_sites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                acronym TEXT,
+                year INTEGER,
+                status TEXT NOT NULL DEFAULT 'draft',
+                start_date TEXT,
+                end_date TEXT,
+                venue TEXT,
+                city TEXT,
+                country TEXT,
+                canonical_url TEXT,
+                deploy_base_path TEXT NOT NULL DEFAULT '/',
+                registration_url TEXT,
+                contact_email TEXT,
+                description TEXT,
+                config_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        conn.execute(
+            "INSERT INTO conference_sites(slug,title,canonical_url) VALUES(?,?,?)",
+            ("plmcn-2025", "PLMCN 2025", "https://events.mifp.eu/PLMCN-2025/"),
+        )
+        result = migrate_content_schema(conn)
+        row = conn.execute(
+            """SELECT public_path,source_format,deploy_status,event_id,package_sha256
+               FROM conference_sites WHERE slug='plmcn-2025'"""
+        ).fetchone()
+        indexes = {item[0] for item in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+
+    assert result["migrations_applied"] == [10]
+    assert row["public_path"] == "PLMCN-2025"
+    assert row["source_format"] == "internal"
+    assert row["deploy_status"] == "unpublished"
+    assert row["event_id"] is None
+    assert row["package_sha256"] is None
+    assert {
+        "idx_conference_sites_event",
+        "idx_conference_sites_public_path",
+        "idx_conference_sites_package_sha256",
+    } <= indexes

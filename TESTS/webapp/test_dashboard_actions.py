@@ -2252,3 +2252,129 @@ def test_conference_site_management_and_public_conference_events_are_separate(cl
     page = client.get("/events/historic-conference")
     assert page.status_code == 200
     assert "https://events.example/historic" in page.get_data(as_text=True)
+
+
+def _conference_editor_package_bytes() -> bytes:
+    conference_yaml = """\
+template:
+  name: MIFP Static Conference Template
+  version: 1.5
+  schema_version: '1'
+site:
+  title: PLMCN 2027
+  short_name: PLMCN-2027
+  year: 2027
+  base_url: https://events.mifp.eu/PLMCN-2027/
+conference:
+  full_name: Physics of Low-dimensional and Molecular Conductors 2027
+  acronym: PLMCN
+  start_date: '2027-09-20'
+  end_date: '2027-09-24'
+  city: Rome
+  country: Italy
+  venue: Tor Vergata
+  email: conference@mifp.eu
+"""
+    people = (
+        "First Name,Last Name,Category,Role,Affiliation,Country,Presentation Title,"
+        "Presentation Type,Image,Visible\n"
+        "Ada,Lovelace,Speaker,Speaker,MIFP,Italy,Computing,Talk,,true\n"
+    )
+    program = (
+        "Day,Date,Start Time,End Time,Type,Title,Speaker,Affiliation,Chair,Location,Notes,Visible\n"
+        "1,2027-09-20,09:00,10:00,talk,Opening,Ada Lovelace,MIFP,,Main hall,,true\n"
+    )
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("conference.yaml", conference_yaml)
+        archive.writestr(
+            "conference.version.json",
+            json.dumps({"schema": 1, "version": "0.4.2", "status": "ready", "history": []}),
+        )
+        archive.writestr("data/people.csv", people)
+        archive.writestr("data/program.csv", program)
+        archive.writestr("index.html", "<!doctype html><title>PLMCN</title>")
+        archive.writestr("assets/site.css", "body{}")
+        archive.writestr("regform/index.php", "<?php echo 'ok';")
+        archive.writestr("regform/settings.yaml", "regform:\n  enabled: true\n")
+    return output.getvalue()
+
+
+def test_conference_editor_package_is_linked_versioned_and_downloaded_verbatim(app, client):
+    with _db(app) as conn:
+        event_id = conn.execute(
+            """INSERT INTO events(title,start_date,event_type,review_status,remote_url)
+               VALUES(?,?,?,?,?)""",
+            (
+                "PLMCN 2027",
+                "2027-09-20",
+                "conference",
+                "published",
+                "https://events.mifp.eu/PLMCN-2027/",
+            ),
+        ).lastrowid
+        conn.commit()
+
+    created = client.post(
+        "/dashboard/conferences",
+        data={
+            "title": "PLMCN placeholder",
+            "slug": "plmcn-2027",
+            "public_path": "PLMCN-2027",
+            "event_id": str(event_id),
+        },
+    )
+    assert created.status_code == 302
+    site_id = _scalar(app, "SELECT id FROM conference_sites WHERE slug='plmcn-2027'")
+
+    payload = _conference_editor_package_bytes()
+    imported = client.post(
+        f"/dashboard/conferences/{site_id}/import",
+        data={"package_file": (io.BytesIO(payload), "PLMCN-2027.zip", "application/zip")},
+        content_type="multipart/form-data",
+    )
+    assert imported.status_code == 302
+
+    with _db(app) as conn:
+        site = conn.execute("SELECT * FROM conference_sites WHERE id=?", (site_id,)).fetchone()
+    assert site["event_id"] == event_id
+    assert site["public_path"] == "PLMCN-2027"
+    assert site["source_format"] == "conference-editor"
+    assert site["source_version"] == "0.4.2"
+    assert site["package_schema_version"] == 1
+    assert site["deploy_status"] == "staged"
+    assert site["title"].startswith("Physics of Low-dimensional")
+    assert site["city"] == "Rome"
+    assert site["package_sha256"]
+    manifest = json.loads(site["package_manifest_json"])
+    assert manifest["has_registration"] is True
+    assert manifest["people_rows"] == 1
+    assert manifest["program_rows"] == 1
+
+    workspace = Path(app.config["CONFERENCES_DIR"]) / "plmcn-2027"
+    assert (workspace / "packages" / f"{site['package_sha256']}.zip").read_bytes() == payload
+    assert (workspace / "sources" / site["package_sha256"] / "conference.yaml").is_file()
+    assert (workspace / "sources" / site["package_sha256"] / "regform" / "index.php").is_file()
+
+    downloaded = client.get(f"/dashboard/conferences/{site_id}/build.zip")
+    assert downloaded.status_code == 200
+    assert downloaded.data == payload
+    assert "PLMCN-2027-0.4.2.zip" in downloaded.headers["Content-Disposition"]
+
+    editor_page = client.get(f"/dashboard/conferences/{site_id}").get_data(as_text=True)
+    assert "mifp-conference-editor" in editor_page
+    assert "Download validated editor ZIP" in editor_page
+    assert 'id="people"' not in editor_page
+    assert 'id="assets"' not in editor_page
+
+    duplicate = client.post(
+        "/dashboard/conferences",
+        data={
+            "title": "Duplicate link",
+            "slug": "duplicate-link",
+            "public_path": "OTHER-2027",
+            "event_id": str(event_id),
+        },
+    )
+    assert duplicate.status_code == 302
+    assert _scalar(app, "SELECT COUNT(*) FROM conference_sites WHERE slug='duplicate-link'") == 0

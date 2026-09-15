@@ -4,7 +4,7 @@
 {% block extra_js %}{{ super() }}<script src="{{ url_for('static', filename='js/dashboard/conferences.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div data-entity="conferences">
-{% call page_header('Content', 'Conference sites', 'Create, configure and package self-contained conference websites.') %}
+{% call page_header('Content', 'Conference sites', 'Link institutional events to conference microsites and manage validated source packages.') %}
   <button class="btn btn-primary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#newConference"><i class="bi bi-plus-lg"></i> New conference</button>
 {% endcall %}
 
@@ -21,10 +21,10 @@
       <tbody>
       {% for site in sites %}
         <tr class="record-row">
-          <td class="col-title" title="{{ site.title }}"><a href="{{ url_for('dashboard.conference_edit', site_id=site.id) }}">{{ site.title }}</a><span class="cell-text">{{ site.acronym or site.slug }}{% if site.year %} · {{ site.year }}{% endif %}</span></td>
+          <td class="col-title" title="{{ site.title }}"><a href="{{ url_for('dashboard.conference_edit', site_id=site.id) }}">{{ site.title }}</a><span class="cell-text">{{ site.acronym or site.slug }}{% if site.year %} · {{ site.year }}{% endif %}{% if site.event_title %} · linked to {{ site.event_title }}{% endif %}</span></td>
           <td class="d-none d-md-table-cell" title="{{ [site.city, site.country]|select|join(', ') }}"><span class="cell-date">{{ site.start_date or '—' }}{% if site.end_date %} – {{ site.end_date }}{% endif %}</span><span class="cell-text">{{ [site.city, site.country]|select|join(', ') or '—' }}</span></td>
-          <td class="d-none d-xl-table-cell" title="{{ site.canonical_url or '' }}">{% if site.canonical_url %}<a href="{{ site.canonical_url }}" target="_blank" rel="noopener">{{ site.canonical_url }}</a>{% else %}<span class="cell-text">—</span>{% endif %}<span class="cell-text">{{ site.deploy_base_path }}</span></td>
-          <td class="d-none d-lg-table-cell"><span class="pill">{{ site.status }}</span></td>
+          <td class="d-none d-xl-table-cell" title="{{ site.canonical_url or '' }}">{% if site.canonical_url %}<a href="{{ site.canonical_url }}" target="_blank" rel="noopener">{{ site.canonical_url }}</a>{% else %}<span class="cell-text">events.mifp.eu/{{ site.public_path or site.slug }}/</span>{% endif %}<span class="cell-text">/{{ site.public_path or site.slug }}/ · {{ site.source_format }}</span></td>
+          <td class="d-none d-lg-table-cell"><span class="pill">{{ site.status }}</span><span class="cell-text">{{ site.deploy_status|replace('_',' ') }}</span></td>
           <td class="col-num d-none d-lg-table-cell">{{ site.people_count }}</td>
           <td class="col-actions"><div class="dash-row-actions">
             <button class="btn btn-mini btn-outline" type="button" data-bs-toggle="modal" data-bs-target="#editConference{{ site.id }}">Edit</button>
@@ -55,7 +55,9 @@
             <label class="field wide"><span>Conference title</span><input class="form-control form-control-sm" name="title" required maxlength="200"></label>
             <label class="field"><span>Acronym</span><input class="form-control form-control-sm" name="acronym" maxlength="40" placeholder="PLMCN"></label>
             <label class="field"><span>Year</span><input class="form-control form-control-sm" name="year" type="number" min="2000" max="2200"></label>
-            <label class="field wide"><span>URL slug</span><input class="form-control form-control-sm" name="slug" pattern="[a-z0-9-]+" placeholder="plmcn-2026"><small>Used for the asset directory and deployment ZIP.</small></label>
+            <label class="field wide"><span>Internal slug</span><input class="form-control form-control-sm" name="slug" pattern="[a-z0-9-]+" placeholder="plmcn-2026"><small>Lower-case storage identifier. It does not dictate the public URL casing.</small></label>
+            <label class="field wide"><span>events.mifp.eu path</span><input class="form-control form-control-sm" name="public_path" placeholder="PLMCN-2026"><small>Case-preserving public path. Leave blank to start from the internal slug.</small></label>
+            <label class="field wide"><span>Institutional event</span><select class="form-select form-select-sm" name="event_id"><option value="">Not linked yet</option>{% for event in event_options %}<option value="{{ event.id }}">{{ event.start_date or 'Undated' }} · {{ event.title }}</option>{% endfor %}</select></label>
             <label class="field wide"><span>Description</span><textarea class="form-control form-control-sm" name="description" rows="4"></textarea></label>
           </div>
         </section>
@@ -72,11 +74,11 @@
           </div>
         </section>
         <section class="wizard-panel" data-conference-create-step="3">
-          <div class="control-note"><i class="bi bi-info-circle"></i><span>Optional. Import either YAML or ZIP, then add any loose assets you also need.</span></div>
+          <div class="control-note"><i class="bi bi-info-circle"></i><span>Preferred: import the ZIP exported by mifp-conference-editor. Legacy config.yaml/internal packages remain supported during the transition.</span></div>
           <div class="event-wizard-grid">
             <label class="field wide"><span>Import config.yaml</span><input class="form-control form-control-sm" type="file" name="config_file" accept=".yaml,.yml"><small>Updates every supported website setting.</small></label>
-            <label class="field wide"><span>Import YAML + assets ZIP</span><input class="form-control form-control-sm" type="file" name="package_file" accept=".zip"><small>ZIP assets must be inside <code>assets/</code>.</small></label>
-            <label class="field wide"><span>Additional assets</span><input class="form-control form-control-sm" type="file" name="assets" accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.doc,.docx,.csv" multiple><small>Images, documents and programme sources can be assigned after creation.</small></label>
+            <label class="field wide"><span>Import conference ZIP</span><input class="form-control form-control-sm" type="file" name="package_file" accept=".zip"><small>Recognizes mifp-conference-editor packages automatically and preserves them as immutable source snapshots.</small></label>
+            <label class="field wide"><span>Additional assets</span><input class="form-control form-control-sm" type="file" name="assets" accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.doc,.docx,.csv" multiple><small>Internal/legacy builder only. For a Conference Editor package, keep assets inside the editor project and export a new ZIP.</small></label>
           </div>
         </section>
       </div>
@@ -101,6 +103,8 @@
         <label class="field"><span>Venue</span><input class="form-control" name="venue" value="{{ site.venue or '' }}"></label>
         <label class="field"><span>City</span><input class="form-control" name="city" value="{{ site.city or '' }}"></label>
         <label class="field"><span>Country</span><input class="form-control" name="country" value="{{ site.country or '' }}"></label>
+        <label class="field"><span>events.mifp.eu path</span><input class="form-control" name="public_path" value="{{ site.public_path or site.slug }}" required></label>
+        <label class="field wide"><span>Institutional event</span><select class="form-select" name="event_id"><option value="">Not linked</option>{% for event in event_options %}<option value="{{ event.id }}" {{ 'selected' if site.event_id == event.id }}>{{ event.start_date or 'Undated' }} · {{ event.title }}</option>{% endfor %}</select></label>
         <label class="field"><span>Contact email</span><input class="form-control" type="email" name="contact_email" value="{{ site.contact_email or '' }}"></label>
         <label class="field wide"><span>Canonical public URL</span><input class="form-control" type="url" name="canonical_url" value="{{ site.canonical_url or '' }}"></label>
         <label class="field"><span>Deploy base path</span><input class="form-control" name="deploy_base_path" value="{{ site.deploy_base_path or '/' }}"></label>

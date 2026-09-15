@@ -54,14 +54,15 @@ definisce gli invarianti che un DB deve rispettare per essere avviato.
 ./mifp db-upgrade-copy OLD NEW
 ```
 
-Non esistono migration implicite all'avvio. I vecchi DB non vengono riparati
-automaticamente: i dati entrano nel DB corrente solo tramite package versionati
-`mifp-content` v1 o `mifp-jsonl-v2` v2; i vecchi ZIP non versionati sono rifiutati.
+Non esistono migration implicite all'avvio. Gli upgrade supportati sono espliciti e
+si eseguono sempre su una copia (`db-upgrade-copy`); in questa versione è supportato
+l'upgrade v9 -> v10. DB legacy/non versionati continuano a passare dai package
+versionati `mifp-content` v1 o `mifp-jsonl-v2` v2; i vecchi ZIP non versionati sono rifiutati.
 
 JSONL è record-only. ZIP è il formato portabile per record/asset e, negli
 export completi della dashboard, stato durevole.
 
-Vedi [schema e lifecycle](docs/database-schema.md).
+Vedi [schema e lifecycle](docs/database-schema.md) e [gestione Conference](docs/conference-sites.md).
 
 ## Produzione
 

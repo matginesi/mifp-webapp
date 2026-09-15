@@ -1,6 +1,6 @@
 # Database MIFP: contratto e lifecycle
 
-SQLite è la fonte di verità runtime. Lo schema corrente è **v9**.
+SQLite è la fonte di verità runtime. Lo schema corrente è **v10**.
 
 - `mifp_app/db/schema.sql`: struttura completa di un DB nuovo.
 - `mifp_app/db/contract.py`: tabelle/colonne/indici/trigger indispensabili.
@@ -13,8 +13,9 @@ SQLite è la fonte di verità runtime. Lo schema corrente è **v9**.
 1. Un DB nuovo deve essere equivalente a un DB portato alla versione corrente.
 2. Il runtime non crea e non migra schema.
 3. Un DB incompleto non viene autoriparato: viene rifiutato.
-4. La migrazione dei dati passa solo da package ZIP moderni e versionati; vecchi
-   layout SQLite, vecchi ZIP e vecchi JSONL non sono supportati.
+4. Gli upgrade tra versioni adiacenti esplicitamente supportate passano dal registry delle
+   migration; v9 -> v10 è supportato. DB non versionati o più vecchi devono invece essere
+   ricreati e popolati tramite package ZIP moderni e versionati.
 5. Upgrade schema: sempre su una copia, validazione, poi swap esplicito.
 6. Import contenuti: transazionale e additivo; nessuna cancellazione implicita.
 7. Backup fisico e export dati sono concetti diversi.
@@ -88,14 +89,31 @@ l'import**, non l'origine dello scraping.
 
 | Tabella | Responsabilità |
 |---|---|
-| `conference_sites` | configurazione micrositi conferenza |
+| `conference_sites` | identità, legame con `events`, path pubblico e stato/versione del pacchetto del microsito |
 | `conference_people` | persone del microsito |
 | `conference_assets` | asset del microsito |
+
+`conference_sites` mantiene separati due identificatori intenzionalmente:
+
+- `slug`: identificatore interno/stabile, normalizzato in minuscolo e usato per lo storage;
+- `public_path`: path case-sensitive pubblicato sotto `events.mifp.eu`, preservato per
+  non rompere URL storici come `PLMCN-2025`.
+
+Quando il microsito nasce da `mifp-conference-editor`, `source_format`,
+`source_version`, `package_schema_version`, `package_sha256` e
+`package_manifest_json` rendono l'import tracciabile. `event_id` collega al massimo
+un microsito a un record canonico della tabella `events`; i due modelli restano
+separati perché la scheda istituzionale e il sito completo della conferenza hanno
+responsabilità diverse.
+
+Per i package `conference-editor`, persone, programma e asset restano nel package sorgente:
+`conference_people` e `conference_assets` continuano a servire soltanto il builder interno/legacy.
+La dashboard non crea quindi una seconda copia editabile degli stessi dati.
 
 ### Schema
 
 `schema_migrations` contiene la versione applicata. `page_views` e le vecchie
-tabelle assistant/chatbot non fanno parte dello schema v9.
+tabelle assistant/chatbot non fanno parte dello schema v10.
 
 ## Import/export
 

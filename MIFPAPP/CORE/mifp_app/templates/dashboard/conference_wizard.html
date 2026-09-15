@@ -4,17 +4,17 @@
 {% block extra_js %}{{ super() }}<script src="{{ url_for('static', filename='js/dashboard/conferences.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div class="conference-workspace" data-entity="conferences">
-{% call page_header('Conference site', site.title, 'Complete the website in order, then build one self-contained ZIP for deployment.', entity_type='conferences') %}
+{% call page_header('Conference site', site.title, 'Manage the conference identity, source package and deployment state without duplicating the authoring workflow.', entity_type='conferences') %}
   <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.conference_sites') }}"><i class="bi bi-arrow-left"></i> All conferences</a>
-  <a class="btn btn-primary btn-sm" href="{{ url_for('dashboard.conference_build', site_id=site.id) }}" data-conference-build><i class="bi bi-file-earmark-zip"></i> Build deploy ZIP</a>
+  <a class="btn btn-primary btn-sm" href="{{ url_for('dashboard.conference_build', site_id=site.id) }}" data-conference-build><i class="bi bi-file-earmark-zip"></i> {{ 'Download editor package' if site.source_format == 'conference-editor' else 'Build deploy ZIP' }}</a>
 {% endcall %}
 
 <nav class="conference-steps" aria-label="Conference editor sections">
   <a href="#identity"><b>1</b><span>Identity & URL</span></a>
-  <a href="#configuration"><b>2</b><span>YAML settings</span></a>
-  <a href="#people"><b>3</b><span>People</span></a>
-  <a href="#assets"><b>4</b><span>Assets</span></a>
-  <a href="#deploy"><b>5</b><span>Build</span></a>
+  <a href="#configuration"><b>2</b><span>Source package</span></a>
+  {% if site.source_format != 'conference-editor' %}<a href="#people"><b>3</b><span>People</span></a>
+  <a href="#assets"><b>4</b><span>Assets</span></a>{% endif %}
+  <a href="#deploy"><b>{{ '3' if site.source_format == 'conference-editor' else '5' }}</b><span>Deploy</span></a>
 </nav>
 
 <section class="table-card conference-panel" id="identity">
@@ -30,6 +30,9 @@
       <label class="field"><span>Venue</span><input class="form-control" name="venue" value="{{ site.venue or '' }}"></label>
       <label class="field"><span>City</span><input class="form-control" name="city" value="{{ site.city or '' }}"></label>
       <label class="field"><span>Country</span><input class="form-control" name="country" value="{{ site.country or '' }}"></label>
+      <label class="field"><span>Internal slug</span><input class="form-control" value="{{ site.slug }}" disabled><small>Stable lower-case storage identifier.</small></label>
+      <label class="field"><span>events.mifp.eu path</span><input class="form-control" name="public_path" value="{{ site.public_path or site.slug }}" required><small>Case is preserved, e.g. <code>PLMCN-2025</code>.</small></label>
+      <label class="field wide"><span>Institutional event</span><select class="form-select" name="event_id"><option value="">Not linked</option>{% for event in event_options %}<option value="{{ event.id }}" {{ 'selected' if site.event_id == event.id }}>{{ event.start_date or 'Undated' }} · {{ event.title }}</option>{% endfor %}</select><small>Links this microsite to one record in the main MIFP Events catalogue.</small></label>
       <label class="field wide"><span>Canonical public URL</span><input class="form-control" type="url" name="canonical_url" value="{{ site.canonical_url or '' }}" placeholder="https://conference.example.org/"><small>The address search engines and social previews should consider authoritative.</small></label>
       <label class="field"><span>Deploy base path</span><input class="form-control" name="deploy_base_path" value="{{ site.deploy_base_path or '/' }}" placeholder="/conference/"></label>
       <label class="field"><span>Registration URL</span><input class="form-control" type="url" name="registration_url" value="{{ site.registration_url or '' }}"></label>
@@ -41,14 +44,25 @@
 </section>
 
 <section class="table-card conference-panel" id="configuration">
-  <div class="panel-head"><div><span>config.yaml</span><h2><i class="bi bi-sliders"></i> Complete website configuration</h2><p>Every setting written to the deploy package is managed here. No manual YAML editing is required.</p></div><span class="storage-badge">6 sections</span></div>
+  <div class="panel-head"><div><span>{{ 'mifp-conference-editor' if site.source_format == 'conference-editor' else 'Internal builder' }}</span><h2><i class="bi bi-box-seam"></i> Conference source</h2><p>{{ 'The imported editor package is authoritative. Edit it in mifp-conference-editor and import a new ZIP here.' if site.source_format == 'conference-editor' else 'Legacy/internal builder settings remain available while conference-editor packages are adopted.' }}</p></div><span class="storage-badge">{{ site.source_format }}</span></div>
+  {% if site.source_format == 'conference-editor' and package_manifest %}
+  <dl class="conference-deploy-summary">
+    <div><dt>Editor version</dt><dd>{{ site.source_version or '—' }}</dd></div>
+    <div><dt>Schema</dt><dd>{{ site.package_schema_version or '—' }}</dd></div>
+    <div><dt>Files</dt><dd>{{ package_manifest.file_count or '—' }}</dd></div>
+    <div><dt>People / program</dt><dd>{{ package_manifest.people_rows or 0 }} / {{ package_manifest.program_rows or 0 }}</dd></div>
+    <div><dt>Registration</dt><dd>{{ 'PHP included' if package_manifest.has_registration else 'No PHP form' }}</dd></div>
+    <div><dt>SHA-256</dt><dd><code title="{{ site.package_sha256 }}">{{ (site.package_sha256 or '')[:16] }}…</code></dd></div>
+  </dl>
+  {% endif %}
   <form class="toolbar conference-import" method="post" action="{{ url_for('dashboard.conference_import', site_id=site.id) }}" enctype="multipart/form-data">
     <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-    <div class="toolbar-search"><i class="bi bi-filetype-yml"></i><input class="form-control form-control-sm" type="file" name="config_file" accept=".yaml,.yml" aria-label="Import config YAML"></div>
-    <span class="toolbar-divider">or</span>
-    <div class="toolbar-search"><i class="bi bi-file-earmark-zip"></i><input class="form-control form-control-sm" type="file" name="package_file" accept=".zip" aria-label="Import YAML and assets ZIP"></div>
-    <button class="btn btn-outline btn-sm"><i class="bi bi-upload"></i> Import configuration</button>
+    {% if site.source_format != 'conference-editor' %}<div class="toolbar-search"><i class="bi bi-filetype-yml"></i><input class="form-control form-control-sm" type="file" name="config_file" accept=".yaml,.yml" aria-label="Import legacy config YAML"></div>
+    <span class="toolbar-divider">or</span>{% endif %}
+    <div class="toolbar-search"><i class="bi bi-file-earmark-zip"></i><input class="form-control form-control-sm" type="file" name="package_file" accept=".zip" aria-label="Import conference package ZIP"></div>
+    <button class="btn btn-outline btn-sm"><i class="bi bi-upload"></i> {{ 'Import new editor release' if site.source_format == 'conference-editor' else 'Import source' }}</button>
   </form>
+  {% if site.source_format != 'conference-editor' %}
   <form method="post" action="{{ url_for('dashboard.conference_config_save', site_id=site.id) }}" class="conference-config-form">
     <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
     {% set cfg = conference_config %}
@@ -103,8 +117,12 @@
     </div>
     <div class="dash-row-actions conference-form-actions"><button class="btn btn-primary btn-sm"><i class="bi bi-file-earmark-code"></i> Save config.yaml settings</button></div>
   </form>
+  {% else %}
+  <div class="control-note"><i class="bi bi-info-circle"></i><span>People, program, assets and PHP registration files come from the imported editor package. They are intentionally not edited a second time in this dashboard.</span></div>
+  {% endif %}
 </section>
 
+{% if site.source_format != 'conference-editor' %}
 <section class="table-card conference-panel" id="people">
   <div class="panel-head"><div><span>Participants</span><h2><i class="bi bi-people"></i> People</h2><p>Speakers, organizers, chairs and participants. Import adds rows; enable replace only when the file is authoritative.</p></div>
     {{ export_dropdown([
@@ -183,10 +201,12 @@
   </div>
 </section>
 
+{% endif %}
+
 <section class="table-card conference-panel" id="deploy">
-  <div class="panel-head"><div><span>Static release</span><h2><i class="bi bi-box-seam"></i> Deployment package</h2><p>The ZIP contains the complete static site, all publishable assets and structured JSON data. CSV source files are converted but never distributed.</p></div></div>
-  <dl class="conference-deploy-summary"><div><dt>Public URL</dt><dd>{{ site.canonical_url or 'Not set' }}</dd></div><div><dt>Base path</dt><dd><code>{{ site.deploy_base_path }}</code></dd></div><div><dt>People</dt><dd>{{ people|length }}</dd></div><div><dt>Assets</dt><dd>{{ assets|length }}</dd></div></dl>
-  <div class="conference-deploy-actions"><a class="btn btn-primary" href="{{ url_for('dashboard.conference_build', site_id=site.id) }}" data-conference-build><i class="bi bi-download"></i> Build and download ZIP</a></div>
+  <div class="panel-head"><div><span>{{ site.deploy_status|replace('_',' ')|title }}</span><h2><i class="bi bi-box-seam"></i> Deployment package</h2><p>{{ 'The exact validated ZIP exported by mifp-conference-editor is retained unchanged for traceability. Publishing to events.mifp.eu is the next deployment step.' if site.source_format == 'conference-editor' else 'The internal builder can still generate its self-contained static release.' }}</p></div></div>
+  <dl class="conference-deploy-summary"><div><dt>Public path</dt><dd><code>/{{ site.public_path or site.slug }}/</code></dd></div><div><dt>Canonical URL</dt><dd>{{ site.canonical_url or 'Not set' }}</dd></div>{% if site.source_format == 'conference-editor' %}<div><dt>Source</dt><dd>{{ site.source_format }} {{ site.source_version or '' }}</dd></div><div><dt>Imported</dt><dd>{{ site.imported_at or '—' }}</dd></div>{% else %}<div><dt>People</dt><dd>{{ people|length }}</dd></div><div><dt>Assets</dt><dd>{{ assets|length }}</dd></div>{% endif %}</dl>
+  <div class="conference-deploy-actions"><a class="btn btn-primary" href="{{ url_for('dashboard.conference_build', site_id=site.id) }}" data-conference-build><i class="bi bi-download"></i> {{ 'Download validated editor ZIP' if site.source_format == 'conference-editor' else 'Build and download ZIP' }}</a></div>
 </section>
 </div>
 {% endblock %}

@@ -7,7 +7,7 @@ must satisfy exactly this contract.
 """
 from __future__ import annotations
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 TABLE_GROUPS = {
     "content": frozenset({
@@ -46,7 +46,11 @@ REQUIRED_COLUMNS = {
     "pages": frozenset({"id", "uid", "slug", "title", "review_status"}),
     "sponsors": frozenset({"id", "uid", "name"}),
     "quality_runs": frozenset({"id", "status", "progress_pct", "progress_message"}),
-    "conference_sites": frozenset({"id", "slug", "config_json"}),
+    "conference_sites": frozenset({
+        "id", "slug", "config_json", "event_id", "public_path", "source_format",
+        "source_version", "package_schema_version", "package_sha256",
+        "package_manifest_json", "deploy_status", "imported_at", "published_at",
+    }),
     "schema_migrations": frozenset({"version", "name", "checksum", "applied_at"}),
 }
 
@@ -56,6 +60,8 @@ REQUIRED_INDEXES = frozenset({
     "idx_sponsors_uid", "idx_assets_content_sha256", "idx_assets_source_url_sha256",
     "idx_source_records_run", "idx_canonical_mappings_entity",
     "idx_import_records_entity", "idx_metrics_daily_date",
+    "idx_conference_sites_event", "idx_conference_sites_public_path",
+    "idx_conference_sites_package_sha256",
 })
 
 REQUIRED_TRIGGERS = frozenset({

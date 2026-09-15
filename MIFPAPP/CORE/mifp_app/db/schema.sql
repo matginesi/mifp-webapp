@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 INSERT OR IGNORE INTO schema_migrations(version,name,checksum)
-VALUES(9,'canonical schema v9','b26a754bed6ef4aa2af5c83b6fc6bfd8e9c94b340caf56b5fc69df0f3971bd85');
+VALUES(10,'canonical schema v10','57ceec99ef0ca42e9d46044f522ab701380aad8b210fbf75f7fe5070ec378902');
 
 CREATE TABLE IF NOT EXISTS source_systems (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -518,7 +518,23 @@ CREATE TABLE IF NOT EXISTS conference_sites (
     config_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+, event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
+    public_path TEXT NOT NULL DEFAULT '',
+    source_format TEXT NOT NULL DEFAULT 'internal' CHECK(source_format IN ('internal','legacy-static','conference-editor')),
+    source_version TEXT,
+    package_schema_version INTEGER,
+    package_sha256 TEXT,
+    package_manifest_json TEXT NOT NULL DEFAULT '{}',
+    deploy_status TEXT NOT NULL DEFAULT 'unpublished' CHECK(deploy_status IN ('unpublished','staged','published','failed')),
+    imported_at TEXT,
+    published_at TEXT);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conference_sites_event
+    ON conference_sites(event_id) WHERE event_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conference_sites_public_path
+    ON conference_sites(public_path) WHERE TRIM(public_path) <> '';
+CREATE INDEX IF NOT EXISTS idx_conference_sites_package_sha256
+    ON conference_sites(package_sha256) WHERE package_sha256 IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS conference_people (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

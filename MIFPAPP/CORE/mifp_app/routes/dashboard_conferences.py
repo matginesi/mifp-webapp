@@ -20,6 +20,12 @@ from flask import (
 from werkzeug.utils import secure_filename
 
 from ..db.connection import connect
+from ..services.conference_packages import (
+    load_stored_package,
+    looks_like_editor_package,
+    normalize_public_path,
+    store_editor_package,
+)
 from ..services.conference_sites import (
     ASSET_ROLES,
     PEOPLE_COLUMNS,
@@ -61,6 +67,53 @@ def _site_values(form) -> dict:
     return values
 
 
+def _event_id(value: str | None) -> int | None:
+    value = str(value or "").strip()
+    if not value:
+        return None
+    try:
+        event_id = int(value)
+    except ValueError as exc:
+        raise ValueError("Linked event is invalid.") from exc
+    if event_id <= 0:
+        raise ValueError("Linked event is invalid.")
+    return event_id
+
+
+def _validate_event_link(conn, event_id: int | None, *, site_id: int | None = None) -> None:
+    if event_id is None:
+        return
+    if not conn.execute("SELECT 1 FROM events WHERE id=?", (event_id,)).fetchone():
+        raise ValueError("The selected institutional event no longer exists.")
+    linked = conn.execute(
+        "SELECT id FROM conference_sites WHERE event_id=?", (event_id,)
+    ).fetchone()
+    if linked and int(linked["id"]) != site_id:
+        raise ValueError("That institutional event is already linked to another conference site.")
+
+
+def _validate_public_path_unique(
+    conn, public_path: str, *, site_id: int | None = None
+) -> None:
+    row = conn.execute(
+        "SELECT id FROM conference_sites WHERE public_path=?", (public_path,)
+    ).fetchone()
+    if row and int(row["id"]) != site_id:
+        raise ValueError("That public conference path is already in use.")
+
+
+def _event_options(conn) -> list[dict]:
+    return [
+        dict(row)
+        for row in conn.execute(
+            """SELECT id,title,start_date,event_type,remote_url
+               FROM events
+               WHERE review_status <> 'duplicate'
+               ORDER BY COALESCE(start_date,'') DESC,title,id DESC"""
+        ).fetchall()
+    ]
+
+
 def _site(conn, site_id: int) -> dict | None:
     row = conn.execute("SELECT * FROM conference_sites WHERE id=?", (site_id,)).fetchone()
     return dict(row) if row else None
@@ -78,22 +131,56 @@ def _people(conn, site_id: int) -> list[dict]:
 def _apply_conference_import(site: dict, config_upload=None, package_upload=None) -> tuple[str, int]:
     if config_upload and config_upload.filename and package_upload and package_upload.filename:
         raise ValueError("Choose either config.yaml or a ZIP package, not both.")
-    config = None
-    filenames: list[str] = []
+
     if package_upload and package_upload.filename:
         if not package_upload.filename.lower().endswith(".zip"):
             raise ValueError("Conference packages must use the .zip extension.")
+        raw = package_upload.read()
+        if looks_like_editor_package(raw):
+            stored = store_editor_package(
+                raw,
+                Path(current_app.config["CONFERENCES_DIR"]),
+                site["slug"],
+            )
+            package = stored.package
+            metadata_updates: dict[str, object] = {
+                "source_format": package.package_format,
+                "source_version": package.source_version,
+                "package_schema_version": package.schema_version,
+                "package_sha256": package.sha256,
+                "package_manifest_json": json.dumps(package.manifest(), ensure_ascii=False),
+                "deploy_status": "staged",
+            }
+            for field in (
+                "title", "acronym", "year", "start_date", "end_date", "venue",
+                "city", "country", "contact_email", "canonical_url",
+            ):
+                value = getattr(package, field)
+                if value not in {None, ""}:
+                    metadata_updates[field] = value
+            assignments = ",".join(f"{field}=?" for field in metadata_updates)
+            with connect(current_app.config["DATABASE_PATH"]) as conn:
+                conn.execute(
+                    f"""UPDATE conference_sites
+                        SET {assignments},imported_at=CURRENT_TIMESTAMP,
+                            updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (*metadata_updates.values(), site["id"]),
+                )
+                conn.commit()
+            return "conference-editor", package.file_count
+
         config, filenames = import_conference_zip(
-            package_upload.read(),
+            raw,
             Path(current_app.config["CONFERENCES_DIR"]),
             site["slug"],
         )
-        source = "zip"
+        source = "legacy-zip"
     elif config_upload and config_upload.filename:
         if not config_upload.filename.lower().endswith((".yaml", ".yml")):
             raise ValueError("Configuration files must use .yaml or .yml.")
         config = parse_config_yaml(config_upload.read())
-        source = "yaml"
+        filenames = []
+        source = "legacy-yaml"
     else:
         raise ValueError("Choose config.yaml or a conference ZIP package.")
 
@@ -101,7 +188,11 @@ def _apply_conference_import(site: dict, config_upload=None, package_upload=None
         conn.execute(
             """UPDATE conference_sites
                SET config_json=?,deploy_base_path=?,registration_url=?,
-                   updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                   source_format='internal',source_version=NULL,
+                   package_schema_version=NULL,package_sha256=NULL,
+                   package_manifest_json='{}',deploy_status='unpublished',
+                   imported_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+               WHERE id=?""",
             (
                 json.dumps(config, ensure_ascii=False),
                 config["deployment"]["nginx_base_path"],
@@ -166,18 +257,26 @@ def _asset_view(path: Path, site_id: int, metadata: dict | None = None) -> dict:
 def conference_sites():
     q = request.args.get("q", "").strip()
     with connect(current_app.config["DATABASE_PATH"]) as conn:
-        sql = """SELECT c.*,
+        sql = """SELECT c.*,e.title AS event_title,e.start_date AS event_start_date,
                (SELECT COUNT(*) FROM conference_people p WHERE p.conference_id=c.id) AS people_count
-               FROM conference_sites c"""
+               FROM conference_sites c
+               LEFT JOIN events e ON e.id=c.event_id"""
         params: tuple = ()
         if q:
             sql += """ WHERE c.title LIKE ? OR c.acronym LIKE ? OR c.slug LIKE ?
-                       OR c.city LIKE ? OR c.country LIKE ? OR CAST(c.year AS TEXT) LIKE ?"""
+                       OR c.public_path LIKE ? OR c.city LIKE ? OR c.country LIKE ?
+                       OR CAST(c.year AS TEXT) LIKE ? OR e.title LIKE ?"""
             term = f"%{q}%"
-            params = (term,) * 6
+            params = (term,) * 8
         sql += " ORDER BY COALESCE(c.start_date,'9999'),c.title"
         sites = [dict(row) for row in conn.execute(sql, params).fetchall()]
-    return render_template("dashboard/conferences.html", sites=sites, q=q)
+        event_options = _event_options(conn)
+    return render_template(
+        "dashboard/conferences.html",
+        sites=sites,
+        q=q,
+        event_options=event_options,
+    )
 
 
 @bp.post("/conferences")
@@ -185,14 +284,20 @@ def conference_sites():
 def conference_create():
     site_id = None
     slug = None
+    imported_source = None
     try:
         values = _site_values(request.form)
         slug = validate_slug(request.form.get("slug") or values["title"])
+        public_path = normalize_public_path(request.form.get("public_path") or slug)
+        event_id = _event_id(request.form.get("event_id"))
         with connect(current_app.config["DATABASE_PATH"]) as conn:
+            _validate_event_link(conn, event_id)
+            _validate_public_path_unique(conn, public_path)
             cursor = conn.execute(
-                f"""INSERT INTO conference_sites(slug,{','.join(SITE_FIELDS)})
-                    VALUES(?,{','.join('?' for _ in SITE_FIELDS)})""",
-                (slug, *values.values()),
+                f"""INSERT INTO conference_sites(
+                        slug,public_path,event_id,{','.join(SITE_FIELDS)}
+                    ) VALUES(?,?,?,{','.join('?' for _ in SITE_FIELDS)})""",
+                (slug, public_path, event_id, *values.values()),
             )
             conn.commit()
             site_id = int(cursor.lastrowid)
@@ -205,21 +310,27 @@ def conference_create():
         ):
             with connect(current_app.config["DATABASE_PATH"]) as conn:
                 created_site = _site(conn, site_id)
-            source, asset_count = _apply_conference_import(
+            source, imported_count = _apply_conference_import(
                 created_site, config_upload, package_upload
             )
+            imported_source = source
             audit_log(
                 "conference.import",
                 "conference source imported during creation",
                 site_id=site_id,
                 source=source,
-                assets=asset_count,
+                imported_files=imported_count,
             )
         uploads = [
             upload for upload in request.files.getlist("assets")
             if upload and upload.filename
         ]
         if uploads:
+            if imported_source == "conference-editor":
+                raise ValueError(
+                    "Additional assets cannot be uploaded beside a Conference Editor package; "
+                    "manage them in mifp-conference-editor and export a new package."
+                )
             filenames = [
                 store_site_asset(
                     Path(current_app.config["CONFERENCES_DIR"]), slug, upload
@@ -233,7 +344,14 @@ def conference_create():
                     [(site_id, filename) for filename in filenames],
                 )
                 conn.commit()
-        audit_log("conference.create", "conference site created", site_id=site_id, slug=slug)
+        audit_log(
+            "conference.create",
+            "conference site created",
+            site_id=site_id,
+            slug=slug,
+            public_path=public_path,
+            event_id=event_id,
+        )
         flash("Conference workspace created.", "success")
         return redirect(url_for("dashboard.conference_edit", site_id=site_id))
     except (ValueError, OSError) as exc:
@@ -260,12 +378,27 @@ def conference_edit(site_id: int):
         if request.method == "POST":
             try:
                 values = _site_values(request.form)
+                public_path = normalize_public_path(
+                    request.form.get("public_path") or site["public_path"] or site["slug"]
+                )
+                event_id = _event_id(request.form.get("event_id"))
+                _validate_event_link(conn, event_id, site_id=site_id)
+                _validate_public_path_unique(conn, public_path, site_id=site_id)
                 conn.execute(
-                    f"UPDATE conference_sites SET {','.join(f'{field}=?' for field in SITE_FIELDS)},updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (*values.values(), site_id),
+                    f"""UPDATE conference_sites
+                        SET {','.join(f'{field}=?' for field in SITE_FIELDS)},
+                            public_path=?,event_id=?,updated_at=CURRENT_TIMESTAMP
+                        WHERE id=?""",
+                    (*values.values(), public_path, event_id, site_id),
                 )
                 conn.commit()
-                audit_log("conference.update", "conference site updated", site_id=site_id)
+                audit_log(
+                    "conference.update",
+                    "conference site updated",
+                    site_id=site_id,
+                    public_path=public_path,
+                    event_id=event_id,
+                )
                 flash("Conference details saved.", "success")
                 return redirect(url_for("dashboard.conference_edit", site_id=site_id))
             except (ValueError, TypeError) as exc:
@@ -273,6 +406,7 @@ def conference_edit(site_id: int):
         site = _site(conn, site_id)
         assert site is not None
         people = _people(conn, site_id)
+        event_options = _event_options(conn)
         asset_rows = {
             row["filename"]: dict(row)
             for row in conn.execute(
@@ -289,6 +423,10 @@ def conference_edit(site_id: int):
         for path in sorted(asset_dir.iterdir(), key=lambda item: item.name.casefold())
         if path.is_file()
     ]
+    try:
+        package_manifest = json.loads(site.get("package_manifest_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        package_manifest = {}
     return render_template(
         "dashboard/conference_wizard.html",
         site=site,
@@ -296,6 +434,8 @@ def conference_edit(site_id: int):
         assets=assets,
         asset_roles=ASSET_ROLES,
         conference_config=conference_config(site.get("config_json"), site),
+        package_manifest=package_manifest,
+        event_options=event_options,
     )
 
 
@@ -366,7 +506,7 @@ def conference_import(site_id: int):
     if not site:
         return Response("Conference not found", status=404)
     try:
-        source, asset_count = _apply_conference_import(
+        source, imported_count = _apply_conference_import(
             site,
             request.files.get("config_file"),
             request.files.get("package_file"),
@@ -382,13 +522,17 @@ def conference_import(site_id: int):
         "conference configuration package imported",
         site_id=site_id,
         source=source,
-        assets=asset_count,
+        imported_files=imported_count,
     )
-    flash(
-        f"Imported {source.upper()} configuration"
-        + (f" and {asset_count} assets." if asset_count else "."),
-        "success",
-    )
+    if source == "conference-editor":
+        message = f"Imported Conference Editor package ({imported_count} files)."
+    else:
+        message = f"Imported {source.upper()} configuration"
+        if imported_count:
+            message += f" and {imported_count} assets."
+        else:
+            message += "."
+    flash(message, "success")
     return redirect(url_for("dashboard.conference_edit", site_id=site_id) + "#configuration")
 
 
@@ -399,6 +543,15 @@ def conference_config_save(site_id: int):
         site = _site(conn, site_id)
         if not site:
             return Response("Conference not found", status=404)
+        if site.get("source_format") == "conference-editor":
+            flash(
+                "This conference is managed by mifp-conference-editor. "
+                "Change the source project there and import a new package.",
+                "warning",
+            )
+            return redirect(
+                url_for("dashboard.conference_edit", site_id=site_id) + "#configuration"
+            )
         try:
             config = config_from_form(
                 request.form,
@@ -678,20 +831,56 @@ def conference_build(site_id: int):
                 (site_id,),
             ).fetchall()
         ]
+
     try:
-        payload = build_site_zip(
-            site,
-            people,
-            Path(current_app.config["CONFERENCES_DIR"]),
-            assets,
-        )
+        if site.get("source_format") == "conference-editor":
+            payload = load_stored_package(
+                Path(current_app.config["CONFERENCES_DIR"]),
+                site["slug"],
+                site.get("package_sha256") or "",
+            )
+            version = str(site.get("source_version") or "package")
+            filename = secure_filename(
+                f"{site['public_path'] or site['slug']}-{version}.zip"
+            ) or f"{site['slug']}-package.zip"
+            audit_log(
+                "conference.package_download",
+                "validated Conference Editor package downloaded",
+                site_id=site_id,
+                sha256=site.get("package_sha256"),
+                bytes=len(payload),
+            )
+        else:
+            payload = build_site_zip(
+                site,
+                people,
+                Path(current_app.config["CONFERENCES_DIR"]),
+                assets,
+            )
+            filename = f"{site['slug']}-deploy.zip"
+            audit_log(
+                "conference.build",
+                "conference deploy package built",
+                site_id=site_id,
+                bytes=len(payload),
+                people=len(people),
+            )
     except ValueError as exc:
         return jsonify({"ok": False, "message": str(exc)}), 409
-    audit_log("conference.build", "conference deploy package built", site_id=site_id, bytes=len(payload), people=len(people))
-    current_app.logger.info("conference package built site_id=%s bytes=%s people=%s", site_id, len(payload), len(people))
-    return Response(payload, mimetype="application/zip", headers={
-        "Content-Disposition": f"attachment; filename={site['slug']}-deploy.zip",
-        "Content-Length": str(len(payload)),
-        "Cache-Control": "no-store, max-age=0",
-        "X-Content-Type-Options": "nosniff",
-    })
+
+    current_app.logger.info(
+        "conference package ready site_id=%s source=%s bytes=%s",
+        site_id,
+        site.get("source_format") or "internal",
+        len(payload),
+    )
+    return Response(
+        payload,
+        mimetype="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Content-Length": str(len(payload)),
+            "Cache-Control": "no-store, max-age=0",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
