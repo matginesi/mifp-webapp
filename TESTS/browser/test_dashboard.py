@@ -532,7 +532,7 @@ class TestDashboardRoutes:
         modal.get_by_role("button", name="Create conference").click()
         page.wait_for_url("**/dashboard/conferences/*")
         expect(page.get_by_role("heading", name="Identity and public URL")).to_be_visible()
-        expect(page.get_by_role("heading", name="Complete website configuration")).to_be_visible()
+        expect(page.get_by_role("heading", name="Conference source")).to_be_visible()
         page.locator('[name="canonical_url"]').fill("https://events.example.org/bp28/")
         page.locator('[name="deploy_base_path"]').fill("/bp28/")
         page.get_by_role("button", name="Save conference details").click()
