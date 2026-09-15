@@ -68,6 +68,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+/.mifp-test-runtime.*/
 .mypy_cache/
 .ruff_cache/
 .hypothesis/

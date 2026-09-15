@@ -1,4 +1,0 @@
-#!/bin/bash
-mode=0755; directory=0; targets=()
-while (($#)); do case "$1" in -m) mode=$2; shift 2;; -o|-g) shift 2;; -d) directory=1; shift;; *) targets+=("$1"); shift;; esac; done
-if ((directory)); then for target in "${targets[@]}"; do mkdir -p "$target"; chmod "$mode" "$target"; done; else cp "${targets[-2]}" "${targets[-1]}"; chmod "$mode" "${targets[-1]}"; fi
