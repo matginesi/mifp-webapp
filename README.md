@@ -73,9 +73,17 @@ builder DB o CLI locali. Sulla VPS non serve un venv.
 Prima installazione:
 
 ```bash
-sudo bash deploy/bootstrap-vps.sh --domain mifp.eu --image-repository ghcr.io/OWNER/REPO
-sudo mifpctl first-deploy sha-<commit>
+sudo bash deploy/bootstrap-vps.sh --domain mifp.eu \
+  --image-repository ghcr.io/matginesi/mifp-webapp
+sudo mifpctl registry-login
+sudo mifpctl init
+sudo mifpctl doctor
 ```
+
+`registry-login` legge il PAT GitHub senza echo e lo passa a Docker via stdin;
+serve un PAT classic con il solo scope `read:packages`. `init` usa `latest`
+soltanto per individuare la prima immagine e registra immediatamente il digest
+OCI immutabile. I deploy successivi continuano a usare `sha-<commit>`.
 
 Uso normale:
 
@@ -96,7 +104,8 @@ Il bootstrap prepara anche PHP-FPM per futuri form, ma PHP resta disabilitato
 per ogni URL finché non viene abilitato esplicitamente su un prefix con
 `mifpctl events-php-enable`.
 
-Dettagli: [DEPLOYMENT.md](DEPLOYMENT.md).
+Dettagli: [panoramica deploy](DEPLOYMENT.md) e
+[guida passo-passo per VPS pubblica e VM locale](docs/deployment/vps-installation.md).
 
 ## Repository hygiene
 

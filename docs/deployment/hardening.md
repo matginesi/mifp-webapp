@@ -55,6 +55,13 @@ sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl status caddy
 ```
 
+Per i soli domini di laboratorio `.home.arpa`, il bootstrap usa una CA Caddy
+locale e un blocco gestito in `/etc/hosts` per l'autorisoluzione della VPS.
+Questa eccezione non si applica mai ai domini pubblici: `mifp.eu` e gli altri
+domini normali usano DNS/ACME e non ricevono mapping loopback. `caddy trust`
+agisce soltanto sulla VPS; l'eventuale root CA va importata manualmente sulla
+workstation.
+
 ## Segreti
 
 Il bootstrap genera `SECRET_KEY` e chiede admin/password interattivamente. È

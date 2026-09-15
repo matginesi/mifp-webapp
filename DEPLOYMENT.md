@@ -10,6 +10,10 @@ GitHub Actions -> GHCR -> mifpctl sulla VPS -> Docker -> Caddy -> Flask/SQLite
 La VPS non compila codice, non esegue scraper e non migra il database durante
 l'avvio. Non serve un virtualenv Python sulla VPS.
 
+Per l'installazione completa, inclusi DNS, VirtualBox, `.home.arpa`, trust della
+CA locale e troubleshooting, segui la
+[guida passo-passo VPS pubblica e VM](docs/deployment/vps-installation.md).
+
 ## I 4 comandi da ricordare
 
 Dopo la prima installazione, normalmente bastano:
@@ -49,22 +53,33 @@ Sulla VPS:
 ```bash
 sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
   --domain mifp.eu \
-  --image-repository ghcr.io/OWNER/REPO
+  --image-repository ghcr.io/matginesi/mifp-webapp
 ```
 
 Il bootstrap installa Docker/Caddy/SQLite/PHP-FPM, crea `/opt/mifp`, configura firewall,
 HTTPS, backup automatico, `SECRET_KEY` e amministratore. La password admin viene
-chiesta due volte, deve avere almeno **10 caratteri** e viene salvato solo
-l'hash. `/opt/mifp/.env` è `root:root` con permessi `0600`.
+chiesta due volte, deve avere almeno **10 caratteri** e, in caso di errore o
+mancata corrispondenza, viene richiesta di nuovo senza interrompere il bootstrap.
+Viene salvato solo l'hash. `/opt/mifp/.env` è `root:root` con permessi `0600`.
 
 La CI esegue in parallelo test e audit delle dipendenze; la build/publish GHCR
 parte solo se entrambi sono verdi. Dopo che GitHub Actions ha pubblicato una release:
 
 ```bash
-sudo mifpctl first-deploy sha-<commit>
+sudo mifpctl registry-login
+sudo mifpctl init
+sudo mifpctl doctor
 ```
 
-`first-deploy` crea un DB **schema-only v10**, lo verifica e avvia la webapp.
+`registry-login` richiede username GitHub e PAT classic nascosto con scope minimo
+`read:packages`; il PAT passa a `docker login` via stdin e non viene salvato nei
+file MIFP. `init` scarica `ghcr.io/matginesi/mifp-webapp:latest`, lo risolve nel digest OCI
+immutabile, crea un DB **schema-only v10**, lo verifica e avvia la webapp. Lo
+stato persistente non contiene mai `latest`.
+`mifpctl doctor` può essere eseguito anche subito dopo il bootstrap: prima di
+`init`, `DB: NOT INITIALIZED` e `Release: NOT INITIALIZED` descrivono lo stato
+atteso e non sono errori. Dopo `init`, DB, release e healthcheck diventano
+obbligatori.
 Apri quindi la dashboard e importa lo ZIP prodotto dagli scraper. Sono accettati
 solo package moderni esplicitamente versionati (`mifp-content` v1 oppure
 `mifp-jsonl-v2` v2); vecchi ZIP e vecchi JSONL self-contained sono rifiutati.
@@ -152,8 +167,37 @@ Il deploy:
 6. registra `CURRENT_IMAGE`/`PREVIOUS_IMAGE` solo dopo il successo;
 7. conserva localmente corrente e precedente, pulendo vecchie immagini MIFP.
 
-`latest` e altri tag mutabili sono rifiutati. Il deploy è protetto da `flock`,
+`latest` è ammesso soltanto dal comando iniziale `init` come selector transitorio;
+`deploy` rifiuta `latest` e ogni altro tag mutabile. Il deploy è protetto da `flock`,
 quindi due operazioni di manutenzione non possono sovrapporsi.
+
+## Test locale con `.home.arpa`
+
+Per una VM con hostname Linux `vpsbox` e dominio applicativo locale distinto:
+
+```bash
+sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
+  --domain vpsbox.home.arpa \
+  --image-repository ghcr.io/matginesi/mifp-webapp
+sudo mifpctl registry-login
+sudo mifpctl init
+sudo mifpctl doctor
+```
+
+Solo per un dominio che termina esattamente in `.home.arpa`, il bootstrap:
+
+- mantiene un blocco marcato e idempotente in `/etc/hosts` con loopback per il
+  dominio, `www` ed `events`, così i check eseguiti dalla VM si autorisolvono;
+- configura `tls internal`, prova `caddy trust` sulla sola VPS e indica il file
+  della root CA da importare manualmente sulla workstation;
+- stampa la riga `/etc/hosts` della workstation usando l'IP LAN se univoco.
+
+Questa è esclusivamente una compatibilità per test locale. Domini pubblici come
+`mifp.eu` non ricevono entry locali né `tls internal`: seguono DNS pubblico e
+ACME normale. Il trust della workstation non viene mai modificato da remoto.
+
+`vpsbox` è l'hostname Linux; `vpsbox.home.arpa` è il dominio applicativo. Sono
+concetti distinti.
 
 ### 2. Nuovi contenuti
 
@@ -283,10 +327,13 @@ Internet -> Caddy :443 -> 127.0.0.1:8000 -> container
 Una volta sola:
 
 ```bash
-docker login ghcr.io
+sudo mifpctl registry-login
 ```
 
-Usa un token con solo `read:packages`.
+Usa un PAT classic con solo `read:packages`. Se un pull restituisce `denied`,
+`unauthorized` o `authentication required`, `mifpctl` mostra il comando da
+eseguire e non registra alcuna release parziale.
 
-Ulteriori dettagli: [backup](docs/deployment/backups.md),
+Ulteriori dettagli: [installazione VPS/VM](docs/deployment/vps-installation.md),
+[backup](docs/deployment/backups.md),
 [hardening](docs/deployment/hardening.md), [schema DB](docs/database-schema.md).

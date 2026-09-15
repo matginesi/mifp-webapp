@@ -121,16 +121,24 @@ def prompt_admin(env_file: Path, *, username: str | None = None) -> None:
         chosen = input(f"Administrator username [{current}]: ").strip() or current
     if not _USERNAME_RE.fullmatch(chosen):
         raise SystemExit("Administrator username contains invalid characters")
-    first = getpass.getpass(
-        f"New administrator password (minimum {MIN_ADMIN_PASSWORD_LENGTH} characters): "
-    )
-    second = getpass.getpass("Repeat password: ")
-    if first != second:
-        raise SystemExit("Passwords do not match")
-    if len(first) < MIN_ADMIN_PASSWORD_LENGTH:
-        raise SystemExit(
-            f"Password must contain at least {MIN_ADMIN_PASSWORD_LENGTH} characters"
+    while True:
+        first = getpass.getpass(
+            f"New administrator password (minimum {MIN_ADMIN_PASSWORD_LENGTH} characters): "
         )
+        second = getpass.getpass("Repeat password: ")
+        if first != second:
+            print("Passwords do not match. Try again.", file=sys.stderr)
+            first = second = ""
+            continue
+        if len(first) < MIN_ADMIN_PASSWORD_LENGTH:
+            print(
+                f"Password must contain at least {MIN_ADMIN_PASSWORD_LENGTH} characters. "
+                "Try again.",
+                file=sys.stderr,
+            )
+            first = second = ""
+            continue
+        break
     update_env(
         env_file,
         {"ADMIN_USERNAME": chosen, "ADMIN_PASSWORD_HASH": make_password_hash(first)},

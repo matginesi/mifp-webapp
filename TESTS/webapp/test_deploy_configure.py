@@ -69,6 +69,31 @@ def test_admin_prompt_requires_ten_characters_and_persists_only_hash(monkeypatch
     assert "admin_1234" not in env_file.read_text(encoding="utf-8")
 
 
+def test_admin_password_mismatch_retries_without_losing_configuration(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    module = _load_helper()
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "SECRET_KEY='a-preserved-secret-that-is-long-enough-1234567890'\n"
+        "ADMIN_USERNAME='existing-admin'\nADMIN_PASSWORD_HASH=''\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(builtins, "input", lambda _prompt: "existing-admin")
+    passwords = iter(["first-password", "different-password", "final-pass-123", "final-pass-123"])
+    monkeypatch.setattr(module.getpass, "getpass", lambda _prompt: next(passwords))
+
+    module.prompt_admin(env_file)
+
+    values = module.read_env(env_file)
+    assert values["SECRET_KEY"] == "a-preserved-secret-that-is-long-enough-1234567890"
+    assert values["ADMIN_USERNAME"] == "existing-admin"
+    assert values["ADMIN_PASSWORD_HASH"].startswith("pbkdf2:sha256:600000$")
+    assert "Passwords do not match. Try again." in capsys.readouterr().err
+    assert "first-password" not in env_file.read_text(encoding="utf-8")
+
+
 def test_config_check_rejects_missing_admin_hash(tmp_path: Path) -> None:
     module = _load_helper()
     env_file = tmp_path / ".env"
@@ -80,3 +105,38 @@ def test_config_check_rejects_missing_admin_hash(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert module.check_config(env_file, quiet=True) == 1
+
+
+def test_configure_preserves_existing_admin_and_secret(monkeypatch, tmp_path: Path) -> None:
+    module = _load_helper()
+    env_file = tmp_path / ".env"
+    example = tmp_path / ".env.example"
+    existing_hash = "pbkdf2:sha256:600000$abcd1234$" + "a" * 64
+    existing_secret = "b" * 64
+    env_file.write_text(
+        f"SECRET_KEY='{existing_secret}'\n"
+        "ADMIN_USERNAME='existing-admin'\n"
+        f"ADMIN_PASSWORD_HASH='{existing_hash}'\n",
+        encoding="utf-8",
+    )
+    example.write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        module,
+        "prompt_admin",
+        lambda *_args, **_kwargs: pytest.fail("existing admin must not be prompted or replaced"),
+    )
+    args = module.argparse.Namespace(
+        env_file=env_file,
+        example=example,
+        domain="mifp.eu",
+        image_repository="ghcr.io/matginesi/mifp-webapp",
+        admin=False,
+        admin_if_missing=True,
+        username=None,
+    )
+
+    assert module.configure(args) == 0
+    values = module.read_env(env_file)
+    assert values["SECRET_KEY"] == existing_secret
+    assert values["ADMIN_USERNAME"] == "existing-admin"
+    assert values["ADMIN_PASSWORD_HASH"] == existing_hash

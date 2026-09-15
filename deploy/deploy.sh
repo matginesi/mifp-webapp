@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 027
 
 # MIFP production operator. Installed as /usr/local/sbin/mifpctl.
 MIFP_HOME="${MIFP_HOME:-/opt/mifp}"
@@ -36,7 +37,8 @@ usage() {
 MIFP production operator
 
 Uso normale:
-  sudo mifpctl first-deploy sha-<commit>  primo avvio: crea DB schema-only + deploy
+  sudo mifpctl registry-login             login interattivo a GHCR (PAT read:packages)
+  sudo mifpctl init                       primo avvio da :latest, fissato subito a digest
   sudo mifpctl deploy sha-<commit>        nuova versione applicazione; il DB non viene modificato
   sudo mifpctl status
   sudo mifpctl logs
@@ -53,6 +55,7 @@ PHP conferenze (deny-by-default):
   sudo mifpctl events-php-disable PLMCN-2027/regform
 
 Manutenzione rara:
+  sudo mifpctl first-deploy sha-<commit>  primo avvio compatibile con selector esplicito
   sudo mifpctl init-db sha-<commit>        crea solo il DB schema-only
   sudo mifpctl upgrade-db sha-<commit> /path/new.db
   sudo mifpctl restore-db /path/backup.db
@@ -63,7 +66,8 @@ Manutenzione rara:
   sudo mifpctl admin [--username NAME]
   sudo mifpctl configure [--admin]
 
-Usa sempre sha-<commit> o un digest OCI. :latest è rifiutato.
+Solo init può usare :latest, esclusivamente come selector iniziale. Lo stato
+persistente contiene sempre un digest OCI immutabile.
 EOF
 }
 
@@ -133,9 +137,11 @@ resolve_image() {
 }
 
 validate_release_image() {
-  local image="$1"
-  [[ "$image" == ghcr.io/* ]] || die "Immagine non GHCR: $image"
-  [[ "$image" == *@sha256:* || "$image" == *:sha-* ]] || die "Usa sha-<commit> o @sha256:...; tag mutabili come :latest non sono ammessi."
+  local image="$1" repo pattern
+  repo="$(image_repository)"
+  pattern="^${repo//./\\.}(@sha256:[0-9a-f]{64}|:sha-[A-Za-z0-9][A-Za-z0-9._-]*)$"
+  [[ "$image" =~ $pattern ]] \
+    || die "Usa sha-<commit> o un digest OCI @sha256:... valido; tag mutabili come :latest non sono ammessi."
 }
 
 compose_with_image() {
@@ -184,23 +190,50 @@ do_fix_permissions() {
   say "Permessi dati corretti."
 }
 
+registry_auth_error() {
+  die $'GHCR authentication required.\n\nRun:\n  sudo mifpctl registry-login\n\nThen retry the previous command.'
+}
+
 pull_and_pin() {
-  local reference="$1" image repo digest
-  image="$(resolve_image "$reference")"; validate_release_image "$image"; check_free_space
-  docker pull "$image" || die "Pull fallito. Se GHCR è privato, esegui una volta: docker login ghcr.io"
+  local reference="$1" allow_latest="${2:-0}" image repo digest pull_output
+  image="$(resolve_image "$reference")"
   repo="$(image_repository)"
+  if [[ "$allow_latest" == 1 && "$image" == "$repo:latest" ]]; then
+    :
+  else
+    validate_release_image "$image"
+  fi
+  check_free_space
+  if pull_output="$(docker pull "$image" 2>&1)"; then
+    [[ -z "$pull_output" ]] || printf '%s\n' "$pull_output" >&2
+  else
+    [[ -z "$pull_output" ]] || printf '%s\n' "$pull_output" >&2
+    if grep -Eqi 'denied|unauthorized|authentication required' <<<"$pull_output"; then
+      registry_auth_error
+    fi
+    die "Pull immagine fallito: $image"
+  fi
   digest="$(
     docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image" 2>/dev/null \
       | awk -v prefix="$repo@sha256:" 'index($0,prefix)==1 {print; exit}'
   )"
-  [[ "$digest" == "$repo"@sha256:* ]] || die "Impossibile risolvere il digest OCI immutabile di $image per $repo"
+  [[ "$digest" =~ ^${repo//./\.}@sha256:[0-9a-f]{64}$ ]] \
+    || die "Impossibile risolvere il digest OCI immutabile di $image per $repo"
   printf '%s\n' "$digest"
 }
 
 ensure_image_local() {
   local image="$1"
   if docker image inspect "$image" >/dev/null 2>&1; then return 0; fi
-  docker pull "$image" >/dev/null || die "Immagine non disponibile localmente e pull fallito: $image"
+  local pull_output
+  if ! pull_output="$(docker pull "$image" 2>&1)"; then
+    [[ -z "$pull_output" ]] || printf '%s\n' "$pull_output" >&2
+    if grep -Eqi 'denied|unauthorized|authentication required' <<<"$pull_output"; then
+      registry_auth_error
+    fi
+    die "Immagine non disponibile localmente e pull fallito: $image"
+  fi
+  [[ -z "$pull_output" ]] || printf '%s\n' "$pull_output" >&2
 }
 
 cleanup_old_release_images() {
@@ -252,7 +285,8 @@ preflight_image_db() {
 }
 
 wait_ready() {
-  local attempts="${1:-60}" i
+  local attempts="${MIFP_READY_ATTEMPTS:-${1:-60}}" i
+  [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || die "MIFP_READY_ATTEMPTS non valido: $attempts"
   for ((i=1; i<=attempts; i++)); do
     curl -fsS --max-time 2 http://127.0.0.1:8000/ready >/dev/null 2>&1 && return 0
     sleep 2
@@ -308,6 +342,54 @@ init_db_with_image() {
   install -o "$RUNTIME_UID" -g "$RUNTIME_GID" -m 0640 "$candidate" "$db"
   rm -rf -- "$work"
   say "DB iniziale creato: $db"
+}
+
+do_registry_login() {
+  local username token=""
+  has docker || die "Docker non disponibile. Riesegui bootstrap-vps.sh."
+  [[ -t 0 ]] || die "registry-login richiede un terminale interattivo."
+  printf 'GitHub username: ' >&2
+  IFS= read -r username
+  [[ "$username" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}$ ]] \
+    || die "GitHub username non valido."
+  printf 'GitHub PAT classic (scope read:packages): ' >&2
+  IFS= read -r -s token
+  printf '\n' >&2
+  [[ -n "$token" ]] || die "Token vuoto."
+  if printf '%s\n' "$token" | docker login ghcr.io --username "$username" --password-stdin; then
+    token=""; unset token
+    say "GHCR login successful."
+    return 0
+  fi
+  token=""; unset token
+  die "GHCR login failed. Verify username, PAT classic and read:packages scope."
+}
+
+do_init() {
+  local selector image db="$DATA_DIR/mifp.db"
+  [[ $# -eq 0 ]] || die "Uso: mifpctl init"
+  validate_production_env; ensure_tools; prepare_runtime_storage
+  [[ ! -e "$RELEASE_FILE" ]] || die "Release già inizializzata. Usa: sudo mifpctl deploy sha-<commit>"
+  [[ ! -e "$db" ]] || die "$db esiste già senza una release registrata; init non lo sovrascrive."
+  selector="$(image_repository):latest"
+  image="$(pull_and_pin "$selector" 1)"
+  init_db_with_image "$image"
+  validate_database_host
+  preflight_image_db "$image"
+  step "Prima release $image"
+  if ! activate_release "$image" ""; then
+    compose_with_image "$image" down >/dev/null 2>&1 || true
+    rm -f -- "$db" "$db-wal" "$db-shm"
+    die "Init fallito; nessuna release o database iniziale è stato registrato."
+  fi
+  if ! systemctl enable --now mifp-backup.timer; then
+    compose_with_image "$image" down >/dev/null 2>&1 || true
+    rm -f -- "$db" "$db-wal" "$db-shm"
+    die "Init fallito: timer backup non abilitato; release e DB iniziale rimossi."
+  fi
+  write_release_state "$image" ""
+  say "Init completato: $image"
+  say "Ora importa lo ZIP contenuti dalla dashboard."
 }
 
 do_init_db() {
@@ -398,7 +480,7 @@ do_upgrade_db() {
   validate_release_image "$(resolve_image "$reference")"
   validate_production_env; ensure_tools; prepare_runtime_storage; validate_database_host
   current="$(current_image || true)"; previous="$(previous_image || true)"
-  [[ -n "$current" ]] || die "Nessuna release corrente: usa first-deploy prima di upgrade-db."
+  [[ -n "$current" ]] || die "Nessuna release corrente: usa init prima di upgrade-db."
   image="$(pull_and_pin "$reference")"
   preflight_image_db "$image" "$candidate"
   saved="$(snapshot_live_database pre-upgrade)"
@@ -818,47 +900,75 @@ do_restart() { local current; validate_production_env; ensure_tools; prepare_run
 do_backup() { [[ -x "$BACKUP_SCRIPT" ]] || die "Manca $BACKUP_SCRIPT"; "$BACKUP_SCRIPT"; }
 
 do_doctor() {
-  local failed=0 current db="$DATA_DIR/mifp.db" domain
-  step "Configurazione"
-  python3 "$CONFIG_HELPER" check --env-file "$ENV_FILE" || failed=1
-  step "Host"
-  docker info >/dev/null 2>&1 && say "Docker: OK" || { say "Docker: ERRORE"; failed=1; }
-  docker compose version >/dev/null 2>&1 && say "Compose: OK" || { say "Compose: ERRORE"; failed=1; }
-  systemctl is-active caddy >/dev/null 2>&1 && say "Caddy: OK" || { say "Caddy: NON attivo"; failed=1; }
-  caddy validate --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null 2>&1 && say "Caddyfile: OK" || { say "Caddyfile: ERRORE"; failed=1; }
-  step "Storage e database"
-  local min_mb available_kb available_mb target
+  local failed=0 current db="$DATA_DIR/mifp.db" domain php_service
+  local min_mb available_kb available_mb target db_check
+  step "Stato host"
+  if python3 "$CONFIG_HELPER" check --env-file "$ENV_FILE" --quiet; then say "Configuration: OK"; else say "Configuration: ERROR"; failed=1; fi
+  docker info >/dev/null 2>&1 && say "Docker: OK" || { say "Docker: ERROR"; failed=1; }
+  docker compose version >/dev/null 2>&1 && say "Compose: OK" || { say "Compose: ERROR"; failed=1; }
+  systemctl is-active caddy >/dev/null 2>&1 && say "Caddy: OK" || { say "Caddy: ERROR"; failed=1; }
+  caddy validate --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null 2>&1 \
+    && say "Caddyfile: OK" || { say "Caddyfile: ERROR"; failed=1; }
+
   min_mb="$(env_value MIFP_DEPLOY_MIN_FREE_MB || true)"; min_mb="${min_mb:-2048}"
   target="$DATA_DIR"; [[ -d /var/lib/docker ]] && target=/var/lib/docker
   available_kb="$(df -Pk "$target" | awk 'NR==2 {print $4}')"
   available_mb=$((available_kb / 1024))
-  if (( available_mb >= min_mb )); then say "Spazio deploy: OK (${available_mb} MB liberi)"; else say "Spazio deploy: INSUFFICIENTE (${available_mb} MB < ${min_mb} MB)"; failed=1; fi
-  if [[ -f "$db" ]]; then validate_database_host && say "SQLite: OK" || failed=1; else say "DB: non ancora inizializzato"; fi
-  step "Eventi e PHP"
-  if [[ -d "$EVENTS_DIR" && ! -L "$EVENTS_DIR" ]]; then say "Document root eventi: OK ($EVENTS_DIR)"; else say "Document root eventi: ERRORE"; failed=1; fi
-  if [[ -d "$EVENTS_PRIVATE_DIR" && ! -L "$EVENTS_PRIVATE_DIR" ]]; then say "Storage PHP privato: OK"; else say "Storage PHP privato: ERRORE"; failed=1; fi
-  local php_service
+  if (( available_mb >= min_mb )); then say "Storage: OK (${available_mb} MB free)"; else say "Storage: ERROR (${available_mb} MB < ${min_mb} MB)"; failed=1; fi
+
+  if [[ -d "$EVENTS_DIR" && ! -L "$EVENTS_DIR" && -d "$EVENTS_PRIVATE_DIR" && ! -L "$EVENTS_PRIVATE_DIR" ]]; then
+    say "Events filesystem: OK"
+  else
+    say "Events filesystem: ERROR"; failed=1
+  fi
   php_service="$(events_php_service || true)"
   if [[ -n "$php_service" ]] && systemctl is-active "$php_service" >/dev/null 2>&1 && [[ -S "$EVENTS_PHP_SOCKET" ]]; then
-    say "PHP-FPM eventi: OK ($php_service)"
+    say "PHP-FPM: OK ($php_service)"
   else
-    say "PHP-FPM eventi: ERRORE/non configurato"; failed=1
+    say "PHP-FPM: ERROR"; failed=1
   fi
-  [[ -f "$EVENTS_PHP_INCLUDE" && ! -L "$EVENTS_PHP_INCLUDE" ]] && say "Allow-list PHP Caddy: OK" || { say "Allow-list PHP Caddy: ERRORE"; failed=1; }
-  step "Release"
+  [[ -f "$EVENTS_PHP_INCLUDE" && ! -L "$EVENTS_PHP_INCLUDE" ]] \
+    && say "PHP allow-list: OK" || { say "PHP allow-list: ERROR"; failed=1; }
+
   current="$(current_image || true)"
-  if [[ -n "$current" ]]; then
-    docker image inspect "$current" >/dev/null 2>&1 && say "Immagine corrente: locale" || { say "Immagine corrente: MANCANTE"; failed=1; }
-    if [[ -f "$db" ]] && docker image inspect "$current" >/dev/null 2>&1; then
-      preflight_image_db "$current" "$db" && say "Contratto DB/runtime: OK" || failed=1
+  if [[ -f "$db" && ! -L "$db" ]]; then
+    if db_check="$(sqlite3 -readonly "$db" 'PRAGMA quick_check; PRAGMA foreign_key_check;' 2>&1)" && [[ "$db_check" == ok ]]; then
+      say "DB: OK"
+    else
+      say "DB: ERROR"; failed=1
     fi
-    curl -fsS --max-time 3 http://127.0.0.1:8000/ready >/dev/null 2>&1 && say "Ready locale: OK" || { say "Ready locale: NON raggiungibile"; failed=1; }
-  else say "Release: non ancora installata"; fi
+  elif [[ -n "$current" ]]; then
+    say "DB: ERROR (missing after initialization)"; failed=1
+  else
+    say "DB: NOT INITIALIZED"
+  fi
+
+  if [[ -z "$current" ]]; then
+    say "Release: NOT INITIALIZED"
+  else
+    if [[ ! "$current" =~ @sha256:[0-9a-f]{64}$ ]]; then
+      say "Release: ERROR (state is not an immutable digest)"; failed=1
+    elif ! docker image inspect "$current" >/dev/null 2>&1; then
+      say "Release: ERROR (image missing locally)"; failed=1
+    else
+      say "Release: OK ($current)"
+      if [[ -f "$db" ]]; then preflight_image_db "$current" "$db" && say "DB/runtime contract: OK" || failed=1; fi
+    fi
+    curl -fsS --max-time 3 http://127.0.0.1:8000/ready >/dev/null 2>&1 \
+      && say "Application health: OK" || { say "Application health: ERROR"; failed=1; }
+  fi
+
   domain="$(env_value MIFP_DOMAIN || true)"
-  if [[ -n "$current" && -n "$domain" ]]; then curl -fsS --max-time 5 "https://$domain/health" >/dev/null 2>&1 && say "HTTPS pubblico: OK" || { say "HTTPS pubblico: NON raggiungibile"; failed=1; }; fi
-  if [[ -n "$domain" ]]; then curl -fsS --max-time 5 "https://events.$domain/.mifp-events-health" >/dev/null 2>&1 && say "HTTPS events: OK" || { say "HTTPS events: NON raggiungibile"; failed=1; }; fi
-  ((failed == 0)) || die "Doctor ha trovato problemi."
-  say "Doctor: tutto OK."
+  if [[ -n "$current" && -n "$domain" ]]; then
+    curl -fsS --max-time 5 "https://$domain/health" >/dev/null 2>&1 \
+      && say "HTTPS application: OK" || { say "HTTPS application: ERROR"; failed=1; }
+  fi
+  if [[ -n "$domain" ]]; then
+    curl -fsS --max-time 5 "https://events.$domain/.mifp-events-health" >/dev/null 2>&1 \
+      && say "HTTPS events: OK" || { say "HTTPS events: ERROR"; failed=1; }
+  fi
+  ((failed == 0)) || die "Doctor found errors."
+  say "Doctor: OK"
 }
 
 do_admin() {
@@ -878,10 +988,12 @@ do_configure() {
 
 command="${1:-status}"
 case "$command" in
-  first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|rollback-upgrade|rollback|--rollback|restart|stop|admin|configure|fix-permissions|events-import|events-rollback|events-php-enable|events-php-disable)
+  init|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|rollback-upgrade|rollback|--rollback|restart|stop|admin|configure|fix-permissions|events-import|events-rollback|events-php-enable|events-php-disable)
     mkdir -p "$(dirname "$LOCK_FILE")"; exec 9>"$LOCK_FILE"; flock -n 9 || die "Un'altra operazione MIFP è già in corso." ;;
 esac
 case "$command" in
+  registry-login) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl registry-login"; do_registry_login ;;
+  init) shift; do_init "$@" ;;
   first-deploy) shift; do_first_deploy "$@" ;;
   deploy) shift; do_deploy "$@" ;;
   init-db) shift; do_init_db "$@" ;;
@@ -895,7 +1007,7 @@ case "$command" in
   status) ensure_tools; do_status ;;
   logs) ensure_tools; do_logs ;;
   backup) do_backup ;;
-  doctor) ensure_tools; do_doctor ;;
+  doctor) do_doctor ;;
   fix-permissions) do_fix_permissions ;;
   events-import) shift; do_events_import "$@" ;;
   events-rollback) do_events_rollback ;;

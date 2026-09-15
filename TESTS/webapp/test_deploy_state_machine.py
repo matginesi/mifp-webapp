@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import pty
+import select
 import subprocess
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,7 +21,9 @@ def _env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     data = home / "data"
     data.mkdir(parents=True)
     (home / ".env").write_text(
-        "MIFP_IMAGE_REPOSITORY='ghcr.io/example/mifp'\nMIFP_DEPLOY_MIN_FREE_MB='1'\n",
+        "MIFP_IMAGE_REPOSITORY='ghcr.io/example/mifp'\n"
+        "MIFP_DEPLOY_MIN_FREE_MB='1'\n"
+        "MIFP_DOMAIN='example.invalid'\n",
         encoding="utf-8",
     )
     (home / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
@@ -60,9 +65,22 @@ ln -sfn "$stamp" "$root/snapshots/latest"
         bin_dir / "install",
         "#!/bin/bash\nmode=0755; directory=0; targets=()\nwhile (($#)); do case \"$1\" in -m) mode=$2; shift 2;; -o|-g) shift 2;; -d) directory=1; shift;; *) targets+=(\"$1\"); shift;; esac; done\nif ((directory)); then for target in \"${targets[@]}\"; do mkdir -p \"$target\"; chmod \"$mode\" \"$target\"; done; else cp \"${targets[-2]}\" \"${targets[-1]}\"; chmod \"$mode\" \"${targets[-1]}\"; fi\n",
     )
-    _write_executable(bin_dir / "systemctl", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        bin_dir / "systemctl",
+        "#!/bin/sh\n"
+        "if [ \"${FAIL_BACKUP_TIMER:-0}\" = 1 ] && "
+        "[ \"${3:-}\" = mifp-backup.timer ]; then exit 1; fi\n"
+        "exit 0\n",
+    )
     _write_executable(bin_dir / "caddy", "#!/bin/sh\nexit 0\n")
-    _write_executable(bin_dir / "curl", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        bin_dir / "curl",
+        "#!/bin/sh\n"
+        "[ \"${FAIL_READY:-0}\" = 1 ] && exit 1\n"
+        "if [ \"${FAIL_DIGEST_TWO_READY:-0}\" = 1 ] && "
+        "grep -q 'sha256:0*2$' \"${FAKE_DOCKER_STATE:?}/active-image\" 2>/dev/null; then exit 1; fi\n"
+        "exit 0\n",
+    )
     _write_executable(
         bin_dir / "rsync",
         r"""#!/bin/bash
@@ -107,8 +125,19 @@ digest_for() {
 }
 if [ "${1:-}" = info ]; then exit 0; fi
 if [ "${1:-}" = pull ]; then
-  [ "${FAIL_PULL:-0}" = 1 ] && exit 1
+  if [ "${FAIL_PULL:-0}" = 1 ]; then echo 'unauthorized: authentication required' >&2; exit 1; fi
+  echo "Pulling from example/mifp"
+  echo "Digest: sha256:verbose-progress-must-not-be-returned"
   d="$(digest_for "$2")"; touch "$state/$(printf '%s' "$d" | tr '/:@' '___')"; exit 0
+fi
+if [ "${1:-}" = login ]; then
+  token=''; IFS= read -r token
+  [ "${FAIL_LOGIN:-0}" = 1 ] && exit 1
+  [ "$2" = ghcr.io ] && [ "$3" = --username ] && [ "$5" = --password-stdin ] || exit 2
+  [ "$token" = "${EXPECTED_REGISTRY_TOKEN:-}" ] || exit 3
+  touch "$state/registry-login-ok"
+  echo 'Login Succeeded'
+  exit 0
 fi
 if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
   if [ "${3:-}" = --format ]; then
@@ -139,6 +168,7 @@ if [ "${1:-}" = compose ]; then
     *' version '*) exit 0 ;;
     *' down '*) [ "${FAIL_COMPOSE_DOWN:-0}" = 1 ] && exit 41 || exit 0 ;;
     *' ps '*'-q web'*) echo fake-container; exit 0 ;;
+    *' up '*) printf '%s\n' "${MIFP_IMAGE:?}" > "$state/active-image"; exit 0 ;;
     *) exit 0 ;;
   esac
 fi
@@ -170,6 +200,51 @@ def _run(env: dict[str, str], *args: str, check: bool = True) -> subprocess.Comp
         capture_output=True,
         check=check,
     )
+
+
+def _run_tty(env: dict[str, str], *args: str, input_text: str) -> tuple[int, str]:
+    master, slave = pty.openpty()
+    process = subprocess.Popen(
+        ["bash", str(DEPLOY), *args],
+        env=env,
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        close_fds=True,
+    )
+    os.close(slave)
+    chunks: list[bytes] = []
+    answers = iter(input_text.splitlines())
+    prompts = [b"GitHub username:", b"GitHub PAT classic"]
+    answered = 0
+    deadline = time.monotonic() + 10
+    while process.poll() is None and time.monotonic() < deadline:
+        ready, _, _ = select.select([master], [], [], 0.1)
+        if ready:
+            try:
+                chunks.append(os.read(master, 4096))
+            except OSError:
+                break
+            combined = b"".join(chunks)
+            if answered < len(prompts) and prompts[answered] in combined:
+                os.write(master, (next(answers) + "\n").encode())
+                answered += 1
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        raise AssertionError(
+            "interactive mifpctl command did not terminate: "
+            + b"".join(chunks).decode(errors="replace")
+        )
+    while True:
+        try:
+            chunks.append(os.read(master, 4096))
+        except OSError:
+            break
+    os.close(master)
+    return process.returncode, b"".join(chunks).decode(errors="replace")
 
 
 def _release(home: Path) -> dict[str, str]:
@@ -216,6 +291,112 @@ def test_first_deploy_then_second_release_and_offline_rollback(tmp_path: Path) -
     rolled = _release(home)
     assert rolled["CURRENT_IMAGE"] == first["CURRENT_IMAGE"]
     assert rolled["PREVIOUS_IMAGE"] == second["CURRENT_IMAGE"]
+
+
+def test_init_uses_latest_only_as_selector_and_persists_clean_digest(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+
+    result = _run(env, "init")
+
+    release = _release(home)
+    expected = "ghcr.io/example/mifp@sha256:" + "0" * 63 + "9"
+    assert release == {"CURRENT_IMAGE": expected, "PREVIOUS_IMAGE": ""}
+    assert "Pulling from example/mifp" in result.stderr
+    assert "Pulling from example/mifp" not in release["CURRENT_IMAGE"]
+    assert ":latest" not in (home / "release.env").read_text(encoding="utf-8")
+    assert (home / "data" / "mifp.db").is_file()
+
+
+def test_init_refuses_an_existing_release(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "init")
+
+    result = _run(env, "init", check=False)
+
+    assert result.returncode != 0
+    assert "Release già inizializzata" in result.stderr
+
+
+def test_init_health_failure_leaves_no_db_or_release_state(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+
+    result = _run(dict(env, FAIL_READY="1", MIFP_READY_ATTEMPTS="1"), "init", check=False)
+
+    assert result.returncode != 0
+    assert "nessuna release o database iniziale" in result.stderr
+    assert not (home / "release.env").exists()
+    assert not (home / "data" / "mifp.db").exists()
+
+
+def test_init_backup_timer_failure_is_atomic(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+
+    result = _run(dict(env, FAIL_BACKUP_TIMER="1"), "init", check=False)
+
+    assert result.returncode != 0
+    assert "timer backup non abilitato" in result.stderr
+    assert not (home / "release.env").exists()
+    assert not (home / "data" / "mifp.db").exists()
+
+
+def test_deploy_health_failure_restores_previous_release(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+
+    result = _run(
+        dict(env, FAIL_DIGEST_TWO_READY="1", MIFP_READY_ATTEMPTS="1"),
+        "deploy",
+        "sha-b",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert _release(home) == before
+    active = (Path(env["FAKE_DOCKER_STATE"]) / "active-image").read_text(encoding="utf-8").strip()
+    assert active == before["CURRENT_IMAGE"]
+
+
+def test_pull_auth_failure_explains_registry_login(tmp_path: Path) -> None:
+    env, _ = _env(tmp_path)
+
+    result = _run(dict(env, FAIL_PULL="1"), "init", check=False)
+
+    assert result.returncode != 0
+    assert "GHCR authentication required" in result.stderr
+    assert "sudo mifpctl registry-login" in result.stderr
+
+
+def test_registry_login_uses_password_stdin_without_echoing_token(tmp_path: Path) -> None:
+    env, _ = _env(tmp_path)
+    token = "github-pat-test-value"
+
+    returncode, output = _run_tty(
+        dict(env, EXPECTED_REGISTRY_TOKEN=token),
+        "registry-login",
+        input_text=f"matteo\n{token}\n",
+    )
+
+    assert returncode == 0, output
+    assert "GHCR login successful" in output
+    assert token not in output
+    assert (Path(env["FAKE_DOCKER_STATE"]) / "registry-login-ok").is_file()
+
+
+def test_registry_login_failure_is_clear_and_does_not_echo_token(tmp_path: Path) -> None:
+    env, _ = _env(tmp_path)
+    token = "github-pat-rejected-value"
+
+    returncode, output = _run_tty(
+        dict(env, EXPECTED_REGISTRY_TOKEN=token, FAIL_LOGIN="1"),
+        "registry-login",
+        input_text=f"matteo\n{token}\n",
+    )
+
+    assert returncode != 0
+    assert "GHCR login failed" in output
+    assert "read:packages" in output
+    assert token not in output
 
 
 def test_mutable_or_legacy_deploy_invocation_is_rejected(tmp_path: Path) -> None:
@@ -414,6 +595,14 @@ def test_events_import_rejects_symlinks(tmp_path: Path) -> None:
     assert not (home / "events").exists()
 
 
+def test_php_enable_rejects_empty_and_traversal_prefixes(tmp_path: Path) -> None:
+    env, _ = _env(tmp_path)
+    for unsafe in ("/", "../regform", "event/../../outside", "event//regform"):
+        result = _run(env, "events-php-enable", unsafe, check=False)
+        assert result.returncode != 0
+        assert "Path conferenza" in result.stderr
+
+
 def test_php_execution_requires_explicit_event_prefix(tmp_path: Path) -> None:
     import socket
     import tempfile
@@ -421,6 +610,7 @@ def test_php_execution_requires_explicit_event_prefix(tmp_path: Path) -> None:
     env, home = _env(tmp_path)
     regform = home / "events" / "PLMCN-2027" / "regform"
     regform.mkdir(parents=True)
+    (home / "events-private").mkdir()
     (regform / "index.php").write_text("<?php echo 'ok';", encoding="utf-8")
     (home / "php-fpm.service").write_text("php8.3-fpm.service\n", encoding="utf-8")
 
@@ -442,11 +632,26 @@ def test_php_execution_requires_explicit_event_prefix(tmp_path: Path) -> None:
                 MIFP_EVENTS_PHP_SOCKET=str(socket_path),
             )
             _run(php_env, "events-php-enable", "PLMCN-2027/regform")
+            _run(php_env, "events-php-enable", "PLMCN-2027/regform")
             rendered = include.read_text(encoding="utf-8")
             assert "path /PLMCN-2027/regform /PLMCN-2027/regform/*" in rendered
             assert f"unix/{socket_path}" in rendered
+            assert (home / "events-php-enabled.txt").read_text(encoding="utf-8").count(
+                "PLMCN-2027/regform"
+            ) == 1
 
             _run(php_env, "events-php-disable", "PLMCN-2027/regform")
             assert "PLMCN-2027/regform" not in include.read_text(encoding="utf-8")
+
+            pre_init = _run(php_env, "doctor")
+            assert "DB: NOT INITIALIZED" in pre_init.stdout
+            assert "Release: NOT INITIALIZED" in pre_init.stdout
+            assert "HTTPS events: OK" in pre_init.stdout
+
+            _run(php_env, "init")
+            post_init = _run(php_env, "doctor")
+            assert "DB: OK" in post_init.stdout
+            assert "Release: OK" in post_init.stdout
+            assert "Application health: OK" in post_init.stdout
         finally:
             sock.close()

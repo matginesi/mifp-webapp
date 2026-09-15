@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 027
 
 # One-time, idempotent MIFP VPS bootstrap for supported Ubuntu hosts.
 # Run as root (normally via sudo). Application data uses the same numeric
@@ -64,7 +65,8 @@ if [[ -z "$SSH_PORT" ]]; then
   fi
 fi
 [[ "$SSH_PORT" =~ ^[0-9]+$ ]] && ((SSH_PORT >= 1 && SSH_PORT <= 65535)) || die "Porta SSH non valida: $SSH_PORT"
-[[ -f "$SCRIPT_DIR/configure.py" && -f "$SCRIPT_DIR/backup.sh" && -f "$SCRIPT_DIR/mifpctl" ]] || die "Cartella deploy incompleta: copia tutti i file deploy/."
+[[ -f "$SCRIPT_DIR/configure.py" && -f "$SCRIPT_DIR/backup.sh" && -f "$SCRIPT_DIR/mifpctl" && -f "$SCRIPT_DIR/local-hosts.sh" ]] \
+  || die "Cartella deploy incompleta: copia tutti i file deploy/."
 
 say "Installo i pacchetti di base"
 export DEBIAN_FRONTEND=noninteractive
@@ -195,6 +197,7 @@ install -o root -g root -m 0750 "$SCRIPT_DIR/configure.py" "$MIFP_HOME/configure
 install -o root -g root -m 0644 "$SCRIPT_DIR/.env.production.example" "$MIFP_HOME/.env.example"
 install -o root -g root -m 0644 "$SCRIPT_DIR/Caddyfile" "$MIFP_HOME/Caddyfile.example"
 install -o root -g root -m 0750 "$SCRIPT_DIR/backup.sh" "$MIFP_HOME/backup.sh"
+install -o root -g root -m 0750 "$SCRIPT_DIR/local-hosts.sh" "$MIFP_HOME/local-hosts.sh"
 install -o root -g root -m 0755 "$SCRIPT_DIR/mifpctl" /usr/local/sbin/mifpctl
 install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-backup.service" /etc/systemd/system/mifp-backup.service
 install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-backup.timer" /etc/systemd/system/mifp-backup.timer
@@ -216,7 +219,14 @@ chown root:root "$MIFP_HOME/.env"
 chmod 0600 "$MIFP_HOME/.env"
 
 say "Configuro Caddy per $DOMAIN e events.$DOMAIN"
-sed "s/__MIFP_DOMAIN__/$DOMAIN/g" "$SCRIPT_DIR/Caddyfile" > /etc/caddy/Caddyfile
+bash "$SCRIPT_DIR/local-hosts.sh" "$DOMAIN" "${MIFP_HOSTS_FILE:-/etc/hosts}"
+if [[ "$DOMAIN" == *.home.arpa ]]; then
+  MIFP_TLS_DIRECTIVE="tls internal"
+else
+  MIFP_TLS_DIRECTIVE=""
+fi
+sed -e "s/__MIFP_DOMAIN__/$DOMAIN/g" -e "s/__MIFP_TLS__/$MIFP_TLS_DIRECTIVE/g" \
+  "$SCRIPT_DIR/Caddyfile" > /etc/caddy/Caddyfile
 chown root:caddy /etc/caddy/Caddyfile
 chmod 0644 /etc/caddy/Caddyfile
 # PHP is deny-by-default.  mifpctl adds only explicit conference prefixes here.
@@ -228,10 +238,24 @@ EOF_EVENTS_PHP
 fi
 chown root:caddy /etc/caddy/mifp-events-php.caddy
 chmod 0644 /etc/caddy/mifp-events-php.caddy
+caddy fmt --overwrite /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 systemctl enable --now caddy.service
 # Refresh supplementary group membership (mifp-events-public) on re-bootstrap.
 systemctl restart caddy.service
+
+if [[ "$DOMAIN" == *.home.arpa ]]; then
+  say "Configuro il trust TLS locale sulla VPS"
+  if caddy trust --config /etc/caddy/Caddyfile --adapter caddyfile; then
+    printf '%s\n' "CA locale Caddy installata nel trust store della VPS."
+  else
+    printf '%s\n' "WARN: caddy trust non completato (certutil può non essere installato)." >&2
+  fi
+  printf '%s\n' \
+    "Questo trust vale solo sulla VPS, non sulla workstation." \
+    "Root CA da copiare se necessaria:" \
+    "  /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt"
+fi
 
 say "Configuro firewall"
 ufw default deny incoming >/dev/null
@@ -243,10 +267,24 @@ ufw --force enable >/dev/null
 
 say "Bootstrap completato"
 printf '%s\n' \
-  "Primo avvio: sudo mifpctl first-deploy sha-<commit>" \
+  "Registry GHCR: sudo mifpctl registry-login" \
+  "Primo avvio: sudo mifpctl init" \
   "Poi importa lo ZIP contenuti dalla dashboard." \
   "Nuove versioni: sudo mifpctl deploy sha-<commit>" \
   "Diagnostica: sudo mifpctl doctor" \
   "Backup manuale: sudo mifpctl backup" \
   "Eventi storici: sudo mifpctl events-import /path/al/backup" \
   "PHP conferenze: installato ma disabilitato per ogni path finché non usi mifpctl events-php-enable"
+
+if [[ "$DOMAIN" == *.home.arpa ]]; then
+  LAN_IPS="$(hostname -I 2>/dev/null | tr ' ' '\n' | awk '/^[0-9]+\./ && $0 !~ /^127\./ {print}' | sort -u)"
+  HOST_SHORT="$(hostname -s 2>/dev/null || printf 'vpsbox')"
+  if [[ "$(printf '%s\n' "$LAN_IPS" | awk 'NF {count++} END {print count+0}')" == 1 ]]; then
+    LAN_IP="$LAN_IPS"
+    printf '\nAdd to your workstation /etc/hosts:\n\n%s %s %s www.%s events.%s\n' \
+      "$LAN_IP" "$HOST_SHORT" "$DOMAIN" "$DOMAIN" "$DOMAIN"
+  else
+    printf '\nWorkstation /etc/hosts: LAN IP ambiguous or unavailable. On the VPS run:\n\n  hostname -I\n\nThen map: %s %s www.%s events.%s\n' \
+      "$HOST_SHORT" "$DOMAIN" "$DOMAIN" "$DOMAIN"
+  fi
+fi

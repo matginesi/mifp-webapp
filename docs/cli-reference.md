@@ -24,6 +24,8 @@
 Uso normale:
 
 ```bash
+sudo mifpctl registry-login
+sudo mifpctl init
 sudo mifpctl deploy sha-<commit>
 sudo mifpctl status
 sudo mifpctl logs
@@ -35,8 +37,13 @@ sudo mifpctl doctor
 Prima installazione:
 
 ```bash
-sudo mifpctl first-deploy sha-<commit>
+sudo mifpctl registry-login
+sudo mifpctl init
 ```
+
+`init` è l'unico comando autorizzato a usare `latest`, solo come selector:
+`release.env` conserva sempre il digest OCI risolto. `first-deploy sha-<commit>`
+resta disponibile soltanto per compatibilità operativa.
 
 Manutenzione rara:
 

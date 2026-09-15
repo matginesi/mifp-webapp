@@ -25,6 +25,7 @@ def test_deploy_artifacts_are_complete() -> None:
         "deploy/mifpctl",
         "deploy/mifp-backup.service",
         "deploy/mifp-backup.timer",
+        "deploy/local-hosts.sh",
     )
     for relative in required:
         assert (root / relative).is_file(), f"missing deploy artifact: {relative}"
@@ -100,6 +101,9 @@ def test_ci_cd_workflow_tests_builds_only() -> None:
     assert 'mifp_app.db.manage init /app/data/mifp.db' in text
     assert 'http://127.0.0.1:${port}/ready' in text
     assert 'http://127.0.0.1:${port}/health' in text
+    assert "promote-latest:" in text
+    assert "needs: [build, verify-image]" in text
+    assert 'imagetools create --tag "$REPOSITORY:latest" "$REPOSITORY@$DIGEST"' in text
     # Deployment to VPS has been removed - users deploy manually
     assert "ssh-action" not in text
     assert "appleboy" not in text
@@ -211,6 +215,11 @@ def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     assert '[[ -f "$MIFP_HOME/data/mifp.db"' in script
     assert "systemctl disable --now mifp-backup.timer" in script
     assert "--admin-if-missing" in script
+    assert "caddy fmt --overwrite /etc/caddy/Caddyfile" in script
+    assert 'if [[ "$DOMAIN" == *.home.arpa ]]' in script
+    assert 'MIFP_TLS_DIRECTIVE="tls internal"' in script
+    assert 'MIFP_TLS_DIRECTIVE=""' in script
+    assert 'bash "$SCRIPT_DIR/local-hosts.sh" "$DOMAIN"' in script
 
 
 def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
