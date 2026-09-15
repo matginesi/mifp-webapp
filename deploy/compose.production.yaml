@@ -27,6 +27,8 @@ services:
       TRUSTED_HOSTS: "${TRUSTED_HOSTS:-mifp.eu,www.mifp.eu,127.0.0.1,localhost}"
       ALLOW_DB_DUMP: "0"
       ALLOW_DB_RESTORE: "0"
+      # Backup credentials are host-only even though secrets.env is shared as an env_file.
+      RESTIC_PASSWORD: ""
       DATABASE_PATH: /app/data/mifp.db
       ASSETS_DIR: /app/data/assets
       EXPORT_DIR: /app/data/exports

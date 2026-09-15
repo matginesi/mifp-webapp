@@ -58,6 +58,7 @@ Uso normale:
   sudo mifpctl rollback                   torna alla release precedente (anche offline se locale)
   sudo mifpctl backup                     snapshot point-in-time DB + file/eventi
   sudo mifpctl doctor                     diagnostica completa
+  sudo mifpctl security-check             audit read-only di superficie e permessi host
   sudo mifpctl fix-permissions            corregge ownership dati solo su richiesta
   sudo mifpctl events-import /backup/root importa/sostituisce events.mifp.eu in modo atomico
   sudo mifpctl events-rollback            scambia events/ con l'import precedente
@@ -422,6 +423,10 @@ do_registry_login() {
   [[ -n "$token" ]] || die "Token vuoto."
   if printf '%s\n' "$token" | docker login ghcr.io --username "$username" --password-stdin; then
     token=""; unset token
+    if [[ -f "$DOCKER_CONFIG_FILE" && ! -L "$DOCKER_CONFIG_FILE" ]]; then
+      chown root:root "$DOCKER_CONFIG_FILE"
+      chmod 0600 "$DOCKER_CONFIG_FILE"
+    fi
     config_cli set REGISTRY_USERNAME "$username" >/dev/null
     say "GHCR login successful."
     return 0
@@ -680,6 +685,13 @@ files = manifest.get("files")
 if not isinstance(files, dict) or not files:
     raise SystemExit("snapshot manifest has no files")
 
+# Reject links and special filesystem objects before considering manifest contents.
+for path in root.rglob("*"):
+    if path.is_symlink():
+        raise SystemExit(f"symbolic link rejected: {path.relative_to(root)}")
+    if not (path.is_file() or path.is_dir()):
+        raise SystemExit(f"special filesystem object rejected: {path.relative_to(root)}")
+
 expected: set[str] = {"mifp.db"}
 directories = ["assets", "conferences", "config"]
 if version >= 2:
@@ -688,13 +700,26 @@ if version >= 2:
     if not state.is_file() or state.is_symlink():
         raise SystemExit("missing or unsafe file: events-php-enabled.txt")
     expected.add("events-php-enabled.txt")
+    import re
+    safe_prefix = re.compile(r"^[A-Za-z0-9._/-]+$")
+    for raw in state.read_text(encoding="utf-8").splitlines():
+        prefix = raw.strip()
+        if not prefix:
+            continue
+        parts = prefix.split("/")
+        if (
+            prefix.startswith("/") or prefix.endswith("/") or "//" in prefix
+            or not safe_prefix.fullmatch(prefix) or any(part in {".", ".."} for part in parts)
+        ):
+            raise SystemExit(f"unsafe PHP allow-list prefix: {prefix!r}")
+        target = root / "events" / prefix
+        if not target.is_dir() or target.is_symlink():
+            raise SystemExit(f"PHP allow-list target missing or unsafe: {prefix}")
 for dirname in directories:
     directory = root / dirname
     if not directory.is_dir() or directory.is_symlink():
         raise SystemExit(f"missing or unsafe directory: {dirname}/")
     for path in directory.rglob("*"):
-        if path.is_symlink():
-            raise SystemExit(f"symbolic link rejected: {path.relative_to(root)}")
         if path.is_file():
             expected.add(path.relative_to(root).as_posix())
 
@@ -831,6 +856,10 @@ render_events_php_include() {
     if [[ -f "$EVENTS_PHP_STATE" ]]; then
       while IFS= read -r prefix; do
         [[ -n "$prefix" ]] || continue
+        [[ "$(normalize_events_prefix "$prefix")" == "$prefix" ]] \
+          || die "Allow-list PHP non canonica: $prefix"
+        [[ -d "$EVENTS_DIR/$prefix" && ! -L "$EVENTS_DIR/$prefix" ]] \
+          || die "Allow-list PHP punta a una directory mancante/non sicura: $prefix"
         i=$((i + 1))
         printf '@mifp_events_php_%d path /%s /%s/*\n' "$i" "$prefix" "$prefix"
         printf 'php_fastcgi @mifp_events_php_%d unix/%s\n\n' "$i" "$EVENTS_PHP_SOCKET"
@@ -917,15 +946,18 @@ do_events_import() {
   [[ -n "$source" ]] || die "Uso: mifpctl events-import /path/document-root"
   source="$(readlink -f -- "$source")"
   [[ -d "$source" && ! -L "$source" ]] || die "Directory sorgente non valida: $source"
-  [[ "$source" != "$EVENTS_DIR" && "$source" != "$EVENTS_DIR"/* ]] || die "La sorgente non può essere dentro $EVENTS_DIR."
+  [[ "$source" != "/" ]] || die "Rifiuto di usare / come document root eventi."
+  [[ "$source" != "$MIFP_HOME" && "$source" != "$EVENTS_DIR" && "$source" != "$EVENTS_DIR"/* ]] \
+    || die "La sorgente non può coincidere con o stare dentro il tree MIFP live."
+  case "$EVENTS_DIR/" in "$source/"*) die "La sorgente non può contenere il tree MIFP live." ;; esac
   has rsync || die "Comando richiesto non disponibile: rsync"
-  bad="$(find "$source" -type l -print -quit)"
-  [[ -z "$bad" ]] || die "Backup eventi non sicuro: symlink trovato: $bad"
+  bad="$(find "$source" -xdev \( -type l -o -type b -o -type c -o -type p -o -type s \) -print -quit)"
+  [[ -z "$bad" ]] || die "Backup eventi non sicuro: symlink o file speciale trovato: $bad"
 
   stage="$MIFP_HOME/.events-stage-$$"
   rm -rf -- "$stage"
   install -d -o root -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$stage"
-  rsync -a --delete "$source/" "$stage/"
+  rsync -a -x --delete "$source/" "$stage/"
   chown -R --no-dereference root:"$EVENTS_PUBLIC_GROUP" "$stage"
   find "$stage" -type d -exec chmod 0750 {} +
   find "$stage" -type f -exec chmod 0640 {} +
@@ -1063,6 +1095,99 @@ do_doctor() {
   say "Doctor: OK"
 }
 
+do_security_check() {
+  local failed=0 bad current cid inspect user privileged network_mode readonly_root security_opts mounts envs unexpected mode
+  step "Security check"
+
+  security_error() { say "ERROR: $*"; failed=1; }
+  security_ok() { say "$*: OK"; }
+
+  if caddy validate --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null 2>&1; then
+    security_ok "Caddy configuration"
+  else
+    security_error "Caddy configuration invalid"
+  fi
+
+  bad="$(find "$MIFP_HOME" -xdev -perm -0002 -print -quit 2>/dev/null || true)"
+  [[ -z "$bad" ]] && security_ok "World-writable MIFP paths" || security_error "world-writable path: $bad"
+
+  bad="$(find "$EVENTS_DIR" "$EVENTS_PRIVATE_DIR" -xdev \( -type l -o -type b -o -type c -o -type p -o -type s \) -print -quit 2>/dev/null || true)"
+  [[ -z "$bad" ]] && security_ok "Events links/special files" || security_error "unsafe events filesystem object: $bad"
+
+  bad="$(find "$MIFP_HOME" -maxdepth 1 \( -name '.events-stage-*' -o -name '.events-swap-*' -o -name '.release.env.*' -o -name '.upgrade.env.*' \) -print -quit 2>/dev/null || true)"
+  [[ -z "$bad" ]] && security_ok "Stale deployment staging" || security_error "stale staging file/directory: $bad"
+
+  if [[ -f "$SECRETS_FILE" && ! -L "$SECRETS_FILE" ]]; then
+    mode="$(stat -c '%a' "$SECRETS_FILE" 2>/dev/null || true)"
+    [[ "$mode" == 600 ]] && security_ok "Secrets permissions" || security_error "$SECRETS_FILE mode is ${mode:-unknown}, expected 600"
+  else
+    security_error "missing or unsafe secrets file: $SECRETS_FILE"
+  fi
+  if [[ -f "$PUBLIC_CONFIG_FILE" && ! -L "$PUBLIC_CONFIG_FILE" ]]; then
+    mode="$(stat -c '%a' "$PUBLIC_CONFIG_FILE" 2>/dev/null || true)"
+    [[ "$mode" == 640 ]] && security_ok "Public config permissions" || security_error "$PUBLIC_CONFIG_FILE mode is ${mode:-unknown}, expected 640"
+  else
+    security_error "missing or unsafe public config: $PUBLIC_CONFIG_FILE"
+  fi
+  if [[ -f "$DOCKER_CONFIG_FILE" ]]; then
+    if [[ -L "$DOCKER_CONFIG_FILE" ]]; then
+      security_error "Docker config is a symlink: $DOCKER_CONFIG_FILE"
+    else
+      mode="$(stat -c '%a' "$DOCKER_CONFIG_FILE" 2>/dev/null || true)"
+      [[ "$mode" == 600 ]] && security_ok "Docker credentials permissions" || security_error "$DOCKER_CONFIG_FILE mode is ${mode:-unknown}, expected 600"
+    fi
+  else
+    say "Docker credentials: NOT CONFIGURED"
+  fi
+
+  if has ss; then
+    unexpected="$(ss -H -lntp 2>/dev/null | awk '
+      {
+        local_addr=$4; proc=""; for (i=6; i<=NF; i++) proc=proc $i;
+        if (local_addr ~ /^127\.0\.0\.1:/ || local_addr ~ /^\[::1\]:/) next;
+        n=split(local_addr, parts, ":"); port=parts[n]; gsub(/[^0-9]/, "", port);
+        if (port == "80" || port == "443" || proc ~ /sshd/) next;
+        print; exit;
+      }')"
+    [[ -z "$unexpected" ]] && security_ok "Unexpected public TCP listeners" || security_error "unexpected public listener: $unexpected"
+  else
+    say "WARN: ss unavailable; listener audit skipped"
+  fi
+
+  current="$(current_image || true)"
+  if [[ -n "$current" ]]; then
+    cid="$(compose_with_image "$current" ps -q web 2>/dev/null || true)"
+    if [[ -z "$cid" ]]; then
+      security_error "web container not running"
+    else
+      inspect="$(docker inspect --format '{{.Config.User}}|{{.HostConfig.Privileged}}|{{.HostConfig.NetworkMode}}|{{.HostConfig.ReadonlyRootfs}}|{{json .HostConfig.SecurityOpt}}|{{json .Mounts}}' "$cid" 2>/dev/null || true)"
+      IFS='|' read -r user privileged network_mode readonly_root security_opts mounts <<<"$inspect"
+      [[ -n "$user" && "$user" != 0 && "$user" != root && "$user" != 0:* ]] \
+        && security_ok "Container non-root user" || security_error "container user is root/unspecified: ${user:-<empty>}"
+      [[ "$privileged" == false ]] && security_ok "Container privileged mode" || security_error "container is privileged"
+      [[ "$network_mode" != host ]] && security_ok "Container host networking" || security_error "container uses host networking"
+      [[ "$readonly_root" == true ]] && security_ok "Container read-only rootfs" || security_error "container rootfs is writable"
+      [[ "$security_opts" == *no-new-privileges* ]] && security_ok "Container no-new-privileges" || security_error "no-new-privileges missing"
+      [[ "$mounts" != *docker.sock* ]] && security_ok "Docker socket mount" || security_error "Docker socket is mounted into web container"
+      envs="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$cid" 2>/dev/null || true)"
+      grep -Fxq 'FLASK_DEBUG=0' <<<"$envs" && security_ok "Production debug" || security_error "FLASK_DEBUG is not explicitly 0"
+      grep -Fxq 'FLASK_ENV=production' <<<"$envs" && security_ok "Production environment" || security_error "FLASK_ENV is not production"
+      if grep -Eq '^RESTIC_PASSWORD=.+$' <<<"$envs"; then
+        security_error "RESTIC_PASSWORD is exposed to the web container"
+      else
+        security_ok "Backup credential isolation"
+      fi
+    fi
+  else
+    say "Container checks: NOT INITIALIZED"
+  fi
+
+  if ((failed)); then
+    die "Security check found problems."
+  fi
+  say "Security check: OK"
+}
+
 do_admin() {
   local args=(admin --env-file "$ENV_FILE") current; shift || true
   while (($#)); do case "$1" in --username) [[ $# -ge 2 ]] || die "--username richiede un valore"; args+=(--username "$2"); shift 2 ;; --username=*) args+=("$1"); shift ;; *) die "Uso: mifpctl admin [--username NAME]" ;; esac; done
@@ -1092,7 +1217,7 @@ do_config_unset() {
 
 command="${1:-status}"
 case "$command" in
-  init|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|rollback-upgrade|rollback|--rollback|restart|stop|admin|admin-reset-password|configure|config-set|config-unset|fix-permissions|events-import|events-rollback|events-php-enable|events-php-disable)
+  init|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|rollback-upgrade|rollback|--rollback|restart|stop|admin|admin-reset-password|configure|config-set|config-unset|fix-permissions|security-check|events-import|events-rollback|events-php-enable|events-php-disable)
     mkdir -p "$(dirname "$LOCK_FILE")"; exec 9>"$LOCK_FILE"; flock -n 9 || die "Un'altra operazione MIFP è già in corso." ;;
 esac
 case "$command" in
@@ -1113,6 +1238,7 @@ case "$command" in
   logs) ensure_tools; do_logs ;;
   backup) do_backup ;;
   doctor) do_doctor ;;
+  security-check) do_security_check ;;
   fix-permissions) do_fix_permissions ;;
   events-import) shift; do_events_import "$@" ;;
   events-rollback) do_events_rollback ;;

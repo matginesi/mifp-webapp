@@ -253,6 +253,31 @@ def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
     assert '"MIFPAPP/DATABASE/uploads"' in packager
 
 
+def test_deploy_security_hardening_contract() -> None:
+    deploy = _read("deploy", "deploy.sh")
+    compose = _read("deploy", "compose.production.yaml")
+    caddy = _read("deploy", "Caddyfile")
+    backup_service = _read("deploy", "mifp-backup.service")
+
+    assert "security-check" in deploy
+    assert "World-writable MIFP paths" in deploy
+    assert "Unexpected public TCP listeners" in deploy
+    assert "Docker socket is mounted" in deploy
+    assert "RESTIC_PASSWORD is exposed" in deploy
+    assert 'RESTIC_PASSWORD: ""' in compose
+    assert "*.sqlite3" in caddy and "*.db" in caddy and "*.sql" in caddy
+    assert "UnsetEnvironment=SECRET_KEY ADMIN_PASSWORD_HASH SMTP_PASSWORD" in backup_service
+    assert "UMask=0077" in backup_service
+
+
+def test_local_ca_certificates_are_not_source_artifacts() -> None:
+    root = _repo_root()
+    assert not list(root.glob("*-caddy-root.crt"))
+    assert "*.crt" in _read(".gitignore")
+    assert '"*.crt"' in _read("tools", "check_repo_hygiene.py")
+    assert '"*.crt"' in _read("zip_it.sh")
+
+
 def test_repository_hygiene_checker_accepts_the_source_tree() -> None:
     root = _repo_root()
     result = subprocess.run(

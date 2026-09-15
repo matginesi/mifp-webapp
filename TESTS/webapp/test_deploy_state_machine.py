@@ -320,6 +320,23 @@ def test_first_deploy_then_second_release_and_offline_rollback(tmp_path: Path) -
     assert rolled["PREVIOUS_IMAGE"] == second["CURRENT_IMAGE"]
 
 
+def test_security_check_passes_on_hardened_preinit_host(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    (home / "events").mkdir()
+    (home / "events-private").mkdir()
+    config_dir = Path(env["MIFP_CONFIG_DIR"])
+    (config_dir / "config.env").chmod(0o640)
+    (config_dir / "secrets.env").chmod(0o600)
+    Path(env["MIFP_DOCKER_CONFIG_FILE"]).chmod(0o600)
+    bin_dir = Path(env["PATH"].split(":", 1)[0])
+    _write_executable(bin_dir / "ss", "#!/bin/sh\nexit 0\n")
+
+    result = _run(env, "security-check")
+
+    assert "Security check: OK" in result.stdout
+    assert "Container checks: NOT INITIALIZED" in result.stdout
+
+
 def test_init_uses_latest_only_as_selector_and_persists_clean_digest(tmp_path: Path) -> None:
     env, home = _env(tmp_path)
 
@@ -554,6 +571,32 @@ def test_restore_snapshot_rejects_tampered_files(tmp_path: Path) -> None:
     assert (home / "data" / "mifp.db").read_text(encoding="utf-8") == "fake-db"
 
 
+def test_restore_snapshot_rejects_injected_php_allowlist(tmp_path: Path) -> None:
+    import hashlib
+    import json
+
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    snapshot = tmp_path / "candidate-snapshot-injected-policy"
+    for name in ("assets", "conferences", "config", "events", "events-private"):
+        (snapshot / name).mkdir(parents=True, exist_ok=True)
+    (snapshot / "mifp.db").write_text("snapshot-db", encoding="utf-8")
+    (snapshot / "events-php-enabled.txt").write_text("safe/regform\nrespond /pwned 200\n", encoding="utf-8")
+    files = {}
+    for candidate in [snapshot / "mifp.db", snapshot / "events-php-enabled.txt"]:
+        files[candidate.relative_to(snapshot).as_posix()] = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    (snapshot / "manifest.json").write_text(
+        json.dumps({"format": "mifp-host-snapshot", "version": 2, "files": files}),
+        encoding="utf-8",
+    )
+
+    result = _run(env, "restore-snapshot", str(snapshot), check=False)
+
+    assert result.returncode != 0
+    assert "Snapshot corrotta" in result.stderr
+    assert (home / "data" / "mifp.db").read_text(encoding="utf-8") == "fake-db"
+
+
 def test_restore_snapshot_v2_restores_public_and_private_event_trees(tmp_path: Path) -> None:
     import hashlib
     import json
@@ -572,6 +615,8 @@ def test_restore_snapshot_v2_restores_public_and_private_event_trees(tmp_path: P
     (snapshot / "mifp.db").write_text("snapshot-db", encoding="utf-8")
     (snapshot / "events" / "PLMCN-2025").mkdir()
     (snapshot / "events" / "PLMCN-2025" / "index.html").write_text("historic", encoding="utf-8")
+    (snapshot / "events" / "PLMCN-2025" / "regform").mkdir()
+    (snapshot / "events" / "PLMCN-2025" / "regform" / "index.php").write_text("<?php echo 'closed';", encoding="utf-8")
     (snapshot / "events-private" / "registrations").mkdir()
     (snapshot / "events-private" / "registrations" / "future.csv").write_text("private", encoding="utf-8")
     (snapshot / "events-php-enabled.txt").write_text("PLMCN-2025/regform\n", encoding="utf-8")
@@ -636,6 +681,19 @@ def test_events_import_rejects_symlinks(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "symlink" in result.stderr
+    assert not (home / "events").exists()
+
+
+def test_events_import_rejects_fifo_special_file(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    source = tmp_path / "events-special"
+    source.mkdir()
+    os.mkfifo(source / "pipe")
+
+    result = _run(env, "events-import", str(source), check=False)
+
+    assert result.returncode != 0
+    assert "file speciale" in result.stderr
     assert not (home / "events").exists()
 
 

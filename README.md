@@ -80,6 +80,7 @@ sudo mifpctl registry-login
 sudo mifpctl config-check
 sudo mifpctl init
 sudo mifpctl doctor
+sudo mifpctl security-check
 ```
 
 Il bootstrap prepara soltanto l'host e può terminare senza dominio o admin.

@@ -69,6 +69,7 @@ SECRET_PATTERNS = (
     "*.pem",
     "*.p12",
     "*.pfx",
+    "*.crt",
     ".htpasswd",
 )
 

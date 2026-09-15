@@ -130,7 +130,7 @@ EXCLUDED_FILE_PATTERNS = {
     "*.coverage", "coverage.xml", ".DS_Store", "Thumbs.db", "*.orig",
     "*.rej", "*.swp", "*.swo", "*~", "credentials.json",
     "credentials.*.json", "*.secret", "*.token", "*.key", "*.pem",
-    "*.p12", "*.pfx", "*.keystore", ".htpasswd", "id_rsa", "id_dsa",
+    "*.p12", "*.pfx", "*.crt", "*.keystore", ".htpasswd", "id_rsa", "id_dsa",
     "id_ecdsa", "id_ed25519",
 }
 

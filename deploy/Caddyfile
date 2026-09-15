@@ -39,6 +39,7 @@ __MIFP_EVENTS_DOMAIN__ {
             path */regform/settings.yaml */regform/settings.yml
             path */regform/registrations/* */regform/src/*
             path */composer.json */composer.lock
+            path *.db *.sqlite *.sqlite3 *.sql *.bak *.old *.orig
         }
         respond @events_sensitive 404
 

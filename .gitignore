@@ -11,6 +11,7 @@ credentials.*.json
 *.token
 *.key
 *.pem
+*.crt
 *.p12
 *.pfx
 .htpasswd

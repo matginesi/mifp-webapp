@@ -64,8 +64,9 @@ workstation.
 
 ## Segreti
 
-Il bootstrap genera `SECRET_KEY` e chiede admin/password interattivamente. È
-salvato soltanto `ADMIN_PASSWORD_HASH`; minimo 10 caratteri. Rotazione:
+`mifpctl` inizializza `SECRET_KEY`; le credenziali admin vengono impostate
+esplicitamente con `mifpctl admin`. È salvato soltanto `ADMIN_PASSWORD_HASH`;
+minimo 10 caratteri. Rotazione:
 
 ```bash
 sudo mifpctl admin
@@ -74,3 +75,18 @@ sudo mifpctl admin
 Per una dashboard accessibile a pochissimi operatori, un secondo controllo
 esterno (VPN/Tailscale/Access/IP allowlist) resta un hardening opzionale, non un
 requisito architetturale.
+
+## Verifica read-only
+
+Dopo bootstrap/init e dopo modifiche infrastrutturali esegui:
+
+```bash
+sudo mifpctl doctor
+sudo mifpctl security-check
+```
+
+`security-check` non corregge automaticamente nulla: controlla permessi dei
+segreti, file world-writable, listener TCP pubblici inattesi, link/file speciali
+nei tree eventi, staging residui e proprietà di isolamento del container
+(non-root, rootfs read-only, no-new-privileges, niente host networking o
+Docker socket).

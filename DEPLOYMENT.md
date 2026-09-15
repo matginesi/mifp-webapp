@@ -31,6 +31,12 @@ Se qualcosa non torna:
 sudo mifpctl doctor
 ```
 
+Audit read-only di superficie, permessi e isolamento:
+
+```bash
+sudo mifpctl security-check
+```
+
 Backup manuale immediato:
 
 ```bash
@@ -131,7 +137,7 @@ Per importare il backup storico completo della vecchia document root:
 sudo mifpctl events-import /path/al/backup/events.mifp.eu
 ```
 
-L'import rifiuta symlink, copia in staging, normalizza i permessi e sostituisce
+L'import rifiuta symlink e file speciali, non attraversa altri filesystem, copia in staging, normalizza i permessi e sostituisce
 `/opt/mifp/events` con un rename atomico. Prima dello switch azzera sempre la
 allow-list PHP: un nuovo tree non eredita mai codice eseguibile dal precedente.
 Il tree precedente resta in `/opt/mifp/events.previous` e può essere scambiato
@@ -354,6 +360,25 @@ Internet -> Caddy :443 -> 127.0.0.1:8000 -> container
 - `cap_drop: ALL`, `no-new-privileges`;
 - limiti RAM/CPU/PID;
 - SQLite ha un solo worker Gunicorn in produzione.
+
+## Production security checklist
+
+Prima di considerare una VPS pronta:
+
+```text
+[ ] sudo mifpctl doctor -> Doctor: OK
+[ ] sudo mifpctl security-check -> Security check: OK
+[ ] solo SSH, 80 e 443 sono listener pubblici attesi
+[ ] Caddyfile valido e backend Flask solo su 127.0.0.1:8000
+[ ] container non-root, rootfs read-only, no-new-privileges, niente docker.sock
+[ ] /etc/mifp/secrets.env è 0600; Docker config root è 0600 se presente
+[ ] PHP eventi è deny-by-default e la allow-list è stata revisionata
+[ ] backup locale riuscito e restore provato almeno una volta
+```
+
+`security-check` è diagnostico e non modifica la macchina. Segnala anche file
+world-writable, staging residui, link/file speciali nei tree eventi, listener TCP
+inaspettati e credenziali backup esposte per errore al container web.
 
 ## GHCR privato
 

@@ -104,10 +104,10 @@ for name in assets conferences config events events-private; do
     fi
     rsync "${args[@]}" "$source_dir/" "$tmp/$name/"
   fi
-  # Managed runtime/public trees must never contain symlinks: they could escape
-  # the snapshot root during a privileged restore or public file serving.
-  link="$(find "$tmp/$name" -type l -print -quit)"
-  [[ -z "$link" ]] || die "Snapshot non sicura: link simbolico trovato in $name/: $link"
+  # Managed runtime/public trees must never contain links or special filesystem
+  # objects: they could escape/alter semantics during a privileged restore.
+  unsafe="$(find "$tmp/$name" \( -type l -o -type b -o -type c -o -type p -o -type s \) -print -quit)"
+  [[ -z "$unsafe" ]] || die "Snapshot non sicura: link simbolico o file speciale trovato in $name/: $unsafe"
 done
 
 # PHP execution policy is part of the public conference state.  Store the

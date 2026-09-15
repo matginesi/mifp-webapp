@@ -44,8 +44,12 @@ def test_production_compose_has_no_build_and_uses_registry_image() -> None:
     assert web["environment"]["TRUST_PROXY"] == "1"
     assert web["environment"]["GUNICORN_BIND"] == "0.0.0.0:8000"
     assert web["environment"]["LOG_OUTPUT"] == "stdout"
+    assert web["environment"]["RESTIC_PASSWORD"] == ""
     assert "127.0.0.1:8000:8000" in web["ports"]
     assert web["cap_drop"] == ["ALL"]
+    assert web["security_opt"] == ["no-new-privileges:true"]
+    assert web["read_only"] is True
+    assert all("docker.sock" not in str(volume) for volume in web.get("volumes", []))
     assert "healthcheck" in web
 
 
