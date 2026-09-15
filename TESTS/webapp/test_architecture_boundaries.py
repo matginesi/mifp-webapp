@@ -89,6 +89,12 @@ def test_ci_cd_workflow_tests_builds_only() -> None:
     assert "docker/build-push-action" in text
     assert "build-pr:" in text
     assert "push: false" in text
+    assert "verify-image:" in text
+    assert "needs: build" in text
+    assert "needs.build.outputs.digest" in text
+    assert 'mifp_app.db.manage init /app/data/mifp.db' in text
+    assert 'http://127.0.0.1:${port}/ready' in text
+    assert 'http://127.0.0.1:${port}/health' in text
     # Deployment to VPS has been removed - users deploy manually
     assert "ssh-action" not in text
     assert "appleboy" not in text
