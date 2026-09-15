@@ -11,13 +11,20 @@ import zipfile
 from collections.abc import Callable, Sequence
 from io import BytesIO
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 from typing import Any
 
 from ..config import Config
 from ..db.connection import table_exists, utc_now, sha256_file
 from ..db.migrations import SCHEMA_VERSION
 from ..domain import ENTITY_TABLES as TYPE_TO_TABLE
-from .assets import AssetWriteSession, conflict_safe_asset_target, resolve_db_asset_path
+from .assets import (
+    AssetWriteSession,
+    conflict_safe_asset_target,
+    db_asset_file_is_valid,
+    download_asset,
+    resolve_db_asset_path,
+)
 from .fingerprints import stable_fingerprint
 from .errors import JobCancelled
 from .importers import import_jsonl
@@ -44,6 +51,22 @@ def table_counts(conn: sqlite3.Connection) -> dict[str, int]:
     return counts
 
 
+def is_canonical_dashboard_restore(summaries: Sequence[dict[str, Any]]) -> bool:
+    """Return True when every imported file is a validated dashboard snapshot.
+
+    Canonical dashboard ZIPs are self-contained restore inputs. Callers use
+    this predicate to avoid a post-import network recovery pass that would
+    make a restore depend on the original websites still being online.
+    """
+    imported_files = [summary for summary in summaries if summary.get("filename")]
+    return bool(imported_files) and all(
+        isinstance(summary.get("manifest"), dict)
+        and summary["manifest"].get("format") == CANONICAL_FORMAT
+        and summary["manifest"].get("format_version") == PORTABLE_FORMAT_VERSION
+        for summary in imported_files
+    )
+
+
 def build_export_bundle(conn: sqlite3.Connection, scope: str) -> dict[str, Any]:
     if scope not in EXPORT_SCOPES:
         raise ValueError("Invalid export scope")
@@ -60,6 +83,195 @@ def build_export_bundle(conn: sqlite3.Connection, scope: str) -> dict[str, Any]:
     }
 
 
+def _preservation_domains() -> set[str]:
+    return {
+        str(domain).strip().lower().rstrip(".")
+        for domain in getattr(Config, "PORTABLE_EXPORT_PRESERVE_DOMAINS", set())
+        if str(domain).strip()
+    }
+
+
+def _url_matches_preservation_domain(url: str, domains: set[str]) -> bool:
+    try:
+        host = (urlparse(str(url or "").strip()).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    return bool(host) and any(host == domain or host.endswith(f".{domain}") for domain in domains)
+
+
+def _asset_candidates_for_export_scope(
+    conn: sqlite3.Connection, scope: str
+) -> list[dict[str, Any]]:
+    if not table_exists(conn, "assets"):
+        return []
+    if scope == "all":
+        return _asset_rows(conn)
+    types = tuple(EXPORT_SCOPES[scope]["types"])
+    if not types or not table_exists(conn, "asset_links"):
+        return []
+    placeholders = ",".join("?" for _ in types)
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT a.*
+        FROM assets a
+        JOIN asset_links al ON al.asset_id=a.id
+        WHERE al.entity_type IN ({placeholders})
+        ORDER BY a.id
+        """,
+        types,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _resolve_export_asset_file(
+    assets_dir: Path, staged_assets_dir: Path | None, db_path: str
+) -> Path | None:
+    roots = [staged_assets_dir, assets_dir] if staged_assets_dir is not None else [assets_dir]
+    for root in roots:
+        if root is None:
+            continue
+        try:
+            path = resolve_db_asset_path(Path(root), db_path)
+        except ValueError:
+            continue
+        if path.is_file():
+            return path
+    return None
+
+
+def _materialize_preserved_export_assets(
+    conn: sqlite3.Connection,
+    scope: str,
+    assets_dir: Path,
+    staged_assets_dir: Path,
+    *,
+    progress_callback: Callable[[str, int], None] | None = None,
+) -> dict[str, Any]:
+    """Materialize selected remote assets inside an export-only transaction.
+
+    The caller owns an outer SAVEPOINT and rolls it back after the archive is
+    written. Files are written only below ``staged_assets_dir``. Therefore a
+    dashboard export can turn disappearing MIFP URLs into packaged local assets
+    without mutating the live database or the live asset library.
+    """
+    domains = _preservation_domains()
+    summary: dict[str, Any] = {
+        "enabled": bool(domains),
+        "domains": sorted(domains),
+        "matching": 0,
+        "already_local": 0,
+        "attempted": 0,
+        "materialized": 0,
+        "failed": 0,
+        "remaining_remote": 0,
+        "complete": True,
+        "failures": [],
+    }
+    if not domains:
+        return summary
+
+    candidates = [
+        row for row in _asset_candidates_for_export_scope(conn, scope)
+        if _url_matches_preservation_domain(str(row.get("source_url") or ""), domains)
+    ]
+    summary["matching"] = len(candidates)
+    if not candidates:
+        return summary
+
+    writer = AssetWriteSession(staged_assets_dir)
+    log = __import__("logging").getLogger("mifp.portability")
+    total = len(candidates)
+    for index, row in enumerate(candidates, start=1):
+        source_url = str(row.get("source_url") or "").strip()
+        db_path = str(row.get("path") or "").strip()
+        if db_path and db_asset_file_is_valid(
+            assets_dir,
+            db_path,
+            kind=row.get("kind"),
+            mime_type=row.get("mime_type"),
+            filename=row.get("filename"),
+        ):
+            local_path = resolve_db_asset_path(assets_dir, db_path)
+            content_sha = sha256_file(local_path)
+            # Disk truth wins inside the export snapshot. This also repairs
+            # stale missing/external flags without touching the live database.
+            conn.execute(
+                "UPDATE assets SET storage_status='local',is_external=0,size=?,"
+                "content_sha256=COALESCE(content_sha256,?),updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (local_path.stat().st_size, content_sha, int(row["id"])),
+            )
+            summary["already_local"] += 1
+            continue
+
+        summary["attempted"] += 1
+        if progress_callback is not None:
+            progress_callback(
+                f"Preserving MIFP assets {index}/{total}…",
+                5 + (10 * index // max(total, 1)),
+            )
+        savepoint = f"portable_export_asset_{int(row['id'])}"
+        checkpoint = writer.checkpoint()
+        conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            asset_id = download_asset(
+                conn,
+                source_url,
+                staged_assets_dir,
+                kind=str(row.get("kind") or "other"),
+                caption=row.get("caption"),
+                alt_text=row.get("alt_text"),
+                max_retries=Config.ASSET_DOWNLOAD_MAX_ATTEMPTS,
+                commit=False,
+                file_session=writer,
+            )
+            restored = conn.execute(
+                "SELECT path,storage_status,is_external FROM assets WHERE id=?",
+                (asset_id,),
+            ).fetchone()
+            restored_path = str(restored["path"] or "") if restored else ""
+            if not (
+                restored
+                and str(restored["storage_status"] or "") == "local"
+                and int(restored["is_external"] or 0) == 0
+                and _resolve_export_asset_file(assets_dir, staged_assets_dir, restored_path) is not None
+            ):
+                raise ValueError("asset download did not produce a packageable local asset")
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            summary["materialized"] += 1
+        except Exception as exc:
+            try:
+                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            finally:
+                writer.rollback_to(checkpoint)
+            summary["failed"] += 1
+            if len(summary["failures"]) < 100:
+                summary["failures"].append({
+                    "asset_id": int(row["id"]),
+                    "url": source_url,
+                    "error": str(exc)[:240],
+                })
+            log.warning(
+                "portable export could not preserve asset id=%s url=%s: %s",
+                row["id"], source_url, exc,
+            )
+
+    remaining = 0
+    for row in _asset_candidates_for_export_scope(conn, scope):
+        source_url = str(row.get("source_url") or "").strip()
+        if not _url_matches_preservation_domain(source_url, domains):
+            continue
+        db_path = str(row.get("path") or "").strip()
+        local_path = _resolve_export_asset_file(assets_dir, staged_assets_dir, db_path) if db_path else None
+        if (
+            local_path is None
+            or str(row.get("storage_status") or "") != "local"
+            or int(row.get("is_external") or 0) != 0
+        ):
+            remaining += 1
+    summary["remaining_remote"] = remaining
+    summary["complete"] = remaining == 0
+    return summary
 
 
 def _write_bundle_zip(
@@ -71,13 +283,14 @@ def _write_bundle_zip(
     app_version: str = "",
     progress_callback: Callable[[str, int], None] | None = None,
 ) -> dict[str, Any]:
-    bundle = build_export_bundle(conn, scope)
-    records = bundle.get("records") or []
-    asset_rows = _asset_rows_for_scope(conn, scope, records)
-    records_payload = _records_to_jsonl(records)
+    if scope not in EXPORT_SCOPES:
+        raise ValueError("Invalid export scope")
+
+    assets_dir = Path(assets_dir)
+    records: list[dict[str, Any]] = []
     seen_archive_paths: set[str] = set()
-    counts = _record_counts(records)
-    total_assets = len(asset_rows)
+    counts: dict[str, int] = {}
+    total_assets = 0
 
     def report(message: str, pct: int) -> None:
         if progress_callback is None:
@@ -93,65 +306,102 @@ def _write_bundle_zip(
         else:
             progress_callback(message, pct)
 
-    report("Collecting records…", 5)
-    durable_state = _durable_state(conn) if scope == "all" else None
-    state_payload = (
-        json.dumps(durable_state, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
-        if durable_state is not None
-        else None
-    )
-    manifest: dict[str, Any] = {
-        "format": CANONICAL_FORMAT,
-        "format_version": PORTABLE_FORMAT_VERSION,
-        "schema_version": SCHEMA_VERSION,
-        "generated_at": utc_now(),
-        "exported_at": bundle["meta"]["exported_at"],
-        "app_version": app_version,
-        "scope": scope,
-        "records": len(records),
-        "records_sha256": hashlib.sha256(records_payload).hexdigest(),
-        "counts": counts,
-        "files": [],
-    }
-    if state_payload is not None and durable_state is not None:
-        manifest["state_sha256"] = hashlib.sha256(state_payload).hexdigest()
-        manifest["state_counts"] = {
-            key: len(value) for key, value in durable_state.items() if isinstance(value, list)
-        }
+    report("Preparing portable snapshot…", 3)
+    outer_savepoint = "portable_export_snapshot"
+    conn.execute(f"SAVEPOINT {outer_savepoint}")
+    try:
+        with tempfile.TemporaryDirectory(prefix="mifp-portable-export-") as temp_root:
+            staged_assets_dir = Path(temp_root) / "assets"
+            staged_assets_dir.mkdir(parents=True, exist_ok=True)
 
-    report("Serializing records…", 15)
-    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-        zf.writestr(ZIP_RECORDS_NAME, records_payload)
-        if state_payload is not None:
-            zf.writestr(ZIP_STATE_NAME, state_payload)
-        for asset in asset_rows:
-            db_path = str(asset.get("path") or "").strip()
-            if not db_path:
-                continue
-            path = resolve_db_asset_path(assets_dir, db_path)
-            if not path.is_file():
-                continue
-            archive_path = db_path if db_path.startswith("assets/") else f"assets/{db_path}"
-            archive_path = _validate_asset_archive_path(archive_path)
-            if archive_path in seen_archive_paths:
-                continue
-            seen_archive_paths.add(archive_path)
-            report(f"Packaging assets {len(seen_archive_paths)}/{len(asset_rows)}…", 15 + 70 * len(seen_archive_paths) // max(len(asset_rows), 1))
-            zf.write(path, archive_path)
-            manifest["files"].append({
-                "path": db_path,
-                "archive_path": archive_path,
-                "size": path.stat().st_size,
-                "sha256": sha256_file(path),
-            })
-        report("Writing manifest…", 92)
-        zf.writestr(
-            ZIP_MANIFEST_NAME,
-            json.dumps(manifest, ensure_ascii=False, indent=2, default=str),
-        )
-    report("Finalizing…", 100)
-    return manifest
+            preservation = _materialize_preserved_export_assets(
+                conn,
+                scope,
+                assets_dir,
+                staged_assets_dir,
+                progress_callback=report,
+            )
 
+            # Serialize only after preservation. Any successfully downloaded
+            # MIFP-owned remote asset now looks local inside this export-only
+            # SAVEPOINT, so records.jsonl and state.json describe the exact
+            # files that are embedded in the ZIP.
+            bundle = build_export_bundle(conn, scope)
+            records = bundle.get("records") or []
+            asset_rows = _asset_rows_for_scope(conn, scope, records)
+            total_assets = len(asset_rows)
+            records_payload = _records_to_jsonl(records)
+            counts = _record_counts(records)
+
+            report("Collecting records…", 15)
+            durable_state = _durable_state(conn) if scope == "all" else None
+            state_payload = (
+                json.dumps(durable_state, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+                if durable_state is not None
+                else None
+            )
+            manifest: dict[str, Any] = {
+                "format": CANONICAL_FORMAT,
+                "format_version": PORTABLE_FORMAT_VERSION,
+                "schema_version": SCHEMA_VERSION,
+                "generated_at": utc_now(),
+                "exported_at": bundle["meta"]["exported_at"],
+                "app_version": app_version,
+                "scope": scope,
+                "records": len(records),
+                "records_sha256": hashlib.sha256(records_payload).hexdigest(),
+                "counts": counts,
+                "files": [],
+                "preservation": preservation,
+            }
+            if state_payload is not None and durable_state is not None:
+                manifest["state_sha256"] = hashlib.sha256(state_payload).hexdigest()
+                manifest["state_counts"] = {
+                    key: len(value) for key, value in durable_state.items() if isinstance(value, list)
+                }
+
+            report("Serializing records…", 20)
+            with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+                zf.writestr(ZIP_RECORDS_NAME, records_payload)
+                if state_payload is not None:
+                    zf.writestr(ZIP_STATE_NAME, state_payload)
+                for asset in asset_rows:
+                    db_path = str(asset.get("path") or "").strip()
+                    if not db_path:
+                        continue
+                    path = _resolve_export_asset_file(assets_dir, staged_assets_dir, db_path)
+                    if path is None:
+                        continue
+                    archive_path = db_path if db_path.startswith("assets/") else f"assets/{db_path}"
+                    archive_path = _validate_asset_archive_path(archive_path)
+                    if archive_path in seen_archive_paths:
+                        continue
+                    seen_archive_paths.add(archive_path)
+                    report(
+                        f"Packaging assets {len(seen_archive_paths)}/{len(asset_rows)}…",
+                        20 + 68 * len(seen_archive_paths) // max(len(asset_rows), 1),
+                    )
+                    zf.write(path, archive_path)
+                    manifest["files"].append({
+                        "path": db_path,
+                        "archive_path": archive_path,
+                        "size": path.stat().st_size,
+                        "sha256": sha256_file(path),
+                    })
+                report("Writing manifest…", 92)
+                zf.writestr(
+                    ZIP_MANIFEST_NAME,
+                    json.dumps(manifest, ensure_ascii=False, indent=2, default=str),
+                )
+            report("Finalizing…", 100)
+            return manifest
+    finally:
+        # Export must be observational: temporary localization/deduplication of
+        # disappearing remote assets must never alter the live database.
+        try:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {outer_savepoint}")
+        finally:
+            conn.execute(f"RELEASE SAVEPOINT {outer_savepoint}")
 
 def bundle_to_zip(
     conn: sqlite3.Connection, scope: str, assets_dir: Path, *, app_version: str = ""
@@ -1236,6 +1486,31 @@ def _validate_manifest_object(manifest: Any) -> dict[str, Any]:
             for key, value in counts.items()
         ):
             raise ValueError("manifest.counts must map record types to non-negative integers")
+    preservation = manifest.get("preservation")
+    if preservation is not None:
+        if not isinstance(preservation, dict):
+            raise ValueError("manifest.preservation must be an object")
+        for key in ("enabled", "complete"):
+            if key in preservation and not isinstance(preservation[key], bool):
+                raise ValueError(f"manifest.preservation.{key} must be a boolean")
+        for key in ("matching", "already_local", "attempted", "materialized", "failed", "remaining_remote"):
+            if key in preservation and (
+                not isinstance(preservation[key], int) or preservation[key] < 0
+            ):
+                raise ValueError(
+                    f"manifest.preservation.{key} must be a non-negative integer"
+                )
+        domains = preservation.get("domains")
+        if domains is not None and (
+            not isinstance(domains, list)
+            or any(not isinstance(domain, str) or not domain.strip() for domain in domains)
+        ):
+            raise ValueError("manifest.preservation.domains must be a list of domain names")
+        failures = preservation.get("failures")
+        if failures is not None and (
+            not isinstance(failures, list) or any(not isinstance(item, dict) for item in failures)
+        ):
+            raise ValueError("manifest.preservation.failures must be a list of objects")
     files = manifest.get("files", [])
     if files is None:
         files = []

@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import tempfile
 import time
+import zipfile
 from collections.abc import Callable, Generator
 from datetime import date
 from pathlib import Path
@@ -37,6 +38,7 @@ from ..services.data_portability import (
     bundle_to_zip_file,
     import_jsonl_payload,
     import_zip_payload,
+    is_canonical_dashboard_restore,
     table_counts,
 )
 from ..services.portability_contract import build_import_format_guide, scope_options
@@ -503,6 +505,7 @@ def data_portability_export_post(fmt: str):
 
     def run_export(cancelled: Callable[[], bool]) -> None:
         with app.app_context():
+            zip_preservation: dict[str, Any] = {}
             try:
                 with operation_maintenance(
                     current_app.config["DATABASE_PATH"], f"data export: {fmt}", logger=app.logger
@@ -513,6 +516,17 @@ def data_portability_export_post(fmt: str):
                                 conn, "all", current_app.config["ASSETS_DIR"], temp_export_path,
                                 app_version=str(current_app.config.get("APP_VERSION", "")),
                                 progress_callback=progress_cb,
+                            )
+                            with zipfile.ZipFile(temp_export_path, "r") as archive:
+                                manifest = json.loads(archive.read("manifest.json"))
+                            record_counts.update(dict(manifest.get("counts") or {}))
+                            zip_preservation = dict(manifest.get("preservation") or {})
+                            app.logger.info(
+                                "data portability ZIP package written records=%d assets=%d preserved=%d unresolved_mifp=%d",
+                                int(manifest.get("records") or 0),
+                                len(manifest.get("files") or []),
+                                int(zip_preservation.get("materialized") or 0),
+                                int(zip_preservation.get("remaining_remote") or 0),
                             )
                         else:
                             manifest = bundle_to_jsonl_file(
@@ -541,14 +555,45 @@ def data_portability_export_post(fmt: str):
                     fmt, total_bytes, int((time.monotonic() - started) * 1000), expired,
                     _export_cache_count(), record_counts,
                 )
-                audit_log("export.data_portability", "data portability export", category="admin", outcome="success",
-                          scope="all", format=fmt, bytes=total_bytes, counts=json.dumps(record_counts, separators=(",", ":")) if record_counts else None)
+                unresolved_mifp = int(zip_preservation.get("remaining_remote") or 0) if fmt == "zip" else 0
+                preserved_mifp = int(zip_preservation.get("materialized") or 0) if fmt == "zip" else 0
+                audit_log(
+                    "export.data_portability",
+                    "data portability export",
+                    category="admin",
+                    outcome="success",
+                    scope="all",
+                    format=fmt,
+                    bytes=total_bytes,
+                    counts=json.dumps(record_counts, separators=(",", ":")) if record_counts else None,
+                    preserved_mifp_assets=preserved_mifp,
+                    unresolved_mifp_assets=unresolved_mifp,
+                )
+                if unresolved_mifp:
+                    title_text = "Export ready with unresolved MIFP assets"
+                    result_message = (
+                        f"ZIP export ({size_str}) is ready, but {unresolved_mifp} MIFP-owned asset(s) "
+                        "could not be embedded and remain remote. See manifest.json for details."
+                    )
+                    icon_class, icon_modifier = "bi-exclamation-triangle", "is-warning"
+                elif fmt == "zip" and preserved_mifp:
+                    title_text = "Self-contained export ready"
+                    result_message = (
+                        f"ZIP export ({size_str}) is ready. {preserved_mifp} remote MIFP-owned asset(s) "
+                        "were embedded for offline re-import."
+                    )
+                    icon_class, icon_modifier = "bi-check-lg", "is-success"
+                else:
+                    title_text = "Export ready"
+                    result_message = f"{fmt.upper()} export ({size_str}) ready for download."
+                    icon_class, icon_modifier = "bi-check-lg", "is-success"
                 event_queue.put({
                     "event": "result", "ok": True,
-                    "title_text": "Export ready", "message": f"{fmt.upper()} export ({size_str}) ready for download.",
-                    "icon_class": "bi-check-lg", "icon_modifier": "is-success",
+                    "title_text": title_text, "message": result_message,
+                    "icon_class": icon_class, "icon_modifier": icon_modifier,
                     "filename": filename, "bytes": total_bytes, "mimetype": mimetype,
                     "download_token": token,
+                    "preservation": zip_preservation if fmt == "zip" else None,
                 })
             except Exception:
                 temp_export_path.unlink(missing_ok=True)
@@ -1173,15 +1218,40 @@ def _perform_import_unprotected(
             from ..services.job_manager import JobCancelled
             raise JobCancelled("Import cancelled by administrator")
         if not dry_run:
-            event_sink({"event": "phase", "phase": "assets", "label": "Recovering assets…", "current_step": 2, "total_steps": 5, "percent": mono(90)})
-            recovery = recover_missing_assets(
-                conn, Path(current_app.config["ASSETS_DIR"]),
-                cancel_check=cancel_check, commit=False, file_session=file_session,
-            )
-            if recovery.get("recovered", 0):
-                current_app.logger.info("Post-import asset recovery: %d recovered", recovery["recovered"])
-            if recovery.get("failed"):
-                current_app.logger.warning("Post-import asset recovery: %d still failed", len(recovery["failed"]))
+            canonical_dashboard_restore = is_canonical_dashboard_restore(summaries)
+            if canonical_dashboard_restore:
+                event_sink({
+                    "event": "phase", "phase": "assets",
+                    "label": "Verifying packaged assets…",
+                    "current_step": 2, "total_steps": 5, "percent": mono(90),
+                })
+                # A dashboard portable ZIP is a snapshot, not a scraper feed.
+                # Never make its restore depend on source websites still being
+                # online; missing files remain explicit instead of triggering a
+                # global recovery pass across the installation.
+                recovery = {
+                    "total": 0, "eligible": 0, "attempted": 0, "recovered": 0,
+                    "failed": [], "marked_missing": 0, "skipped": 0,
+                    "deferred": 0, "terminal": 0, "no_source": 0,
+                    "budget_exhausted": False, "network_skipped": True,
+                    "reason": "canonical_dashboard_restore",
+                }
+                current_app.logger.info(
+                    "post-import network asset recovery skipped for canonical dashboard restore"
+                )
+            else:
+                event_sink({
+                    "event": "phase", "phase": "assets", "label": "Recovering assets…",
+                    "current_step": 2, "total_steps": 5, "percent": mono(90),
+                })
+                recovery = recover_missing_assets(
+                    conn, Path(current_app.config["ASSETS_DIR"]),
+                    cancel_check=cancel_check, commit=False, file_session=file_session,
+                )
+                if recovery.get("recovered", 0):
+                    current_app.logger.info("Post-import asset recovery: %d recovered", recovery["recovered"])
+                if recovery.get("failed"):
+                    current_app.logger.warning("Post-import asset recovery: %d still failed", len(recovery["failed"]))
             summaries.append({"asset_recovery": recovery})
             event_sink({
                 "event": "metrics",

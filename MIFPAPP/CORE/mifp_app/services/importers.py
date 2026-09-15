@@ -886,12 +886,12 @@ def _restore_identity_asset(
     db_path = str(spec.get("path") or "").strip()
     _validate_asset_db_path(db_path, 0)
     target = resolve_db_asset_path(assets_dir, db_path)
-    source_dir = asset_source_dir or assets_dir
-    source = (
-        source_dir.parent / Path(*Path(db_path).parts[1:])
-        if Path(db_path).parts[:1] == ("assets",)
-        else source_dir / Path(db_path)
-    )
+    source_dir = Path(asset_source_dir or assets_dir)
+    # ``asset_source_dir`` is already the extracted assets/ root. Canonical DB
+    # paths may be either ``assets/kind/file`` or the older ``kind/file``; use
+    # the same resolver as the live asset library so both forms map to the
+    # packaged file instead of accidentally looking one directory too high.
+    source = resolve_db_asset_path(source_dir, db_path)
     local_file: Path | None = None
     if source.is_file():
         local_file = source

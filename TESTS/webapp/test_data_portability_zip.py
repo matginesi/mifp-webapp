@@ -1430,3 +1430,240 @@ def test_content_zip_import_is_additive_and_does_not_delete_local_data(tmp_path:
         "SELECT COUNT(*) FROM asset_links WHERE entity_type='news' AND entity_id=? AND asset_id=7",
         (incoming_id,),
     ).fetchone()[0] == 1
+
+
+def _insert_remote_news_asset(
+    conn: sqlite3.Connection,
+    *,
+    url: str,
+    asset_id: int = 1,
+    uid: str = "uid-remote-1",
+) -> None:
+    url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    conn.execute(
+        "INSERT INTO assets(id,uid,filename,path,kind,source_url,storage_status,is_external,checksum,source_url_sha256) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (
+            asset_id,
+            uid,
+            "legacy-paper.pdf",
+            f"external/legacy-paper-{asset_id}.pdf",
+            "pdf",
+            url,
+            "external",
+            1,
+            url_hash,
+            url_hash,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO news(id,title,slug,review_status) VALUES(1,'Legacy paper','legacy-paper','published')"
+    )
+    conn.execute(
+        "INSERT INTO asset_links(asset_id,entity_type,entity_id,role,is_primary) "
+        "VALUES(?, 'news', 1, 'document', 1)",
+        (asset_id,),
+    )
+
+
+def test_dashboard_zip_preserves_mifp_remote_asset_without_mutating_live_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import mifp_app.services.data_portability as portability
+    import mifp_app.services.importers as importers
+
+    source = _conn()
+    url = "https://events.mifp.eu/archive/legacy-paper.pdf"
+    _insert_remote_news_asset(source, url=url)
+    source_assets = tmp_path / "source-assets"
+
+    payload_bytes = b"%PDF-1.4\nportable legacy paper\n"
+    payload_sha = hashlib.sha256(payload_bytes).hexdigest()
+
+    def fake_download_asset(conn, remote_url, assets_dir, **kwargs):
+        assert remote_url == url
+        target = Path(assets_dir) / "pdf" / f"legacy-paper-{payload_sha[:12]}.pdf"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload_bytes)
+        row = conn.execute("SELECT id FROM assets WHERE source_url=?", (remote_url,)).fetchone()
+        asset_id = int(row["id"])
+        conn.execute(
+            "UPDATE assets SET filename=?,original_filename=?,path=?,mime_type=?,size=?,kind='pdf',"
+            "storage_status='local',is_external=0,checksum=?,content_sha256=? WHERE id=?",
+            (
+                target.name,
+                "legacy-paper.pdf",
+                f"assets/pdf/{target.name}",
+                "application/pdf",
+                len(payload_bytes),
+                payload_sha,
+                payload_sha,
+                asset_id,
+            ),
+        )
+        return asset_id
+
+    monkeypatch.setattr(portability, "download_asset", fake_download_asset)
+    payload = portability.bundle_to_zip(source, "all", source_assets)
+
+    # The export-only SAVEPOINT is rolled back: the live database remains remote.
+    live = source.execute(
+        "SELECT path,storage_status,is_external,checksum FROM assets WHERE id=1"
+    ).fetchone()
+    assert live["path"].startswith("external/")
+    assert live["storage_status"] == "external"
+    assert live["is_external"] == 1
+    assert live["checksum"] != payload_sha
+    assert not source_assets.exists()
+
+    with zipfile.ZipFile(BytesIO(payload), "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        record = json.loads(zf.read("records.jsonl").decode("utf-8").strip())
+        preserved_path = record["assets"][0]["path"]
+        archive_path = preserved_path if preserved_path.startswith("assets/") else f"assets/{preserved_path}"
+        assert zf.read(archive_path) == payload_bytes
+
+    assert record["assets"][0]["storage_status"] == "local"
+    assert record["assets"][0]["is_external"] == 0
+    assert record["assets"][0]["content_sha256"] == payload_sha
+    assert manifest["preservation"]["domains"] == ["mifp.eu"]
+    assert manifest["preservation"]["matching"] == 1
+    assert manifest["preservation"]["attempted"] == 1
+    assert manifest["preservation"]["materialized"] == 1
+    assert manifest["preservation"]["remaining_remote"] == 0
+    assert manifest["preservation"]["complete"] is True
+
+    # Re-import is offline for this asset because the file is carried by the ZIP.
+    def network_must_not_be_used(*args, **kwargs):
+        raise AssertionError("re-import unexpectedly attempted a network download")
+
+    monkeypatch.setattr(importers, "download_asset", network_must_not_be_used)
+    target = _conn()
+    target_assets = tmp_path / "target-assets"
+    summary = portability.import_zip_payload(target, payload, "all", target_assets)
+    assert summary["errors"] == []
+    restored = target.execute(
+        "SELECT uid,path,storage_status,is_external,source_url,content_sha256 FROM assets"
+    ).fetchone()
+    assert restored["uid"] == "uid-remote-1"
+    assert restored["storage_status"] == "local"
+    assert restored["is_external"] == 0
+    assert restored["source_url"] == url
+    assert restored["content_sha256"] == payload_sha
+    restored_file = portability.resolve_db_asset_path(target_assets, restored["path"])
+    assert restored_file.read_bytes() == payload_bytes
+
+
+def test_dashboard_zip_does_not_materialize_third_party_remote_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import mifp_app.services.data_portability as portability
+
+    source = _conn()
+    url = "https://example.org/files/third-party.pdf"
+    _insert_remote_news_asset(source, url=url)
+    calls: list[str] = []
+
+    def unexpected_download(conn, remote_url, assets_dir, **kwargs):
+        calls.append(remote_url)
+        raise AssertionError("third-party asset should not be materialized during export")
+
+    monkeypatch.setattr(portability, "download_asset", unexpected_download)
+    payload = portability.bundle_to_zip(source, "news", tmp_path / "source-assets")
+
+    assert calls == []
+    with zipfile.ZipFile(BytesIO(payload), "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        record = json.loads(zf.read("records.jsonl").decode("utf-8").strip())
+        assert not any(name.startswith("assets/") for name in zf.namelist())
+    assert manifest["preservation"]["matching"] == 0
+    assert manifest["preservation"]["complete"] is True
+    assert record["assets"][0]["storage_status"] == "external"
+    assert record["assets"][0]["url"] == url
+
+
+def test_dashboard_zip_reports_unresolved_mifp_asset_but_still_exports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import mifp_app.services.data_portability as portability
+
+    source = _conn()
+    url = "https://old.mifp.eu/files/gone.pdf"
+    _insert_remote_news_asset(source, url=url)
+
+    def failed_download(*args, **kwargs):
+        raise ValueError("legacy host returned 404")
+
+    monkeypatch.setattr(portability, "download_asset", failed_download)
+    payload = portability.bundle_to_zip(source, "news", tmp_path / "source-assets")
+
+    with zipfile.ZipFile(BytesIO(payload), "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        record = json.loads(zf.read("records.jsonl").decode("utf-8").strip())
+    preservation = manifest["preservation"]
+    assert preservation["matching"] == 1
+    assert preservation["attempted"] == 1
+    assert preservation["materialized"] == 0
+    assert preservation["failed"] == 1
+    assert preservation["remaining_remote"] == 1
+    assert preservation["complete"] is False
+    assert preservation["failures"][0]["url"] == url
+    assert record["assets"][0]["storage_status"] == "external"
+
+
+def test_canonical_dashboard_restore_is_offline_only_for_dashboard_snapshots() -> None:
+    import mifp_app.services.data_portability as portability
+
+    canonical = {
+        "filename": "backup.zip",
+        "manifest": {
+            "format": "mifp-jsonl-v2",
+            "format_version": 2,
+        },
+    }
+    assert portability.is_canonical_dashboard_restore([canonical]) is True
+    assert portability.is_canonical_dashboard_restore([
+        canonical,
+        {"filename": "older.zip", "manifest": {"format": "mifp-jsonl-v2", "format_version": 2}},
+    ]) is True
+    assert portability.is_canonical_dashboard_restore([
+        {"filename": "records.jsonl"}
+    ]) is False
+    assert portability.is_canonical_dashboard_restore([
+        {"filename": "scraper.zip", "manifest": {"format": "mifp-content", "format_version": 1}}
+    ]) is False
+    assert portability.is_canonical_dashboard_restore([
+        canonical, {"filename": "records.jsonl"}
+    ]) is False
+    assert portability.is_canonical_dashboard_restore([]) is False
+
+
+def test_manifest_preservation_metadata_is_optional_but_validated(tmp_path: Path) -> None:
+    import mifp_app.services.data_portability as portability
+
+    source = _conn()
+    payload = portability.bundle_to_zip(source, "news", tmp_path / "assets")
+    with zipfile.ZipFile(BytesIO(payload), "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+    # Older canonical v2 packages did not have preservation metadata.
+    legacy_shape = dict(manifest)
+    legacy_shape.pop("preservation", None)
+    assert portability._validate_manifest_object(legacy_shape)["format"] == "mifp-jsonl-v2"
+
+    malformed = dict(manifest)
+    malformed["preservation"] = {"complete": "yes"}
+    with pytest.raises(ValueError, match="preservation.complete"):
+        portability._validate_manifest_object(malformed)
+
+
+def test_generated_import_guide_describes_portable_offline_zip_contract() -> None:
+    from mifp_app.services.portability_contract import build_import_format_guide
+
+    guide = build_import_format_guide()
+    assert "Dashboard portable asset-preservation metadata" in guide
+    assert "`old.mifp.eu`" in guide
+    assert "`events.mifp.eu`" in guide
+    assert "exactly one `assets/` prefix" in guide
+    assert "offline/deterministic restore" in guide
+    assert "post-import network recovery pass is skipped" in guide
+    assert "older valid v2 dashboard ZIPs" in guide

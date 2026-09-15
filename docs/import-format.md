@@ -77,7 +77,11 @@ MIFP usa due package ZIP distinti perché hanno scopi diversi. La pipeline local
 
 La dashboard può invece esportare un **portable package** `mifp-jsonl-v2`/`format_version: 2`. Contiene gli stessi record canonici e gli asset e, nello scope completo, può aggiungere `state.json` per preservare lo stato durevole supportato dall'import/export applicativo. Non è un backup byte-per-byte di SQLite.
 
-In entrambi i package moderni `records.jsonl` è protetto da SHA-256 nel manifest; gli asset locali dichiarano percorso, dimensione e SHA-256. Il package portabile completo protegge anche `state.json`. Path ZIP, file inattesi, dimensioni, checksum e limiti di decompressione vengono validati prima dell'import.
+Prima di creare lo ZIP, l'export della dashboard prova anche a **materializzare temporaneamente gli asset remoti MIFP** tracciati nel database. Di default il dominio di preservazione è `mifp.eu`, quindi sono inclusi anche `www.mifp.eu`, `old.mifp.eu`, `events.mifp.eu` e gli altri sottodomini. I file vengono scaricati in staging e inseriti nello ZIP senza modificare il database o la libreria asset live. Gli URL di terze parti non vengono copiati automaticamente. Il manifest contiene un oggetto `preservation` con conteggi, eventuali errori e `remaining_remote`; gli ZIP v2 più vecchi senza questo oggetto restano validi.
+
+Il re-import di soli ZIP dashboard `mifp-jsonl-v2` è volutamente **offline**: ripristina i file presenti nel package e non lancia la recovery HTTP post-import. Se un asset MIFP non è stato materializzato durante l'export, resta esplicitamente irrisolto invece di rendere il restore dipendente dal vecchio sito. JSONL e package scraper `mifp-content` mantengono invece il normale comportamento di ingest/recovery degli asset remoti.
+
+In entrambi i package moderni `records.jsonl` è protetto da SHA-256 nel manifest; gli asset locali dichiarano percorso, dimensione e SHA-256. Il package portabile completo protegge anche `state.json`. Per un asset, `archive_path` contiene esattamente un prefisso `assets/`: se `path` lo contiene già non viene aggiunto di nuovo. Path ZIP, file inattesi, dimensioni, checksum e limiti di decompressione vengono validati prima dell'import.
 
 L'export JSONL della dashboard è volutamente **record-only**: una riga JSON per record canonico, senza stato dell'installazione e senza asset binari in Base64. È il formato da usare per ispezione, pipeline e versionamento dei dati, non per un ripristino completo.
 

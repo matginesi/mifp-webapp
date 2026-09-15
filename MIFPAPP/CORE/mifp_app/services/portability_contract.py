@@ -336,6 +336,11 @@ def build_import_format_guide() -> str:
         "`records.jsonl`, and declared files under `assets/`. It never carries installation-owned durable state. "
         f"Dashboard portable ZIP export uses `{CANONICAL_FORMAT}` version {PORTABLE_FORMAT_VERSION} and may also "
         "contain `state.json` for full-scope installation transfer. Both formats are importable.", "",
+        "A dashboard ZIP is intended to be a portable snapshot. Before serializing it, the exporter tries to "
+        "materialize DB-tracked remote assets whose source host belongs to the configured preservation domains. "
+        "The default is `mifp.eu`, which also covers `www.mifp.eu`, `old.mifp.eu`, `events.mifp.eu`, and other "
+        "subdomains. This staging is export-only: it does not rewrite the live database or live asset directory. "
+        "Third-party remote assets are deliberately not mirrored by this rule.", "",
         "Each declared asset needs exact byte size and lowercase SHA-256. `records_sha256` hashes the exact UTF-8 "
         "record bytes; a dashboard package that contains state also hashes `state.json`. Paths are relative and "
         "unique, and any mismatch rejects the archive.", "",
@@ -368,10 +373,24 @@ def build_import_format_guide() -> str:
         "Manifest invariants:", "",
         "- `format`, `format_version`, `scope`, `records`, `records_sha256`, `counts`, and `files` are required for modern content packages.",
         "- `records` equals the number of non-empty record lines; `counts` exactly groups them by singular type.",
-        "- `path` is the database-relative asset path; `archive_path` is exactly `assets/` plus that path.",
+        "- `path` is the database-relative asset path. `archive_path` contains exactly one `assets/` prefix: if `path` already starts with `assets/`, it is unchanged; otherwise `assets/` is prepended.",
         "- Every archive asset is declared exactly once; no undeclared asset or unsupported extra file is allowed.",
         "- An `all` dashboard portable ZIP also requires `state.json`, `state_sha256`, and `state_counts`.",
         "- Hash exact bytes, not parsed/reformatted JSON. Repacking or pretty-printing after hashing invalidates the package.", "",
+        "### Dashboard portable asset-preservation metadata", "",
+        f"New `{CANONICAL_FORMAT}` version {PORTABLE_FORMAT_VERSION} exports add a `preservation` object to `manifest.json`. "
+        "This object is additive metadata: older valid v2 dashboard ZIPs that do not contain it remain importable.", "",
+        "```json", compact({
+            "preservation": {
+                "enabled": True, "domains": ["mifp.eu"], "matching": 12,
+                "already_local": 4, "attempted": 8, "materialized": 8,
+                "failed": 0, "remaining_remote": 0, "complete": True, "failures": [],
+            }
+        }), "```", "",
+        "`complete: true` means that every DB-tracked asset matching the configured preservation domains is "
+        "packageable from the ZIP snapshot. It does **not** mean that every third-party URL on the site has been "
+        "mirrored. If `remaining_remote` is non-zero, the export still completes but the dashboard reports the "
+        "unresolved MIFP assets and `failures` contains bounded diagnostics.", "",
         "## Dashboard JSONL export", "",
         "Dashboard JSONL export is deliberately record-only: one canonical record per line, with no Base64 "
         "binary payloads and no installation-owned durable state. This keeps JSONL suitable for inspection, "
@@ -403,7 +422,10 @@ def build_import_format_guide() -> str:
         "- A malformed record is rolled back to its savepoint and reported with its line number; other valid records may continue.",
         "- A fatal package-integrity error rejects the package. A multi-file batch is committed only if its database transaction completes.",
         "- `Validate only` verifies syntax/structure/package integrity but cannot prove factual truth and does not exercise every final database conflict.",
-        "- Actual import creates a pre-import database backup. Asset/network failures may be reported separately from record errors.", "",
+        "- Actual import creates a pre-import database backup. Asset/network failures may be reported separately from record errors.",
+        f"- Re-importing only validated `{CANONICAL_FORMAT}` dashboard ZIPs is an offline/deterministic restore: packaged assets are restored from the archive and the post-import network recovery pass is skipped.",
+        f"- Record-only JSONL and `{CONTENT_FORMAT}` scraper packages may still use normal asset recovery for unresolved remote files; they are content-ingest formats, not guaranteed offline snapshots.",
+        "- A canonical dashboard asset path may be `assets/<kind>/<file>` or an older relative `<kind>/<file>` path; import resolves both without creating a second `assets/assets/` level.", "",
         "Never tell the operator that validation proves the facts are correct. It proves conformance, not truth.", "",
         "## Per-type decision rules", "",
         "### Members", "",
