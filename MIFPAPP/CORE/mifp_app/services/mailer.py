@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import smtplib
 from email.message import EmailMessage
-from email.utils import parseaddr
+from email.utils import formataddr, parseaddr
 
 log = logging.getLogger("mifp.mailer")
 
@@ -25,7 +25,9 @@ def send_mail(app, *, to: str, subject: str, body: str, reply_to: str | None = N
         log.info("mail disabled subject=%s to=%s", _clean_header(subject), to)
         return False
     msg = EmailMessage()
-    msg["From"] = _valid_email(app.config.get("MAIL_FROM", "no-reply@mifp.eu"))
+    from_address = _valid_email(app.config.get("MAIL_FROM", "no-reply@mifp.eu"))
+    from_name = _clean_header(str(app.config.get("MAIL_FROM_NAME", "")))
+    msg["From"] = formataddr((from_name, from_address)) if from_name else from_address
     msg["To"] = _valid_email(to)
     msg["Subject"] = _clean_header(subject)[:180]
     if reply_to:
@@ -39,8 +41,10 @@ def send_mail(app, *, to: str, subject: str, body: str, reply_to: str | None = N
         if not host:
             raise RuntimeError("SMTP_HOST is not configured")
         port = int(app.config.get("SMTP_PORT", 587))
-        with smtplib.SMTP(host, port, timeout=20) as smtp:
-            if app.config.get("SMTP_USE_TLS", True):
+        security = str(app.config.get("SMTP_SECURITY", "starttls") or "starttls").lower()
+        smtp_class = smtplib.SMTP_SSL if security == "tls" else smtplib.SMTP
+        with smtp_class(host, port, timeout=20) as smtp:
+            if security == "starttls":
                 smtp.starttls()
             username = app.config.get("SMTP_USERNAME")
             password = app.config.get("SMTP_PASSWORD")

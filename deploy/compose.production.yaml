@@ -8,6 +8,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: ${MIFP_SECRETS_FILE:-/etc/mifp/secrets.env}
+        required: false
     environment:
       MIFP_LOAD_DOTENV: "0"
       FLASK_ENV: production

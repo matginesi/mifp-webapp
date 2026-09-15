@@ -7,6 +7,11 @@ MIFP_HOME="${MIFP_HOME:-/opt/mifp}"
 ENV_FILE="$MIFP_HOME/.env"
 ENV_EXAMPLE="$MIFP_HOME/.env.example"
 CONFIG_HELPER="$MIFP_HOME/configure.py"
+VPS_CONFIG_HELPER="$MIFP_HOME/vps_config.py"
+CONFIG_DIR="${MIFP_CONFIG_DIR:-/etc/mifp}"
+PUBLIC_CONFIG_FILE="$CONFIG_DIR/config.env"
+SECRETS_FILE="$CONFIG_DIR/secrets.env"
+DOCKER_CONFIG_FILE="${MIFP_DOCKER_CONFIG_FILE:-/root/.docker/config.json}"
 COMPOSE_FILE="$MIFP_HOME/compose.yaml"
 RELEASE_FILE="$MIFP_HOME/release.env"
 UPGRADE_FILE="$MIFP_HOME/upgrade.env"
@@ -20,6 +25,8 @@ EVENTS_PHP_STATE="$MIFP_HOME/events-php-enabled.txt"
 EVENTS_PHP_INCLUDE="${MIFP_EVENTS_PHP_INCLUDE:-/etc/caddy/mifp-events-php.caddy}"
 EVENTS_PHP_SOCKET="${MIFP_EVENTS_PHP_SOCKET:-/run/php/mifp-events.sock}"
 CADDY_CONFIG="${MIFP_CADDY_CONFIG:-/etc/caddy/Caddyfile}"
+CADDY_TEMPLATE="$MIFP_HOME/Caddyfile.example"
+LOCAL_HOSTS_HELPER="$MIFP_HOME/local-hosts.sh"
 PHP_FPM_SERVICE_FILE="$MIFP_HOME/php-fpm.service"
 BACKUP_SCRIPT="$MIFP_HOME/backup.sh"
 LOCK_FILE="${MIFP_DEPLOY_LOCK_FILE:-/run/lock/mifp-deploy.lock}"
@@ -38,6 +45,12 @@ MIFP production operator
 
 Uso normale:
   sudo mifpctl registry-login             login interattivo a GHCR (PAT read:packages)
+  sudo mifpctl configure [--section NAME] wizard progressivo (web/mail/registry/backup)
+  sudo mifpctl config-show                riepilogo senza mostrare segreti
+  sudo mifpctl config-set KEY VALUE       aggiorna un valore non segreto
+  sudo mifpctl config-unset KEY           rimuove un valore
+  sudo mifpctl config-check               readiness read-only (exit 0/1)
+  sudo mifpctl registry-check             verifica accesso al manifest GHCR
   sudo mifpctl init                       primo avvio da :latest, fissato subito a digest
   sudo mifpctl deploy sha-<commit>        nuova versione applicazione; il DB non viene modificato
   sudo mifpctl status
@@ -64,7 +77,7 @@ Manutenzione rara:
   sudo mifpctl restart
   sudo mifpctl stop
   sudo mifpctl admin [--username NAME]
-  sudo mifpctl configure [--admin]
+  sudo mifpctl admin-reset-password [--username NAME]
 
 Solo init può usare :latest, esclusivamente come selector iniziale. Lo stato
 persistente contiene sempre un digest OCI immutabile.
@@ -75,6 +88,57 @@ EOF
 [[ -f "$ENV_FILE" ]] || die "Manca $ENV_FILE. Esegui prima deploy/bootstrap-vps.sh."
 [[ -f "$COMPOSE_FILE" ]] || die "Manca $COMPOSE_FILE. Riesegui bootstrap-vps.sh."
 [[ -f "$CONFIG_HELPER" ]] || die "Manca $CONFIG_HELPER. Riesegui bootstrap-vps.sh con la cartella deploy aggiornata."
+[[ -f "$VPS_CONFIG_HELPER" ]] || die "Manca $VPS_CONFIG_HELPER. Riesegui bootstrap-vps.sh con la cartella deploy aggiornata."
+
+config_cli() {
+  python3 "$VPS_CONFIG_HELPER" \
+    --config-file "$PUBLIC_CONFIG_FILE" \
+    --secrets-file "$SECRETS_FILE" \
+    --runtime-env "$ENV_FILE" \
+    --example "$ENV_EXAMPLE" \
+    --docker-config "$DOCKER_CONFIG_FILE" "$@"
+}
+
+apply_host_configuration() {
+  local domain www_domain events_domain tls_directive="" tmp
+  cleanup_host_config_tmp() { [[ -z "${tmp:-}" ]] || rm -f -- "$tmp"; }
+  trap cleanup_host_config_tmp EXIT
+  domain="$(config_cli get DOMAIN)"
+  if [[ -z "$domain" ]]; then
+    bash "$LOCAL_HOSTS_HELPER" --clear "${MIFP_HOSTS_FILE:-/etc/hosts}"
+    tmp="$(mktemp "$(dirname "$CADDY_CONFIG")/.mifp-caddy.XXXXXX")"
+    printf '%s\n' ':80 {' '    respond "MIFP host ready; run sudo mifpctl configure" 503' '}' >"$tmp"
+  else
+    www_domain="$(config_cli get WWW_DOMAIN)"
+    events_domain="$(config_cli get EVENTS_DOMAIN)"
+    [[ -n "$www_domain" && -n "$events_domain" ]] || die "Domini incompleti; esegui sudo mifpctl configure --section web."
+    bash "$LOCAL_HOSTS_HELPER" "$domain" "${MIFP_HOSTS_FILE:-/etc/hosts}" "$www_domain" "$events_domain"
+    [[ "$domain" != *.home.arpa ]] || tls_directive="tls internal"
+    tmp="$(mktemp "$(dirname "$CADDY_CONFIG")/.mifp-caddy.XXXXXX")"
+    sed -e "s/__MIFP_DOMAIN__/$domain/g" \
+      -e "s/__MIFP_WWW_DOMAIN__/$www_domain/g" \
+      -e "s/__MIFP_EVENTS_DOMAIN__/$events_domain/g" \
+      -e "s/__MIFP_TLS__/$tls_directive/g" "$CADDY_TEMPLATE" >"$tmp"
+  fi
+  chown root:caddy "$tmp"; chmod 0644 "$tmp"
+  caddy fmt --overwrite "$tmp" >/dev/null
+  caddy validate --config "$tmp" --adapter caddyfile >/dev/null
+  mv -f "$tmp" "$CADDY_CONFIG"
+  tmp=""
+  trap - EXIT
+  systemctl reload caddy.service 2>/dev/null || systemctl restart caddy.service
+  if [[ "$domain" == *.home.arpa ]]; then
+    caddy trust --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null 2>&1 \
+      || say "WARN: CA locale Caddy non installata nel trust store della VPS."
+    local lan_ip
+    lan_ip="$(hostname -I 2>/dev/null | tr ' ' '\n' | awk '/^[0-9]+\./ && $0 !~ /^127\./ {print}' | sort -u | awk 'NR==1 {value=$0} NR==2 {value=""} END {print value}')"
+    if [[ -n "$lan_ip" ]]; then
+      say "Workstation /etc/hosts: $lan_ip $domain $www_domain $events_domain"
+    else
+      say "Workstation /etc/hosts: individua l'IP LAN con 'hostname -I', poi mappa $domain $www_domain $events_domain"
+    fi
+  fi
+}
 
 read_release_value() {
   local key="$1"
@@ -120,7 +184,7 @@ env_value() {
 }
 
 validate_production_env() {
-  python3 "$CONFIG_HELPER" check --env-file "$ENV_FILE" --quiet || die "Configurazione non valida. Esegui: sudo mifpctl configure"
+  config_cli validate || die "Configurazione non valida. Esegui: sudo mifpctl configure"
   chmod 0600 "$ENV_FILE"; chown root:root "$ENV_FILE"
 }
 
@@ -358,6 +422,7 @@ do_registry_login() {
   [[ -n "$token" ]] || die "Token vuoto."
   if printf '%s\n' "$token" | docker login ghcr.io --username "$username" --password-stdin; then
     token=""; unset token
+    config_cli set REGISTRY_USERNAME "$username" >/dev/null
     say "GHCR login successful."
     return 0
   fi
@@ -365,10 +430,33 @@ do_registry_login() {
   die "GHCR login failed. Verify username, PAT classic and read:packages scope."
 }
 
+do_registry_check() {
+  local repository
+  has docker || die "Docker non disponibile. Riesegui bootstrap-vps.sh."
+  docker info >/dev/null 2>&1 || die "Docker daemon non raggiungibile."
+  repository="$(image_repository)"
+  docker manifest inspect "$repository:latest" >/dev/null 2>&1 \
+    || die "GHCR non accessibile o manifest :latest assente. Esegui: sudo mifpctl registry-login"
+  say "Registry: OK ($repository:latest leggibile; nessuna release modificata)"
+}
+
+do_config_check() {
+  config_cli check || return 1
+  ensure_tools
+  systemctl is-active caddy.service >/dev/null 2>&1 || die "Caddy non è attivo."
+  caddy validate --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null 2>&1 \
+    || die "Caddyfile non valido."
+  do_registry_check
+  say "Host readiness: READY"
+}
+
 do_init() {
   local selector image db="$DATA_DIR/mifp.db"
   [[ $# -eq 0 ]] || die "Uso: mifpctl init"
+  do_config_check || die "Configurazione non pronta. Correggi le azioni indicate e ripeti config-check."
   validate_production_env; ensure_tools; prepare_runtime_storage
+  systemctl is-active caddy.service >/dev/null 2>&1 || die "Caddy non è attivo."
+  caddy validate --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null 2>&1 || die "Caddyfile non valido."
   [[ ! -e "$RELEASE_FILE" ]] || die "Release già inizializzata. Usa: sudo mifpctl deploy sha-<commit>"
   [[ ! -e "$db" ]] || die "$db esiste già senza una release registrata; init non lo sovrascrive."
   selector="$(image_repository):latest"
@@ -382,7 +470,9 @@ do_init() {
     rm -f -- "$db" "$db-wal" "$db-shm"
     die "Init fallito; nessuna release o database iniziale è stato registrato."
   fi
-  if ! systemctl enable --now mifp-backup.timer; then
+  if [[ "$(config_cli get BACKUP_ENABLED)" == "false" ]]; then
+    systemctl disable --now mifp-backup.timer >/dev/null 2>&1 || true
+  elif ! systemctl enable --now mifp-backup.timer; then
     compose_with_image "$image" down >/dev/null 2>&1 || true
     rm -f -- "$db" "$db-wal" "$db-shm"
     die "Init fallito: timer backup non abilitato; release e DB iniziale rimossi."
@@ -805,7 +895,7 @@ do_events_php_enable() {
     chmod 0644 "$tmp"; chown root:root "$tmp"; mv -f "$tmp" "$EVENTS_PHP_STATE"
   fi
   install_events_php_include
-  say "PHP abilitato solo per https://events.$(env_value MIFP_DOMAIN)/$prefix/"
+  say "PHP abilitato solo per https://$(config_cli get EVENTS_DOMAIN)/$prefix/"
 }
 
 do_events_php_disable() {
@@ -873,16 +963,17 @@ do_events_rollback() {
 }
 
 do_status() {
-  local current previous php_service events_count=0
+  local current previous php_service events_domain events_count=0
   current="$(current_image || true)"; previous="$(previous_image || true)"
+  events_domain="$(config_cli get EVENTS_DOMAIN)"
   say "Current image:  ${current:-none}"; say "Previous image: ${previous:-none}"
   [[ -n "$current" ]] && compose_with_image "$current" ps || docker ps --filter label=com.docker.compose.project=mifp || true
   systemctl is-active caddy >/dev/null 2>&1 && say "Caddy: attivo" || say "Caddy: NON attivo"
   if [[ -d "$EVENTS_DIR" ]]; then
     events_count="$(find "$EVENTS_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l)"
-    say "events.mifp.eu: $events_count directory pubbliche in $EVENTS_DIR"
+    say "${events_domain:-events}: $events_count directory pubbliche in $EVENTS_DIR"
   else
-    say "events.mifp.eu: directory pubblica mancante"
+    say "${events_domain:-events}: directory pubblica mancante"
   fi
   php_service="$(events_php_service || true)"
   if [[ -n "$php_service" ]] && systemctl is-active "$php_service" >/dev/null 2>&1; then
@@ -900,10 +991,10 @@ do_restart() { local current; validate_production_env; ensure_tools; prepare_run
 do_backup() { [[ -x "$BACKUP_SCRIPT" ]] || die "Manca $BACKUP_SCRIPT"; "$BACKUP_SCRIPT"; }
 
 do_doctor() {
-  local failed=0 current db="$DATA_DIR/mifp.db" domain php_service
+  local failed=0 current db="$DATA_DIR/mifp.db" domain events_domain php_service
   local min_mb available_kb available_mb target db_check
   step "Stato host"
-  if python3 "$CONFIG_HELPER" check --env-file "$ENV_FILE" --quiet; then say "Configuration: OK"; else say "Configuration: ERROR"; failed=1; fi
+  if config_cli validate; then say "Configuration: OK"; else say "Configuration: ERROR"; failed=1; fi
   docker info >/dev/null 2>&1 && say "Docker: OK" || { say "Docker: ERROR"; failed=1; }
   docker compose version >/dev/null 2>&1 && say "Compose: OK" || { say "Compose: ERROR"; failed=1; }
   systemctl is-active caddy >/dev/null 2>&1 && say "Caddy: OK" || { say "Caddy: ERROR"; failed=1; }
@@ -959,12 +1050,13 @@ do_doctor() {
   fi
 
   domain="$(env_value MIFP_DOMAIN || true)"
+  events_domain="$(config_cli get EVENTS_DOMAIN)"
   if [[ -n "$current" && -n "$domain" ]]; then
     curl -fsS --max-time 5 "https://$domain/health" >/dev/null 2>&1 \
       && say "HTTPS application: OK" || { say "HTTPS application: ERROR"; failed=1; }
   fi
-  if [[ -n "$domain" ]]; then
-    curl -fsS --max-time 5 "https://events.$domain/.mifp-events-health" >/dev/null 2>&1 \
+  if [[ -n "$events_domain" ]]; then
+    curl -fsS --max-time 5 "https://$events_domain/.mifp-events-health" >/dev/null 2>&1 \
       && say "HTTPS events: OK" || { say "HTTPS events: ERROR"; failed=1; }
   fi
   ((failed == 0)) || die "Doctor found errors."
@@ -975,24 +1067,37 @@ do_admin() {
   local args=(admin --env-file "$ENV_FILE") current; shift || true
   while (($#)); do case "$1" in --username) [[ $# -ge 2 ]] || die "--username richiede un valore"; args+=(--username "$2"); shift 2 ;; --username=*) args+=("$1"); shift ;; *) die "Uso: mifpctl admin [--username NAME]" ;; esac; done
   python3 "$CONFIG_HELPER" "${args[@]}"
+  config_cli import-admin
   current="$(current_image || true)"; [[ -n "$current" ]] && service_running "$current" && do_restart || true
 }
 
 do_configure() {
-  local force_admin=0 current; shift || true
-  while (($#)); do case "$1" in --admin) force_admin=1; shift ;; *) die "Uso: mifpctl configure [--admin]" ;; esac; done
-  local args=(configure --env-file "$ENV_FILE" --example "$ENV_EXAMPLE" --admin-if-missing); ((force_admin)) && args+=(--admin)
-  python3 "$CONFIG_HELPER" "${args[@]}"
+  local current; shift || true
+  config_cli configure "$@"
+  apply_host_configuration
   current="$(current_image || true)"; [[ -n "$current" ]] && service_running "$current" && do_restart || true
+}
+
+do_config_set() {
+  [[ $# -eq 2 ]] || die "Uso: mifpctl config-set KEY VALUE"
+  config_cli set "$1" "$2"
+  case "${1^^}" in DOMAIN|WWW_DOMAIN|EVENTS_DOMAIN|ENVIRONMENT) apply_host_configuration ;; esac
+}
+
+do_config_unset() {
+  [[ $# -eq 1 ]] || die "Uso: mifpctl config-unset KEY"
+  config_cli unset "$1"
+  case "${1^^}" in DOMAIN|WWW_DOMAIN|EVENTS_DOMAIN|ENVIRONMENT) apply_host_configuration ;; esac
 }
 
 command="${1:-status}"
 case "$command" in
-  init|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|rollback-upgrade|rollback|--rollback|restart|stop|admin|configure|fix-permissions|events-import|events-rollback|events-php-enable|events-php-disable)
+  init|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|rollback-upgrade|rollback|--rollback|restart|stop|admin|admin-reset-password|configure|config-set|config-unset|fix-permissions|events-import|events-rollback|events-php-enable|events-php-disable)
     mkdir -p "$(dirname "$LOCK_FILE")"; exec 9>"$LOCK_FILE"; flock -n 9 || die "Un'altra operazione MIFP è già in corso." ;;
 esac
 case "$command" in
   registry-login) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl registry-login"; do_registry_login ;;
+  registry-check) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl registry-check"; do_registry_check ;;
   init) shift; do_init "$@" ;;
   first-deploy) shift; do_first_deploy "$@" ;;
   deploy) shift; do_deploy "$@" ;;
@@ -1015,7 +1120,12 @@ case "$command" in
   events-php-enable) shift; do_events_php_enable "$@" ;;
   events-php-disable) shift; do_events_php_disable "$@" ;;
   admin) do_admin "$@" ;;
+  admin-reset-password) do_admin "$@" ;;
   configure) do_configure "$@" ;;
+  config-show) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl config-show"; config_cli show ;;
+  config-set) shift; do_config_set "$@" ;;
+  config-unset) shift; do_config_unset "$@" ;;
+  config-check|production-check) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl config-check"; do_config_check ;;
   -h|--help|help) usage ;;
   *) usage >&2; die "Comando sconosciuto: $command" ;;
 esac

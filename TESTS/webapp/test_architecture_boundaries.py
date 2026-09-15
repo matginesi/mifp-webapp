@@ -58,7 +58,7 @@ def test_deploy_caddyfile_proxies_to_localhost() -> None:
     assert "reverse_proxy 127.0.0.1:8000" in caddyfile
     assert "@ready path /ready" in caddyfile
     assert "respond @ready 404" in caddyfile
-    assert "events.__MIFP_DOMAIN__" in caddyfile
+    assert "__MIFP_EVENTS_DOMAIN__" in caddyfile
     assert "root * /opt/mifp/events" in caddyfile
     assert "mifp-events-php.caddy" in caddyfile
     assert "@events_php_source" in caddyfile
@@ -214,7 +214,9 @@ def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     assert "mifp-backup.timer" in script
     assert '[[ -f "$MIFP_HOME/data/mifp.db"' in script
     assert "systemctl disable --now mifp-backup.timer" in script
-    assert "--admin-if-missing" in script
+    assert "--admin-if-missing" not in script
+    assert 'install -o root -g root -m 0750 "$SCRIPT_DIR/vps_config.py"' in script
+    assert "Host bootstrap completed" in script
     assert "caddy fmt --overwrite /etc/caddy/Caddyfile" in script
     assert 'if [[ "$DOMAIN" == *.home.arpa ]]' in script
     assert 'MIFP_TLS_DIRECTIVE="tls internal"' in script

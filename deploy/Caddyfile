@@ -1,12 +1,12 @@
-# Installed by bootstrap-vps.sh after replacing __MIFP_DOMAIN__.
+# Installed after replacing the three domain placeholders and TLS directive.
 #
 # The Flask application remains isolated behind loopback.  Historical and
 # newly-published conference sites are served directly from /opt/mifp/events.
-# PHP is intentionally deny-by-default on events.__MIFP_DOMAIN__: the bootstrap
+# PHP is intentionally deny-by-default on __MIFP_EVENTS_DOMAIN__: the bootstrap
 # installs a hardened PHP-FPM pool, but execution is enabled only for explicit
 # conference paths written to /etc/caddy/mifp-events-php.caddy by mifpctl.
 
-__MIFP_DOMAIN__, www.__MIFP_DOMAIN__ {
+__MIFP_DOMAIN__, __MIFP_WWW_DOMAIN__ {
     __MIFP_TLS__
     encode zstd gzip
     header -Server
@@ -18,7 +18,7 @@ __MIFP_DOMAIN__, www.__MIFP_DOMAIN__ {
     reverse_proxy 127.0.0.1:8000
 }
 
-events.__MIFP_DOMAIN__ {
+__MIFP_EVENTS_DOMAIN__ {
     __MIFP_TLS__
     encode zstd gzip
     header {

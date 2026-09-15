@@ -37,9 +37,25 @@ Backup manuale immediato:
 sudo mifpctl backup
 ```
 
+## VPS configuration lifecycle
+
+Il lifecycle è deliberatamente progressivo:
+
+```text
+bootstrap -> configure -> registry-login -> config-check -> init -> doctor
+                                                               -> deploy
+                                                               -> backup/restore
+```
+
+`bootstrap-vps.sh` prepara Ubuntu, Docker, Caddy, PHP-FPM, utenti, firewall e
+file iniziali; non richiede dominio o admin. `configure` conserva i valori che
+non vengono modificati. `init` è ammesso solo quando `config-check` conferma
+domini, admin, DNS (fuori dal local mode) e login registry.
+
 ## Prima installazione, una volta sola
 
-Prerequisiti: Ubuntu, DNS del dominio puntato alla VPS, accesso SSH con `sudo`.
+Prerequisiti: Ubuntu e accesso SSH con `sudo`. Il DNS può essere completato
+anche dopo il bootstrap.
 
 Dal PC:
 
@@ -52,21 +68,35 @@ Sulla VPS:
 
 ```bash
 sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
-  --domain mifp.eu \
   --image-repository ghcr.io/matginesi/mifp-webapp
 ```
 
 Il bootstrap installa Docker/Caddy/SQLite/PHP-FPM, crea `/opt/mifp`, configura firewall,
-HTTPS, backup automatico, `SECRET_KEY` e amministratore. La password admin viene
-chiesta due volte, deve avere almeno **10 caratteri** e, in caso di errore o
-mancata corrispondenza, viene richiesta di nuovo senza interrompere il bootstrap.
-Viene salvato solo l'hash. `/opt/mifp/.env` è `root:root` con permessi `0600`.
+systemd e `mifpctl`, quindi termina anche con configurazione incompleta. Finché
+il dominio manca, Caddy risponde su HTTP con una pagina di attesa; non tenta
+ACME e non inventa record locali.
+
+Configura poi, anche in più sessioni:
+
+```bash
+sudo mifpctl configure
+sudo mifpctl config-set DOMAIN mifp.eu
+sudo mifpctl config-set PUBLIC_IPV4 203.0.113.10
+sudo mifpctl admin
+sudo mifpctl config-show
+```
+
+I non-segreti sono in `/etc/mifp/config.env` (`root:root`, `0640`); hash e
+password in `/etc/mifp/secrets.env` (`0600`). `config-set` rifiuta i segreti in
+command line: usa `configure --section mail|backup`. Il PAT GHCR rimane soltanto
+nel credential store Docker di root.
 
 La CI esegue in parallelo test e audit delle dipendenze; la build/publish GHCR
 parte solo se entrambi sono verdi. Dopo che GitHub Actions ha pubblicato una release:
 
 ```bash
 sudo mifpctl registry-login
+sudo mifpctl config-check
 sudo mifpctl init
 sudo mifpctl doctor
 ```
@@ -76,10 +106,9 @@ sudo mifpctl doctor
 file MIFP. `init` scarica `ghcr.io/matginesi/mifp-webapp:latest`, lo risolve nel digest OCI
 immutabile, crea un DB **schema-only v10**, lo verifica e avvia la webapp. Lo
 stato persistente non contiene mai `latest`.
-`mifpctl doctor` può essere eseguito anche subito dopo il bootstrap: prima di
-`init`, `DB: NOT INITIALIZED` e `Release: NOT INITIALIZED` descrivono lo stato
-atteso e non sono errori. Dopo `init`, DB, release e healthcheck diventano
-obbligatori.
+`config-check` non modifica alcun file. SMTP e backup remoto mancanti sono
+opzionali; dominio/admin/DNS/login GHCR sono bloccanti. `doctor` verifica invece
+l'host e, dopo `init`, anche DB, release e healthcheck.
 Apri quindi la dashboard e importa lo ZIP prodotto dagli scraper. Sono accettati
 solo package moderni esplicitamente versionati (`mifp-content` v1 oppure
 `mifp-jsonl-v2` v2); vecchi ZIP e vecchi JSONL self-contained sono rifiutati.
@@ -297,16 +326,20 @@ Cambio password:
 
 ```bash
 sudo mifpctl admin
+# alias esplicito:
+sudo mifpctl admin-reset-password
 ```
 
-Riconfigurazione guidata:
+La password viene chiesta due volte e resta soltanto sotto forma di hash. Per
+configurare SMTP o restic senza esporre password nella shell history:
 
 ```bash
-sudo mifpctl configure
-sudo mifpctl configure --admin
+sudo mifpctl configure --section mail
+sudo mifpctl configure --section backup
 ```
 
-Non scrivere password in chiaro nel repository o in `/opt/mifp/.env`.
+Non scrivere password in chiaro nel repository, in `config.env` o nel file
+runtime `/opt/mifp/.env`.
 
 ## Sicurezza runtime
 

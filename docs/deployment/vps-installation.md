@@ -68,12 +68,53 @@ ls -la /tmp/mifp-deploy
 ```
 
 Devono essere presenti almeno `bootstrap-vps.sh`, `deploy.sh`, `mifpctl`,
-`configure.py`, `local-hosts.sh`, `Caddyfile`, `compose.production.yaml` e i
+`configure.py`, `vps_config.py`, `local-hosts.sh`, `Caddyfile`, `compose.production.yaml` e i
 file systemd del backup.
 
 ## 2. Deploy su VPS pubblica
 
-### 2.1 Configura il DNS prima del bootstrap
+### 2.1 Esegui il bootstrap dell'host
+
+Il dominio non è richiesto. Sulla VPS:
+
+```bash
+sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
+  --image-repository ghcr.io/matginesi/mifp-webapp
+```
+
+Il comando installa Docker Engine, Compose, Caddy, SQLite, PHP-FPM e gli
+strumenti host; crea utenti/directory, systemd e firewall; installa `mifpctl`;
+infine inizializza i file di configurazione senza chiedere credenziali
+applicative. Se manca il dominio, Caddy resta su una configurazione HTTP di
+attesa. Il bootstrap è idempotente e non elimina DB, dati o release esistenti.
+
+Un vecchio `/opt/mifp/.env` viene migrato preservando dominio, repository,
+admin e segreti esistenti. Dopo la migrazione, i file autorevoli sono:
+
+```text
+/etc/mifp/config.env    root:root 0640   valori non sensibili
+/etc/mifp/secrets.env   root:root 0600   segreti e hash admin
+/opt/mifp/.env          root:root 0600   compatibilità runtime, senza segreti
+```
+
+### 2.2 Configura progressivamente dominio e DNS
+
+Avvia il wizard o imposta soltanto i dati già disponibili:
+
+```bash
+sudo mifpctl configure --section web
+sudo mifpctl config-set DOMAIN mifp.eu
+sudo mifpctl config-set PUBLIC_IPV4 203.0.113.10
+sudo mifpctl config-set DNS_PROVIDER aruba
+sudo mifpctl config-set DNS_EXPECTED_IPV4 203.0.113.10
+sudo mifpctl admin
+```
+
+Impostando `DOMAIN`, i default diventano `www.DOMAIN` ed `events.DOMAIN`; sono
+comunque personalizzabili. La modifica rigenera e valida Caddy prima del reload.
+Per un dominio pubblico rimuove un eventuale vecchio blocco MIFP da
+`/etc/hosts`, non configura `tls internal` e lascia certificati e redirect al
+normale percorso DNS/ACME di Caddy.
 
 Crea record DNS verso l'IP pubblico della VPS:
 
@@ -95,61 +136,32 @@ dig +short www.mifp.eu A
 dig +short events.mifp.eu A
 ```
 
-Attendi la propagazione prima di proseguire. Non aggiungere `mifp.eu` al file
-`hosts` della VPS: la produzione deve usare DNS e ACME normali.
-
-### 2.2 Esegui il bootstrap
-
-Sulla VPS:
+Attendi la propagazione, poi esegui il controllo read-only:
 
 ```bash
-sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
-  --domain mifp.eu \
-  --image-repository ghcr.io/matginesi/mifp-webapp
+sudo mifpctl config-show
+sudo mifpctl config-check
 ```
 
-Il comando:
+Il controllo mostra record correnti e attesi e spiega quali record correggere
+nel pannello Aruba; non modifica mai il provider DNS. Prima del login GHCR può
+correttamente concludere `NOT READY` anche se il DNS è già a posto.
 
-- installa Docker Engine, Compose, Caddy, SQLite, PHP-FPM e gli strumenti host;
-- crea utenti, gruppi e directory con ownership dedicata;
-- installa `mifpctl` in `/usr/local/sbin`;
-- genera `SECRET_KEY` solo se manca;
-- conserva amministratore, hash e segreti già configurati;
-- richiede username e password admin se l'hash manca;
-- ripete localmente la richiesta password se conferma o lunghezza non sono valide;
-- formatta e valida il Caddyfile prima del riavvio;
-- prepara PHP-FPM, eventi e backup senza inizializzare il DB applicativo.
-
-È sicuro rilanciare lo stesso bootstrap dopo un'interruzione. Non elimina DB,
-dati o release esistenti.
-
-### 2.3 Verifica lo stato pre-init
-
-```bash
-sudo mifpctl doctor
-```
-
-Prima del primo deploy sono normali:
-
-```text
-DB: NOT INITIALIZED
-Release: NOT INITIALIZED
-```
-
-Il comando deve comunque terminare con `Doctor: OK`. Gli altri componenti,
-inclusi Caddy, PHP-FPM, filesystem eventi e HTTPS eventi, devono essere `OK`.
-
-### 2.4 Accedi a GHCR
+### 2.3 Login registry e readiness pre-init
 
 ```bash
 sudo mifpctl registry-login
+sudo mifpctl config-check
 ```
 
 Inserisci username GitHub e PAT classic. Il token non viene mostrato, non passa
 nella command line e non viene scritto in `.env`; Docker lo riceve tramite
 stdin e usa il proprio credential store di root.
+`config-check` verifica anche Docker, Caddy e la possibilità di leggere il
+manifest `:latest` senza avviare container o modificare `release.env`. Per
+isolare questo solo controllo usa `sudo mifpctl registry-check`.
 
-### 2.5 Inizializza la prima release
+### 2.4 Inizializza la prima release
 
 ```bash
 sudo mifpctl init
@@ -169,7 +181,7 @@ sudo mifpctl init
 Se healthcheck o timer falliscono, DB iniziale e stato release vengono rimossi e
 `init` può essere ripetuto dopo aver corretto la causa.
 
-### 2.6 Verifica e apri il sito
+### 2.5 Verifica e apri il sito
 
 ```bash
 sudo mifpctl doctor
@@ -188,6 +200,38 @@ https://events.mifp.eu/
 
 Dalla dashboard importa il package dati prodotto dagli scraper. Non copiare mai
 un `mifp.db` locale sopra il database vivo.
+
+### 2.6 Required, optional e modifiche successive
+
+Per arrivare a `READY` servono `ENVIRONMENT`, i tre domini, repository GHCR,
+username e hash admin, `SECRET_KEY`, DNS coerente in produzione e login Docker
+a GHCR. `HOSTNAME`, IP pubblici/attesi e provider DNS sono utili alla diagnosi,
+ma gli IP diventano vincoli DNS soltanto quando impostati.
+
+SMTP e backup remoto sono opzionali. Il backup locale è attivo per default e
+può essere disabilitato esplicitamente:
+
+```bash
+sudo mifpctl configure --section mail
+# SMTP_SECURITY: tls (normalmente 465), starttls (normalmente 587), none
+
+sudo mifpctl configure --section backup
+# BACKUP_ENABLED, BACKUP_LOCAL_RETENTION, RESTIC_REPOSITORY/RESTIC_PASSWORD
+```
+
+`RESTIC_REPOSITORY` vuoto significa “solo snapshot locale”, non errore. Se è
+presente, `backup.sh` usa `RESTIC_PASSWORD` dal file segreti. Nessuna mail viene
+inviata dal bootstrap o dal wizard. Per correggere un singolo non-segreto:
+
+```bash
+sudo mifpctl config-set TIMEZONE Europe/Rome
+sudo mifpctl config-unset PUBLIC_IPV6
+sudo mifpctl config-show
+```
+
+Non passare password a `config-set`: il comando le rifiuta per evitare shell
+history e process list. Dopo cambi a dominio o mail, ripeti `config-check`; se
+la release è già attiva, `configure` la riavvia con l'ambiente aggiornato.
 
 ## 3. Deploy su VPS in VM locale
 
@@ -235,11 +279,13 @@ Nella VM:
 
 ```bash
 sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
-  --domain vpsbox.home.arpa \
   --image-repository ghcr.io/matginesi/mifp-webapp
+sudo mifpctl config-set DOMAIN vpsbox.home.arpa
+sudo mifpctl admin
 ```
 
-Per `.home.arpa` il bootstrap aggiunge esclusivamente nella VM:
+Quando `mifpctl` riceve un dominio `.home.arpa`, riconosce automaticamente
+`ENVIRONMENT=local` e aggiunge esclusivamente nella VM:
 
 ```text
 # BEGIN MIFP LOCAL HOSTS
@@ -247,14 +293,14 @@ Per `.home.arpa` il bootstrap aggiunge esclusivamente nella VM:
 # END MIFP LOCAL HOSTS
 ```
 
-Il blocco viene sostituito, non duplicato, a ogni esecuzione. Caddy riceve
-`tls internal`; il bootstrap prova a installare la CA nel trust store della VM
+Il blocco viene sostituito, non duplicato, a ogni modifica. Caddy riceve
+`tls internal`; `mifpctl` prova a installare la CA nel trust store della VM
 e mostra il percorso della root CA. Nulla viene modificato automaticamente
 sulla workstation.
 
 ### 3.3 Configura la risoluzione sulla workstation
 
-Il bootstrap stampa una riga simile a:
+`config-set DOMAIN` stampa una riga simile a:
 
 ```text
 192.168.1.50 vpsbox vpsbox.home.arpa www.vpsbox.home.arpa events.vpsbox.home.arpa
@@ -334,11 +380,14 @@ distribuirla né usarla per domini pubblici.
 Nella VM:
 
 ```bash
-sudo mifpctl doctor
 sudo mifpctl registry-login
+sudo mifpctl config-check
 sudo mifpctl init
 sudo mifpctl doctor
 ```
+
+In local mode `config-check` salta consapevolmente il DNS pubblico. SMTP e
+backup off-site restano opzionali; admin e autenticazione GHCR no.
 
 Dalla workstation:
 

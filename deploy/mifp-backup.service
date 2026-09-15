@@ -4,6 +4,7 @@ After=local-fs.target
 
 [Service]
 Type=oneshot
+EnvironmentFile=-/etc/mifp/secrets.env
 ExecStart=/opt/mifp/backup.sh
 Nice=10
 IOSchedulingClass=best-effort

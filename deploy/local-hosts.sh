@@ -6,13 +6,17 @@ umask 077
 # receive local mappings: for them this helper merely removes an old block.
 DOMAIN="${1:-}"
 HOSTS_FILE="${2:-/etc/hosts}"
+WWW_DOMAIN="${3:-}"
+EVENTS_DOMAIN="${4:-}"
 BEGIN_MARKER="# BEGIN MIFP LOCAL HOSTS"
 END_MARKER="# END MIFP LOCAL HOSTS"
 
-[[ "$DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "$DOMAIN" == *.* ]] || {
+if [[ "$DOMAIN" == "--clear" ]]; then
+  DOMAIN=""
+elif [[ ! "$DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ || "$DOMAIN" != *.* ]]; then
   printf 'ERROR: invalid domain: %s\n' "$DOMAIN" >&2
   exit 2
-}
+fi
 [[ -f "$HOSTS_FILE" && ! -L "$HOSTS_FILE" ]] || {
   printf 'ERROR: hosts file is missing or unsafe: %s\n' "$HOSTS_FILE" >&2
   exit 1
@@ -29,9 +33,11 @@ awk -v begin="$BEGIN_MARKER" -v end="$END_MARKER" '
 ' "$HOSTS_FILE" > "$tmp"
 
 if [[ "$DOMAIN" == *.home.arpa ]]; then
+  WWW_DOMAIN="${WWW_DOMAIN:-www.$DOMAIN}"
+  EVENTS_DOMAIN="${EVENTS_DOMAIN:-events.$DOMAIN}"
   {
     printf '%s\n' "$BEGIN_MARKER"
-    printf '127.0.0.1 %s www.%s events.%s\n' "$DOMAIN" "$DOMAIN" "$DOMAIN"
+    printf '127.0.0.1 %s %s %s\n' "$DOMAIN" "$WWW_DOMAIN" "$EVENTS_DOMAIN"
     printf '%s\n' "$END_MARKER"
   } >> "$tmp"
 fi

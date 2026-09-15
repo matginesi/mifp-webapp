@@ -111,11 +111,16 @@ class Config:
     JOIN_STORE_RAW_IP = os.getenv('JOIN_STORE_RAW_IP', '0') in {'1','true','True','yes','on'}
     MAIL_PROVIDER = os.getenv('MAIL_PROVIDER', 'disabled').strip().lower()
     MAIL_FROM = os.getenv('MAIL_FROM', 'no-reply@mifp.eu')
+    MAIL_FROM_NAME = os.getenv('MAIL_FROM_NAME', '')
     MAIL_TO = os.getenv('MAIL_TO', 'info@mifp.eu')
     SMTP_HOST = os.getenv('SMTP_HOST', '')
     SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
     SMTP_USERNAME = os.getenv('SMTP_USERNAME', '')
     SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
+    SMTP_SECURITY = os.getenv(
+        'SMTP_SECURITY',
+        'starttls' if os.getenv('SMTP_USE_TLS', '1') in {'1','true','True','yes','on'} else 'none',
+    ).strip().lower()
     SMTP_USE_TLS = os.getenv('SMTP_USE_TLS', '1') in {'1','true','True','yes','on'}
     DATABASE_PATH = _path_from_config('db_path', 'DATABASE_PATH', '../DATABASE/mifp.db')
     ASSETS_DIR = _path_from_config('assets_dir', 'ASSETS_DIR', '../DATABASE/assets')

@@ -24,6 +24,13 @@
 Uso normale:
 
 ```bash
+sudo mifpctl configure [--section web|mail|registry|backup]
+sudo mifpctl config-show
+sudo mifpctl config-set KEY VALUE
+sudo mifpctl config-unset KEY
+sudo mifpctl config-check
+sudo mifpctl registry-check
+sudo mifpctl admin-reset-password [--username NAME]
 sudo mifpctl registry-login
 sudo mifpctl init
 sudo mifpctl deploy sha-<commit>
@@ -37,9 +44,19 @@ sudo mifpctl doctor
 Prima installazione:
 
 ```bash
+sudo mifpctl configure
+sudo mifpctl admin
 sudo mifpctl registry-login
+sudo mifpctl config-check
 sudo mifpctl init
 ```
+
+`config-set` accetta soltanto chiavi non segrete. Password SMTP/restic si
+inseriscono nel wizard, senza command line né shell history. `config-show`
+riporta per i segreti solo `configured`/`not configured`; `config-check` non
+scrive file e ritorna 0 quando tutti i required sono pronti, 1 altrimenti.
+Verifica inoltre Docker, Caddy e la leggibilità del manifest GHCR `:latest`;
+`registry-check` esegue soltanto quest'ultimo controllo senza cambiare release.
 
 `init` è l'unico comando autorizzato a usare `latest`, solo come selector:
 `release.env` conserva sempre il digest OCI risolto. `first-deploy sha-<commit>`
@@ -49,7 +66,6 @@ Manutenzione rara:
 
 ```bash
 sudo mifpctl admin
-sudo mifpctl configure
 sudo mifpctl restore-db BACKUP.db
 sudo mifpctl restore-snapshot SNAPSHOT_DIR
 sudo mifpctl upgrade-db sha-<commit> NEW.db

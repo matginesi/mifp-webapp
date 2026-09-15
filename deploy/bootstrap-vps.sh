@@ -24,11 +24,11 @@ die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'EOF'
 Uso:
-  sudo bash bootstrap-vps.sh --domain mifp.eu \
+  sudo bash bootstrap-vps.sh [--domain mifp.eu] \
     [--image-repository ghcr.io/OWNER/REPO] [--ssh-port 22]
 
-Il comando genera automaticamente SECRET_KEY e configura l'amministratore
-interattivamente se non è già presente. Nessuna password viene salvata in chiaro.
+Il dominio e l'amministratore possono essere configurati dopo il provisioning
+con `sudo mifpctl configure` e `sudo mifpctl admin`.
 EOF
 }
 
@@ -51,9 +51,10 @@ done
 . /etc/os-release
 [[ "${ID:-}" == "ubuntu" ]] || die "Bootstrap supportato solo su Ubuntu (rilevato: ${ID:-unknown})."
 
-[[ -n "$DOMAIN" ]] || { usage >&2; die "--domain è obbligatorio"; }
 DOMAIN="${DOMAIN,,}"
-[[ "$DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "$DOMAIN" == *.* ]] || die "Dominio non valido: $DOMAIN"
+if [[ -n "$DOMAIN" ]]; then
+  [[ "$DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "$DOMAIN" == *.* ]] || die "Dominio non valido: $DOMAIN"
+fi
 [[ "$IMAGE_REPOSITORY" =~ ^ghcr\.io/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "Repository GHCR non valido: $IMAGE_REPOSITORY"
 if [[ -z "$SSH_PORT" ]]; then
   if [[ -n "${SSH_CONNECTION:-}" ]]; then
@@ -65,7 +66,7 @@ if [[ -z "$SSH_PORT" ]]; then
   fi
 fi
 [[ "$SSH_PORT" =~ ^[0-9]+$ ]] && ((SSH_PORT >= 1 && SSH_PORT <= 65535)) || die "Porta SSH non valida: $SSH_PORT"
-[[ -f "$SCRIPT_DIR/configure.py" && -f "$SCRIPT_DIR/backup.sh" && -f "$SCRIPT_DIR/mifpctl" && -f "$SCRIPT_DIR/local-hosts.sh" ]] \
+[[ -f "$SCRIPT_DIR/configure.py" && -f "$SCRIPT_DIR/vps_config.py" && -f "$SCRIPT_DIR/backup.sh" && -f "$SCRIPT_DIR/mifpctl" && -f "$SCRIPT_DIR/local-hosts.sh" ]] \
   || die "Cartella deploy incompleta: copia tutti i file deploy/."
 
 say "Installo i pacchetti di base"
@@ -194,6 +195,7 @@ say "Installo i file di deploy"
 install -o root -g root -m 0644 "$SCRIPT_DIR/compose.production.yaml" "$MIFP_HOME/compose.yaml"
 install -o root -g root -m 0750 "$SCRIPT_DIR/deploy.sh" "$MIFP_HOME/deploy.sh"
 install -o root -g root -m 0750 "$SCRIPT_DIR/configure.py" "$MIFP_HOME/configure.py"
+install -o root -g root -m 0750 "$SCRIPT_DIR/vps_config.py" "$MIFP_HOME/vps_config.py"
 install -o root -g root -m 0644 "$SCRIPT_DIR/.env.production.example" "$MIFP_HOME/.env.example"
 install -o root -g root -m 0644 "$SCRIPT_DIR/Caddyfile" "$MIFP_HOME/Caddyfile.example"
 install -o root -g root -m 0750 "$SCRIPT_DIR/backup.sh" "$MIFP_HOME/backup.sh"
@@ -202,31 +204,61 @@ install -o root -g root -m 0755 "$SCRIPT_DIR/mifpctl" /usr/local/sbin/mifpctl
 install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-backup.service" /etc/systemd/system/mifp-backup.service
 install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-backup.timer" /etc/systemd/system/mifp-backup.timer
 systemctl daemon-reload
-if [[ -f "$MIFP_HOME/data/mifp.db" && ! -L "$MIFP_HOME/data/mifp.db" ]]; then
+
+say "Inizializzo la configurazione progressiva"
+# Compatibility with installations that used the earlier /etc location.
+if [[ ! -f "$MIFP_HOME/.env" && -f /etc/mifp/production.env && ! -L /etc/mifp/production.env ]]; then
+  install -o root -g root -m 0600 /etc/mifp/production.env "$MIFP_HOME/.env"
+fi
+LEGACY_ARGS=(configure --env-file "$MIFP_HOME/.env" --example "$MIFP_HOME/.env.example" --image-repository "$IMAGE_REPOSITORY")
+[[ -z "$DOMAIN" ]] || LEGACY_ARGS+=(--domain "$DOMAIN")
+python3 "$MIFP_HOME/configure.py" "${LEGACY_ARGS[@]}"
+chown root:root "$MIFP_HOME/.env"
+chmod 0600 "$MIFP_HOME/.env"
+install -d -o root -g root -m 0750 /etc/mifp
+CONFIG_ARGS=(
+  --config-file /etc/mifp/config.env
+  --secrets-file /etc/mifp/secrets.env
+  --runtime-env "$MIFP_HOME/.env"
+  --example "$MIFP_HOME/.env.example"
+  --docker-config /root/.docker/config.json
+  init --image-repository "$IMAGE_REPOSITORY"
+)
+[[ -z "$DOMAIN" ]] || CONFIG_ARGS+=(--domain "$DOMAIN")
+python3 "$MIFP_HOME/vps_config.py" "${CONFIG_ARGS[@]}"
+DOMAIN="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get DOMAIN)"
+WWW_DOMAIN="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get WWW_DOMAIN)"
+EVENTS_DOMAIN="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get EVENTS_DOMAIN)"
+
+if [[ -f "$MIFP_HOME/data/mifp.db" && ! -L "$MIFP_HOME/data/mifp.db" ]] \
+  && [[ "$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get BACKUP_ENABLED)" != false ]]; then
   systemctl enable --now mifp-backup.timer
 else
   systemctl disable --now mifp-backup.timer >/dev/null 2>&1 || true
 fi
 
-say "Configuro segreti e amministratore"
-python3 "$MIFP_HOME/configure.py" configure \
-  --env-file "$MIFP_HOME/.env" \
-  --example "$MIFP_HOME/.env.example" \
-  --domain "$DOMAIN" \
-  --image-repository "$IMAGE_REPOSITORY" \
-  --admin-if-missing
-chown root:root "$MIFP_HOME/.env"
-chmod 0600 "$MIFP_HOME/.env"
-
-say "Configuro Caddy per $DOMAIN e events.$DOMAIN"
-bash "$SCRIPT_DIR/local-hosts.sh" "$DOMAIN" "${MIFP_HOSTS_FILE:-/etc/hosts}"
-if [[ "$DOMAIN" == *.home.arpa ]]; then
-  MIFP_TLS_DIRECTIVE="tls internal"
+if [[ -n "$DOMAIN" ]]; then
+  say "Configuro Caddy per $DOMAIN e $EVENTS_DOMAIN"
+  bash "$SCRIPT_DIR/local-hosts.sh" "$DOMAIN" "${MIFP_HOSTS_FILE:-/etc/hosts}" "$WWW_DOMAIN" "$EVENTS_DOMAIN"
+  if [[ "$DOMAIN" == *.home.arpa ]]; then
+    MIFP_TLS_DIRECTIVE="tls internal"
+  else
+    MIFP_TLS_DIRECTIVE=""
+  fi
+  sed -e "s/__MIFP_DOMAIN__/$DOMAIN/g" \
+    -e "s/__MIFP_WWW_DOMAIN__/$WWW_DOMAIN/g" \
+    -e "s/__MIFP_EVENTS_DOMAIN__/$EVENTS_DOMAIN/g" \
+    -e "s/__MIFP_TLS__/$MIFP_TLS_DIRECTIVE/g" \
+    "$SCRIPT_DIR/Caddyfile" > /etc/caddy/Caddyfile
 else
-  MIFP_TLS_DIRECTIVE=""
+  say "Configuro Caddy in attesa del dominio"
+  bash "$SCRIPT_DIR/local-hosts.sh" --clear "${MIFP_HOSTS_FILE:-/etc/hosts}"
+  cat > /etc/caddy/Caddyfile <<'EOF_CADDY_PENDING'
+:80 {
+    respond "MIFP host ready; run sudo mifpctl configure" 503
+}
+EOF_CADDY_PENDING
 fi
-sed -e "s/__MIFP_DOMAIN__/$DOMAIN/g" -e "s/__MIFP_TLS__/$MIFP_TLS_DIRECTIVE/g" \
-  "$SCRIPT_DIR/Caddyfile" > /etc/caddy/Caddyfile
 chown root:caddy /etc/caddy/Caddyfile
 chmod 0644 /etc/caddy/Caddyfile
 # PHP is deny-by-default.  mifpctl adds only explicit conference prefixes here.
@@ -265,16 +297,15 @@ ufw allow 80/tcp >/dev/null
 ufw allow 443/tcp >/dev/null
 ufw --force enable >/dev/null
 
-say "Bootstrap completato"
+say "Host bootstrap completed"
 printf '%s\n' \
-  "Registry GHCR: sudo mifpctl registry-login" \
-  "Primo avvio: sudo mifpctl init" \
-  "Poi importa lo ZIP contenuti dalla dashboard." \
-  "Nuove versioni: sudo mifpctl deploy sha-<commit>" \
-  "Diagnostica: sudo mifpctl doctor" \
-  "Backup manuale: sudo mifpctl backup" \
-  "Eventi storici: sudo mifpctl events-import /path/al/backup" \
-  "PHP conferenze: installato ma disabilitato per ogni path finché non usi mifpctl events-php-enable"
+  "" \
+  "Next:" \
+  "  sudo mifpctl configure" \
+  "  sudo mifpctl admin" \
+  "  sudo mifpctl registry-login" \
+  "  sudo mifpctl config-check" \
+  "  sudo mifpctl init"
 
 if [[ "$DOMAIN" == *.home.arpa ]]; then
   LAN_IPS="$(hostname -I 2>/dev/null | tr ' ' '\n' | awk '/^[0-9]+\./ && $0 !~ /^127\./ {print}' | sort -u)"

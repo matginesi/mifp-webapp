@@ -73,12 +73,20 @@ builder DB o CLI locali. Sulla VPS non serve un venv.
 Prima installazione:
 
 ```bash
-sudo bash deploy/bootstrap-vps.sh --domain mifp.eu \
-  --image-repository ghcr.io/matginesi/mifp-webapp
+sudo bash deploy/bootstrap-vps.sh
+sudo mifpctl configure
+sudo mifpctl admin
 sudo mifpctl registry-login
+sudo mifpctl config-check
 sudo mifpctl init
 sudo mifpctl doctor
 ```
+
+Il bootstrap prepara soltanto l'host e può terminare senza dominio o admin.
+La configurazione progressiva vive in `/etc/mifp/config.env` (non segreti,
+`0640`) e `/etc/mifp/secrets.env` (`0600`); il vecchio `/opt/mifp/.env` viene
+migrato senza perdere i valori esistenti e resta un file runtime compatibile.
+`config-show` non stampa segreti e `config-check` è read-only.
 
 `registry-login` legge il PAT GitHub senza echo e lo passa a Docker via stdin;
 serve un PAT classic con il solo scope `read:packages`. `init` usa `latest`

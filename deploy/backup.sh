@@ -194,8 +194,13 @@ if [[ -n "$RESTIC_REPO" ]]; then
   command -v restic >/dev/null 2>&1 || die "MIFP_RESTIC_REPOSITORY è configurato ma restic non è installato."
   export RESTIC_REPOSITORY="$RESTIC_REPO"
   password_file="$(env_value MIFP_RESTIC_PASSWORD_FILE || true)"
-  [[ -n "$password_file" && -r "$password_file" ]] || die "Configura un MIFP_RESTIC_PASSWORD_FILE leggibile."
-  export RESTIC_PASSWORD_FILE="$password_file"
+  if [[ -n "${RESTIC_PASSWORD:-}" ]]; then
+    export RESTIC_PASSWORD
+  elif [[ -n "$password_file" && -r "$password_file" ]]; then
+    export RESTIC_PASSWORD_FILE="$password_file"
+  else
+    die "Configura RESTIC_PASSWORD in /etc/mifp/secrets.env o un MIFP_RESTIC_PASSWORD_FILE leggibile."
+  fi
   restic backup "$final" --tag mifp --tag production
 fi
 

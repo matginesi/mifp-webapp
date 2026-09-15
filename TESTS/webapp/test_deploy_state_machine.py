@@ -3,9 +3,12 @@ from __future__ import annotations
 import os
 import pty
 import select
+import shutil
 import subprocess
 import time
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy" / "deploy.sh"
@@ -28,6 +31,27 @@ def _env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     )
     (home / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
     _write_executable(home / "configure.py", "#!/usr/bin/env python3\nraise SystemExit(0)\n")
+    shutil.copy2(ROOT / "deploy" / "vps_config.py", home / "vps_config.py")
+    shutil.copy2(ROOT / "deploy" / "Caddyfile", home / "Caddyfile.example")
+    shutil.copy2(ROOT / "deploy" / "local-hosts.sh", home / "local-hosts.sh")
+    config_dir = tmp_path / "mifp-config"
+    config_dir.mkdir()
+    (config_dir / "config.env").write_text(
+        "ENVIRONMENT=local\nDOMAIN=vpsbox.home.arpa\n"
+        "WWW_DOMAIN=www.vpsbox.home.arpa\nEVENTS_DOMAIN=events.vpsbox.home.arpa\n"
+        "IMAGE_REPOSITORY=ghcr.io/example/mifp\nADMIN_USERNAME=admin\n"
+        "BACKUP_ENABLED=true\n",
+        encoding="utf-8",
+    )
+    (config_dir / "secrets.env").write_text(
+        "SECRET_KEY=0123456789abcdef0123456789abcdef\n"
+        "ADMIN_PASSWORD_HASH='pbkdf2:sha256:600000$abcd$abcd'\n",
+        encoding="utf-8",
+    )
+    docker_config = tmp_path / "docker-config.json"
+    docker_config.write_text('{"auths":{"ghcr.io":{"auth":"test"}}}\n', encoding="utf-8")
+    hosts_file = tmp_path / "hosts"
+    hosts_file.write_text("127.0.0.1 localhost\n", encoding="utf-8")
     caddy_dir = tmp_path / "caddy"
     caddy_dir.mkdir()
     (caddy_dir / "Caddyfile").write_text("example.invalid { respond 200 }\n", encoding="utf-8")
@@ -187,6 +211,9 @@ exit 0
             "MIFP_BACKUP_ROOT": str(tmp_path / "host-backups"),
             "MIFP_EVENTS_PHP_INCLUDE": str(caddy_dir / "mifp-events-php.caddy"),
             "MIFP_CADDY_CONFIG": str(caddy_dir / "Caddyfile"),
+            "MIFP_CONFIG_DIR": str(config_dir),
+            "MIFP_DOCKER_CONFIG_FILE": str(docker_config),
+            "MIFP_HOSTS_FILE": str(hosts_file),
         }
     )
     return env, home
@@ -305,6 +332,23 @@ def test_init_uses_latest_only_as_selector_and_persists_clean_digest(tmp_path: P
     assert "Pulling from example/mifp" not in release["CURRENT_IMAGE"]
     assert ":latest" not in (home / "release.env").read_text(encoding="utf-8")
     assert (home / "data" / "mifp.db").is_file()
+
+
+def test_init_refuses_incomplete_progressive_configuration(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    config_file = Path(env["MIFP_CONFIG_DIR"]) / "config.env"
+    config_file.write_text(
+        "ENVIRONMENT=production\nIMAGE_REPOSITORY=ghcr.io/example/mifp\n"
+        "ADMIN_USERNAME=admin\nBACKUP_ENABLED=true\n",
+        encoding="utf-8",
+    )
+
+    result = _run(env, "init", check=False)
+
+    assert result.returncode != 0
+    assert "DOMAIN: missing required" in result.stdout
+    assert not (home / "release.env").exists()
+    assert not (home / "data" / "mifp.db").exists()
 
 
 def test_init_refuses_an_existing_release(tmp_path: Path) -> None:
@@ -619,11 +663,15 @@ def test_php_execution_requires_explicit_event_prefix(tmp_path: Path) -> None:
 
     # Linux limits AF_UNIX paths to roughly 108 bytes.  test_all.sh places
     # pytest's tmp_path below an intentionally isolated (and potentially long)
-    # runtime directory, so use a short dedicated directory at repository root.
-    with tempfile.TemporaryDirectory(prefix=".mifp-socket-", dir=ROOT) as socket_dir:
+    # runtime directory, so use a short dedicated directory below /tmp.
+    with tempfile.TemporaryDirectory(prefix="mifp-socket-", dir="/tmp") as socket_dir:
         socket_path = Path(socket_dir) / "events.sock"
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(str(socket_path))
+        try:
+            sock.bind(str(socket_path))
+        except PermissionError:
+            sock.close()
+            pytest.skip("sandbox does not allow Unix-domain socket creation")
         try:
             php_env = dict(
                 env,

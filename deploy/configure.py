@@ -201,7 +201,10 @@ def check_config(env_file: Path, *, quiet: bool, allow_missing_admin: bool = Fal
     if not admin_hash:
         if not allow_missing_admin:
             errors.append("ADMIN_PASSWORD_HASH is missing")
-    elif not re.fullmatch(r"pbkdf2:sha256:\d+\$[0-9a-f]+\$[0-9a-f]+", admin_hash):
+    elif not re.fullmatch(
+        r"(?:pbkdf2:sha256:\d+|scrypt:\d+:\d+:\d+)\$[^$\s]+\$[^$\s]+",
+        admin_hash,
+    ):
         errors.append("ADMIN_PASSWORD_HASH has an unexpected format")
     domain = values.get("MIFP_DOMAIN", "").strip().lower()
     if domain and (not _DOMAIN_RE.fullmatch(domain) or "." not in domain):
