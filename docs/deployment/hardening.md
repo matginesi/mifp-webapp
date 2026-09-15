@@ -1,7 +1,7 @@
 # Hardening VPS
 
-Il bootstrap configura il minimo necessario: Docker, Caddy, SQLite, firewall,
-utente dati e backup timer.
+Il bootstrap configura il minimo necessario: Docker, Caddy, SQLite, PHP-FPM,
+firewall, utenti dati separati e backup timer.
 
 ## SSH e firewall
 
@@ -35,10 +35,20 @@ runtime: il container non-root può leggerla senza rendere il DB scrivibile.
 Produzione usa filesystem root read-only, `cap_drop: ALL`,
 `no-new-privileges`, limiti PID/RAM/CPU e un solo worker Gunicorn.
 
-## Caddy
+## Caddy ed eventi
 
 Caddy è installato dal repository ufficiale. `/ready` viene bloccato
 pubblicamente; `/health` espone soltanto lo stato minimo in produzione.
+`events.mifp.eu` viene servito direttamente da `/opt/mifp/events`, che è
+root-owned e leggibile soltanto dal gruppo pubblico dedicato. PHP, file di
+configurazione del registration form e dati runtime sensibili sono negati per
+default.
+
+PHP-FPM gira come utente `mifp-events`, con pool separato, `open_basedir`,
+limiti di upload/memoria/tempo e funzioni di shell disabilitate. Il suo storage
+scrivibile è `/opt/mifp/events-private`, fuori dal document root. Aggiungere un
+path alla allow-list Caddy richiede un comando esplicito
+`mifpctl events-php-enable`.
 
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

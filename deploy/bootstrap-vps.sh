@@ -10,6 +10,8 @@ MIFP_USER="mifp"
 MIFP_GROUP="mifp"
 MIFP_UID="10001"
 MIFP_GID="10001"
+EVENTS_PHP_USER="mifp-events"
+EVENTS_PUBLIC_GROUP="mifp-events-public"
 DOMAIN="${MIFP_DOMAIN:-}"
 IMAGE_REPOSITORY="${MIFP_IMAGE_REPOSITORY:-ghcr.io/matginesi/mifp-webapp}"
 SSH_PORT="${MIFP_SSH_PORT:-}"
@@ -67,7 +69,8 @@ fi
 say "Installo i pacchetti di base"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg debian-keyring debian-archive-keyring apt-transport-https python3 sqlite3 rsync restic ufw util-linux
+apt-get install -y ca-certificates curl gnupg debian-keyring debian-archive-keyring apt-transport-https \
+  python3 sqlite3 rsync restic ufw util-linux php-fpm php-cli php-mbstring php-curl
 
 say "Configuro Docker Engine dal repository ufficiale"
 install -m 0755 -d /etc/apt/keyrings
@@ -104,12 +107,86 @@ else
   useradd --system --uid "$MIFP_UID" --gid "$MIFP_GID" --home "$MIFP_HOME" --shell /usr/sbin/nologin "$MIFP_USER"
 fi
 
+# Conference sites are intentionally separate from the Flask data tree.  Caddy
+# and PHP need read-only access to the public tree, while only PHP may write
+# private registrations/sessions/uploads.
+if ! getent group "$EVENTS_PUBLIC_GROUP" >/dev/null 2>&1; then
+  say "Creo il gruppo pubblico conferenze $EVENTS_PUBLIC_GROUP"
+  groupadd --system "$EVENTS_PUBLIC_GROUP"
+fi
+if ! id "$EVENTS_PHP_USER" >/dev/null 2>&1; then
+  say "Creo l'utente PHP dedicato $EVENTS_PHP_USER"
+  useradd --system --user-group --home "$MIFP_HOME/events-private" --shell /usr/sbin/nologin "$EVENTS_PHP_USER"
+fi
+usermod -a -G "$EVENTS_PUBLIC_GROUP" "$EVENTS_PHP_USER"
+usermod -a -G "$EVENTS_PUBLIC_GROUP" caddy
+
 say "Preparo $MIFP_HOME"
 install -d -o root -g root -m 0755 "$MIFP_HOME"
 install -d -o "$MIFP_UID" -g "$MIFP_GID" -m 0750 "$MIFP_HOME/data"
 for dir in assets backups conferences exports logs config tmp; do
   install -d -o "$MIFP_UID" -g "$MIFP_GID" -m 0750 "$MIFP_HOME/data/$dir"
 done
+
+# Public archive: root-owned and not writable by either Caddy or PHP.
+install -d -o root -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$MIFP_HOME/events"
+# Private PHP runtime state never lives below the public document root.
+install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$MIFP_HOME/events-private"
+for dir in registrations sessions tmp; do
+  install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$MIFP_HOME/events-private/$dir"
+done
+
+say "Configuro il pool PHP-FPM dedicato alle conferenze"
+PHP_VERSION="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
+PHP_FPM_SERVICE="php${PHP_VERSION}-fpm.service"
+PHP_POOL_DIR="/etc/php/${PHP_VERSION}/fpm/pool.d"
+[[ -d "$PHP_POOL_DIR" ]] || die "Directory PHP-FPM non trovata: $PHP_POOL_DIR"
+cat > "$PHP_POOL_DIR/mifp-events.conf" <<EOF_PHP_POOL
+[mifp-events]
+user = $EVENTS_PHP_USER
+group = $EVENTS_PHP_USER
+listen = /run/php/mifp-events.sock
+listen.owner = caddy
+listen.group = caddy
+listen.mode = 0660
+
+pm = ondemand
+pm.max_children = 4
+pm.process_idle_timeout = 10s
+pm.max_requests = 500
+request_terminate_timeout = 60s
+catch_workers_output = yes
+clear_env = yes
+security.limit_extensions = .php
+
+php_admin_value[open_basedir] = $MIFP_HOME/events:$MIFP_HOME/events-private:/tmp
+php_admin_value[session.save_path] = $MIFP_HOME/events-private/sessions
+php_admin_value[upload_tmp_dir] = $MIFP_HOME/events-private/tmp
+php_admin_value[display_errors] = Off
+php_admin_value[log_errors] = On
+php_admin_value[expose_php] = Off
+php_admin_value[cgi.fix_pathinfo] = 0
+php_admin_value[session.cookie_secure] = 1
+php_admin_value[session.cookie_httponly] = 1
+php_admin_value[session.cookie_samesite] = Lax
+php_admin_value[session.use_strict_mode] = 1
+php_admin_value[memory_limit] = 128M
+php_admin_value[max_execution_time] = 30
+php_admin_value[upload_max_filesize] = 10M
+php_admin_value[post_max_size] = 12M
+php_admin_value[max_file_uploads] = 5
+php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen
+EOF_PHP_POOL
+chmod 0644 "$PHP_POOL_DIR/mifp-events.conf"
+PHP_FPM_BIN="$(command -v "php-fpm${PHP_VERSION}" || true)"
+[[ -n "$PHP_FPM_BIN" ]] || die "Binario PHP-FPM non trovato per PHP $PHP_VERSION"
+"$PHP_FPM_BIN" -t || die "Configurazione PHP-FPM non valida."
+printf '%s\n' "$PHP_FPM_SERVICE" > "$MIFP_HOME/php-fpm.service"
+chown root:root "$MIFP_HOME/php-fpm.service"
+chmod 0644 "$MIFP_HOME/php-fpm.service"
+systemctl enable "$PHP_FPM_SERVICE"
+systemctl restart "$PHP_FPM_SERVICE"
+[[ -S /run/php/mifp-events.sock ]] || die "Il pool PHP-FPM MIFP non ha creato /run/php/mifp-events.sock"
 
 say "Installo i file di deploy"
 install -o root -g root -m 0644 "$SCRIPT_DIR/compose.production.yaml" "$MIFP_HOME/compose.yaml"
@@ -138,13 +215,23 @@ python3 "$MIFP_HOME/configure.py" configure \
 chown root:root "$MIFP_HOME/.env"
 chmod 0600 "$MIFP_HOME/.env"
 
-say "Configuro Caddy per $DOMAIN"
+say "Configuro Caddy per $DOMAIN e events.$DOMAIN"
 sed "s/__MIFP_DOMAIN__/$DOMAIN/g" "$SCRIPT_DIR/Caddyfile" > /etc/caddy/Caddyfile
 chown root:caddy /etc/caddy/Caddyfile
 chmod 0644 /etc/caddy/Caddyfile
+# PHP is deny-by-default.  mifpctl adds only explicit conference prefixes here.
+if [[ ! -f /etc/caddy/mifp-events-php.caddy ]]; then
+  cat > /etc/caddy/mifp-events-php.caddy <<'EOF_EVENTS_PHP'
+# Generated/managed by `mifpctl events-php-enable|events-php-disable`.
+# Empty means no public conference path can execute PHP.
+EOF_EVENTS_PHP
+fi
+chown root:caddy /etc/caddy/mifp-events-php.caddy
+chmod 0644 /etc/caddy/mifp-events-php.caddy
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 systemctl enable --now caddy.service
-systemctl reload caddy.service
+# Refresh supplementary group membership (mifp-events-public) on re-bootstrap.
+systemctl restart caddy.service
 
 say "Configuro firewall"
 ufw default deny incoming >/dev/null
@@ -160,4 +247,6 @@ printf '%s\n' \
   "Poi importa lo ZIP contenuti dalla dashboard." \
   "Nuove versioni: sudo mifpctl deploy sha-<commit>" \
   "Diagnostica: sudo mifpctl doctor" \
-  "Backup manuale: sudo mifpctl backup"
+  "Backup manuale: sudo mifpctl backup" \
+  "Eventi storici: sudo mifpctl events-import /path/al/backup" \
+  "PHP conferenze: installato ma disabilitato per ogni path finché non usi mifpctl events-php-enable"

@@ -4,6 +4,10 @@ set -Eeuo pipefail
 MIFP_HOME="${MIFP_HOME:-/opt/mifp}"
 DATA_DIR="$MIFP_HOME/data"
 DB="$DATA_DIR/mifp.db"
+EVENTS_DIR="$MIFP_HOME/events"
+EVENTS_PRIVATE_DIR="$MIFP_HOME/events-private"
+EVENTS_PHP_STATE="$MIFP_HOME/events-php-enabled.txt"
+PHP_FPM_SERVICE_FILE="$MIFP_HOME/php-fpm.service"
 BACKUP_ROOT="${MIFP_BACKUP_ROOT:-/var/backups/mifp}"
 ENV_FILE="$MIFP_HOME/.env"
 LOCK_FILE="${MIFP_BACKUP_LOCK_FILE:-/run/lock/mifp-backup.lock}"
@@ -44,10 +48,12 @@ final="$SNAPSHOT_ROOT/snapshot-$stamp"
 previous="$(find "$SNAPSHOT_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'snapshot-*' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1 {sub(/^[^ ]+ /, ""); print; exit}')"
 mkdir -m 0700 "$tmp"
 paused_container=""
+paused_php_service=""
 cleanup() {
   local rc=$?
   trap - EXIT INT TERM
   if [[ -n "$paused_container" ]]; then docker unpause "$paused_container" >/dev/null 2>&1 || true; fi
+  if [[ -n "$paused_php_service" ]]; then systemctl start "$paused_php_service" >/dev/null 2>&1 || true; fi
   rm -rf -- "$tmp"
   exit "$rc"
 }
@@ -62,6 +68,17 @@ if [[ "$QUIESCE" == "1" ]] && command -v docker >/dev/null 2>&1 && docker info >
   fi
 fi
 
+# Future conference registration endpoints may write files outside the public
+# document root.  If the dedicated FPM service is active, briefly stop it so
+# events-private/ is captured at one coherent point in time as well.
+if [[ "$QUIESCE" == "1" && -f "$PHP_FPM_SERVICE_FILE" ]] && command -v systemctl >/dev/null 2>&1; then
+  candidate_service="$(tr -d '[:space:]' < "$PHP_FPM_SERVICE_FILE")"
+  if [[ "$candidate_service" =~ ^php[0-9]+\.[0-9]+-fpm\.service$ ]] && systemctl is-active "$candidate_service" >/dev/null 2>&1; then
+    systemctl stop "$candidate_service" || die "Impossibile sospendere PHP-FPM eventi per la snapshot."
+    paused_php_service="$candidate_service"
+  fi
+fi
+
 # SQLite Backup API gives a transactionally coherent database even when the
 # live database is in WAL mode.
 sqlite3 -readonly "$DB" ".timeout 30000" ".backup '$tmp/mifp.db'"
@@ -73,20 +90,37 @@ chmod 0600 "$tmp/mifp.db" "$tmp/mifp.db.sha256"
 # Each directory is a real point-in-time tree. --link-dest hard-links files
 # unchanged since the previous snapshot, so snapshots stay cheap without the
 # ambiguity of one cumulative mirror shared by every DB generation.
-for name in assets conferences config; do
+for name in assets conferences config events events-private; do
   mkdir -m 0700 "$tmp/$name"
-  if [[ -d "$DATA_DIR/$name" ]]; then
+  case "$name" in
+    events) source_dir="$EVENTS_DIR" ;;
+    events-private) source_dir="$EVENTS_PRIVATE_DIR" ;;
+    *) source_dir="$DATA_DIR/$name" ;;
+  esac
+  if [[ -d "$source_dir" ]]; then
     args=(-a --delete)
     if [[ -n "$previous" && -d "$previous/$name" ]]; then
       args+=(--link-dest="$previous/$name")
     fi
-    rsync "${args[@]}" "$DATA_DIR/$name/" "$tmp/$name/"
+    rsync "${args[@]}" "$source_dir/" "$tmp/$name/"
   fi
-  # Managed runtime trees must never contain symlinks: they could escape the
-  # snapshot root during a privileged restore.
+  # Managed runtime/public trees must never contain symlinks: they could escape
+  # the snapshot root during a privileged restore or public file serving.
   link="$(find "$tmp/$name" -type l -print -quit)"
   [[ -z "$link" ]] || die "Snapshot non sicura: link simbolico trovato in $name/: $link"
 done
+
+# PHP execution policy is part of the public conference state.  Store the
+# allow-list source, not the derived Caddy include.  Missing means empty/deny-all.
+if [[ -L "$EVENTS_PHP_STATE" ]]; then
+  die "Snapshot non sicura: $EVENTS_PHP_STATE è un symlink."
+fi
+if [[ -f "$EVENTS_PHP_STATE" ]]; then
+  cp -- "$EVENTS_PHP_STATE" "$tmp/events-php-enabled.txt"
+else
+  : > "$tmp/events-php-enabled.txt"
+fi
+chmod 0600 "$tmp/events-php-enabled.txt"
 
 # Integrity manifest for the entire restorable snapshot, not only SQLite.
 # JSON avoids pathname ambiguities and lets restore verify the exact file set.
@@ -108,16 +142,16 @@ def digest(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-for candidate in [root / "mifp.db"] + [
+for candidate in [root / "mifp.db", root / "events-php-enabled.txt"] + [
     path
-    for dirname in ("assets", "conferences", "config")
+    for dirname in ("assets", "conferences", "config", "events", "events-private")
     for path in sorted((root / dirname).rglob("*"))
     if path.is_file() and not path.is_symlink()
 ]:
     relative = candidate.relative_to(root).as_posix()
     files[relative] = digest(candidate)
 
-manifest = {"format": "mifp-host-snapshot", "version": 1, "files": files}
+manifest = {"format": "mifp-host-snapshot", "version": 2, "files": files}
 (root / "manifest.json").write_text(
     json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",
@@ -129,14 +163,19 @@ if [[ -n "$paused_container" ]]; then
   docker unpause "$paused_container" >/dev/null || die "Impossibile riattivare MIFP dopo il backup."
   paused_container=""
 fi
+if [[ -n "$paused_php_service" ]]; then
+  systemctl start "$paused_php_service" || die "Impossibile riattivare PHP-FPM dopo il backup."
+  paused_php_service=""
+fi
 
 cat > "$tmp/README.txt" <<EOF
 MIFP point-in-time backup
 UTC: $stamp
 Database: mifp.db (verified with quick_check + foreign_key_check)
-Files: assets/, conferences/, config/
+Files: assets/, conferences/, config/, events/, events-private/, events-php-enabled.txt
 Integrity: manifest.json covers every restorable file
 Restore DB: sudo mifpctl restore-db $final/mifp.db
+Restore complete snapshot: sudo mifpctl restore-snapshot $final
 EOF
 
 # Publishing the directory rename is atomic on the backup filesystem.

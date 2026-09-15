@@ -19,6 +19,11 @@ def _backup_env(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     for name in ("assets", "conferences", "config"):
         (data / name).mkdir(parents=True, exist_ok=True)
         (data / name / f"{name}.txt").write_text(name, encoding="utf-8")
+    (home / "events" / "PLMCN-2025").mkdir(parents=True)
+    (home / "events" / "PLMCN-2025" / "index.html").write_text("historic", encoding="utf-8")
+    (home / "events-private" / "registrations").mkdir(parents=True)
+    (home / "events-private" / "registrations" / "future.csv").write_text("private", encoding="utf-8")
+    (home / "events-php-enabled.txt").write_text("PLMCN-2027/regform\n", encoding="utf-8")
     (data / "mifp.db").write_bytes(b"SQLite format 3\x00" + b"x" * 200)
     (home / ".env").write_text("MIFP_BACKUP_KEEP='2'\n", encoding="utf-8")
 
@@ -86,6 +91,9 @@ def test_backup_is_point_in_time_and_retained(tmp_path: Path) -> None:
     assert (first / "mifp.db").is_file()
     assert (first / "mifp.db.sha256").is_file()
     assert (first / "manifest.json").is_file()
+    assert (first / "events" / "PLMCN-2025" / "index.html").read_text() == "historic"
+    assert (first / "events-private" / "registrations" / "future.csv").read_text() == "private"
+    assert (first / "events-php-enabled.txt").read_text() == "PLMCN-2027/regform\n"
 
     # A later backup must not mutate the older filesystem snapshot.
     (data / "config" / "config.txt").write_text("config-v2", encoding="utf-8")
@@ -104,6 +112,9 @@ def test_backup_is_point_in_time_and_retained(tmp_path: Path) -> None:
     assert all((snap / "assets").is_dir() for snap in kept)
     assert all((snap / "conferences").is_dir() for snap in kept)
     assert all((snap / "config").is_dir() for snap in kept)
+    assert all((snap / "events").is_dir() for snap in kept)
+    assert all((snap / "events-private").is_dir() for snap in kept)
+    assert all((snap / "events-php-enabled.txt").is_file() for snap in kept)
     assert all((snap / "manifest.json").is_file() for snap in kept)
     assert not any(path.name.startswith(".snapshot-") for path in (backup_root / "snapshots").iterdir())
 

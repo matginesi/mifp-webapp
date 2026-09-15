@@ -4,6 +4,7 @@ Produzione usa un solo percorso:
 
 ```text
 GitHub Actions -> GHCR -> mifpctl sulla VPS -> Docker -> Caddy -> Flask/SQLite
+                                           \-> events.mifp.eu -> file statici (+ PHP-FPM opt-in)
 ```
 
 La VPS non compila codice, non esegue scraper e non migra il database durante
@@ -51,7 +52,7 @@ sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
   --image-repository ghcr.io/OWNER/REPO
 ```
 
-Il bootstrap installa Docker/Caddy/SQLite, crea `/opt/mifp`, configura firewall,
+Il bootstrap installa Docker/Caddy/SQLite/PHP-FPM, crea `/opt/mifp`, configura firewall,
 HTTPS, backup automatico, `SECRET_KEY` e amministratore. La password admin viene
 chiesta due volte, deve avere almeno **10 caratteri** e viene salvato solo
 l'hash. `/opt/mifp/.env` è `root:root` con permessi `0600`.
@@ -63,10 +64,75 @@ parte solo se entrambi sono verdi. Dopo che GitHub Actions ha pubblicato una rel
 sudo mifpctl first-deploy sha-<commit>
 ```
 
-`first-deploy` crea un DB **schema-only v9**, lo verifica e avvia la webapp.
+`first-deploy` crea un DB **schema-only v10**, lo verifica e avvia la webapp.
 Apri quindi la dashboard e importa lo ZIP prodotto dagli scraper. Sono accettati
 solo package moderni esplicitamente versionati (`mifp-content` v1 oppure
 `mifp-jsonl-v2` v2); vecchi ZIP e vecchi JSONL self-contained sono rifiutati.
+
+
+## `events.mifp.eu`: vecchi eventi e nuove conferenze
+
+`events.mifp.eu` non passa da Flask. Caddy serve direttamente:
+
+```text
+/opt/mifp/events/
+  PLMCN-2025/
+  ICP2DC-2024/
+  ...
+```
+
+Per importare il backup storico completo della vecchia document root:
+
+```bash
+sudo mifpctl events-import /path/al/backup/events.mifp.eu
+```
+
+L'import rifiuta symlink, copia in staging, normalizza i permessi e sostituisce
+`/opt/mifp/events` con un rename atomico. Prima dello switch azzera sempre la
+allow-list PHP: un nuovo tree non eredita mai codice eseguibile dal precedente.
+Il tree precedente resta in `/opt/mifp/events.previous` e può essere scambiato
+di nuovo con:
+
+```bash
+sudo mifpctl events-rollback
+```
+
+Anche il rollback disabilita PHP per tutti i path; se la versione ripristinata
+ha davvero bisogno di PHP, il relativo prefix va riabilitato esplicitamente.
+
+Quindi la migrazione storica non richiede conversioni: `PLMCN-2025/index.html`
+continua a rispondere come `https://events.mifp.eu/PLMCN-2025/`, preservando il
+casing originale.
+
+### PHP: installato, ma deny-by-default
+
+Il bootstrap installa un pool PHP-FPM dedicato (`mifp-events`) sul socket
+`/run/php/mifp-events.sock`. **Nessun `.php` del backup storico viene eseguito o
+servito come sorgente**: Caddy risponde 404 finché un path non viene abilitato
+esplicitamente.
+
+Per una futura conferenza con form PHP:
+
+```bash
+sudo mifpctl events-php-enable PLMCN-2027/regform
+sudo mifpctl events-php-list
+```
+
+Per disabilitarlo:
+
+```bash
+sudo mifpctl events-php-disable PLMCN-2027/regform
+```
+
+Lo storage scrivibile di PHP è separato dal document root:
+`/opt/mifp/events-private/`. Un nuovo form deve quindi salvare registrazioni,
+upload e sessioni lì (per esempio
+`/opt/mifp/events-private/registrations/PLMCN-2027/`), non dentro il sito
+pubblico. `regform/settings.yaml`, `regform/src/` e `regform/registrations/`
+sono comunque negati da Caddy.
+
+PHP-FPM non configura da solo la consegna e-mail: per un futuro form che invia
+mail va scelta esplicitamente una configurazione SMTP/MTA o un provider.
 
 ## Tre cicli separati
 
@@ -147,13 +213,16 @@ snapshot-YYYYMMDD-HHMMSS-NNNNNNNNN/
   assets/
   conferences/
   config/
+  events/
+  events-private/
+  events-php-enabled.txt
   README.txt
 ```
 
 Il container viene brevemente messo in pausa durante la fotografia dei file;
 SQLite viene copiato con la Backup API e verificato. `manifest.json` registra
 l'SHA-256 dell'intero insieme ripristinabile (`mifp.db`, `assets/`, `conferences/`,
-`config/`) e il restore rifiuta file mancanti, extra, alterati o symlink. Le
+`config/`, `events/`, `events-private/`, `events-php-enabled.txt`) e il restore rifiuta file mancanti, extra, alterati o symlink. Le
 snapshot successive usano hardlink per i file invariati. Backup immediato:
 
 ```bash

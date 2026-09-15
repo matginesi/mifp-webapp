@@ -58,6 +58,9 @@ bash MIFPAPP/DATABASE/build.sh --fresh
 - `deploy/` holds the VPS release artifacts: `compose.production.yaml` (no
   `build:`; GHCR image, `127.0.0.1:8000`, host data at `/opt/mifp/data`),
   `Caddyfile`, `.env.production.example`, `configure.py`, `deploy.sh`, and `bootstrap-vps.sh`.
+- Historical/public conference sites live on the host under `/opt/mifp/events`;
+  Caddy serves them directly at `events.mifp.eu`. PHP-FPM is host-side,
+  dedicated and deny-by-default; writable PHP state is `/opt/mifp/events-private`.
 - `.github/workflows/ci-cd.yml` publishes the GHCR image only: it runs the
   versioned webapp + scraper + database quick suite and builds/pushes the image
   from `MIFPAPP/CORE`.

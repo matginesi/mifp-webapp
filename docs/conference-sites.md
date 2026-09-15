@@ -82,20 +82,27 @@ In questa fase l'import di un package editor valido arriva a `staged`. La pubbli
 propria su `events.mifp.eu` verrà aggiunta separatamente, così un upload non può diventare
 eseguibile o pubblico per il solo fatto di essere stato importato.
 
-## Prossima fase VPS
+## Hosting VPS
 
-La fase successiva aggiungerà il servizio di pubblicazione senza complicare il runtime Flask:
+Il publish pubblico è volutamente più semplice dello storage di authoring:
 
 ```text
 Internet
   -> Caddy :443
-       -> www.mifp.eu / mifp.eu -> Flask
-       -> events.mifp.eu        -> conference web container
-                                      -> static files
-                                      -> PHP-FPM per regform/
+       -> mifp.eu / www.mifp.eu -> Flask :8000
+       -> events.mifp.eu        -> /opt/mifp/events/ (file server)
+                                    \-> PHP-FPM solo per prefix esplicitamente abilitati
 ```
 
-Le registrazioni dovranno vivere fuori dal document root in uno storage privato e separato dal
-source package. Il publish dovrà essere atomico, verificare il checksum prima dell'attivazione e
-conservare la release precedente per rollback. I siti storici verranno importati come
-`source_format = legacy-static` senza modificarne il contenuto o il casing del path pubblico.
+I siti storici possono quindi essere copiati 1:1 nella document root con
+`mifpctl events-import`; non devono essere convertiti in un package editor per
+essere pubblicati. I package `mifp-conference-editor` conservati sotto
+`data/conferences/` restano invece sorgenti/staging della dashboard e possono
+essere pubblicati nello stesso filesystem in una fase successiva.
+
+PHP è deny-by-default: i `.php` storici restituiscono 404. Il bootstrap prepara
+un pool FPM dedicato e `/opt/mifp/events-private`, ma l'esecuzione si abilita
+soltanto con `mifpctl events-php-enable <public-prefix>`. Un import completo o
+`events-rollback` svuota sempre la allow-list, così il nuovo tree non eredita
+codice eseguibile dal precedente. Le registrazioni non devono mai vivere sotto
+`/opt/mifp/events`.

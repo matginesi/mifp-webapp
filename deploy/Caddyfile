@@ -1,5 +1,11 @@
 # Installed by bootstrap-vps.sh after replacing __MIFP_DOMAIN__.
-# Docker publishes the application only on the VPS loopback interface.
+#
+# The Flask application remains isolated behind loopback.  Historical and
+# newly-published conference sites are served directly from /opt/mifp/events.
+# PHP is intentionally deny-by-default on events.__MIFP_DOMAIN__: the bootstrap
+# installs a hardened PHP-FPM pool, but execution is enabled only for explicit
+# conference paths written to /etc/caddy/mifp-events-php.caddy by mifpctl.
+
 __MIFP_DOMAIN__, www.__MIFP_DOMAIN__ {
     encode zstd gzip
     header -Server
@@ -9,4 +15,40 @@ __MIFP_DOMAIN__, www.__MIFP_DOMAIN__ {
     respond @ready 404
 
     reverse_proxy 127.0.0.1:8000
+}
+
+events.__MIFP_DOMAIN__ {
+    encode zstd gzip
+    header {
+        -Server
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    root * /opt/mifp/events
+
+    # Keep deployment/runtime material out of the public archive even when it
+    # is present in an old conference backup.
+    route {
+        respond /.mifp-events-health 204
+
+        @events_sensitive {
+            path */.env */.env.* */.git/* */.svn/*
+            path */regform/settings.yaml */regform/settings.yml
+            path */regform/registrations/* */regform/src/*
+            path */composer.json */composer.lock
+        }
+        respond @events_sensitive 404
+
+        # This file exists even when empty.  Explicit PHP-enabled conference
+        # prefixes are inserted here by `mifpctl events-php-enable`.
+        import mifp-events-php.caddy
+
+        # Any PHP-like file not caught by an explicit allow-list rule above is
+        # never served as source code and never executed.
+        @events_php_source path *.php *.phtml *.phar
+        respond @events_php_source 404
+
+        file_server
+    }
 }

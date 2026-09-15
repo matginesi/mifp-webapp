@@ -9,10 +9,11 @@ Docker Compose e Caddy.
 ```text
 CODICE:      GitHub -> GHCR -> VPS -> Docker
 CONTENUTI:   scraper -> ZIP -> Dashboard Import -> SQLite
-BACKUP:      SQLite + file persistenti -> /var/backups/mifp
+EVENTI:      backup/editor -> /opt/mifp/events -> Caddy -> events.mifp.eu
+BACKUP:      SQLite + file persistenti + eventi -> /var/backups/mifp
 ```
 
-Questi tre flussi non si mescolano. Un normale deploy non modifica i dati e un
+Questi flussi non si mescolano. Un normale deploy non modifica i dati e un
 normale import non sostituisce fisicamente il DB.
 
 ## Locale
@@ -84,6 +85,16 @@ sudo mifpctl status
 sudo mifpctl logs
 sudo mifpctl rollback
 ```
+
+I micrositi storici di `events.mifp.eu` sono file host-side, non record Flask:
+
+```bash
+sudo mifpctl events-import /path/al/backup/document-root
+```
+
+Il bootstrap prepara anche PHP-FPM per futuri form, ma PHP resta disabilitato
+per ogni URL finché non viene abilitato esplicitamente su un prefix con
+`mifpctl events-php-enable`.
 
 Dettagli: [DEPLOYMENT.md](DEPLOYMENT.md).
 

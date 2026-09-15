@@ -57,6 +57,11 @@ def test_deploy_caddyfile_proxies_to_localhost() -> None:
     assert "reverse_proxy 127.0.0.1:8000" in caddyfile
     assert "@ready path /ready" in caddyfile
     assert "respond @ready 404" in caddyfile
+    assert "events.__MIFP_DOMAIN__" in caddyfile
+    assert "root * /opt/mifp/events" in caddyfile
+    assert "mifp-events-php.caddy" in caddyfile
+    assert "@events_php_source" in caddyfile
+    assert "respond @events_php_source 404" in caddyfile
     assert "web:8000" not in caddyfile
 
 
@@ -195,6 +200,10 @@ def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     assert 'MIFP_GID="10001"' in script
     assert "apt-get install -y docker-ce" in script
     assert "docker-compose-plugin caddy" in script
+    assert "php-fpm php-cli php-mbstring php-curl" in script
+    assert "mifp-events.conf" in script
+    assert "/run/php/mifp-events.sock" in script
+    assert 'EVENTS_PHP_USER="mifp-events"' in script
     assert "/etc/systemd/system/caddy.service" not in script
     assert 'install -o root -g root -m 0750 "$SCRIPT_DIR/configure.py"' in script
     assert 'install -o root -g root -m 0755 "$SCRIPT_DIR/mifpctl" /usr/local/sbin/mifpctl' in script
