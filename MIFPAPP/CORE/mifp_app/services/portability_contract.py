@@ -36,7 +36,7 @@ EXPORT_SCOPES = {
         "types": ["news"], "primary": "news", "icon": "bi-newspaper",
     },
     "events": {
-        "label": "Events", "description": "Public event records with links and assets.",
+        "label": "Events", "description": "Public event records, archive metadata, links and assets.",
         "types": ["event"], "primary": "events", "icon": "bi-calendar-event",
     },
     "publications": {
@@ -412,6 +412,10 @@ def build_import_format_guide() -> str:
         "timestamp, or an operator-supplied batch id. Do not place credentials, personal notes, raw private "
         "documents, chain-of-thought, or prompts in it. Never set `exported_from_id`: that marker is reserved "
         "for dashboard exports and changes restore behavior.", "",
+        "Dashboard exports may add optional `meta.archive` to an event. It is a backward-compatible portable "
+        "extension for the one-to-one Historical Archive record and contains no database integer IDs. Events and "
+        "All scope ZIPs preserve it together with ordinary `links` and `assets`; older packages without it remain "
+        "valid. Agents creating new editorial records must not synthesize this reserved object.", "",
         "Recommended shape (keys are descriptive metadata, not identity):", "",
         "```json", compact({"source_document": "announcements-2026.pdf", "source_item": "page-4-item-2", "batch": "operator-provided-batch-id", "extraction_confidence": 0.93}), "```", "",
         "## What import actually does", "",

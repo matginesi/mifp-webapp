@@ -24,18 +24,21 @@ from ..services.metrics_service import classify_asset_key, increment_daily
 from ..services.public_repository import (
     NEWS_TYPE_LABELS,
     get_home_context,
+    get_archive_entry,
     get_public_event,
     get_public_news,
     get_public_page,
     get_public_page_by_slug,
     get_public_sponsor,
     list_home_sponsors,
+    list_archive_entries,
     list_members_page,
     list_news_page,
     list_public_events,
     list_public_publications,
     list_public_research,
     sanitize_html,
+    event_public_destination,
     sitemap_dynamic_entries,
 )
 from ..utils.logger import audit_log, security_event
@@ -202,8 +205,38 @@ def event_detail(slug: str):
         event = get_public_event(conn, slug, lambda filename: url_for("public.media", filename=filename, _external=True))
         if not event:
             abort(404)
+        endpoint, values = event_public_destination(event)
+        if endpoint == "public.archive_detail":
+            return redirect(url_for(endpoint, **values), code=308)
     event["conference_website_url"] = event.get("remote_url")
     return render_template("public/event_detail.html", event=event)
+
+
+@bp.get("/archive/")
+def archive():
+    search = request.args.get("q", "").strip() or None
+    category = request.args.get("category", "").strip() or None
+    year = request.args.get("year", "").strip() or None
+    series = request.args.get("series", "").strip() or None
+    with connect_readonly(current_app.config["DATABASE_PATH"]) as conn:
+        result = list_archive_entries(
+            conn, lambda filename: url_for("public.media", filename=filename),
+            search=search, category=category, year=year, series=series,
+        )
+    return render_template("public/archive.html", archive=result, q=search,
+                           current_category=category, current_year=year, current_series=series)
+
+
+@bp.get("/archive/<category>/<int:year>/<slug>/")
+def archive_detail(category: str, year: int, slug: str):
+    with connect_readonly(current_app.config["DATABASE_PATH"]) as conn:
+        event = get_archive_entry(
+            conn, category, year, slug,
+            lambda filename: url_for("public.media", filename=filename, _external=True),
+        )
+    if not event:
+        abort(404)
+    return render_template("public/archive_detail.html", event=event)
 
 
 # ---------------------------------------------------------------------------
@@ -605,12 +638,18 @@ def sitemap_xml():
     db_path = current_app.config["DATABASE_PATH"]
     today = date.today().isoformat()
     urls = []
-    for endpoint in ("public.home", "public.events", "public.news", "public.publications", "public.research", "public.about", "public.privacy", "public.cookie_policy", "public.manifesto", "public.members", "public.code_of_conduct", "public.sponsors", "public.sponsor_how_to"):
+    for endpoint in ("public.home", "public.events", "public.archive", "public.news", "public.publications", "public.research", "public.about", "public.privacy", "public.cookie_policy", "public.manifesto", "public.members", "public.code_of_conduct", "public.sponsors", "public.sponsor_how_to"):
         urls.append({"loc": url_for(endpoint, _external=True), "lastmod": today, "changefreq": "weekly", "priority": "0.8"})
     with connect_readonly(db_path) as conn:
         for row in sitemap_dynamic_entries(conn):
-            endpoint = "public.event_detail" if row["kind"] == "event" else "public.news_detail"
-            urls.append({"loc": url_for(endpoint, slug=row["slug"], _external=True), "lastmod": row["lastmod"] or today, "changefreq": "monthly", "priority": "0.6"})
+            if row["kind"] == "event":
+                if row.get("archive_category"):
+                    loc = url_for("public.archive_detail", category=row["archive_category"], year=row["archive_year"], slug=row["slug"], _external=True)
+                else:
+                    loc = url_for("public.event_detail", slug=row["slug"], _external=True)
+            else:
+                loc = url_for("public.news_detail", slug=row["slug"], _external=True)
+            urls.append({"loc": loc, "lastmod": row["lastmod"] or today, "changefreq": "monthly", "priority": "0.6"})
     xml = render_template("public/sitemap.xml", urls=urls)
     resp = make_response(xml, 200)
     resp.headers["Content-Type"] = "application/xml; charset=utf-8"

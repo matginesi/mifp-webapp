@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 from collections.abc import Callable
 from datetime import date
@@ -354,6 +355,24 @@ def enrich_event(conn, event: dict[str, Any], media_url: MediaUrl) -> dict[str, 
     return event
 
 
+def event_public_destination(event: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Return the internal Flask destination without persisting an absolute URL."""
+    if event.get("archive_category") and event.get("archive_year") and event.get("slug"):
+        return "public.archive_detail", {
+            "category": event["archive_category"],
+            "year": int(event["archive_year"]),
+            "slug": event["slug"],
+        }
+    return "public.event_detail", {"slug": event.get("slug")}
+
+
+def _archive_select() -> str:
+    return (
+        "SELECT e.*,a.category AS archive_category,a.archive_year,a.public_path AS archive_public_path "
+        "FROM events e LEFT JOIN event_archive_entries a ON a.event_id=e.id"
+    )
+
+
 def news_asset_info(conn, news_row: dict[str, Any], media_url: MediaUrl) -> dict[str, Any]:
     cover = cover_url(conn, news_row, media_url)
     entity_id = news_row["id"]
@@ -481,11 +500,10 @@ def list_forthcoming_events(conn, media_url: MediaUrl, limit: int = 6) -> list[d
         dict(r)
         for r in conn.execute(
             f"""
-            SELECT *
-            FROM events
-            WHERE COALESCE(is_featured,0)=1
-              AND {PUBLIC_REVIEW_FILTER}
-            ORDER BY COALESCE(start_date,end_date,'9999-99-99') ASC, id DESC
+            {_archive_select()}
+            WHERE COALESCE(e.is_featured,0)=1
+              AND COALESCE(e.review_status,'draft')='published'
+            ORDER BY COALESCE(e.start_date,e.end_date,'9999-99-99') ASC, e.id DESC
             LIMIT ?
             """,
             (limit,),
@@ -499,9 +517,9 @@ def list_public_events(conn, media_url: MediaUrl) -> tuple[list[dict[str, Any]],
         dict(r)
         for r in conn.execute(
             f"""
-            SELECT * FROM events
-            WHERE {PUBLIC_REVIEW_FILTER}
-            ORDER BY COALESCE(start_date,end_date,'0000-00-00') DESC, id DESC
+            {_archive_select()}
+            WHERE COALESCE(e.review_status,'draft')='published'
+            ORDER BY COALESCE(e.start_date,e.end_date,'0000-00-00') DESC, e.id DESC
             """
         ).fetchall()
     ]
@@ -520,10 +538,88 @@ def list_public_events(conn, media_url: MediaUrl) -> tuple[list[dict[str, Any]],
 
 def get_public_event(conn, slug: str, media_url: MediaUrl) -> dict[str, Any] | None:
     row = conn.execute(
-        f"SELECT * FROM events WHERE slug=? AND {PUBLIC_REVIEW_FILTER}",
+        f"{_archive_select()} WHERE e.slug=? AND COALESCE(e.review_status,'draft')='published'",
         (slug,),
     ).fetchone()
     return enrich_event(conn, dict(row), media_url) if row else None
+
+
+def list_archive_entries(
+    conn, media_url: MediaUrl, *, search: str | None = None,
+    category: str | None = None, year: str | None = None, series: str | None = None,
+) -> dict[str, Any]:
+    clauses = ["COALESCE(e.review_status,'draft')='published'"]
+    params: list[Any] = []
+    if search:
+        clauses.append("(e.title LIKE ? OR COALESCE(a.acronym,'') LIKE ? OR COALESCE(a.summary,'') LIKE ?)")
+        term = f"%{search}%"; params.extend((term, term, term))
+    if category:
+        clauses.append("a.category=?"); params.append(category)
+    if year:
+        clauses.append("a.archive_year=?"); params.append(year)
+    if series:
+        clauses.append("e.series_key=?"); params.append(series)
+    rows = [dict(row) for row in conn.execute(
+        "SELECT e.*,a.category AS archive_category,a.archive_year,a.public_path AS archive_public_path,"
+        "a.acronym,a.summary,(SELECT COUNT(*) FROM asset_links al JOIN assets x ON x.id=al.asset_id "
+        "WHERE al.entity_type='event' AND al.entity_id=e.id AND (al.role='document' OR x.kind IN ('pdf','document'))) AS document_count "
+        "FROM event_archive_entries a JOIN events e ON e.id=a.event_id WHERE " + " AND ".join(clauses) +
+        " ORDER BY a.archive_year DESC,COALESCE(e.start_date,e.date_text) DESC,e.title", params
+    ).fetchall()]
+    categories = [row[0] for row in conn.execute("SELECT DISTINCT category FROM event_archive_entries ORDER BY category")]
+    years = [int(row[0]) for row in conn.execute("SELECT DISTINCT archive_year FROM event_archive_entries ORDER BY archive_year DESC")]
+    series_values = [row[0] for row in conn.execute("SELECT DISTINCT e.series_key FROM event_archive_entries a JOIN events e ON e.id=a.event_id WHERE COALESCE(e.series_key,'')<>'' ORDER BY e.series_key")]
+    totals = conn.execute(
+        "SELECT COUNT(*),MIN(archive_year),MAX(archive_year),"
+        "COALESCE(SUM((SELECT COUNT(*) FROM asset_links al JOIN assets x ON x.id=al.asset_id WHERE al.entity_type='event' AND al.entity_id=a.event_id AND (al.role='document' OR x.kind IN ('pdf','document')))),0) "
+        "FROM event_archive_entries a"
+    ).fetchone()
+    people_total = 0
+    for raw in conn.execute("SELECT people_json FROM event_archive_entries"):
+        try: people_total += sum(len(items) for items in json.loads(raw[0] or "{}").values())
+        except (ValueError, TypeError, AttributeError): pass
+    return {"entries": [enrich_event(conn, row, media_url) for row in rows],
+            "categories": categories, "years": years, "series": series_values,
+            "stats": {"events": int(totals[0] or 0), "year_min": totals[1], "year_max": totals[2],
+                      "documents": int(totals[3] or 0), "people": people_total}}
+
+
+def get_archive_entry(conn, category: str, year: int, slug: str, media_url: MediaUrl) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT e.*,a.category AS archive_category,a.archive_year,a.public_path AS archive_public_path,"
+        "a.source_schema,a.original_public_url,a.acronym,a.summary,a.topics_json,a.topics_note,"
+        "a.people_json,a.programme_json,a.recovery_json,a.not_recovered_json,a.media_json,a.updated_at AS archive_updated_at "
+        "FROM event_archive_entries a JOIN events e ON e.id=a.event_id "
+        "WHERE a.category=? AND a.archive_year=? AND e.slug=? AND COALESCE(e.review_status,'draft')='published'",
+        (category, year, slug),
+    ).fetchone()
+    if not row: return None
+    event = enrich_event(conn, dict(row), media_url)
+    for target, source, default in (("topics","topics_json",[]),("people","people_json",{}),
+                                    ("programme","programme_json",[]),("recovery","recovery_json",{}),
+                                    ("not_recovered","not_recovered_json",[]),("media","media_json",{})):
+        try: event[target] = json.loads(event.get(source) or json.dumps(default))
+        except (ValueError, TypeError): event[target] = default
+    gallery = conn.execute(
+        "SELECT al.asset_id,a.caption,a.alt_text,a.source_url FROM asset_links al JOIN assets a ON a.id=al.asset_id "
+        "WHERE al.entity_type='event' AND al.entity_id=? AND al.role='gallery' ORDER BY al.sort_order,al.id",
+        (event["id"],),
+    ).fetchall()
+    image_meta = {
+        str(item.get("source_url") or ""): item
+        for item in event.get("media", {}).get("images", [])
+        if isinstance(item, dict) and item.get("source_url")
+    }
+    event["gallery"] = [
+        {
+            "url": asset_url(conn, item["asset_id"], media_url),
+            "caption": image_meta.get(str(item["source_url"] or ""), {}).get("caption") or item["caption"],
+            "alt": image_meta.get(str(item["source_url"] or ""), {}).get("alt") or item["alt_text"],
+        }
+        for item in gallery
+    ]
+    event["source_links"] = [link for link in event["entity_links"] if link.get("role") == "source"]
+    return event
 
 
 def list_recent_news(conn, media_url: MediaUrl, limit: int = 10) -> list[dict[str, Any]]:
@@ -788,11 +884,12 @@ def get_public_sponsor(conn, slug: str, media_url: MediaUrl) -> dict[str, Any] |
         enrich_event(conn, dict(r), media_url)
         for r in conn.execute(
             f"""
-            SELECT e.*
+            SELECT e.*,a.category AS archive_category,a.archive_year
             FROM events e
+            LEFT JOIN event_archive_entries a ON a.event_id=e.id
             JOIN entity_relations er
               ON er.source_type='sponsor' AND er.source_id=? AND er.target_type='event' AND er.target_id=e.id
-            WHERE {PUBLIC_REVIEW_FILTER}
+            WHERE COALESCE(e.review_status,'draft')='published'
             ORDER BY COALESCE(e.start_date,e.end_date,'0000-00-00') DESC, e.id DESC
             """,
             (sponsor["id"],),
@@ -978,8 +1075,13 @@ def list_public_publications(conn, media_url: MediaUrl) -> list[dict[str, Any]]:
 
 def sitemap_dynamic_entries(conn) -> list[dict[str, Any]]:
     events = [
-        {"kind": "event", "slug": row["slug"], "lastmod": row["updated_at"]}
-        for row in conn.execute(f"SELECT slug, updated_at FROM events WHERE {PUBLIC_REVIEW_FILTER}").fetchall()
+        {"kind": "event", "slug": row["slug"], "lastmod": row["updated_at"],
+         "archive_category": row["archive_category"], "archive_year": row["archive_year"]}
+        for row in conn.execute(
+            "SELECT e.slug,e.updated_at,a.category AS archive_category,a.archive_year "
+            "FROM events e LEFT JOIN event_archive_entries a ON a.event_id=e.id "
+            "WHERE COALESCE(e.review_status,'draft')='published'"
+        ).fetchall()
     ]
     news = [
         {"kind": "news", "slug": row["slug"], "lastmod": row["date"] or row["updated_at"]}

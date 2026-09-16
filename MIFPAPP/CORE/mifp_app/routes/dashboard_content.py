@@ -488,6 +488,11 @@ def _event_has_publishable_cover(conn, record_id: int | None, form) -> bool:
     if submitted_cover:
         return True
 
+    if record_id and conn.execute(
+        "SELECT 1 FROM event_archive_entries WHERE event_id=?", (record_id,)
+    ).fetchone():
+        return True
+
     if form.get("manage_event_assets") == "1" or not record_id:
         return False
 

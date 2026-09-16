@@ -719,12 +719,30 @@ def _records_for_scope(conn: sqlite3.Connection, scope: str) -> list[dict[str, A
                 parent_id = data.pop("parent_event_id", None)
                 if parent_id in event_slugs:
                     data["parent_event_slug"] = event_slugs[parent_id]
+            meta: dict[str, Any] = {"exported_from_id": entity_id}
+            if typ == "event" and table_exists(conn, "event_archive_entries"):
+                archive = conn.execute(
+                    "SELECT source_schema,public_path,original_public_url,category,archive_year,"
+                    "acronym,summary,topics_json,topics_note,people_json,programme_json,"
+                    "recovery_json,not_recovered_json,media_json,source_record_sha256,imported_at,updated_at "
+                    "FROM event_archive_entries WHERE event_id=?", (entity_id,),
+                ).fetchone()
+                if archive:
+                    archive_meta = dict(archive)
+                    for key in ("topics_json", "people_json", "programme_json", "recovery_json", "not_recovered_json", "media_json"):
+                        try:
+                            archive_meta[key.removesuffix("_json")] = json.loads(
+                                archive_meta.pop(key) or "null"
+                            )
+                        except (ValueError, TypeError):
+                            archive_meta[key.removesuffix("_json")] = None
+                    meta["archive"] = archive_meta
             records.append({
                 "type": typ,
                 "data": data,
                 "links": links_by_entity.get((typ, entity_id), []),
                 "assets": assets_by_entity.get((typ, entity_id), []),
-                "meta": {"exported_from_id": entity_id},
+                "meta": meta,
             })
     return records
 

@@ -6,6 +6,7 @@ import re
 import sqlite3
 import unicodedata
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -207,6 +208,8 @@ def import_jsonl(
                 force_import=force_import,
                 portable_restore=portable_restore,
             )
+            if typ == "event" and isinstance(meta.get("archive"), dict):
+                _restore_archive_metadata(conn, entity_id, meta["archive"])
             summary[action][typ] = summary[action].get(typ, 0) + 1
             summary["linked_links"] += _merge_links(conn, typ, entity_id, links)
             if import_assets:
@@ -672,6 +675,38 @@ def _restore_portable_references(
                 "line": line_no,
                 "error": f"Parent event not found: {parent_slug}",
             })
+
+
+def _restore_archive_metadata(conn: sqlite3.Connection, event_id: int, archive: dict[str, Any]) -> None:
+    """Restore the optional, backward-compatible portable event extension."""
+    required = {"source_schema", "public_path", "category", "archive_year"}
+    if not required.issubset(archive):
+        raise ImportValidationError("Portable event meta.archive is missing required fields")
+    public_path = str(archive.get("public_path") or "").strip("/")
+    slug_row = conn.execute("SELECT slug FROM events WHERE id=?", (event_id,)).fetchone()
+    slug = str(slug_row["slug"] or "") if slug_row else ""
+    expected = f"archive/{archive['category']}/{int(archive['archive_year'])}/{slug}"
+    if public_path != expected or not re.fullmatch(r"archive/[a-z][a-z0-9-]*/[0-9]{4}/[a-z0-9]+(?:-[a-z0-9]+)*", public_path):
+        raise ImportValidationError("Portable event meta.archive has an invalid public_path")
+    def packed(key: str, default: Any) -> str:
+        return json.dumps(archive.get(key, default), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    now = datetime.now(UTC).isoformat()
+    conn.execute(
+        "INSERT INTO event_archive_entries(event_id,source_schema,public_path,original_public_url,category,archive_year,"
+        "acronym,summary,topics_json,topics_note,people_json,programme_json,recovery_json,not_recovered_json,"
+        "media_json,source_record_sha256,imported_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(event_id) DO UPDATE SET source_schema=excluded.source_schema,public_path=excluded.public_path,"
+        "original_public_url=excluded.original_public_url,category=excluded.category,archive_year=excluded.archive_year,"
+        "acronym=excluded.acronym,summary=excluded.summary,topics_json=excluded.topics_json,topics_note=excluded.topics_note,"
+        "people_json=excluded.people_json,programme_json=excluded.programme_json,recovery_json=excluded.recovery_json,"
+        "not_recovered_json=excluded.not_recovered_json,media_json=excluded.media_json,source_record_sha256=excluded.source_record_sha256,"
+        "imported_at=excluded.imported_at,updated_at=excluded.updated_at",
+        (event_id, archive["source_schema"], public_path, archive.get("original_public_url"), archive["category"],
+         int(archive["archive_year"]), archive.get("acronym"), archive.get("summary"), packed("topics", []),
+         archive.get("topics_note"), packed("people", {}), packed("programme", []), packed("recovery", {}),
+         packed("not_recovered", []), packed("media", {}), archive.get("source_record_sha256"),
+         archive.get("imported_at") or now, archive.get("updated_at") or now),
+    )
 
 
 def _upsert_asset_record(conn: sqlite3.Connection, data: dict[str, Any]) -> tuple[int, str]:

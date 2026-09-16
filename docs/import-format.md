@@ -16,6 +16,12 @@ Ogni riga e' un record indipendente:
 - `assets`: opzionale, lista di asset espliciti.
 - `meta`: opzionale, solo audit/import info. Non diventa contenuto pubblico.
 
+Negli export dashboard, un record `event` storico può includere
+`meta.archive`. È un'estensione opzionale e retrocompatibile: non contiene ID
+interi del database e preserva schema sorgente, `public_path`, categoria/anno,
+acronimo, sommario, topics, persone, programma e metadata di recovery. I
+package più vecchi senza `meta.archive` restano validi.
+
 Il nome file non determina il tipo. Ogni riga deve avere `type`.
 
 ## Regole
@@ -86,6 +92,41 @@ In entrambi i package moderni `records.jsonl` è protetto da SHA-256 nel manifes
 L'export JSONL della dashboard è volutamente **record-only**: una riga JSON per record canonico, senza stato dell'installazione e senza asset binari in Base64. È il formato da usare per ispezione, pipeline e versionamento dei dati, non per un ripristino completo.
 
 Non è mantenuta compatibilità con i vecchi ZIP `mifp-export`, con ZIP privi di `format`/`format_version` o con i vecchi JSONL self-contained `_mifp`: sono tutti rifiutati. Gli scraper emettono `mifp-content` v1 e gli export ZIP della dashboard emettono `mifp-jsonl-v2` v2.
+
+## Historical Archive source package
+
+La pagina `/dashboard/archive` accetta separatamente package sorgente con
+schema `mifp-historical-event-v1`. Non sono normali ZIP portabili. Il layout è:
+
+```text
+archive/<category>/<year>/<slug>/event.json
+archive/<category>/<year>/<slug>/assets/documents/...
+archive/<category>/<year>/<slug>/assets/images/...
+```
+
+`event.json` è la fonte strutturata; `index.html` e `assets/archive.css` sono
+ignorati. Il validatore rifiuta schema incompatibile, path assoluti/traversal,
+backslash, symlink, duplicati e rapporti di compressione sospetti. Upload e
+asset sono elaborati su disco a blocchi. La dashboard offre prima il dry-run,
+con azioni `create`, `attach`, `update archive`, `fill missing fields`,
+`unchanged` o `conflict`.
+
+Il matching è deterministico: UID esatto, poi slug esatto, altrimenti create.
+UID e slug che indicano eventi diversi producono un conflitto. Un record
+esistente riceve solo campi canonici mancanti; il package non sovrascrive
+contenuto curato e non imposta mai `events.remote_url` dal vecchio
+`public_url`. Documenti e immagini passano dal normale asset service e sono
+deduplicati per checksum. Le URL sorgente diventano `entity_links` con ruolo
+`source`.
+
+L'import effettivo usa il job manager limitato e supporta cancellazione tra
+record. Gli esiti restano auditabili in `import_runs`/`import_records`. Dopo
+l'import, `/events/<slug>` canonicalizza verso
+`/archive/<category>/<year>/<slug>/`; gli eventi ordinari non cambiano.
+
+Per backup e trasferimento non riutilizzare lo ZIP storico. Esportare lo scope
+Events o All dalla normale Data portability: `meta.archive`, link e asset
+locali consentono il ripristino offline completo senza i siti storici.
 
 ## Validazione
 

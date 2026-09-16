@@ -8,6 +8,7 @@ from .helpers import chart_js_has_data, screenshot_on_failure, wait_for_chart_re
 PUBLIC_ROUTES = [
     ("/", ["nav", "main", "footer"]),
     ("/events", ["main"]),
+    ("/archive/", ["main"]),
     ("/news", ["main"]),
     ("/publications", ["main", "#pubSearch"]),
     ("/about", ["main"]),

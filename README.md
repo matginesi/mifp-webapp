@@ -56,12 +56,18 @@ definisce gli invarianti che un DB deve rispettare per essere avviato.
 ```
 
 Non esistono migration implicite all'avvio. Gli upgrade supportati sono espliciti e
-si eseguono sempre su una copia (`db-upgrade-copy`); in questa versione è supportato
-l'upgrade v9 -> v10. DB legacy/non versionati continuano a passare dai package
+si eseguono sempre su una copia (`db-upgrade-copy`); in questa versione sono supportati
+gli upgrade adiacenti v9 -> v10 -> v11. DB legacy/non versionati continuano a passare dai package
 versionati `mifp-content` v1 o `mifp-jsonl-v2` v2; i vecchi ZIP non versionati sono rifiutati.
 
 JSONL è record-only. ZIP è il formato portabile per record/asset e, negli
 export completi della dashboard, stato durevole.
+
+Gli eventi storici recuperati si importano una sola volta dalla sezione
+dashboard **Archive**. Restano normali record `events`, con metadata ricchi in
+un'estensione 1:1 e file nella libreria asset. Le pagine pubbliche sono servite
+internamente sotto `/archive/`; i normali export portabili Events/All
+conservano metadata e file senza dipendere dallo ZIP storico originale.
 
 Vedi [schema e lifecycle](docs/database-schema.md) e [gestione Conference](docs/conference-sites.md).
 

@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 INSERT OR IGNORE INTO schema_migrations(version,name,checksum)
-VALUES(10,'canonical schema v10','57ceec99ef0ca42e9d46044f522ab701380aad8b210fbf75f7fe5070ec378902');
+VALUES(11,'canonical schema v11','c18a419d2e63809f94d3072cff512febe066f132f15f74d3980ecb2d19b9a9c5');
 
 CREATE TABLE IF NOT EXISTS source_systems (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,6 +192,36 @@ CREATE TABLE IF NOT EXISTS events (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (parent_event_id) REFERENCES events(id) ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS event_archive_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL UNIQUE,
+    source_schema TEXT NOT NULL,
+    public_path TEXT NOT NULL UNIQUE,
+    original_public_url TEXT,
+    category TEXT NOT NULL,
+    archive_year INTEGER NOT NULL,
+    acronym TEXT,
+    summary TEXT,
+    topics_json TEXT NOT NULL DEFAULT '[]',
+    topics_note TEXT,
+    people_json TEXT NOT NULL DEFAULT '{}',
+    programme_json TEXT NOT NULL DEFAULT '[]',
+    recovery_json TEXT NOT NULL DEFAULT '{}',
+    not_recovered_json TEXT NOT NULL DEFAULT '[]',
+    media_json TEXT NOT NULL DEFAULT '{}',
+    source_record_sha256 TEXT,
+    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_event_archive_event
+    ON event_archive_entries(event_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_event_archive_public_path
+    ON event_archive_entries(public_path);
+CREATE INDEX IF NOT EXISTS idx_event_archive_browse
+    ON event_archive_entries(category, archive_year, event_id);
 
 CREATE TABLE IF NOT EXISTS news (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -622,4 +652,3 @@ CREATE TRIGGER IF NOT EXISTS assign_sponsors_uid AFTER INSERT ON sponsors
 WHEN NEW.uid IS NULL OR TRIM(NEW.uid)='' BEGIN
   UPDATE sponsors SET uid='sponsor_' || lower(hex(randomblob(16))) WHERE id=NEW.id;
 END;
-

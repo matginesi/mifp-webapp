@@ -627,6 +627,7 @@ def assets_retry_external():
 
 
 from . import (  # noqa: E402,F401
+    dashboard_archive,
     dashboard_assets,
     dashboard_conferences,
     dashboard_content,

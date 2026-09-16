@@ -4,7 +4,7 @@
 {% block content %}
 {% call page_header('Operations', 'Data quality', 'Scan, review, and consolidate records. Nothing changes until a reviewed plan is applied.') %}
   <a class="btn btn-outline btn-sm" href="#dqQuarantine"><i class="bi bi-shield-lock"></i> Quarantine <span>{{ quarantined|length }}</span></a>
-  <button type="button" class="btn btn-primary btn-sm" id="dqAnalyze"><i class="bi bi-stars"></i> Scan database</button>
+  <button type="button" class="btn btn-primary btn-sm" id="dqAnalyze" {% if latest_run_state and latest_run_state.status == 'running' %}disabled{% endif %}><i class="bi bi-stars"></i> {{ 'Scan running…' if latest_run_state and latest_run_state.status == 'running' else 'Scan database' }}</button>
 {% endcall %}
 
 <div class="dq-app">
@@ -18,14 +18,21 @@
         <p>Detect records that should be merged, cleaned, enriched, or split. A scan alone never changes record counts: queue the automatic fixes, then apply them.</p>
       </div>
     </header>
-    <div class="dq-progress" id="dqProgress" hidden>
-      <div class="dq-progress-track"><span id="dqProgressFill"></span></div>
-      <b id="dqProgressPercent"></b>
-      <span id="dqProgressText"></span>
+    <div class="dq-progress" id="dqProgress" {% if not latest_run_state or latest_run_state.status != 'running' %}hidden{% endif %}>
+      <div class="dq-progress-track"><span id="dqProgressFill" {% if latest_run_state and latest_run_state.status == 'running' %}class="is-active" style="width:{{ latest_run_state.progress_pct or 0 }}%"{% endif %}></span></div>
+      <b id="dqProgressPercent">{% if latest_run_state and latest_run_state.status == 'running' %}{{ latest_run_state.progress_pct or 0 }}%{% endif %}</b>
+      <span id="dqProgressText">{{ latest_run_state.progress_message if latest_run_state and latest_run_state.status == 'running' else '' }}</span>
       <time id="dqProgressTime"></time>
     </div>
     <div class="dq-summary" id="dqSummary">
       {% if run %}
+      <div class="dq-scan-evidence">
+        <span><i class="bi bi-check2-circle"></i><b>Scan #{{ run.id }} completed</b></span>
+        <span><b>{{ run.summary.records or 0 }}</b> records checked</span>
+        <span><b>{{ run.summary.pairs or 0 }}</b> candidate pairs compared</span>
+        <span><b>{{ '%.2f'|format((run.duration_ms or 0) / 1000) }} s</b> elapsed</span>
+      </div>
+      {% if finding_total %}
       <div class="dq-summary-cards" id="dqSummaryCards">
         {% for value, label, icon, help in [
           ('automatic','Automatic fixes','bi-lightning-charge','Deterministic and very-high-confidence changes that can be queued in bulk.'),
@@ -39,6 +46,9 @@
         </button>
         {% endfor %}
       </div>
+      {% else %}
+      <div class="dq-clean-result" id="dqSummaryCards"><i class="bi bi-check2-circle"></i><div><b>Scan complete: no open findings</b><span>The analyzer checked the current records and relationships. Nothing needs review or application.</span></div></div>
+      {% endif %}
       {% set manual_count = workflow_counts.get('manual', 0) %}
       <div class="dq-manual-callout{% if not manual_count %} is-empty{% endif %}">
         <div class="dq-manual-callout-icon"><i class="bi bi-person-check"></i></div>
@@ -55,6 +65,8 @@
           Review decisions <span>{{ manual_count }}</span>
         </button>
       </div>
+      {% elif latest_run_state and latest_run_state.status == 'failed' %}
+      <div class="dq-empty-phase is-error"><i class="bi bi-exclamation-triangle"></i><b>Latest scan failed</b><p>{{ latest_run_state.progress_message or latest_run_state.error_message or 'Check the server log and run the scan again.' }}</p></div>
       {% else %}
       <div class="dq-empty-phase">
         <i class="bi bi-clipboard-data"></i>
@@ -68,7 +80,7 @@
   <hr class="dq-phase-divider">
 
   <!-- Phase 2: Review & Apply -->
-  <section class="dq-phase {% if not run %}dq-phase-disabled{% endif %}" id="dqPhase2" data-phase="2">
+  <section class="dq-phase {% if not run or (not finding_total and not bundle) %}dq-phase-disabled{% endif %}" id="dqPhase2" data-phase="2">
     <header class="dq-phase-header">
       <span class="dq-phase-num"><i class="bi bi-check2-square"></i></span>
       <div>
@@ -76,7 +88,7 @@
         <p>Queue safe fixes in one click. Your decision is requested only when the evidence is genuinely ambiguous.</p>
       </div>
     </header>
-    {% if run %}
+    {% if run and (finding_total or bundle) %}
     <form class="dq-toolbar" id="dqFilters">
       <label>
         <span>Action</span>
@@ -104,9 +116,9 @@
       <label>
         <span>Finding</span>
         <select class="form-select form-select-sm" name="classification">
-          <option value="automatic" selected>Automatic fixes</option>
-          <option value="manual">Needs decision</option>
-          <option value="informational">Informational / non-blocking</option>
+          <option value="automatic" {{ 'selected' if default_workflow == 'automatic' }}>Automatic fixes</option>
+          <option value="manual" {{ 'selected' if default_workflow == 'manual' }}>Needs decision</option>
+          <option value="informational" {{ 'selected' if default_workflow == 'informational' }}>Informational / non-blocking</option>
           <option value="">All</option>
           <option value="exact_duplicate">Exact match</option>
           <option value="strong_candidate">Strong candidate</option>
@@ -122,7 +134,7 @@
     </form>
     <div class="dq-queue-bar">
       <div class="dq-filter-status" aria-live="polite">
-        <b id="dqFilteredCount">{{ workflow_counts.get('automatic', 0) }}</b>
+        <b id="dqFilteredCount">{{ workflow_counts.get(default_workflow, 0) }}</b>
         <span>matching the current filters</span>
       </div>
       <div class="dq-queue-stats" id="dqQueueStats">
@@ -168,6 +180,8 @@
       <p class="dq-history-empty">No previous consolidations.</p>
       {% endif %}
     </div>
+    {% elif run %}
+    <div class="dq-empty-phase is-clean"><i class="bi bi-check2-circle"></i><b>No review queue needed</b><p>This scan completed successfully and found no open changes.</p></div>
     {% else %}
     <div class="dq-empty-phase">
       <i class="bi bi-clipboard-data"></i>
@@ -227,7 +241,9 @@
 {{ super() }}
 <script src="{{ url_for('static', filename='js/dashboard/data-quality.js', v=static_version) }}" defer></script>
 <script type="application/json" id="dqConfig" nonce="{{ csp_nonce }}">{{ {
-  'runId': run.id if run else none,
+  'runId': run.id if run else latest_run_state.id if latest_run_state else none,
+  'runStatus': latest_run_state.status if latest_run_state else 'none',
+  'defaultWorkflow': default_workflow,
   'bundleId': bundle.id if bundle else none,
   'analyzeUrl': url_for('dashboard.data_quality_analyze'),
   'progressUrl': url_for('dashboard.data_quality_analyze_progress'),

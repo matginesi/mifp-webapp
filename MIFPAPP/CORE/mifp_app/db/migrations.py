@@ -85,8 +85,39 @@ def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v10_to_v11(conn: sqlite3.Connection) -> None:
+    """Add the one-to-one historical archive extension for canonical events."""
+    conn.execute(
+        """CREATE TABLE event_archive_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL UNIQUE,
+    source_schema TEXT NOT NULL,
+    public_path TEXT NOT NULL UNIQUE,
+    original_public_url TEXT,
+    category TEXT NOT NULL,
+    archive_year INTEGER NOT NULL,
+    acronym TEXT,
+    summary TEXT,
+    topics_json TEXT NOT NULL DEFAULT '[]',
+    topics_note TEXT,
+    people_json TEXT NOT NULL DEFAULT '{}',
+    programme_json TEXT NOT NULL DEFAULT '[]',
+    recovery_json TEXT NOT NULL DEFAULT '{}',
+    not_recovered_json TEXT NOT NULL DEFAULT '[]',
+    media_json TEXT NOT NULL DEFAULT '{}',
+    source_record_sha256 TEXT,
+    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+)"""
+    )
+    conn.execute("CREATE UNIQUE INDEX idx_event_archive_event ON event_archive_entries(event_id)")
+    conn.execute("CREATE UNIQUE INDEX idx_event_archive_public_path ON event_archive_entries(public_path)")
+    conn.execute("CREATE INDEX idx_event_archive_browse ON event_archive_entries(category, archive_year, event_id)")
+
+
 # Target-version -> migration from the immediately preceding supported version.
-MIGRATIONS: dict[int, Migration] = {10: _migrate_v9_to_v10}
+MIGRATIONS: dict[int, Migration] = {10: _migrate_v9_to_v10, 11: _migrate_v10_to_v11}
 MIN_UPGRADABLE_VERSION = 9
 
 

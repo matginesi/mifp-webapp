@@ -72,7 +72,7 @@
       </div>
       <div class="card-grid">
         {% for event in sponsor.linked_events %}
-        <a href="{{ url_for('public.event_detail', slug=event.slug) }}" class="card event-card">
+        <a href="{{ url_for('public.archive_detail', category=event.archive_category, year=event.archive_year, slug=event.slug) if event.archive_category else url_for('public.event_detail', slug=event.slug) }}" class="card event-card">
           {% if event.cover_url %}
           <div class="card-cover">
             <img src="{{ event.cover_url }}" alt="{{ event.title }}" loading="lazy">

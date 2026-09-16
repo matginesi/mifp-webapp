@@ -1,0 +1,41 @@
+{% extends "public/base.html" %}
+{% block title %}{{ event.title }} — MIFP Archive{% endblock %}
+{% block meta_description %}{{ (event.summary or event.description or event.title)[:160] }}{% endblock %}
+{% block extra_css %}<link href="{{ url_for('static', filename='css/archive.css', v=static_version) }}" rel="stylesheet">{% endblock %}
+{% block json_ld %}<script type="application/ld+json" nonce="{{ csp_nonce }}">{{ {"@context":"https://schema.org","@type":"Event","name":event.title,"startDate":event.start_date,"endDate":event.end_date,"description":event.summary or event.description,"url":request.base_url,"location":{"@type":"Place","name":event.location} if event.location else none}|tojson }}</script>{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="container-wide">
+    <ol class="mifp-breadcrumb"><li><a href="{{ url_for('public.home') }}">Home</a></li><li><a href="{{ url_for('public.events') }}">Events</a></li><li><a href="{{ url_for('public.archive') }}">Archive</a></li><li aria-current="page">{{ event.archive_year }}</li></ol>
+    <div class="eyebrow-row archive-eyebrow"><span class="num serif italic">—</span><span class="eyebrow eyebrow-red">Historical event</span><span class="tag red">{{ event.archive_category|replace('-',' ') }}</span>{% if event.acronym %}<span class="tag">{{ event.acronym }}</span>{% endif %}</div>
+    <h1>{{ event.title }}</h1>
+    {% if event.summary %}<p>{{ event.summary }}</p>{% endif %}
+    <div class="accent-bar"></div>
+  </div>
+</section>
+
+<section class="section-sm">
+  <div class="container-wide archive-detail-layout">
+    <aside class="archive-detail-aside">
+      <div class="detail-info-card"><div class="detail-info-row"><div class="detail-info-icon"><i class="bi bi-calendar3"></i></div><div><div class="detail-info-label">Date</div><div class="detail-info-value">{{ event.date_text or event.start_date or 'Not recovered' }}</div></div></div></div>
+      {% if event.location %}<div class="detail-info-card"><div class="detail-info-row"><div class="detail-info-icon"><i class="bi bi-geo-alt"></i></div><div><div class="detail-info-label">Place</div><div class="detail-info-value">{{ event.location }}</div></div></div></div>{% endif %}
+      <div class="detail-info-card"><div class="detail-info-row"><div class="detail-info-icon blue"><i class="bi bi-bookmark"></i></div><div><div class="detail-info-label">Category</div><div class="detail-info-value">{{ event.event_type|replace('_',' ')|title }}</div></div></div></div>
+      {% if event.series_key %}<div class="detail-info-card"><div class="detail-info-row"><div class="detail-info-icon blue"><i class="bi bi-collection"></i></div><div><div class="detail-info-label">Series</div><div class="detail-info-value">{{ event.series_key }}</div></div></div></div>{% endif %}
+      {% if event.documents %}<div class="detail-info-card archive-document-card"><div class="detail-info-label">Documents</div><ul>{% for doc in event.documents %}<li><a href="{{ doc.url }}"><i class="bi bi-file-earmark-text"></i><span>{{ doc.filename }}</span><i class="bi bi-download"></i></a></li>{% endfor %}</ul></div>{% endif %}
+    </aside>
+
+    <div class="archive-detail-content">
+      {% if event.description_html %}<section class="archive-content-section"><div class="archive-section-heading"><span class="num serif italic">—</span><h2>About this event</h2></div><div class="article-body">{{ event.description_html|safe }}</div></section>{% endif %}
+      {% if event.topics %}<section class="archive-content-section"><div class="archive-section-heading"><span class="num serif italic">—</span><h2>Topics</h2></div><ul class="archive-topics">{% for topic in event.topics %}<li>{{ topic }}</li>{% endfor %}</ul>{% if event.topics_note %}<p class="archive-note">{{ event.topics_note }}</p>{% endif %}</section>{% endif %}
+      {% for role, people in event.people.items() if people %}<section class="archive-content-section"><div class="archive-section-heading"><span class="num serif italic">—</span><h2>{{ role|replace('_',' ')|title }}</h2></div><div class="archive-people-list">{% for person in people %}<article><div class="archive-person-mark">{{ person.name[:1] }}</div><div><h3>{{ person.name }}</h3>{% if person.affiliation %}<p>{{ person.affiliation }}</p>{% endif %}{% if person.role_label %}<span>{{ person.role_label }}</span>{% endif %}{% if person.presentation_title %}<blockquote>{{ person.presentation_title }}{% if person.presentation_type %}<small>{{ person.presentation_type|replace('_',' ') }}</small>{% endif %}</blockquote>{% endif %}</div></article>{% endfor %}</div></section>{% endfor %}
+      {% if event.programme %}<section class="archive-content-section"><div class="archive-section-heading"><span class="num serif italic">—</span><h2>Programme</h2></div><div class="archive-programme">{% for row in event.programme %}<article>{% for key, value in row.items() if value %}<div><b>{{ key|replace('_',' ')|title }}</b><span>{{ value if value is string else value|join(', ') }}</span></div>{% endfor %}</article>{% endfor %}</div></section>{% endif %}
+      {% if event.gallery %}<section class="archive-content-section"><div class="archive-section-heading"><span class="num serif italic">—</span><h2>Gallery</h2></div><div class="archive-gallery">{% for image in event.gallery %}<figure><img src="{{ image.url }}" alt="{{ image.alt or image.caption or event.title }}" loading="lazy">{% if image.caption %}<figcaption>{{ image.caption }}</figcaption>{% endif %}</figure>{% endfor %}</div></section>{% endif %}
+      {% if event.source_links %}<section class="archive-content-section archive-source-section"><div class="archive-section-heading"><span class="num serif italic">—</span><h2>Historical sources</h2></div><ul>{% for link in event.source_links %}<li><a href="{{ link.url }}" rel="noopener noreferrer"><i class="bi bi-box-arrow-up-right"></i>{{ link.label or link.url }}</a></li>{% endfor %}</ul></section>{% endif %}
+      {% if event.recovery.notes %}<section class="archive-content-section"><div class="archive-section-heading"><span class="num serif italic">—</span><h2>Recovery notes</h2></div><ul>{% for note in event.recovery.notes %}<li>{{ note }}</li>{% endfor %}</ul></section>{% endif %}
+      {% if event.not_recovered %}<section class="archive-content-section archive-not-recovered"><div class="archive-section-heading"><span class="num serif italic">—</span><h2>Not recovered</h2></div><ul>{% for note in event.not_recovered %}<li>{{ note }}</li>{% endfor %}</ul></section>{% endif %}
+      <a href="{{ url_for('public.archive') }}" class="back-button"><i class="bi bi-chevron-left"></i> Historical Event Archive</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

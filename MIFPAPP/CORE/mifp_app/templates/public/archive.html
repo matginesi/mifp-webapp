@@ -1,0 +1,58 @@
+{% extends "public/base.html" %}
+{% block title %}Historical Event Archive — MIFP{% endblock %}
+{% block meta_description %}Browse the MIFP historical archive of conferences, schools, workshops, meetings and seminars.{% endblock %}
+{% block extra_css %}<link href="{{ url_for('static', filename='css/archive.css', v=static_version) }}" rel="stylesheet">{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="container-wide">
+    <ol class="mifp-breadcrumb"><li><a href="{{ url_for('public.home') }}">Home</a></li><li><a href="{{ url_for('public.events') }}">Events</a></li><li aria-current="page">Archive</li></ol>
+    <div class="eyebrow-row archive-eyebrow"><span class="num serif italic">—</span><span class="eyebrow eyebrow-red">Event archive</span></div>
+    <h1>Historical Event Archive</h1>
+    <p>Recovered programmes, people, documents and records from MIFP’s earlier scientific events.</p>
+    <div class="accent-bar"></div>
+  </div>
+</section>
+
+<section class="section-sm archive-index-section">
+  <div class="container-wide">
+    <div class="archive-overview" aria-label="Archive summary">
+      <div class="archive-overview-lead"><span>Historical range</span><strong>{% if archive.stats.events %}{{ archive.stats.year_min }}–{{ archive.stats.year_max }}{% else %}—{% endif %}</strong></div>
+      <div><span>Events</span><strong>{{ archive.stats.events }}</strong></div>
+      <div><span>Documents</span><strong>{{ archive.stats.documents }}</strong></div>
+      <div><span>People listed</span><strong>{{ archive.stats.people }}</strong></div>
+    </div>
+
+    <form class="archive-filters" method="get" action="{{ url_for('public.archive') }}" aria-label="Filter archive">
+      <label class="archive-search"><span>Search archive</span><span class="archive-input-wrap"><i class="bi bi-search" aria-hidden="true"></i><input name="q" value="{{ q or '' }}" placeholder="Title, acronym or summary"></span></label>
+      <label><span>Category</span><select name="category"><option value="">All categories</option>{% for item in archive.categories %}<option value="{{ item }}" {{ 'selected' if item == current_category }}>{{ item|replace('-',' ')|title }}</option>{% endfor %}</select></label>
+      <label><span>Year</span><select name="year"><option value="">All years</option>{% for item in archive.years %}<option value="{{ item }}" {{ 'selected' if item|string == current_year }}>{{ item }}</option>{% endfor %}</select></label>
+      <label><span>Series</span><select name="series"><option value="">All series</option>{% for item in archive.series %}<option value="{{ item }}" {{ 'selected' if item == current_series }}>{{ item }}</option>{% endfor %}</select></label>
+      <div class="archive-filter-actions"><button class="btn btn-primary" type="submit">Apply filters</button>{% if q or current_category or current_year or current_series %}<a class="btn btn-outline" href="{{ url_for('public.archive') }}">Clear</a>{% endif %}</div>
+    </form>
+
+    <div class="section-head archive-results-head">
+      <div class="section-head-left"><div class="eyebrow-row"><span class="num serif italic">—</span><span class="eyebrow eyebrow-blue">Recovered records</span></div><h2>{{ archive.entries|length }} event{{ '' if archive.entries|length == 1 else 's' }}</h2></div>
+    </div>
+
+    {% if archive.entries %}
+    <div class="archive-event-list">
+      {% for event in archive.entries %}
+      <article class="archive-event-row">
+        <div class="archive-event-date"><strong>{{ event.archive_year }}</strong><span>{{ event.archive_category|replace('-',' ') }}</span></div>
+        <div class="archive-event-copy">
+          <div class="archive-event-tags">{% if event.acronym %}<span class="tag red">{{ event.acronym }}</span>{% endif %}{% if event.series_key %}<span>Series: {{ event.series_key }}</span>{% endif %}</div>
+          <h3><a href="{{ url_for('public.archive_detail', category=event.archive_category, year=event.archive_year, slug=event.slug) }}">{{ event.title }}</a></h3>
+          {% if event.summary or event.description %}<p>{{ event.summary or event.description }}</p>{% endif %}
+          <div class="archive-event-meta"><span><i class="bi bi-calendar3"></i>{{ event.date_text or event.start_date or 'Date not recovered' }}</span>{% if event.location %}<span><i class="bi bi-geo-alt"></i>{{ event.location }}</span>{% endif %}{% if event.document_count %}<span><i class="bi bi-file-earmark-text"></i>{{ event.document_count }} document{{ '' if event.document_count == 1 else 's' }}</span>{% endif %}</div>
+        </div>
+        <a class="archive-event-action" href="{{ url_for('public.archive_detail', category=event.archive_category, year=event.archive_year, slug=event.slug) }}" aria-label="View {{ event.title }}"><i class="bi bi-chevron-right"></i></a>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state"><div class="empty-state-icon"><i class="bi bi-calendar-x"></i></div><p>No archive records match these filters.</p><p>Change or clear the filters to view the full archive.</p></div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

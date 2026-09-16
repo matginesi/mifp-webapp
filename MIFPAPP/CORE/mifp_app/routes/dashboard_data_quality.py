@@ -81,19 +81,20 @@ def data_quality_page():
             else:
                 item["edit_url"] = None
         latest, bundle, total = _workspace_state(conn)
-        run = None
-        if latest:
-            has_findings = conn.execute(
-                "SELECT COUNT(*) FROM quality_findings WHERE run_id=?",
-                (latest["id"],),
-            ).fetchone()[0]
-            if has_findings:
-                run = latest
-                workflow_counts = count_workflows(conn, int(run["id"]))
+        run = latest if latest and latest.get("status") == "completed" else None
+        if run:
+            workflow_counts = count_workflows(conn, int(run["id"]))
+    finding_total = sum(workflow_counts.values())
+    default_workflow = next(
+        (name for name in ("automatic", "manual", "informational") if workflow_counts.get(name)),
+        "automatic",
+    )
     current_app.logger.info("data_quality page loaded run_id=%s bundle_id=%s open=%s workflow=%s", run["id"] if run else None, bundle["id"] if bundle else None, total, workflow_counts)
     return render_template(
         "dashboard/data_quality.html", run=run, bundle=bundle, total=total,
         workflow_counts=workflow_counts, quarantined=quarantined,
+        finding_total=finding_total, default_workflow=default_workflow,
+        latest_run_state=latest,
     )
 
 
@@ -178,7 +179,11 @@ def data_quality_analyze():
         except Exception as exc:
             try:
                 with connect(db_path) as c:
-                    c.execute("UPDATE quality_runs SET status='failed',progress_message=? WHERE id=?", (str(exc)[:200], run_id))
+                    c.execute(
+                        "UPDATE quality_runs SET status='failed',completed_at=CURRENT_TIMESTAMP,"
+                        "error_message=?,progress_message=? WHERE id=?",
+                        (str(exc)[:1000], str(exc)[:200], run_id),
+                    )
                     c.commit()
             except Exception:
                 pass

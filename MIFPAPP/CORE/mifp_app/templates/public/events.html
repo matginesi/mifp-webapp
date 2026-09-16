@@ -71,7 +71,7 @@
           {% endif %}
 
           <div class="event-foot">
-            <a href="{{ url_for('public.event_detail', slug=event.slug) if event.slug else '#' }}" class="btn btn-primary btn-sm">
+            <a href="{{ url_for('public.archive_detail', category=event.archive_category, year=event.archive_year, slug=event.slug) if event.archive_category else url_for('public.event_detail', slug=event.slug) if event.slug else '#' }}" class="btn btn-primary btn-sm">
               View details
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </a>
@@ -95,7 +95,7 @@
 
     <div class="past-list">
       {% for event in past %}
-      <a href="{{ url_for('public.event_detail', slug=event.slug) if event.slug else '#' }}" class="past-row">
+      <a href="{{ url_for('public.archive_detail', category=event.archive_category, year=event.archive_year, slug=event.slug) if event.archive_category else url_for('public.event_detail', slug=event.slug) if event.slug else '#' }}" class="past-row">
         {% set year = event.start_date[:4] if event.start_date else (event.date_text[:4] if event.date_text and event.date_text[:4]|int > 1990 else '—') %}
         <span class="past-year">{{ year }}</span>
         <div class="past-info">

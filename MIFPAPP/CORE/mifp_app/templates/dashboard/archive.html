@@ -1,0 +1,144 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Archive{% endblock %}
+
+{% block content %}
+{% call page_header('Historical archive', 'Archive', 'Validate recovered event packages and connect them to canonical Events.', entity_type='events') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('public.archive') }}" target="_blank" rel="noopener noreferrer"><i class="bi bi-box-arrow-up-right"></i> Public archive</a>
+{% endcall %}
+
+<section class="operations-status-strip archive-status-strip" aria-label="Archive summary">
+  <div class="operations-status-lead"><i class="bi bi-archive" aria-hidden="true"></i><span><small>Archive events</small><strong>{{ stats.events }}</strong><em>canonical records</em></span></div>
+  <div><small>Categories</small><strong>{{ stats.categories }}</strong><em>event types</em></div>
+  <div><small>Year span</small><strong>{{ stats.year_min or '—' }}{% if stats.year_max and stats.year_max != stats.year_min %}–{{ stats.year_max }}{% endif %}</strong><em>historical range</em></div>
+  <div><small>Imports</small><strong>{{ runs|length }}</strong><em>recent runs</em></div>
+</section>
+
+<ol class="transfer-workflow archive-workflow" aria-label="Archive import workflow">
+  <li><span>1</span><div><b>Select</b><small>Choose the historical ZIP</small></div></li>
+  <li><span>2</span><div><b>Validate</b><small>Inspect records and assets</small></div></li>
+  <li><span>3</span><div><b>Import</b><small>Attach data to canonical events</small></div></li>
+</ol>
+
+<div class="archive-workspace">
+  <section class="modern-card portability-panel archive-import-panel">
+    <div class="panel-head">
+      <div><span class="panel-eyebrow">Inbound</span><h3><i class="bi bi-box-arrow-in-down"></i> Import historical package</h3><p>Use a package with the <code>mifp-historical-event-v1</code> schema.</p></div>
+    </div>
+    <div class="portability-safe-note"><i class="bi bi-shield-check" aria-hidden="true"></i><div><b>Validate before writing</b><span>The default operation checks identities, paths and packaged assets without changing the database.</span></div></div>
+    <form id="archiveImportForm" method="post" action="{{ url_for('dashboard.archive_import') }}" enctype="multipart/form-data" class="transfer-form" data-no-spinner="1">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <label class="transfer-drop archive-drop" for="archiveZip">
+        <i class="bi bi-cloud-arrow-up"></i><strong>Add historical ZIP</strong>
+        <span>Choose one recovered archive package containing event records and their local assets.</span>
+        <span>Maximum package size: {{ (config.IMPORT_MAX_ZIP_BYTES // (1024 * 1024)) }} MB</span>
+        <input id="archiveZip" type="file" name="archive_zip" accept=".zip,application/zip" required>
+      </label>
+      <div class="archive-selection" id="archiveSelection" aria-live="polite"><span class="transfer-empty">No package selected yet.</span></div>
+      <fieldset class="transfer-mode">
+        <legend>Operation</legend>
+        <label><input type="radio" name="dry_run" value="1" checked><span><b>Validate only</b><small>Review the package without changing events or assets.</small></span></label>
+        <label><input type="radio" name="dry_run" value="0"><span><b>Import archive</b><small>Create or enrich canonical events and install valid assets.</small></span></label>
+      </fieldset>
+      <button class="btn btn-primary" id="archiveImportButton" type="submit"><i class="bi bi-shield-check"></i> Validate package</button>
+    </form>
+    {% if import_result %}
+    <div class="archive-inline-result alert {{ 'alert-warning' if import_result.actions.get('conflict') or import_result.missing_assets else 'alert-info' }}">
+      <b>{{ 'Validation preview' if import_result.dry_run else 'Import complete' }}</b> — {{ import_result.events }} events, {{ import_result.documents }} documents, {{ import_result.images }} images and {{ import_result.people }} listed people.
+      <div class="archive-result-badges">{% for action, count in import_result.actions.items() %}<span class="status-badge status-neutral">{{ action }}: {{ count }}</span>{% endfor %}</div>
+    </div>
+    {% endif %}
+  </section>
+
+  <aside class="modern-card archive-guide-panel">
+    <div class="panel-head"><div><span class="panel-eyebrow">Package contract</span><h3><i class="bi bi-diagram-3"></i> What the import preserves</h3><p>Archive data extends Events; it does not create a second event catalogue.</p></div></div>
+    <ul class="archive-contract-list">
+      <li><i class="bi bi-link-45deg"></i><span><b>Canonical identity</b><small>Matches existing events by UID or slug and reports conflicts before writing.</small></span></li>
+      <li><i class="bi bi-file-earmark-text"></i><span><b>Documents and images</b><small>Installs valid package assets through the managed asset store.</small></span></li>
+      <li><i class="bi bi-clock-history"></i><span><b>Historical detail</b><small>Preserves programme, people, topics, recovery notes and public paths.</small></span></li>
+    </ul>
+    <div class="archive-contract-note"><i class="bi bi-info-circle"></i><span>Canonical title, dates and publication state remain editable from <a href="{{ url_for('dashboard.events') }}">Events</a>.</span></div>
+  </aside>
+</div>
+
+{% if jobs %}
+<section class="modern-card archive-panel ops-panel">
+  <div class="panel-head"><div><span class="panel-eyebrow">Background activity</span><h3><i class="bi bi-arrow-repeat"></i> Import jobs</h3><p>Current and recently completed archive operations.</p></div></div>
+  <div class="table-responsive"><table class="data-table"><thead><tr><th>Package</th><th>Status</th><th>Submitted</th><th><span class="visually-hidden">Actions</span></th></tr></thead><tbody>
+    {% for job in jobs %}<tr><td><b>{{ job.name|replace('Historical archive: ', '') }}</b></td><td><span class="status-badge {{ 'status-info' if job.status in ('queued','running','cancel_requested') else 'status-success' if job.status == 'completed' else 'status-danger' }}">{{ job.status|replace('_',' ') }}</span></td><td>{{ job.submitted_at }}</td><td class="table-actions">{% if job.status in ('queued','running','cancel_requested') %}<form method="post" action="{{ url_for('dashboard.archive_cancel_job', job_id=job.id) }}"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button class="btn btn-outline btn-sm" type="submit">Cancel</button></form>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endif %}
+
+<section class="modern-card archive-panel ops-panel">
+  <div class="panel-head"><div><span class="panel-eyebrow">Canonical records</span><h3><i class="bi bi-calendar2-event"></i> Archive entries</h3><p>Detaching archive metadata never deletes the canonical event or shared assets.</p></div></div>
+  <form method="get" class="toolbar archive-filter-toolbar">
+    <div class="toolbar-search"><i class="bi bi-search"></i><input class="form-control" name="q" value="{{ q or '' }}" placeholder="Search title or acronym"></div>
+    <select class="form-select slim" name="category"><option value="">All categories</option>{% for item in categories %}<option value="{{ item }}" {{ 'selected' if item == current_category }}>{{ item|title }}</option>{% endfor %}</select>
+    <select class="form-select slim" name="year"><option value="">All years</option>{% for item in years %}<option value="{{ item }}" {{ 'selected' if item|string == current_year }}>{{ item }}</option>{% endfor %}</select>
+    <button class="btn btn-outline btn-sm"><i class="bi bi-funnel"></i> Filter</button>
+  </form>
+  <div class="table-responsive"><table class="data-table"><thead><tr><th>Year</th><th>Canonical event</th><th>Category</th><th>Assets</th><th>Updated</th><th>Actions</th></tr></thead><tbody>
+    {% for item in entries %}<tr><td><b>{{ item.archive_year }}</b></td><td><b>{{ item.title }}</b><small>{{ item.slug }}</small></td><td><span class="status-badge status-neutral">{{ item.category|title }}</span></td><td>{{ item.document_count }} docs · {{ item.image_count }} images</td><td>{{ item.updated_at }}</td><td class="table-actions"><a href="{{ url_for('public.archive_detail', category=item.category, year=item.archive_year, slug=item.slug) }}" target="_blank" title="Open public page"><i class="bi bi-box-arrow-up-right"></i></a><a href="{{ url_for('dashboard.events', edit=item.event_id) }}" title="Edit canonical event"><i class="bi bi-pencil"></i></a><form method="post" action="{{ url_for('dashboard.archive_detach', archive_id=item.id) }}" data-confirm="Detach archive metadata? The canonical event and assets will remain."><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button class="icon-button danger" title="Detach archive metadata"><i class="bi bi-link-45deg"></i></button></form></td></tr>
+    {% else %}<tr><td colspan="6"><div class="archive-empty"><i class="bi bi-archive"></i><span>No archive entries match the current filters.</span></div></td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+{% if runs %}
+<section class="modern-card archive-panel ops-panel">
+  <div class="panel-head"><div><span class="panel-eyebrow">Audit trail</span><h3><i class="bi bi-clock-history"></i> Recent imports</h3><p>Latest historical package runs recorded by the database.</p></div></div>
+  <div class="portability-history-list archive-history-list">
+    {% for run in runs %}<article><span class="portability-history-status is-{{ run.status|replace('_', '-') }}"><i class="bi {{ 'bi-check-circle-fill' if run.status == 'completed' else 'bi-arrow-repeat' if run.status == 'running' else 'bi-x-circle-fill' }}"></i></span><div class="portability-history-copy"><b>{{ run.name }}</b><small>{{ run.started_at }} · run #{{ run.id }}</small></div><div class="portability-history-stats"><span><b>{{ run.stats.events or 0 }}</b> events</span><span><b>{{ run.stats.documents or 0 }}</b> docs</span><span><b>{{ run.stats.images or 0 }}</b> images</span></div></article>{% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<div class="modal fade" id="archiveAuthModal" tabindex="-1" aria-labelledby="archiveAuthTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form class="modal-content smart-modal export-auth-modal" id="archiveAuthForm" data-no-spinner="1">
+      <div class="modal-header">
+        <h5 class="modal-title" id="archiveAuthTitle"><i class="bi bi-shield-lock"></i> Authorize archive import</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="export-auth-notice"><i class="bi bi-database-lock" aria-hidden="true"></i><div><b>Confirm this sensitive operation</b><span id="archiveAuthNotice">The selected package can validate or change event records and managed assets. Enter the administrator password to continue.</span></div></div>
+        <label class="form-label" for="archiveAuthPassword">Administrator password</label>
+        <input class="form-control" id="archiveAuthPassword" name="password" type="password" autocomplete="current-password" required>
+        <p class="export-auth-format">Requested operation: <b id="archiveAuthOperation">—</b></p>
+        <p class="form-error" id="archiveAuthError" role="alert" hidden></p>
+        <small class="export-auth-security"><i class="bi bi-check2-circle"></i> The password is verified by the server, never written to logs and discarded when processing ends.</small>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-outline" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary" id="archiveAuthSubmit"><i class="bi bi-shield-check"></i> Verify and continue</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="modal fade" id="archiveTransferModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content smart-modal transfer-modal">
+      <div class="modal-header"><h5 class="modal-title"><i class="bi bi-archive"></i> <span id="archiveModalTitle">Archive transfer</span></h5></div>
+      <div class="modal-body">
+        <div id="archiveWorking"><div class="transfer-working-grid">
+          <div class="transfer-left">
+            <div class="transfer-status-icon"><span class="spinner-border" role="status"></span></div><strong id="archiveStatus">Preparing package…</strong><p id="archiveDetail">The upload is staged before validation starts.</p>
+            <div class="import-progress-bar is-loading" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="archiveProgress"></span></div>
+            <div class="transfer-progress-meta" aria-live="polite"><span id="archivePercent">Working…</span><span id="archiveElapsed">00:00</span></div>
+            <div class="transfer-metrics"><div><span>Events</span><b id="archiveMetricEvents">0</b></div><div><span>Documents</span><b id="archiveMetricDocuments">0</b></div><div><span>Images</span><b id="archiveMetricImages">0</b></div><div><span>People</span><b id="archiveMetricPeople">0</b></div></div>
+          </div>
+          <div class="transfer-right">
+            <div class="archive-package-totem"><i class="bi bi-file-earmark-zip"></i><div><b id="archivePackageName">Historical package</b><small id="archivePackageSize">Waiting for upload</small></div><span id="archivePackageState">Queued</span></div>
+            <div class="transfer-activity"><span class="transfer-activity-label">Activity</span><div class="transfer-activity-log" id="archiveActivityLog"></div></div>
+          </div>
+        </div></div>
+        <div id="archiveResult" hidden><div class="transfer-result-mark" id="archiveResultMark"><i class="bi bi-check-lg"></i></div><h4 id="archiveResultTitle">Package validated</h4><p id="archiveResultMessage"></p><div class="import-result-grid" id="archiveResultGrid"></div></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-outline" id="archiveCancel"><i class="bi bi-x-circle"></i> Cancel</button><button type="button" class="btn btn-primary" id="archiveClose" data-bs-dismiss="modal" hidden>Close</button></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/dashboard/archive-import.js') }}" defer></script>
+{% endblock %}

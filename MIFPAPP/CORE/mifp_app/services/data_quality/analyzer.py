@@ -698,13 +698,22 @@ def analyze(
         classes = Counter(f.classification.value for f in persisted_findings)
         duration = int((time.monotonic() - started) * 1000)
         summary = {"actions": counts, "classifications": classes, "records": sum(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] for table in TABLES.values()), "pairs": pair_count}
-        conn.execute("UPDATE quality_runs SET status='completed',completed_at=CURRENT_TIMESTAMP,duration_ms=?,summary_json=? WHERE id=?", (duration, json.dumps(summary), run_id))
+        conn.execute(
+            "UPDATE quality_runs SET status='completed',completed_at=CURRENT_TIMESTAMP,"
+            "duration_ms=?,summary_json=?,progress_pct=100,progress_message='Analysis complete' "
+            "WHERE id=?",
+            (duration, json.dumps(summary), run_id),
+        )
         conn.commit()
         if progress:
             progress(len(TABLES) + 2, len(TABLES) + 2, "complete", "Analysis complete")
         return {"run_id": run_id, "duration_ms": duration, "summary": summary, "finding_count": len(persisted_findings)}
     except Exception as exc:
-        conn.execute("UPDATE quality_runs SET status='failed',completed_at=CURRENT_TIMESTAMP,error_message=? WHERE id=?", (str(exc)[:1000], run_id))
+        conn.execute(
+            "UPDATE quality_runs SET status='failed',completed_at=CURRENT_TIMESTAMP,"
+            "error_message=?,progress_message=? WHERE id=?",
+            (str(exc)[:1000], str(exc)[:200], run_id),
+        )
         conn.commit()
         raise
 

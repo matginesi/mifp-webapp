@@ -7,11 +7,11 @@ must satisfy exactly this contract.
 """
 from __future__ import annotations
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 TABLE_GROUPS = {
     "content": frozenset({
-        "roles", "members", "events", "news", "publications",
+        "roles", "members", "events", "event_archive_entries", "news", "publications",
         "research_areas", "pages", "sponsors",
     }),
     "assets_relations": frozenset({
@@ -39,6 +39,12 @@ RUNTIME_REQUIRED_TABLES = frozenset().union(*TABLE_GROUPS.values())
 REQUIRED_COLUMNS = {
     "assets": frozenset({"id", "uid", "path", "kind", "storage_status", "content_sha256", "source_url_sha256"}),
     "events": frozenset({"id", "uid", "title", "review_status", "remote_url"}),
+    "event_archive_entries": frozenset({
+        "id", "event_id", "source_schema", "public_path", "original_public_url",
+        "category", "archive_year", "acronym", "summary", "topics_json",
+        "topics_note", "people_json", "programme_json", "recovery_json",
+        "not_recovered_json", "media_json", "source_record_sha256", "imported_at", "updated_at",
+    }),
     "news": frozenset({"id", "uid", "title", "review_status"}),
     "members": frozenset({"id", "uid", "display_name", "review_status"}),
     "publications": frozenset({"id", "uid", "title", "review_status"}),
@@ -62,6 +68,8 @@ REQUIRED_INDEXES = frozenset({
     "idx_import_records_entity", "idx_metrics_daily_date",
     "idx_conference_sites_event", "idx_conference_sites_public_path",
     "idx_conference_sites_package_sha256",
+    "idx_event_archive_event", "idx_event_archive_public_path",
+    "idx_event_archive_browse",
 })
 
 REQUIRED_TRIGGERS = frozenset({

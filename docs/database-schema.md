@@ -1,6 +1,6 @@
 # Database MIFP: contratto e lifecycle
 
-SQLite è la fonte di verità runtime. Lo schema corrente è **v10**.
+SQLite è la fonte di verità runtime. Lo schema corrente è **v11**.
 
 - `mifp_app/db/schema.sql`: struttura completa di un DB nuovo.
 - `mifp_app/db/contract.py`: tabelle/colonne/indici/trigger indispensabili.
@@ -14,7 +14,7 @@ SQLite è la fonte di verità runtime. Lo schema corrente è **v10**.
 2. Il runtime non crea e non migra schema.
 3. Un DB incompleto non viene autoriparato: viene rifiutato.
 4. Gli upgrade tra versioni adiacenti esplicitamente supportate passano dal registry delle
-   migration; v9 -> v10 è supportato. DB non versionati o più vecchi devono invece essere
+   migration; v9 -> v10 -> v11 è supportato. DB non versionati o più vecchi devono invece essere
    ricreati e popolati tramite package ZIP moderni e versionati.
 5. Upgrade schema: sempre su una copia, validazione, poi swap esplicito.
 6. Import contenuti: transazionale e additivo; nessuna cancellazione implicita.
@@ -30,6 +30,7 @@ SQLite è la fonte di verità runtime. Lo schema corrente è **v10**.
 | `roles` | ruoli dei membri |
 | `members` | persone/membri |
 | `events` | eventi e relazioni parent/child |
+| `event_archive_entries` | estensione 1:1 dei soli eventi con contenuto storico recuperato |
 | `news` | news/annunci |
 | `publications` | pubblicazioni |
 | `research_areas` | aree di ricerca |
@@ -73,6 +74,33 @@ Queste tabelle descrivono **da dove viene il dato**.
 `import_*` non duplica `source_*`: descrive **cosa ha fatto l'app durante
 l'import**, non l'origine dello scraping.
 
+### Historical Event Archive
+
+`events` resta l'unico catalogo canonico. `event_archive_entries.event_id` è
+UNIQUE e usa `ON DELETE CASCADE`; contiene soltanto i dati specifici della
+ricostruzione storica. Titolo, date, luogo, descrizione, tipo e serie restano
+in `events`.
+
+```mermaid
+flowchart LR
+  Z[Historical source ZIP] --> I[Archive importer]
+  I --> E[(events)]
+  E --> A[(event_archive_entries)]
+  I --> F[(assets + asset_links)]
+  I --> L[(entity_links role=source)]
+  E --> P[/archive/category/year/slug/]
+  A --> P
+  F --> P
+  E --> X[Normal portable Events/All ZIP]
+  A --> X
+  F --> X
+```
+
+La migrazione v10 -> v11 crea la tabella e gli indici
+`idx_event_archive_event`, `idx_event_archive_public_path` e
+`idx_event_archive_browse`. Un DB migrato e un DB v11 nuovo convergono allo
+stesso fingerprint canonico.
+
 ### Data Quality
 
 | Tabella | Responsabilità |
@@ -113,7 +141,7 @@ La dashboard non crea quindi una seconda copia editabile degli stessi dati.
 ### Schema
 
 `schema_migrations` contiene la versione applicata. `page_views` e le vecchie
-tabelle assistant/chatbot non fanno parte dello schema v10.
+tabelle assistant/chatbot non fanno parte dello schema v11.
 
 ## Import/export
 
@@ -121,9 +149,15 @@ tabelle assistant/chatbot non fanno parte dello schema v10.
 JSONL              record canonici, niente binari/stato
 mifp-content ZIP   scraper -> dashboard; record + asset
 portable ZIP       dashboard -> dashboard; record + asset + stato durevole
+historical ZIP     sorgente una tantum -> events + estensione Archive + asset
 host backup        DB SQLite + assets/conferences/config per disaster recovery
 ```
 
 Sono accettati soltanto package ZIP esplicitamente versionati: `mifp-content` v1
 o `mifp-jsonl-v2` v2. Vecchi ZIP `mifp-export`, ZIP senza identificatore di
 formato e JSONL `_mifp` sono rifiutati intenzionalmente.
+
+Lo ZIP storico `mifp-historical-event-v1` è gestito soltanto dalla sezione
+dashboard **Archive**. Dopo l'import non serve più: l'export portabile normale
+degli scope Events e All include l'estensione in `meta.archive`, i link in
+`links` e i file in `assets`.

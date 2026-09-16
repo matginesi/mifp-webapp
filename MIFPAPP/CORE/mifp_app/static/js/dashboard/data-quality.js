@@ -231,20 +231,24 @@
     if (btn) btn.disabled = false;
   }
 
-  async function pollProgress(runId, fill, txt) {
+  async function pollProgress(runId, fill, txt, pct) {
     if (S._pollId === null) return null;
     try {
       var r = await window.MIFP.request(C.progressUrl);
       var p = r.data;
       if (p.status === 'completed' || p.status === 'failed') { S._pollId = null; return p; }
-      if (p.run_id === runId && p.pct > 0) { fill.style.width = Math.min(p.pct, 99) + '%'; if (p.message) txt.textContent = p.message; }
+      if (p.run_id === runId && p.pct >= 0) {
+        fill.style.width = Math.min(p.pct, 99) + '%';
+        if (pct) pct.textContent = Math.round(p.pct) + '%';
+        if (p.message) txt.textContent = p.message;
+      }
     } catch (e) { /* ignore */ }
     return null;
   }
 
-  function waitForCompletion(runId, fill, txt, resolve) {
+  function waitForCompletion(runId, fill, txt, pct, resolve) {
     if (S._pollId === null) { resolve(null); return; }
-    pollProgress(runId, fill, txt).then(function (r) { if (r) { resolve(r); return; } setTimeout(function () { waitForCompletion(runId, fill, txt, resolve); }, 1500); });
+    pollProgress(runId, fill, txt, pct).then(function (r) { if (r) { resolve(r); return; } setTimeout(function () { waitForCompletion(runId, fill, txt, pct, resolve); }, 1500); });
   }
 
   async function analyze() {
@@ -269,29 +273,22 @@
       S.runId = runId;
       pct.textContent = 'Working';
       S._pollId = runId;
-      var finalStatus = await new Promise(function (resolve) { waitForCompletion(runId, fill, txt, resolve); });
+      var finalStatus = await new Promise(function (resolve) { waitForCompletion(runId, fill, txt, pct, resolve); });
       S._pollId = null;
       clearInterval(timer);
       time.textContent = Math.floor((Date.now() - started) / 1000) + ' s';
       if (finalStatus && finalStatus.status === 'completed') {
         pct.textContent = 'Done';
-        txt.textContent = 'Loading results…';
+        txt.textContent = 'Scan complete. Loading current results…';
         fill.style.width = '100%';
         fill.classList.remove('is-active');
-
-        // On the first scan Flask must render the complete review workspace.
-        // Scanning is read-only: queue mutations always require an explicit
-        // Accept or Accept all action from the administrator.
-        if (!($('dqFilters') instanceof HTMLFormElement) || !$('dqFindings')) {
-          window.location.reload();
-          return;
-        }
-
-        $('dqPhase2').classList.remove('dq-phase-disabled');
-        await reloadFindings();
-        await renderQueue();
-        $('dqPhase2').scrollIntoView({ behavior: 'smooth', block: 'start' });
-        toast('Scan complete: no records changed yet. Queue the automatic fixes, then Apply changes to consolidate duplicates.', 'success');
+        // Scanning is read-only: applying any proposed change remains a
+        // separate, explicit administrator action.
+        // Always reload the canonical server-rendered state. The populated
+        // workflow can change between scans, so retaining the previous filter
+        // can make valid manual/informational findings look like an empty run.
+        window.location.reload();
+        return;
       } else {
         txt.textContent = 'Scan failed on server.';
         fill.classList.remove('is-active');
@@ -306,6 +303,37 @@
       toast(error.message || 'Scan failed.', 'error');
     }
     btn.disabled = false;
+  }
+
+  async function resumeAnalysis() {
+    if (!S.runId || C.runStatus !== 'running') return;
+    var btn = $('dqAnalyze');
+    var prog = $('dqProgress');
+    var fill = $('dqProgressFill');
+    var pct = $('dqProgressPercent');
+    var txt = $('dqProgressText');
+    if (!btn || !prog || !fill || !pct || !txt) return;
+    btn.disabled = true;
+    prog.hidden = false;
+    fill.classList.add('is-active');
+    S._pollId = S.runId;
+    var finalStatus = await new Promise(function (resolve) {
+      waitForCompletion(S.runId, fill, txt, pct, resolve);
+    });
+    S._pollId = null;
+    if (finalStatus && finalStatus.status === 'completed') {
+      pct.textContent = 'Done';
+      txt.textContent = 'Scan complete. Loading current results…';
+      fill.style.width = '100%';
+      window.location.reload();
+      return;
+    }
+    fill.classList.remove('is-active');
+    pct.textContent = 'Failed';
+    txt.textContent = finalStatus && finalStatus.message ? finalStatus.message : 'Scan failed on server.';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-stars"></i> Scan database';
+    toast(txt.textContent, 'error');
   }
 
   async function applyAll() {
@@ -425,6 +453,7 @@
   $('dqAcceptAll') && ($('dqAcceptAll').onclick = function () { acceptAll().catch(function (e) { toast(e.message, 'error'); }); });
 
   // ---- Initial load ----
-  if (S.runId) { reloadFindings().catch(function (e) { toast(e.message, 'error'); }); }
+  if (C.runStatus === 'completed' && S.runId && $('dqFilters')) { reloadFindings().catch(function (e) { toast(e.message, 'error'); }); }
   if (S.bundleId) { renderQueue().catch(function (e) { toast(e.message, 'error'); }); }
+  if (C.runStatus === 'running') { resumeAnalysis().catch(function (e) { toast(e.message, 'error'); }); }
 })();

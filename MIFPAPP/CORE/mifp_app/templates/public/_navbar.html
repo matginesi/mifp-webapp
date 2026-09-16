@@ -23,6 +23,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="7"/><line x1="8" y1="2" x2="8" y2="7"/><line x1="3" y1="11" x2="21" y2="11"/></svg>
         {{ site_copy.nav_events }}
       </a>
+      <a href="{{ url_for('public.archive') }}" class="nav-link {{ 'active' if request.endpoint in ('public.archive', 'public.archive_detail') }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16v14H4z"/><path d="M2 3h20v4H2z"/><path d="M9 11h6"/></svg>
+        Archive
+      </a>
       <a href="{{ url_for('public.news') }}" class="nav-link {{ 'active' if request.endpoint in ('public.news', 'public.news_detail') }}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-4 2V6z"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="12" y2="12"/></svg>
         {{ site_copy.nav_news }}
@@ -104,6 +108,10 @@
       <a href="{{ url_for('public.events') }}" class="nav-mobile-link {{ 'active' if request.endpoint in ('public.events', 'public.event_detail') }}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="7"/><line x1="8" y1="2" x2="8" y2="7"/><line x1="3" y1="11" x2="21" y2="11"/></svg>
         {{ site_copy.nav_events }}
+      </a>
+      <a href="{{ url_for('public.archive') }}" class="nav-mobile-link {{ 'active' if request.endpoint in ('public.archive', 'public.archive_detail') }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16v14H4z"/><path d="M2 3h20v4H2z"/><path d="M9 11h6"/></svg>
+        Archive
       </a>
       <a href="{{ url_for('public.news') }}" class="nav-mobile-link {{ 'active' if request.endpoint in ('public.news', 'public.news_detail') }}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-4 2V6z"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="12" y2="12"/></svg>

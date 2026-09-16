@@ -1542,6 +1542,9 @@ def test_log_export_and_cleanup_actions(app, client):
 
 
 MUTATING_DASHBOARD_ENDPOINTS = {
+    "dashboard.archive_cancel_job",
+    "dashboard.archive_detach",
+    "dashboard.archive_import",
     "dashboard.assets_page",
     "dashboard.asset_create_json",
     "dashboard.cleanup_unused_assets",
@@ -2191,6 +2194,76 @@ def test_data_quality_analysis_is_read_only(client, app):
     assert data.get("run_id", 0) > 0
     assert _scalar(app, "SELECT COUNT(*) FROM sponsors") == 2
     assert _scalar(app, "SELECT COUNT(*) FROM quality_bundles") == 0
+
+
+def test_data_quality_scan_completes_and_surfaces_findings(client, app):
+    with _db(app) as conn:
+        conn.executemany(
+            "INSERT INTO sponsors(slug,name,is_active) VALUES(?,?,1)",
+            [("duplicate-a", "Mediterranean Test Foundation"),
+             ("duplicate-b", "Mediterranean Test Foundation")],
+        )
+        conn.commit()
+
+    started = client.post("/dashboard/data-quality/analyze").get_json()
+    deadline = time.monotonic() + 5
+    progress = {}
+    while time.monotonic() < deadline:
+        progress = client.get("/dashboard/data-quality/analyze-progress").get_json()
+        if progress.get("status") in {"completed", "failed"}:
+            break
+        time.sleep(.02)
+
+    assert progress["status"] == "completed"
+    assert progress["pct"] >= 0
+    assert _scalar(
+        app, "SELECT COUNT(*) FROM quality_findings WHERE run_id=?", (started["run_id"],)
+    ) > 0
+    body = client.get("/dashboard/data-quality").get_data(as_text=True)
+    assert f"Scan #{started['run_id']} completed" in body
+    assert "No scan results" not in body
+
+
+def test_data_quality_completed_clean_scan_remains_visible(client, app):
+    with _db(app) as conn:
+        run_id = conn.execute(
+            """INSERT INTO quality_runs(
+                   status,fingerprint,completed_at,duration_ms,summary_json,progress_pct
+               ) VALUES('completed','clean-scan',CURRENT_TIMESTAMP,1250,?,100)""",
+            (json.dumps({"records": 17, "pairs": 3, "actions": {}, "classifications": {}}),),
+        ).lastrowid
+        conn.commit()
+
+    body = client.get("/dashboard/data-quality").get_data(as_text=True)
+
+    assert f"Scan #{run_id} completed" in body
+    assert "17</b> records checked" in body
+    assert "3</b> candidate pairs compared" in body
+    assert "Scan complete: no open findings" in body
+    assert "No scan results" not in body
+
+
+def test_data_quality_defaults_to_first_populated_workflow(client, app):
+    with _db(app) as conn:
+        run_id = conn.execute(
+            """INSERT INTO quality_runs(status,fingerprint,completed_at,summary_json)
+               VALUES('completed','manual-only',CURRENT_TIMESTAMP,'{}')"""
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO quality_findings(
+                   run_id,action_type,entity_type,record_ids_json,
+                   classification,score,status,fingerprint,plan_json
+               ) VALUES(?,'merge_records','event','[1,2]','ambiguous',
+                        .6,'open','manual-only-finding','{}')""",
+            (run_id,),
+        )
+        conn.commit()
+
+    body = client.get("/dashboard/data-quality").get_data(as_text=True)
+
+    assert '<option value="manual" selected>Needs decision</option>' in body
+    assert '"defaultWorkflow": "manual"' in body
+    assert '<b id="dqFilteredCount">1</b>' in body
 
 
 def test_data_quality_page_renders_latest_bundle(client, app):
