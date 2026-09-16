@@ -522,7 +522,7 @@ def data_portability_export_post(fmt: str):
                             record_counts.update(dict(manifest.get("counts") or {}))
                             zip_preservation = dict(manifest.get("preservation") or {})
                             app.logger.info(
-                                "data portability ZIP package written records=%d assets=%d preserved=%d unresolved_mifp=%d",
+                                "data portability ZIP package written records=%d assets=%d preserved=%d unresolved_remote=%d",
                                 int(manifest.get("records") or 0),
                                 len(manifest.get("files") or []),
                                 int(zip_preservation.get("materialized") or 0),
@@ -555,8 +555,8 @@ def data_portability_export_post(fmt: str):
                     fmt, total_bytes, int((time.monotonic() - started) * 1000), expired,
                     _export_cache_count(), record_counts,
                 )
-                unresolved_mifp = int(zip_preservation.get("remaining_remote") or 0) if fmt == "zip" else 0
-                preserved_mifp = int(zip_preservation.get("materialized") or 0) if fmt == "zip" else 0
+                unresolved_remote = int(zip_preservation.get("remaining_remote") or 0) if fmt == "zip" else 0
+                preserved_remote = int(zip_preservation.get("materialized") or 0) if fmt == "zip" else 0
                 audit_log(
                     "export.data_portability",
                     "data portability export",
@@ -566,20 +566,20 @@ def data_portability_export_post(fmt: str):
                     format=fmt,
                     bytes=total_bytes,
                     counts=json.dumps(record_counts, separators=(",", ":")) if record_counts else None,
-                    preserved_mifp_assets=preserved_mifp,
-                    unresolved_mifp_assets=unresolved_mifp,
+                    preserved_remote_assets=preserved_remote,
+                    unresolved_remote_assets=unresolved_remote,
                 )
-                if unresolved_mifp:
-                    title_text = "Export ready with unresolved MIFP assets"
+                if unresolved_remote:
+                    title_text = "Export ready with unresolved remote assets"
                     result_message = (
-                        f"ZIP export ({size_str}) is ready, but {unresolved_mifp} MIFP-owned asset(s) "
+                        f"ZIP export ({size_str}) is ready, but {unresolved_remote} remote asset(s) "
                         "could not be embedded and remain remote. See manifest.json for details."
                     )
                     icon_class, icon_modifier = "bi-exclamation-triangle", "is-warning"
-                elif fmt == "zip" and preserved_mifp:
+                elif fmt == "zip" and preserved_remote:
                     title_text = "Self-contained export ready"
                     result_message = (
-                        f"ZIP export ({size_str}) is ready. {preserved_mifp} remote MIFP-owned asset(s) "
+                        f"ZIP export ({size_str}) is ready. {preserved_remote} remote asset(s) "
                         "were embedded for offline re-import."
                     )
                     icon_class, icon_modifier = "bi-check-lg", "is-success"

@@ -337,10 +337,11 @@ def build_import_format_guide() -> str:
         f"Dashboard portable ZIP export uses `{CANONICAL_FORMAT}` version {PORTABLE_FORMAT_VERSION} and may also "
         "contain `state.json` for full-scope installation transfer. Both formats are importable.", "",
         "A dashboard ZIP is intended to be a portable snapshot. Before serializing it, the exporter tries to "
-        "materialize DB-tracked remote assets whose source host belongs to the configured preservation domains. "
-        "The default is `mifp.eu`, which also covers `www.mifp.eu`, `old.mifp.eu`, `events.mifp.eu`, and other "
-        "subdomains. This staging is export-only: it does not rewrite the live database or live asset directory. "
-        "Third-party remote assets are deliberately not mirrored by this rule.", "",
+        "materialize every DB-tracked remote asset, regardless of its public source host. The default preservation "
+        "matcher is `*`; `PORTABLE_EXPORT_PRESERVE_DOMAINS` may explicitly narrow it for an installation. "
+        "This applies only to `assets`: ordinary public URLs stored in `entity_links` remain links and are not "
+        "crawled. HTML responses are rejected as assets, so normal web pages are not silently copied into the ZIP. "
+        "Staging is export-only and does not rewrite the live database or live asset directory.", "",
         "Each declared asset needs exact byte size and lowercase SHA-256. `records_sha256` hashes the exact UTF-8 "
         "record bytes; a dashboard package that contains state also hashes `state.json`. Paths are relative and "
         "unique, and any mismatch rejects the archive.", "",
@@ -382,15 +383,16 @@ def build_import_format_guide() -> str:
         "This object is additive metadata: older valid v2 dashboard ZIPs that do not contain it remain importable.", "",
         "```json", compact({
             "preservation": {
-                "enabled": True, "domains": ["mifp.eu"], "matching": 12,
+                "enabled": True, "domains": ["*"], "matching": 12,
                 "already_local": 4, "attempted": 8, "materialized": 8,
                 "failed": 0, "remaining_remote": 0, "complete": True, "failures": [],
             }
         }), "```", "",
-        "`complete: true` means that every DB-tracked asset matching the configured preservation domains is "
-        "packageable from the ZIP snapshot. It does **not** mean that every third-party URL on the site has been "
-        "mirrored. If `remaining_remote` is non-zero, the export still completes but the dashboard reports the "
-        "unresolved MIFP assets and `failures` contains bounded diagnostics.", "",
+        "`complete: true` means that every DB-tracked asset matching the configured preservation matcher is "
+        "packageable from the ZIP snapshot. With the default `*`, this means all remote assets that the exporter "
+        "could safely retrieve. It does **not** mean that every URL on the site has been mirrored: `entity_links` "
+        "stay as links. If `remaining_remote` is non-zero, the export still completes and `failures` contains "
+        "bounded diagnostics for assets that could not be embedded.", "",
         "## Dashboard JSONL export", "",
         "Dashboard JSONL export is deliberately record-only: one canonical record per line, with no Base64 "
         "binary payloads and no installation-owned durable state. This keeps JSONL suitable for inspection, "

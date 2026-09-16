@@ -96,7 +96,10 @@ def _url_matches_preservation_domain(url: str, domains: set[str]) -> bool:
         host = (urlparse(str(url or "").strip()).hostname or "").lower().rstrip(".")
     except ValueError:
         return False
-    return bool(host) and any(host == domain or host.endswith(f".{domain}") for domain in domains)
+    return bool(host) and (
+        "*" in domains
+        or any(host == domain or host.endswith(f".{domain}") for domain in domains)
+    )
 
 
 def _asset_candidates_for_export_scope(
@@ -151,8 +154,13 @@ def _materialize_preserved_export_assets(
 
     The caller owns an outer SAVEPOINT and rolls it back after the archive is
     written. Files are written only below ``staged_assets_dir``. Therefore a
-    dashboard export can turn disappearing MIFP URLs into packaged local assets
-    without mutating the live database or the live asset library.
+    dashboard export can turn remote downloadable assets into packaged local
+    assets without mutating the live database or the live asset library.
+
+    Only DB-tracked ``assets`` are considered here. Ordinary page URLs live in
+    ``entity_links`` and therefore remain links. HTML responses are rejected by
+    the asset downloader, so a misclassified web page is not silently archived
+    as a file.
     """
     domains = _preservation_domains()
     summary: dict[str, Any] = {
@@ -206,7 +214,7 @@ def _materialize_preserved_export_assets(
         summary["attempted"] += 1
         if progress_callback is not None:
             progress_callback(
-                f"Preserving MIFP assets {index}/{total}…",
+                f"Preserving remote assets {index}/{total}…",
                 5 + (10 * index // max(total, 1)),
             )
         savepoint = f"portable_export_asset_{int(row['id'])}"
@@ -323,7 +331,7 @@ def _write_bundle_zip(
             )
 
             # Serialize only after preservation. Any successfully downloaded
-            # MIFP-owned remote asset now looks local inside this export-only
+            # Remote asset now looks local inside this export-only
             # SAVEPOINT, so records.jsonl and state.json describe the exact
             # files that are embedded in the ZIP.
             bundle = build_export_bundle(conn, scope)

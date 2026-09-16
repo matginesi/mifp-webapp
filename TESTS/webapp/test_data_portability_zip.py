@@ -1526,7 +1526,7 @@ def test_dashboard_zip_preserves_mifp_remote_asset_without_mutating_live_db(
     assert record["assets"][0]["storage_status"] == "local"
     assert record["assets"][0]["is_external"] == 0
     assert record["assets"][0]["content_sha256"] == payload_sha
-    assert manifest["preservation"]["domains"] == ["mifp.eu"]
+    assert manifest["preservation"]["domains"] == ["*"]
     assert manifest["preservation"]["matching"] == 1
     assert manifest["preservation"]["attempted"] == 1
     assert manifest["preservation"]["materialized"] == 1
@@ -1554,7 +1554,7 @@ def test_dashboard_zip_preserves_mifp_remote_asset_without_mutating_live_db(
     assert restored_file.read_bytes() == payload_bytes
 
 
-def test_dashboard_zip_does_not_materialize_third_party_remote_assets(
+def test_dashboard_zip_materializes_third_party_remote_assets_but_keeps_page_links(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import mifp_app.services.data_portability as portability
@@ -1562,27 +1562,61 @@ def test_dashboard_zip_does_not_materialize_third_party_remote_assets(
     source = _conn()
     url = "https://example.org/files/third-party.pdf"
     _insert_remote_news_asset(source, url=url)
+    source.execute(
+        "INSERT INTO entity_links(entity_type,entity_id,url,label,role) "
+        "VALUES('news',1,'https://example.org/article','Original page','source')"
+    )
     calls: list[str] = []
+    payload_bytes = b"%PDF-1.4\nthird party portable paper\n"
+    payload_sha = hashlib.sha256(payload_bytes).hexdigest()
 
-    def unexpected_download(conn, remote_url, assets_dir, **kwargs):
+    def fake_download(conn, remote_url, assets_dir, **kwargs):
         calls.append(remote_url)
-        raise AssertionError("third-party asset should not be materialized during export")
+        assert remote_url == url
+        target = Path(assets_dir) / "pdf" / f"third-party-{payload_sha[:12]}.pdf"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload_bytes)
+        row = conn.execute("SELECT id FROM assets WHERE source_url=?", (remote_url,)).fetchone()
+        asset_id = int(row["id"])
+        conn.execute(
+            "UPDATE assets SET filename=?,original_filename=?,path=?,mime_type=?,size=?,kind='pdf',"
+            "storage_status='local',is_external=0,checksum=?,content_sha256=? WHERE id=?",
+            (
+                target.name,
+                "third-party.pdf",
+                f"assets/pdf/{target.name}",
+                "application/pdf",
+                len(payload_bytes),
+                payload_sha,
+                payload_sha,
+                asset_id,
+            ),
+        )
+        return asset_id
 
-    monkeypatch.setattr(portability, "download_asset", unexpected_download)
+    monkeypatch.setattr(portability, "download_asset", fake_download)
     payload = portability.bundle_to_zip(source, "news", tmp_path / "source-assets")
 
-    assert calls == []
+    assert calls == [url]
     with zipfile.ZipFile(BytesIO(payload), "r") as zf:
         manifest = json.loads(zf.read("manifest.json"))
         record = json.loads(zf.read("records.jsonl").decode("utf-8").strip())
-        assert not any(name.startswith("assets/") for name in zf.namelist())
-    assert manifest["preservation"]["matching"] == 0
+        preserved_path = record["assets"][0]["path"]
+        archive_path = preserved_path if preserved_path.startswith("assets/") else f"assets/{preserved_path}"
+        assert zf.read(archive_path) == payload_bytes
+    assert manifest["preservation"]["domains"] == ["*"]
+    assert manifest["preservation"]["matching"] == 1
+    assert manifest["preservation"]["materialized"] == 1
     assert manifest["preservation"]["complete"] is True
-    assert record["assets"][0]["storage_status"] == "external"
+    assert record["assets"][0]["storage_status"] == "local"
     assert record["assets"][0]["url"] == url
+    assert any(
+        link["url"] == "https://example.org/article"
+        for link in record.get("links", [])
+    )
 
 
-def test_dashboard_zip_reports_unresolved_mifp_asset_but_still_exports(
+def test_dashboard_zip_reports_unresolved_remote_asset_but_still_exports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import mifp_app.services.data_portability as portability
@@ -1661,8 +1695,9 @@ def test_generated_import_guide_describes_portable_offline_zip_contract() -> Non
 
     guide = build_import_format_guide()
     assert "Dashboard portable asset-preservation metadata" in guide
-    assert "`old.mifp.eu`" in guide
-    assert "`events.mifp.eu`" in guide
+    assert "default preservation matcher is `*`" in guide
+    assert "ordinary public URLs stored in `entity_links` remain links" in guide
+    assert "HTML responses are rejected as assets" in guide
     assert "exactly one `assets/` prefix" in guide
     assert "offline/deterministic restore" in guide
     assert "post-import network recovery pass is skipped" in guide

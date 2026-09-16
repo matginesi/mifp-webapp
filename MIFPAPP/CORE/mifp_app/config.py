@@ -222,13 +222,14 @@ class Config:
         for d in os.getenv('ASSET_ALLOWED_DOMAINS', '').split(',')
         if d.strip()
     }
-    # Dashboard ZIP exports preserve remote assets from these domains by
-    # materializing them into the archive before it is finalized. A parent
-    # domain matches all of its subdomains, so the default ``mifp.eu`` covers
-    # www.mifp.eu, old.mifp.eu, events.mifp.eu, and future MIFP subdomains.
+    # Dashboard ZIP exports preserve DB-tracked remote assets by materializing
+    # them into the archive before it is finalized. ``*`` means every public
+    # HTTP(S) source host; entity_links are never materialized, so ordinary web
+    # links remain links. The existing allow-list can still narrow the export
+    # when an installation explicitly sets PORTABLE_EXPORT_PRESERVE_DOMAINS.
     PORTABLE_EXPORT_PRESERVE_DOMAINS = {
         d.strip().lower().rstrip('.')
-        for d in os.getenv('PORTABLE_EXPORT_PRESERVE_DOMAINS', 'mifp.eu').split(',')
+        for d in os.getenv('PORTABLE_EXPORT_PRESERVE_DOMAINS', '*').split(',')
         if d.strip()
     }
 
