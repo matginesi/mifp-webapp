@@ -57,6 +57,17 @@
       <li><i class="bi bi-file-earmark-text"></i><span><b>Documents and images</b><small>Installs valid package assets through the managed asset store.</small></span></li>
       <li><i class="bi bi-clock-history"></i><span><b>Historical detail</b><small>Preserves programme, people, topics, recovery notes and public paths.</small></span></li>
     </ul>
+    <div class="portability-export-actions archive-guide-download">
+      <a class="transfer-export-button is-guide" href="{{ url_for('dashboard.archive_import_guide') }}" download>
+        <span class="transfer-export-icon"><i class="bi bi-filetype-md" aria-hidden="true"></i></span>
+        <span class="transfer-export-copy">
+          <span class="transfer-export-title"><b>LLM archive guide</b><em>Markdown</em></span>
+          <small>ZIP layout, event schema, asset paths, complete example and recovery rules.</small>
+          <span class="transfer-export-use"><i class="bi bi-stars" aria-hidden="true"></i> Give this file and the historical sources to an agent before building the ZIP</span>
+        </span>
+        <i class="bi bi-download transfer-export-action" aria-hidden="true"></i>
+      </a>
+    </div>
     <div class="archive-contract-note"><i class="bi bi-info-circle"></i><span>Canonical title, dates and publication state remain editable from <a href="{{ url_for('dashboard.events') }}">Events</a>.</span></div>
   </aside>
 </div>

@@ -629,6 +629,8 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .archive-contract-note { display: flex; gap: .45rem; margin: 0 .8rem .8rem; padding: .65rem; color: var(--text-2); background: var(--blue-bg); border: 1px solid color-mix(in srgb, var(--blue) 18%, var(--border)); border-radius: var(--radius-sm); font-size: .62rem; line-height: 1.45; }
 .archive-contract-note > i { flex: 0 0 auto; color: var(--blue); }
 .archive-contract-note a { color: var(--blue); font-weight: 800; }
+.archive-guide-download { margin: 0 .8rem .8rem; }
+.archive-guide-download .transfer-export-button { box-shadow: none; }
 .archive-panel { margin-bottom: var(--dashboard-gap); overflow: hidden; }
 .archive-panel > .table-responsive { margin: .6rem .7rem; }
 .archive-panel .archive-filter-toolbar { margin: .6rem .7rem; box-shadow: none; }

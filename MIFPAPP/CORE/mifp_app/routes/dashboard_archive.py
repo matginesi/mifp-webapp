@@ -10,7 +10,11 @@ from pathlib import Path
 from flask import Response, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 
 from ..db.connection import connect
-from ..services.historical_archive import HistoricalArchiveError, import_historical_archive
+from ..services.historical_archive import (
+    HistoricalArchiveError,
+    build_historical_archive_guide,
+    import_historical_archive,
+)
 from ..services.job_manager import JobQueueFull, get_job_manager
 from ..utils.logger import audit_log
 from ..utils.security import admin_password_matches, get_client_ip, ip_rate_allowed
@@ -61,6 +65,29 @@ def archive_page():
                            q=q, current_category=category, current_year=year, runs=runs,
                            stats={"events": stats[0], "categories": stats[1], "year_min": stats[2], "year_max": stats[3]}, jobs=jobs,
                            import_result=session.pop("archive_import_result", None))
+
+
+@bp.get("/archive/import-guide.md")
+@login_required
+def archive_import_guide():
+    guide = build_historical_archive_guide()
+    audit_log(
+        "archive.guide_downloaded",
+        "Historical Archive LLM import guide downloaded",
+        category="admin",
+        outcome="success",
+        bytes=len(guide.encode("utf-8")),
+    )
+    return Response(
+        guide,
+        mimetype="text/markdown",
+        headers={
+            "Content-Disposition": 'attachment; filename="MIFP_LLM_HISTORICAL_ARCHIVE_GUIDE.md"',
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @bp.post("/archive/import")

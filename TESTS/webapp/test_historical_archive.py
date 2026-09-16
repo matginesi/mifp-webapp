@@ -149,6 +149,27 @@ def test_v10_archive_migration_converges_to_fresh_fingerprint(tmp_path: Path):
     assert schema_fingerprint(conn) == canonical_schema_fingerprint()
 
 
+def test_historical_archive_llm_guide_tracks_import_contract(tmp_path: Path):
+    from mifp_app.services.historical_archive import (
+        build_historical_archive_guide,
+        inspect_historical_archive,
+    )
+
+    guide = build_historical_archive_guide()
+    assert "mifp-historical-event-v1" in guide
+    assert "archive/<category>/<YYYY>/<slug>" in guide
+    assert "assets/documents/programme.pdf" in guide
+    assert "## Copy/paste task prompt for an agent" in guide
+    assert "Validate only" in guide
+    example = guide.split("```json\n", 1)[1].split("\n```", 1)[0]
+    record = json.loads(example)
+    assert record["schema"] == "mifp-historical-event-v1"
+    assert record["public_path"] == "archive/conferences/2014/mediterranean-quantum-meeting"
+    preview = inspect_historical_archive(_package(tmp_path / "guide-example.zip", record))
+    assert preview["events"] == 1
+    assert preview["missing_assets"] == 0
+
+
 def test_public_routes_redirect_event_and_dashboard_import_requires_auth(tmp_path: Path):
     from mifp_app import create_app
     from mifp_app.db.manage import init_database
@@ -170,6 +191,7 @@ def test_public_routes_redirect_event_and_dashboard_import_requires_auth(tmp_pat
         import_historical_archive(conn, package, assets)
     anonymous = app.test_client()
     assert anonymous.get("/dashboard/archive").status_code == 302
+    assert anonymous.get("/dashboard/archive/import-guide.md").status_code == 302
     index = anonymous.get("/archive/")
     assert index.status_code == 200 and "Archive One" in index.get_data(as_text=True)
     detail = anonymous.get("/archive/conferences/2014/archive-one/")
@@ -185,6 +207,14 @@ def test_public_routes_redirect_event_and_dashboard_import_requires_auth(tmp_pat
     assert 'id="archiveTransferModal"' in dashboard_html
     assert 'id="archiveAuthModal"' in dashboard_html
     assert "js/dashboard/archive-import.js" in dashboard_html
+    assert "/dashboard/archive/import-guide.md" in dashboard_html
+    guide_response = anonymous.get("/dashboard/archive/import-guide.md")
+    assert guide_response.status_code == 200
+    assert guide_response.mimetype == "text/markdown"
+    assert guide_response.headers["Content-Disposition"] == (
+        'attachment; filename="MIFP_LLM_HISTORICAL_ARCHIVE_GUIDE.md"'
+    )
+    assert "Complete example" in guide_response.get_data(as_text=True)
     denied = anonymous.post("/dashboard/archive/import", data={
         "dry_run": "1", "archive_zip": (io.BytesIO(package.read_bytes()), "archive.zip")
     }, content_type="multipart/form-data", headers={"X-Requested-With": "XMLHttpRequest"})
