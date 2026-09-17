@@ -30,8 +30,13 @@ _request_id: ContextVar[str] = ContextVar("request_id", default="-")
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 _EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
 _CREDENTIAL_RE = re.compile(r"\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
+_AUTHORIZATION_VALUE_RE = re.compile(
+    r"(?P<prefix>\bauthorization\s*[:=]\s*)"
+    r"(?:(?:bearer|basic)\s+)?[^\s,;&]+",
+    re.IGNORECASE,
+)
 _SECRET_VALUE_RE = re.compile(
-    r"(?P<prefix>\b(?:password|passwd|pwd|secret|token|csrf|authorization|cookie|session|api[-_]?key)\s*[:=]\s*)"
+    r"(?P<prefix>\b(?:password|passwd|pwd|secret|token|csrf|cookie|session|api[-_]?key)\s*[:=]\s*)"
     r"[^\s,;&]+",
     re.IGNORECASE,
 )
@@ -160,6 +165,7 @@ def redact(value: Any, *, key: str | None = None, _depth: int = 0) -> Any:
         return value
     if isinstance(value, str):
         text = _EMAIL_RE.sub("[REDACTED_EMAIL]", value[:4000])
+        text = _AUTHORIZATION_VALUE_RE.sub(r"\g<prefix>[REDACTED_CREDENTIAL]", text)
         text = _CREDENTIAL_RE.sub("[REDACTED_CREDENTIAL]", text)
         return _SECRET_VALUE_RE.sub(r"\g<prefix>[REDACTED]", text)
     if isinstance(value, Mapping):
