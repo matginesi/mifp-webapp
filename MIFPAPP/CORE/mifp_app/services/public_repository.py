@@ -317,6 +317,16 @@ def event_documents(conn, event_id: int, media_url: MediaUrl) -> list[dict[str, 
 
 
 def enrich_event(conn, event: dict[str, Any], media_url: MediaUrl) -> dict[str, Any]:
+    for people_field in ("speakers", "chairs", "committee"):
+        raw = event.pop(f"{people_field}_json", None)
+        if raw in (None, ""):
+            event[people_field] = []
+            continue
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            parsed = []
+        event[people_field] = parsed if isinstance(parsed, list) else []
     cover = cover_url(conn, event, media_url)
     if not cover:
         al = conn.execute(

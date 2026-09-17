@@ -567,8 +567,8 @@ Ambiti:
   cache     virtualenv, cache Python/test e report generati
   logs      log webapp e launcher locale
   outputs   soltanto SCRAPERS/OUTPUTS
-  archive-events  rimuove solo le estensioni Archive Events dal DB; gli Event canonici restano intatti
-  data      database, asset, export, backup e workspace generati
+  archive-events  rimuove estensioni e cronologia Archive Events; gli Event canonici restano intatti
+  data      database, cronologia job/import, asset, export, backup e workspace generati
   docker    arresta lo stack locale; --volumes elimina anche i volumi
   all       cache + logs + outputs + data; .env resta salvo senza --env
 USAGE
@@ -604,6 +604,8 @@ append_data_targets() {
   CLEAN_TARGETS+=(
     "$DATABASE_DIR/mifp.db" "$DATABASE_DIR/mifp.db-wal"
     "$DATABASE_DIR/mifp.db-shm" "$DATABASE_DIR/mifp.db-journal"
+    "$DATABASE_DIR/jobs.sqlite3" "$DATABASE_DIR/jobs.sqlite3-wal"
+    "$DATABASE_DIR/jobs.sqlite3-shm" "$DATABASE_DIR/jobs.sqlite3-journal"
     "$DATABASE_DIR/assets" "$DATABASE_DIR/backups"
     "$DATABASE_DIR/conferences" "$DATABASE_DIR/config"
     "$DATABASE_DIR/exports" "$DATABASE_DIR/tmp"
@@ -631,28 +633,55 @@ PYDB
 
 remove_archive_events() {
   local db="$DATABASE_DIR/mifp.db"
-  [[ -f "$db" ]] || return 0
-  python3 - "$db" <<'PYDB'
+  local jobs_db="$DATABASE_DIR/jobs.sqlite3"
+  if [[ -f "$db" ]]; then
+    python3 - "$db" <<'PYDB'
 import sqlite3, sys
 from pathlib import Path
 path = Path(sys.argv[1])
 conn = sqlite3.connect(path, timeout=30)
 try:
     conn.execute("PRAGMA foreign_keys=ON")
-    exists = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='event_archive_entries'"
-    ).fetchone()
-    if not exists:
-        print("Archive Events rimossi: 0")
-    else:
-        conn.execute("BEGIN IMMEDIATE")
-        count = int(conn.execute("SELECT COUNT(*) FROM event_archive_entries").fetchone()[0] or 0)
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    count = int(conn.execute("SELECT COUNT(*) FROM event_archive_entries").fetchone()[0] or 0) if "event_archive_entries" in tables else 0
+    conn.execute("BEGIN IMMEDIATE")
+    if "event_archive_entries" in tables:
         conn.execute("DELETE FROM event_archive_entries")
-        conn.commit()
-        print(f"Archive Events rimossi: {count}")
+    run_ids = []
+    if "import_runs" in tables:
+        run_ids = [int(row[0]) for row in conn.execute(
+            "SELECT id FROM import_runs WHERE source_kind='historical-archive'"
+        )]
+    if run_ids and "import_records" in tables:
+        marks = ",".join("?" for _ in run_ids)
+        conn.execute(f"DELETE FROM import_records WHERE import_run_id IN ({marks})", run_ids)
+    if run_ids:
+        marks = ",".join("?" for _ in run_ids)
+        conn.execute(f"DELETE FROM import_runs WHERE id IN ({marks})", run_ids)
+    conn.commit()
+    print(f"Archive Events rimossi: {count}")
+    print(f"Cronologia import Archive rimossa: {len(run_ids)}")
 finally:
     conn.close()
 PYDB
+  else
+    echo "Archive Events rimossi: 0"
+    echo "Cronologia import Archive rimossa: 0"
+  fi
+  if [[ -f "$jobs_db" ]]; then
+    python3 - "$jobs_db" <<'PYJOBS'
+import sqlite3, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+try:
+    with sqlite3.connect(path, timeout=30) as conn:
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs'").fetchone()
+        if exists:
+            conn.execute("DELETE FROM jobs WHERE name LIKE 'Historical archive:%'")
+except sqlite3.Error:
+    pass
+PYJOBS
+  fi
 }
 
 clean_docker_stacks() {
@@ -699,7 +728,7 @@ clean_project() {
     local archive_count
     archive_count="$(archive_events_count)"
     printf 'Pulizia MIFP\n  ambito: archive-events\n  Archive Events: %s\n' "$archive_count"
-    say "  - solo event_archive_entries; Event canonici, asset e altri dati non vengono eliminati"
+    say "  - event_archive_entries + cronologia dei soli import Archive; Event canonici, asset e altri dati restano intatti"
     if ((dry_run)); then
       say "Dry-run completato: nessuna modifica."
       return 0

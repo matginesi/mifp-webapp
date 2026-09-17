@@ -719,6 +719,14 @@ def _records_for_scope(conn: sqlite3.Connection, scope: str) -> list[dict[str, A
                 parent_id = data.pop("parent_event_id", None)
                 if parent_id in event_slugs:
                     data["parent_event_slug"] = event_slugs[parent_id]
+                for people_field in ("speakers", "chairs", "committee"):
+                    raw = data.pop(f"{people_field}_json", "[]")
+                    try:
+                        parsed = json.loads(raw or "[]")
+                    except (TypeError, ValueError):
+                        parsed = []
+                    if isinstance(parsed, list) and parsed:
+                        data[people_field] = parsed
             meta: dict[str, Any] = {"exported_from_id": entity_id}
             if typ == "event" and table_exists(conn, "event_archive_entries"):
                 archive = conn.execute(

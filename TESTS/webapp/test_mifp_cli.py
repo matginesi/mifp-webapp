@@ -294,3 +294,64 @@ def test_zip_it_includes_source_and_excludes_generated_data(tmp_path: Path) -> N
     assert "MIFPAPP/DATABASE/assets/download.jpg" not in names
     assert "SCRAPERS/OUTPUTS/records.jsonl" not in names
     assert "IMPORT_DATA/private.jsonl" not in names
+
+
+def test_clear_all_removes_persisted_background_job_history(tmp_path: Path) -> None:
+    import sqlite3
+
+    _prepare_launcher_tree(tmp_path)
+    database_dir = tmp_path / "MIFPAPP" / "DATABASE"
+    db_path = database_dir / "mifp.db"
+    jobs_path = database_dir / "jobs.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE sample(id INTEGER PRIMARY KEY)")
+    with sqlite3.connect(jobs_path) as conn:
+        conn.execute("CREATE TABLE jobs(id TEXT PRIMARY KEY, name TEXT)")
+        conn.execute("INSERT INTO jobs VALUES('1','Historical archive: sample.zip')")
+
+    result = subprocess.run(
+        ["bash", "mifp", "clear", "all", "--yes"],
+        cwd=tmp_path, text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not db_path.exists()
+    assert not jobs_path.exists()
+
+
+def test_clean_archive_events_removes_only_archive_import_history(tmp_path: Path) -> None:
+    import sqlite3
+
+    _prepare_launcher_tree(tmp_path)
+    database_dir = tmp_path / "MIFPAPP" / "DATABASE"
+    db_path = database_dir / "mifp.db"
+    jobs_path = database_dir / "jobs.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE events (id INTEGER PRIMARY KEY, title TEXT NOT NULL);
+            CREATE TABLE event_archive_entries (id INTEGER PRIMARY KEY, event_id INTEGER NOT NULL UNIQUE);
+            CREATE TABLE import_runs (id INTEGER PRIMARY KEY, source_kind TEXT);
+            CREATE TABLE import_records (id INTEGER PRIMARY KEY, import_run_id INTEGER);
+            INSERT INTO events VALUES(1,'Historical event'),(2,'Ordinary event');
+            INSERT INTO event_archive_entries VALUES(10,1);
+            INSERT INTO import_runs VALUES(20,'historical-archive'),(21,'jsonl');
+            INSERT INTO import_records VALUES(30,20),(31,21);
+            """
+        )
+    with sqlite3.connect(jobs_path) as conn:
+        conn.execute("CREATE TABLE jobs(id TEXT PRIMARY KEY, name TEXT)")
+        conn.execute("INSERT INTO jobs VALUES('a','Historical archive: old.zip')")
+        conn.execute("INSERT INTO jobs VALUES('b','Data portability: records.jsonl')")
+
+    result = subprocess.run(
+        ["bash", "mifp", "clean", "archive-events", "--yes"],
+        cwd=tmp_path, text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM event_archive_entries").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 2
+        assert conn.execute("SELECT source_kind FROM import_runs").fetchall() == [("jsonl",)]
+        assert conn.execute("SELECT import_run_id FROM import_records").fetchall() == [(21,)]
+    with sqlite3.connect(jobs_path) as conn:
+        assert conn.execute("SELECT name FROM jobs").fetchall() == [("Data portability: records.jsonl",)]

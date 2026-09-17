@@ -662,7 +662,11 @@ def display_columns(conn: sqlite3.Connection, table: str) -> list[str]:
 
 def editable_columns(conn: sqlite3.Connection, table: str) -> list[str]:
     readonly = {"id", "created_at", "updated_at", "checksum", "size"}
-    return [c["name"] for c in table_schema(conn, table) if c["name"] not in readonly]
+    internal = {"speakers_json", "chairs_json", "committee_json"} if table == "events" else set()
+    return [
+        c["name"] for c in table_schema(conn, table)
+        if c["name"] not in readonly and c["name"] not in internal
+    ]
 
 def asset_usage(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute("""

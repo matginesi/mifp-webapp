@@ -116,8 +116,24 @@ def _migrate_v10_to_v11(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX idx_event_archive_browse ON event_archive_entries(category, archive_year, event_id)")
 
 
+def _migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
+    """Add structured people collections to canonical events.
+
+    These columns deliberately store compact JSON arrays. They are exposed by
+    the portable contract as ``speakers``, ``chairs`` and ``committee`` so old
+    packages remain valid while newer packages can preserve richer event data.
+    """
+    conn.execute("ALTER TABLE events ADD COLUMN speakers_json TEXT NOT NULL DEFAULT '[]'")
+    conn.execute("ALTER TABLE events ADD COLUMN chairs_json TEXT NOT NULL DEFAULT '[]'")
+    conn.execute("ALTER TABLE events ADD COLUMN committee_json TEXT NOT NULL DEFAULT '[]'")
+
+
 # Target-version -> migration from the immediately preceding supported version.
-MIGRATIONS: dict[int, Migration] = {10: _migrate_v9_to_v10, 11: _migrate_v10_to_v11}
+MIGRATIONS: dict[int, Migration] = {
+    10: _migrate_v9_to_v10,
+    11: _migrate_v10_to_v11,
+    12: _migrate_v11_to_v12,
+}
 MIN_UPGRADABLE_VERSION = 9
 
 

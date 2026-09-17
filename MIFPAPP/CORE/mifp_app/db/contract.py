@@ -7,7 +7,7 @@ must satisfy exactly this contract.
 """
 from __future__ import annotations
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 TABLE_GROUPS = {
     "content": frozenset({
@@ -38,7 +38,10 @@ RUNTIME_REQUIRED_TABLES = frozenset().union(*TABLE_GROUPS.values())
 
 REQUIRED_COLUMNS = {
     "assets": frozenset({"id", "uid", "path", "kind", "storage_status", "content_sha256", "source_url_sha256"}),
-    "events": frozenset({"id", "uid", "title", "review_status", "remote_url"}),
+    "events": frozenset({
+        "id", "uid", "title", "review_status", "remote_url",
+        "speakers_json", "chairs_json", "committee_json",
+    }),
     "event_archive_entries": frozenset({
         "id", "event_id", "source_schema", "public_path", "original_public_url",
         "category", "archive_year", "acronym", "summary", "topics_json",

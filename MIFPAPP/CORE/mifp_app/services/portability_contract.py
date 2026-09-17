@@ -98,6 +98,7 @@ def build_import_format_guide() -> str:
         "menu_order": "integer", "parent_event_id": "integer", "is_featured": "boolean",
         "is_active": "boolean", "date_is_inferred": "boolean", "start_date": "date",
         "end_date": "date", "date": "date", "effective_date": "date",
+        "speakers": "array[person]", "chairs": "array[person]", "committee": "array[person]",
     }
     field_help = {
         "uid": "Stable external identity. Reuse exactly on every run; never use a database row id.",
@@ -129,6 +130,9 @@ def build_import_format_guide() -> str:
         "date_inference_rule": "Short deterministic rule identifier explaining an inferred date; omit for explicit dates.",
         "location": "Venue/city/country as one concise factual string; no travel or registration prose.",
         "description": "Clean main descriptive text, preserving paragraphs and factual distinctions.",
+        "speakers": "All identified event speakers/contributors. Include oral and poster contributors when available. Each item is a person object with name and optional affiliation, contribution_type and contribution_title.",
+        "chairs": "Event/session chairs as person objects with name and optional affiliation. Keep separate from speakers even when one person has both roles.",
+        "committee": "Organising/scientific/programme committee members as person objects with name and optional affiliation. Preserve every explicitly recovered member.",
         "event_type": "Controlled event category; choose other if evidence does not support a narrower value.",
         "series_key": "Stable identifier shared by editions of one event series; editions remain separate records.",
         "parent_event_slug": "Stable slug of a parent event included in the same or existing dataset.",
@@ -203,6 +207,14 @@ def build_import_format_guide() -> str:
                 "end_date": "2027-06-18", "date_precision": "range",
                 "location": "Rome, Italy", "event_type": "conference",
                 "series_key": "plmcn", "review_status": "review",
+                "speakers": [
+                    {"name": "Ada Example", "affiliation": "Example University",
+                     "contribution_type": "oral", "contribution_title": "Light-matter coupling"},
+                    {"name": "Bruno Example", "contribution_type": "poster",
+                     "contribution_title": "Nanostructure poster contribution"}
+                ],
+                "chairs": [{"name": "Carla Example", "affiliation": "MIFP"}],
+                "committee": [{"name": "Dario Example", "affiliation": "MIFP"}],
             }, "links": [{"url": "https://example.org/plmcn-2027", "role": "primary"}], "assets": [],
         },
         "publication": {
@@ -447,6 +459,12 @@ def build_import_format_guide() -> str:
         "One edition/occurrence per record. Reuse `series_key` across editions but keep year-specific `uid` and "
         "slug`. Use `parent_event_slug` only for a real containment relationship, not merely related events. "
         "A year-only event is not a full-year range unless the source explicitly says so.", "",
+        "Preserve event people explicitly in `speakers`, `chairs`, and `committee` when the source provides them. "
+        "For `speakers`, include every recovered contributor rather than only invited/keynote speakers: oral and poster "
+        "contributors belong in the same array and should carry `contribution_type` (`oral`, `poster`, `invited`, "
+        "`keynote`, etc.) plus `contribution_title` when known. Each person object requires `name`; `affiliation` is "
+        "optional. Do not invent missing roles, affiliations, contribution types, or titles. Omit an entire collection "
+        "when the source does not provide it; an empty list is also valid.", "",
         "### Publications", "",
         "DOI dominates identity when present. Normalize it without URL/prefix. Preserve author order. A news item "
         "announcing a publication and the publication itself are two different records of different types.", "",

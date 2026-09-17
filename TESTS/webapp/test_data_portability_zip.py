@@ -1702,3 +1702,51 @@ def test_generated_import_guide_describes_portable_offline_zip_contract() -> Non
     assert "offline/deterministic restore" in guide
     assert "post-import network recovery pass is skipped" in guide
     assert "older valid v2 dashboard ZIPs" in guide
+    assert "`speakers`, `chairs`, and `committee`" in guide
+    assert "oral and poster" in guide
+    assert "contribution_type" in guide
+
+
+def test_event_people_roundtrip_jsonl_and_zip(tmp_path: Path) -> None:
+    from mifp_app.services.data_portability import bundle_to_jsonl_file, bundle_to_zip, import_jsonl_payload, import_zip_payload
+
+    source = _conn()
+    speakers = [
+        {"name": "Ada Example", "affiliation": "Example University", "contribution_type": "oral", "contribution_title": "Quantum light"},
+        {"name": "Bruno Example", "contribution_type": "poster", "contribution_title": "Poster contribution"},
+    ]
+    chairs = [{"name": "Carla Example", "affiliation": "MIFP"}]
+    committee = [{"name": "Dario Example", "affiliation": "MIFP"}]
+    source.execute(
+        "INSERT INTO events(slug,title,review_status,speakers_json,chairs_json,committee_json) VALUES(?,?,?,?,?,?)",
+        ("people-event", "People Event", "published", json.dumps(speakers), json.dumps(chairs), json.dumps(committee)),
+    )
+
+    jsonl = tmp_path / "events.jsonl"
+    bundle_to_jsonl_file(source, "events", tmp_path / "assets", jsonl)
+    record = json.loads(jsonl.read_text(encoding="utf-8").strip())
+    assert record["data"]["speakers"] == speakers
+    assert record["data"]["chairs"] == chairs
+    assert record["data"]["committee"] == committee
+    assert "speakers_json" not in record["data"]
+
+    json_target = _conn()
+    summary = import_jsonl_payload(json_target, jsonl, "events", tmp_path / "json-assets")
+    assert summary["errors"] == []
+    row = json_target.execute(
+        "SELECT speakers_json,chairs_json,committee_json FROM events WHERE slug='people-event'"
+    ).fetchone()
+    assert json.loads(row["speakers_json"]) == speakers
+    assert json.loads(row["chairs_json"]) == chairs
+    assert json.loads(row["committee_json"]) == committee
+
+    zip_payload = bundle_to_zip(source, "events", tmp_path / "assets")
+    zip_target = _conn()
+    zip_summary = import_zip_payload(zip_target, zip_payload, "events", tmp_path / "zip-assets")
+    assert zip_summary["errors"] == []
+    zip_row = zip_target.execute(
+        "SELECT speakers_json,chairs_json,committee_json FROM events WHERE slug='people-event'"
+    ).fetchone()
+    assert json.loads(zip_row["speakers_json"]) == speakers
+    assert json.loads(zip_row["chairs_json"]) == chairs
+    assert json.loads(zip_row["committee_json"]) == committee

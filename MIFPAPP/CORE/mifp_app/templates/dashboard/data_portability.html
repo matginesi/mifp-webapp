@@ -193,6 +193,20 @@
         <h5 class="modal-title"><i class="bi bi-arrow-left-right"></i> <span id="transferModalTitle">Data transfer</span></h5>
       </div>
       <div class="modal-body">
+        <div class="transfer-operation-totem" id="transferOperationTotem" data-state="working">
+          <div class="transfer-totem-icon" id="transferTotemIcon"><i class="bi bi-arrow-left-right" aria-hidden="true"></i></div>
+          <div class="transfer-totem-copy">
+            <small id="transferTotemEyebrow">Data transfer</small>
+            <strong id="transferTotemTitle">Preparing operation</strong>
+            <span id="transferTotemMeta">Waiting for transfer metadata</span>
+          </div>
+          <span class="transfer-totem-state" id="transferTotemState">Preparing</span>
+          <div class="transfer-totem-facts">
+            <span><small>Mode</small><b id="transferTotemMode">—</b></span>
+            <span><small>Format</small><b id="transferTotemFormat">—</b></span>
+            <span><small>Assets</small><b id="transferTotemAssets">—</b></span>
+          </div>
+        </div>
         <div id="transferWorking">
           <div class="transfer-working-grid">
             <div class="transfer-left">

@@ -57,6 +57,7 @@ ENTITY_DATA_FIELDS = {
         "uid", "slug", "title", "start_date", "end_date", "date_text", "date_precision",
         "location", "description", "event_type", "series_key", "parent_event_id",
         "parent_event_slug", "review_status", "is_featured", "sort_order", "remote_url",
+        "speakers", "chairs", "committee",
     }),
     "news": frozenset({
         "uid", "slug", "title", "news_type", "card_layout", "date", "date_text",

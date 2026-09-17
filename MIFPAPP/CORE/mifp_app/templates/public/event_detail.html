@@ -183,6 +183,42 @@
           {% if event.description_html %}{{ event.description_html|safe }}{% else %}{{ event.description }}{% endif %}
         </div>
         {% endif %}
+
+        {% if event.speakers or event.chairs or event.committee %}
+        <section class="event-people-section" aria-label="Event people">
+          {% for role_key, role_label, people in [
+            ('speakers', 'Speakers & contributions', event.speakers),
+            ('chairs', 'Chairs', event.chairs),
+            ('committee', 'Committee', event.committee)
+          ] %}
+            {% if people %}
+            <div class="event-people-group event-people-group-{{ role_key }}">
+              <div class="event-people-heading">
+                <span>{{ role_label }}</span><b>{{ people|length }}</b>
+              </div>
+              <div class="event-people-list">
+                {% for person in people %}
+                  {% set is_object = person is mapping %}
+                  {% set person_name = person.get('name') if is_object else person %}
+                  {% if person_name %}
+                  <article class="event-person">
+                    <strong>{{ person_name }}</strong>
+                    {% if is_object and person.get('affiliation') %}<span>{{ person.get('affiliation') }}</span>{% endif %}
+                    {% if role_key == 'speakers' and is_object and (person.get('contribution_type') or person.get('contribution_title')) %}
+                    <small>
+                      {% if person.get('contribution_type') %}<em>{{ person.get('contribution_type')|replace('_',' ')|title }}</em>{% endif %}
+                      {% if person.get('contribution_title') %}{{ person.get('contribution_title') }}{% endif %}
+                    </small>
+                    {% endif %}
+                  </article>
+                  {% endif %}
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+          {% endfor %}
+        </section>
+        {% endif %}
       </div>
 
     </div>

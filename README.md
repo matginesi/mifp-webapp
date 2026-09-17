@@ -57,7 +57,7 @@ definisce gli invarianti che un DB deve rispettare per essere avviato.
 
 Non esistono migration implicite all'avvio. Gli upgrade supportati sono espliciti e
 si eseguono sempre su una copia (`db-upgrade-copy`); in questa versione sono supportati
-gli upgrade adiacenti v9 -> v10 -> v11. DB legacy/non versionati continuano a passare dai package
+gli upgrade adiacenti v9 -> v10 -> v11 -> v12. DB legacy/non versionati continuano a passare dai package
 versionati `mifp-content` v1 o `mifp-jsonl-v2` v2; i vecchi ZIP non versionati sono rifiutati.
 
 JSONL è record-only. ZIP è il formato portabile per record/asset e, negli

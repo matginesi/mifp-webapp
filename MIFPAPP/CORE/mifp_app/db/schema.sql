@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 INSERT OR IGNORE INTO schema_migrations(version,name,checksum)
-VALUES(11,'canonical schema v11','c18a419d2e63809f94d3072cff512febe066f132f15f74d3980ecb2d19b9a9c5');
+VALUES(12,'canonical schema v12','mifp-schema-v12');
 
 CREATE TABLE IF NOT EXISTS source_systems (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -190,6 +190,9 @@ CREATE TABLE IF NOT EXISTS events (
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    speakers_json TEXT NOT NULL DEFAULT '[]',
+    chairs_json TEXT NOT NULL DEFAULT '[]',
+    committee_json TEXT NOT NULL DEFAULT '[]',
     FOREIGN KEY (parent_event_id) REFERENCES events(id) ON DELETE SET NULL
 );
 

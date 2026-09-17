@@ -83,6 +83,15 @@
   var metricsRecordErrors = document.getElementById('metricsRecordErrors');
   var metricsAssetErrors = document.getElementById('metricsAssetErrors');
   var metricsSkipped = document.getElementById('metricsSkipped');
+  var transferTotem = document.getElementById('transferOperationTotem');
+  var transferTotemIcon = document.getElementById('transferTotemIcon');
+  var transferTotemEyebrow = document.getElementById('transferTotemEyebrow');
+  var transferTotemTitle = document.getElementById('transferTotemTitle');
+  var transferTotemMeta = document.getElementById('transferTotemMeta');
+  var transferTotemState = document.getElementById('transferTotemState');
+  var transferTotemMode = document.getElementById('transferTotemMode');
+  var transferTotemFormat = document.getElementById('transferTotemFormat');
+  var transferTotemAssets = document.getElementById('transferTotemAssets');
   var startedAt = 0;
   var clockTimer = null;
   var streamBuffer = '';
@@ -119,6 +128,27 @@
       if (exportAuthPassword) exportAuthPassword.value = '';
       pendingExportFormat = null;
     });
+  }
+
+  function setTransferTotem(options) {
+    options = options || {};
+    if (!transferTotem) return;
+    transferTotem.dataset.state = options.state || 'working';
+    if (transferTotemIcon && options.icon) transferTotemIcon.replaceChildren(icon(options.icon));
+    if (transferTotemEyebrow) transferTotemEyebrow.textContent = options.eyebrow || 'Data transfer';
+    if (transferTotemTitle) transferTotemTitle.textContent = options.title || 'Preparing operation';
+    if (transferTotemMeta) transferTotemMeta.textContent = options.meta || 'Waiting for transfer metadata';
+    if (transferTotemState) transferTotemState.textContent = options.status || 'Preparing';
+    if (transferTotemMode) transferTotemMode.textContent = options.mode || '—';
+    if (transferTotemFormat) transferTotemFormat.textContent = options.format || '—';
+    if (transferTotemAssets) transferTotemAssets.textContent = options.assets || '—';
+  }
+
+  function selectedFormatLabel(files) {
+    var formats = new Set(files.map(function (file) {
+      return String(file.name || '').toLowerCase().endsWith('.zip') ? 'ZIP' : 'JSON/JSONL';
+    }));
+    return formats.size > 1 ? 'Mixed' : (Array.from(formats)[0] || '—');
   }
 
   function setOperationActive(active) {
@@ -237,6 +267,7 @@
   function resetModal(modalTitle, message) {
     title.textContent = modalTitle;
     status.textContent = message;
+    setTransferTotem({ title: modalTitle, meta: message, status: 'Preparing', mode: '—', format: '—', assets: '—', icon: 'bi-arrow-left-right' });
     detail.textContent = '';
     activityLog.replaceChildren();
     filesContainer.replaceChildren();
@@ -313,6 +344,14 @@
       ? payload.icon_class : 'bi-check-lg';
     resultMark.className = 'transfer-result-mark ' + modifier;
     resultMark.replaceChildren(icon(resultIcon));
+    if (transferTotem) {
+      transferTotem.dataset.state = modifier === 'is-error' ? 'error' : modifier === 'is-warning' ? 'warning' : 'success';
+      if (transferTotemState) transferTotemState.textContent = payload.download_token ? 'Ready to download' : (payload.ok ? 'Completed' : 'Failed');
+      if (payload.filename && transferTotemTitle) transferTotemTitle.textContent = payload.filename;
+      if (payload.filename && transferTotemMeta) {
+        transferTotemMeta.textContent = (payload.bytes ? window.MIFP.formatBytes(Number(payload.bytes)) + ' · ' : '') + 'Generated successfully';
+      }
+    }
     resultTitle.textContent = payload.title_text || 'Import complete';
     resultMessage.textContent = payload.message || '';
     var smartMerge = document.getElementById('transferSmartMerge');
@@ -425,6 +464,7 @@
       logEvent('Server job queued', 'done');
     } else if (msg.event === 'phase') {
       setPhase(msg.label, '', msg.percent == null ? null : batchProgress(msg.percent));
+      if (transferTotemState) transferTotemState.textContent = msg.label || 'Processing';
       logEvent(msg.label, 'active');
     } else if (msg.event === 'progress') {
       var fileEl = fileProgressEls[msg.file];
@@ -659,12 +699,14 @@
       if (!upload.lengthComputable) return;
       status.textContent = 'Uploading package ' + (batchIndex + 1) + ' of ' + batchTotal + '…';
       detail.textContent = window.MIFP.formatBytes(upload.loaded) + ' of ' + window.MIFP.formatBytes(upload.total) + ' uploaded in this package';
+      if (transferTotemState) transferTotemState.textContent = 'Uploading ' + Math.round((upload.loaded / upload.total) * 100) + '%';
     });
     xhr.upload.addEventListener('load', function () {
       logEvent('Upload ' + (batchIndex + 1) + '/' + batchTotal + ' complete · server processing started', 'done');
       progress.parentElement.classList.add('is-loading');
       progress.style.removeProperty('width');
       percent.textContent = 'Processing…';
+      if (transferTotemState) transferTotemState.textContent = 'Server processing';
     });
     xhr.addEventListener('loadend', function () {
       streamBuffer += xhr.responseText.substring(lastStreamPos);
@@ -769,6 +811,15 @@
       skip_assets: Boolean(form.querySelector('[name="skip_assets"]')?.checked),
     });
     resetModal(dryRun ? 'Check import' : 'Import data', 'Preparing upload queue…');
+    setTransferTotem({
+      eyebrow: 'Inbound package',
+      title: files.length === 1 ? files[0].name : files.length + ' selected files',
+      meta: window.MIFP.formatBytes(totalBytes) + ' · ' + batches.length + (batches.length === 1 ? ' upload batch' : ' upload batches'),
+      status: 'Queued', state: 'working', icon: dryRun ? 'bi-shield-check' : 'bi-cloud-arrow-up',
+      mode: dryRun ? 'Validate only' : 'Import',
+      format: selectedFormatLabel(files),
+      assets: form.querySelector('[name="skip_assets"]')?.checked ? 'Skip packaged assets' : 'Include packaged assets'
+    });
     logEvent('Selected ' + files.length + ' file(s) · ' + window.MIFP.formatBytes(totalBytes) + ' · ' + batches.length + ' upload(s)', 'done');
     logEvent(dryRun ? 'Validation mode: database will not be changed' : 'A database backup is created before each upload', 'active');
     modal.show();
@@ -864,6 +915,13 @@
       var fmtUpper = fmt.toUpperCase();
       transferLog.info('export.authorization_submitted', { format: fmt });
       resetModal('Export data', 'Preparing ' + fmtUpper + '…');
+      setTransferTotem({
+        eyebrow: 'Outbound package',
+        title: fmt === 'zip' ? 'Portable MIFP ZIP' : 'Portable MIFP JSONL',
+        meta: fmt === 'zip' ? 'Canonical records + durable state + managed local assets' : 'Canonical record stream without packaged files',
+        status: 'Building', state: 'working', icon: fmt === 'zip' ? 'bi-file-earmark-zip' : 'bi-braces',
+        mode: 'Export', format: fmtUpper, assets: fmt === 'zip' ? 'Packaged' : 'Records only'
+      });
       if (cancelButton) cancelButton.hidden = true;
       logEvent(fmtUpper === 'ZIP' ? 'Collecting records and local assets' : 'Serializing records as JSONL', 'active');
       modal.show();
@@ -962,6 +1020,8 @@
     downloadButton.addEventListener('click', function () {
       if (!exportDlFilename || !downloadButton.getAttribute('href')) return;
       logEvent('Downloading ' + exportDlFilename, 'done');
+      if (transferTotemState) transferTotemState.textContent = 'Download started';
+      if (transferTotem) transferTotem.dataset.state = 'success';
       transferLog.info('export.download_started', { filename: exportDlFilename });
       window.setTimeout(function () {
         downloadButton.removeAttribute('href');

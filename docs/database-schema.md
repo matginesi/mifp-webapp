@@ -1,6 +1,6 @@
 # Database MIFP: contratto e lifecycle
 
-SQLite è la fonte di verità runtime. Lo schema corrente è **v11**.
+SQLite è la fonte di verità runtime. Lo schema corrente è **v12**.
 
 - `mifp_app/db/schema.sql`: struttura completa di un DB nuovo.
 - `mifp_app/db/contract.py`: tabelle/colonne/indici/trigger indispensabili.
@@ -14,7 +14,7 @@ SQLite è la fonte di verità runtime. Lo schema corrente è **v11**.
 2. Il runtime non crea e non migra schema.
 3. Un DB incompleto non viene autoriparato: viene rifiutato.
 4. Gli upgrade tra versioni adiacenti esplicitamente supportate passano dal registry delle
-   migration; v9 -> v10 -> v11 è supportato. DB non versionati o più vecchi devono invece essere
+   migration; v9 -> v10 -> v11 -> v12 è supportato. DB non versionati o più vecchi devono invece essere
    ricreati e popolati tramite package ZIP moderni e versionati.
 5. Upgrade schema: sempre su una copia, validazione, poi swap esplicito.
 6. Import contenuti: transazionale e additivo; nessuna cancellazione implicita.
@@ -98,7 +98,7 @@ flowchart LR
 
 La migrazione v10 -> v11 crea la tabella e gli indici
 `idx_event_archive_event`, `idx_event_archive_public_path` e
-`idx_event_archive_browse`. Un DB migrato e un DB v11 nuovo convergono allo
+`idx_event_archive_browse`. Un DB migrato e un DB v12 nuovo convergono allo
 stesso fingerprint canonico.
 
 ### Data Quality
@@ -141,7 +141,7 @@ La dashboard non crea quindi una seconda copia editabile degli stessi dati.
 ### Schema
 
 `schema_migrations` contiene la versione applicata. `page_views` e le vecchie
-tabelle assistant/chatbot non fanno parte dello schema v11.
+tabelle assistant/chatbot non fanno parte dello schema v12.
 
 ## Import/export
 
@@ -161,3 +161,14 @@ Lo ZIP storico `mifp-historical-event-v1` è gestito soltanto dalla sezione
 dashboard **Archive**. Dopo l'import non serve più: l'export portabile normale
 degli scope Events e All include l'estensione in `meta.archive`, i link in
 `links` e i file in `assets`.
+
+### Events: persone strutturate (v12)
+
+La migrazione v11 -> v12 aggiunge a `events` tre collezioni JSON compatte:
+`speakers_json`, `chairs_json` e `committee_json`. Il formato portabile non espone
+i nomi fisici delle colonne: usa invece `speakers`, `chairs` e `committee` come
+array di persone. Gli speaker possono includere `affiliation`, `contribution_type`
+e `contribution_title`, così contributi oral, poster, invited/keynote e simili non
+vengono persi. I record precedenti restano validi: le tre collezioni sono opzionali
+e la pagina pubblica non mostra sezioni vuote.
+

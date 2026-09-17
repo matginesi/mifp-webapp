@@ -161,7 +161,7 @@ def test_v9_conference_metadata_migrates_to_v10_contract(tmp_path: Path) -> None
         ).fetchone()
         indexes = {item[0] for item in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
 
-    assert result["migrations_applied"] == [10, 11]
+    assert result["migrations_applied"] == [10, 11, 12]
     assert row["public_path"] == "PLMCN-2025"
     assert row["source_format"] == "internal"
     assert row["deploy_status"] == "unpublished"

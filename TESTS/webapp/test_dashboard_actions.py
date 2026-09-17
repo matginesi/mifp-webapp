@@ -2451,3 +2451,32 @@ def test_conference_editor_package_is_linked_versioned_and_downloaded_verbatim(a
     )
     assert duplicate.status_code == 302
     assert _scalar(app, "SELECT COUNT(*) FROM conference_sites WHERE slug='duplicate-link'") == 0
+
+
+def test_public_event_renders_optional_people_sections_without_placeholders(client, app):
+    with _db(app) as conn:
+        conn.execute(
+            """INSERT INTO events(slug,title,event_type,start_date,review_status,speakers_json,chairs_json,committee_json)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                "people-details-event", "People Details Event", "conference", "2027-05-01", "published",
+                json.dumps([
+                    {"name": "Ada Example", "affiliation": "Example University", "contribution_type": "oral", "contribution_title": "Quantum light"},
+                    {"name": "Bruno Example", "contribution_type": "poster", "contribution_title": "Poster contribution"},
+                ]),
+                json.dumps([{"name": "Carla Example", "affiliation": "MIFP"}]),
+                "[]",
+            ),
+        )
+        conn.commit()
+
+    response = client.get("/events/people-details-event")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Speakers &amp; contributions" in body
+    assert "Ada Example" in body
+    assert "Oral" in body
+    assert "Poster" in body
+    assert "Chairs" in body
+    assert "Carla Example" in body
+    assert "Committee" not in body

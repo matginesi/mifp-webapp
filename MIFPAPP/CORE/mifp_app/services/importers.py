@@ -385,6 +385,47 @@ def _normalize_member_name(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+_EVENT_PERSON_KEYS = {"name", "affiliation", "contribution_type", "contribution_title"}
+
+
+def _normalize_event_people(value: Any, *, field: str) -> str:
+    """Normalize a portable event people collection to compact JSON storage.
+
+    Portable records expose arrays. String entries remain accepted for simple
+    hand-authored JSON, while object entries preserve affiliation and speaker
+    contribution metadata (including oral/poster contributions).
+    """
+    if value in (None, ""):
+        return "[]"
+    if not isinstance(value, list):
+        raise ImportValidationError(f"{field} must be a list")
+    normalized: list[dict[str, str]] = []
+    for index, item in enumerate(value, start=1):
+        if isinstance(item, str):
+            name = item.strip()
+            if not name:
+                continue
+            normalized.append({"name": name})
+            continue
+        if not isinstance(item, dict):
+            raise ImportValidationError(f"{field}[{index}] must be a string or object")
+        unknown = set(item) - _EVENT_PERSON_KEYS
+        if unknown:
+            raise ImportValidationError(
+                f"{field}[{index}] unknown keys: {', '.join(sorted(unknown))}"
+            )
+        name = str(item.get("name") or "").strip()
+        if not name:
+            raise ImportValidationError(f"{field}[{index}].name is required")
+        person = {"name": name}
+        for key in ("affiliation", "contribution_type", "contribution_title"):
+            text = str(item.get(key) or "").strip()
+            if text:
+                person[key] = text
+        normalized.append(person)
+    return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+
+
 def _boolean_int(value: Any, *, field: str) -> int:
     """Normalize portable booleans without treating non-empty strings as true."""
     if value in (None, ""):
@@ -418,6 +459,12 @@ def _normalize_data(
     for boolean_field in ("is_featured", "is_active", "date_is_inferred"):
         if boolean_field in data:
             data[boolean_field] = _boolean_int(data[boolean_field], field=boolean_field)
+    if typ == "event":
+        for portable_field in ("speakers", "chairs", "committee"):
+            if portable_field in data:
+                data[f"{portable_field}_json"] = _normalize_event_people(
+                    data.pop(portable_field), field=portable_field
+                )
     if not portable_restore and typ == "member" and not data.get("country") and data.get("affiliation"):
         inferred = infer_country(data["affiliation"])
         if inferred:
