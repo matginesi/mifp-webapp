@@ -111,13 +111,56 @@ def test_archive_requires_minimum_card_dataset(tmp_path: Path):
         ("location", lambda event: event.pop("location"), "location"),
         ("summary", lambda event: event.update(summary=""), "summary"),
         ("committee", lambda event: event["people"].pop("committee"), "people.committee"),
-        ("logo", lambda event: event["images"][0].pop("role"), "role=logo"),
     ]
     for label, mutate, error in cases:
         event = _event()
         mutate(event)
         with pytest.raises(HistoricalArchiveError, match=error):
             inspect_historical_archive(_package(tmp_path / f"missing-{label}.zip", event))
+
+
+
+def test_archive_infers_legacy_logo_and_links_it_as_logo(tmp_path: Path):
+    from mifp_app.services.historical_archive import import_historical_archive, inspect_historical_archive
+
+    event = _event()
+    event["images"][0].pop("role")
+    package = _package(tmp_path / "legacy-logo.zip", event)
+    preview = inspect_historical_archive(package)
+    assert preview["events"] == 1
+    assert any("Logo inferred" in warning for warning in preview["records"][0]["warnings"])
+
+    conn = _conn()
+    import_historical_archive(conn, package, tmp_path / "assets")
+    roles = [row[0] for row in conn.execute(
+        "SELECT role FROM asset_links WHERE entity_type='event' ORDER BY role"
+    )]
+    assert "logo" in roles
+    assert "gallery" in roles
+
+
+
+
+def test_archive_accepts_legacy_top_level_logo(tmp_path: Path):
+    from mifp_app.services.historical_archive import inspect_historical_archive
+
+    event = _event()
+    image = event["images"].pop()
+    event["logo"] = {"path": image["path"], "alt": image["alt"]}
+    preview = inspect_historical_archive(_package(tmp_path / "top-level-logo.zip", event))
+    assert preview["events"] == 1
+    assert preview["missing_assets"] == 0
+
+def test_archive_without_resolvable_logo_is_warning_not_package_failure(tmp_path: Path):
+    from mifp_app.services.historical_archive import inspect_historical_archive
+
+    event = _event()
+    event["images"] = []
+    package = _package(tmp_path / "no-logo.zip", event)
+    preview = inspect_historical_archive(package)
+    assert preview["events"] == 1
+    assert any("without a logo" in warning for warning in preview["records"][0]["warnings"])
+
 
 def test_archive_repository_filter_destination_and_detail(tmp_path: Path):
     from mifp_app.services.historical_archive import import_historical_archive

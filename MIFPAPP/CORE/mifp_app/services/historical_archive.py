@@ -129,7 +129,7 @@ def build_historical_archive_guide() -> str:
         "the original website. The following six content groups are mandatory:", "",
         "1. **Title** — `title` must be a non-empty human-readable event title.",
         "2. **Dates** — `dates` must contain at least one non-empty value among `start`, `end`, or `text`.",
-        "3. **Logo** — `images` must contain exactly one descriptor with `role: \"logo\"`; its `path` must point to a real packaged image in the ZIP.",
+        "3. **Logo** — package a real event logo in `images` and mark it with `role: \"logo\"` whenever possible. The importer keeps compatibility with older packages that use a top-level `logo`, `cover`/`hero`, `kind: \"logo\"`, `is_primary`, a `logo.*` filename, or a single unlabelled image.",
         "4. **Location** — `location.display` must be non-empty.",
         "5. **People** — `people` must explicitly contain the four arrays `participants`, `chairs`, `speakers`, and `committee`. Use an empty array only when that role was genuinely not recovered; record material gaps in `not_recovered`.",
         "6. **Short description** — `summary` must be a concise, non-empty description suitable for the Archive listing.", "",
@@ -157,7 +157,7 @@ def build_historical_archive_guide() -> str:
         "| `people` | yes | Object containing all four arrays: `participants`, `chairs`, `speakers`, `committee`. |",
         "| `program` | no | Array of programme entries; preserve recovered dates, times, titles and speakers. |",
         "| `documents` | no | Array of packaged document descriptors. |",
-        "| `images` | yes | Packaged image descriptors; exactly one item must have `role: \"logo\"` and reference a real ZIP member. |",
+        "| `images` | yes | Packaged image descriptors. New packages should contain one real logo with `role: \"logo\"`; its file must be included in the ZIP. Compatibility fallbacks exist only for older packages. |",
         "| `sources` | no | Array of HTTP(S) URL strings or objects with `url` and optional `label`. |",
         "| `recovery` | no | Object containing provenance, confidence and recovery notes. |",
         "| `not_recovered` | no | Array stating material known to be missing; never invent missing facts. |", "",
@@ -220,7 +220,7 @@ def build_historical_archive_guide() -> str:
         "- [ ] UIDs and slugs are stable and unique within the package.",
         "- [ ] Every event has title, usable dates, location and a concise summary.",
         "- [ ] Every event has `participants`, `chairs`, `speakers`, and `committee` arrays.",
-        "- [ ] Every event has exactly one `images[]` item with `role: \"logo\"`.",
+        "- [ ] Every event packages its real logo and new records mark it with `images[].role: \"logo\"`.",
         "- [ ] Every referenced document and image exists at its relative path, including the logo.",
         "- [ ] Source URLs, recovery notes and known gaps are preserved.",
         "- [ ] The package has been run through **Validate only** before import.", "",
@@ -312,14 +312,31 @@ def _validate_event(raw: bytes, member: str, members: dict[str, zipfile.ZipInfo]
     for role, rows in people.items():
         _list(rows, f"{member}.people.{role}")
     images = _list(event.get("images"), f"{member}.images")
-    logo_items = [
+    legacy_logo = event.get("logo")
+    if legacy_logo:
+        if isinstance(legacy_logo, str):
+            legacy_logo_spec: dict[str, Any] = {"path": legacy_logo, "role": "logo"}
+        elif isinstance(legacy_logo, dict):
+            legacy_logo_spec = dict(legacy_logo)
+            legacy_logo_spec.setdefault("role", "logo")
+        else:
+            raise HistoricalArchiveError(f"{member}.logo must be a path string or object when present")
+        legacy_logo_path = str(legacy_logo_spec.get("path") or "").strip()
+        if legacy_logo_path and not any(
+            isinstance(item, dict) and str(item.get("path") or "").strip() == legacy_logo_path
+            for item in images
+        ):
+            images.append(legacy_logo_spec)
+            event["images"] = images
+
+    # Historical packages produced by older agents are not perfectly uniform in
+    # how they label the event logo.  Keep ``role=logo`` as the canonical
+    # contract, but do not reject an otherwise valid archive solely because the
+    # logo descriptor uses a common legacy label (cover/hero), marks the image
+    # primary, or omits the role when there is only one packaged image.  The
+    # resolved candidate is stored below after asset paths have been verified.
+    for index, item in enumerate(images, 1):
         _object(item, f"{member}.images[{index}]")
-        for index, item in enumerate(images, 1)
-        if isinstance(item, dict) and str(item.get("role") or "").strip().casefold() == "logo"
-    ]
-    if len(logo_items) != 1:
-        raise HistoricalArchiveError(f"{member}.images must contain exactly one item with role=logo")
-    logo_path = str(logo_items[0].get("path") or "").strip()
     event_type = str(event.get("event_type") or "other").strip().casefold()
     if event_type not in EVENT_TYPES:
         raise HistoricalArchiveError(f"Invalid event_type in {member}: {event_type}")
@@ -351,16 +368,72 @@ def _validate_event(raw: bytes, member: str, members: dict[str, zipfile.ZipInfo]
                     archive_name = matches[0]
                     info = members[archive_name]
             if not info or archive_name.endswith("/"):
-                if group == "images" and relative == logo_path:
-                    raise HistoricalArchiveError(f"Required logo file is missing from ZIP: {archive_name}")
                 missing_assets.append(archive_name)
                 continue
             referenced.append({"group": group, "kind": item.get("kind") or default_kind,
                                "member": archive_name, "spec": item})
+
+    image_assets = [asset for asset in referenced if asset["group"] == "images"]
+
+    def logo_priority(asset: dict[str, Any]) -> int:
+        spec = asset["spec"]
+        role = str(spec.get("role") or "").strip().casefold().replace("-", "_")
+        kind = str(spec.get("kind") or spec.get("type") or "").strip().casefold().replace("-", "_")
+        basename = PurePosixPath(str(spec.get("path") or "")).name.casefold()
+        if role == "logo":
+            return 100
+        if kind == "logo":
+            return 95
+        if role in {"hero_logo", "event_logo"}:
+            return 90
+        if role in {"cover", "hero"}:
+            return 80
+        if spec.get("is_primary") is True or spec.get("primary") is True:
+            return 70
+        if "logo" in basename:
+            return 60
+        return 0
+
+    logo_asset: dict[str, Any] | None = None
+    logo_warning: str | None = None
+    ranked = sorted(
+        ((logo_priority(asset), order, asset) for order, asset in enumerate(image_assets)),
+        key=lambda row: (-row[0], row[1]),
+    )
+    if ranked and ranked[0][0] > 0:
+        top_score = ranked[0][0]
+        logo_asset = ranked[0][2]
+        equally_ranked = [row for row in ranked if row[0] == top_score]
+        if top_score < 100:
+            logo_warning = (
+                f"Logo inferred from {logo_asset['spec'].get('path')!r}; "
+                "use role=logo in newly generated packages"
+            )
+        elif len(equally_ranked) > 1:
+            logo_warning = (
+                f"Multiple explicit logo candidates found; using "
+                f"{logo_asset['spec'].get('path')!r}"
+            )
+    elif len(image_assets) == 1:
+        logo_asset = image_assets[0]
+        logo_warning = (
+            f"Logo inferred from the only packaged image "
+            f"{logo_asset['spec'].get('path')!r}; use role=logo in newly generated packages"
+        )
+    elif not image_assets:
+        logo_warning = "No packaged event logo could be resolved; event will be imported without a logo"
+    else:
+        logo_warning = (
+            "No unambiguous event logo could be resolved from packaged images; "
+            "event will be imported without a logo"
+        )
+
     event["_member"] = member
     event["_raw_sha256"] = hashlib.sha256(raw).hexdigest()
     event["_year"] = int(match["year"])
     event["_assets"] = referenced
+    event["_logo_member"] = logo_asset["member"] if logo_asset else None
+    event["_validation_warnings"] = [logo_warning] if logo_warning else []
     event["_missing_assets"] = missing_assets
     event["_dates"] = dates
     event["_location"] = location
@@ -435,6 +508,7 @@ def inspect_historical_archive(path: Path, conn: sqlite3.Connection | None = Non
                 raise HistoricalArchiveError(f"Duplicate event identity in package: {name}")
             seen_uid.add(event["uid"]); seen_slug.add(event["slug"])
             event_id, action, warnings = _resolve_event(conn, event) if conn else (None, "create", [])
+            warnings.extend(event.get("_validation_warnings") or [])
             actions[action] += 1
             categories[event["category"]] += 1
             years.append(event["_year"])
@@ -569,8 +643,16 @@ def import_historical_archive(
                     cur = conn.execute("INSERT OR IGNORE INTO asset_links(asset_id,entity_type,entity_id,role,is_primary,sort_order) VALUES(?,'event',?,?,?,?)",
                                        (asset_id, event_id, role, 0, order))
                     linked_assets += max(cur.rowcount, 0)
-                    if role == "gallery" and first_image_id is None:
-                        first_image_id = asset_id
+                    if asset["group"] == "images":
+                        if first_image_id is None:
+                            first_image_id = asset_id
+                        if asset["member"] == event.get("_logo_member"):
+                            logo_cur = conn.execute(
+                                "INSERT OR IGNORE INTO asset_links(asset_id,entity_type,entity_id,role,is_primary,sort_order) "
+                                "VALUES(?,'event',?,'logo',1,0)",
+                                (asset_id, event_id),
+                            )
+                            linked_assets += max(logo_cur.rowcount, 0)
                 if first_image_id and not conn.execute("SELECT 1 FROM asset_links WHERE entity_type='event' AND entity_id=? AND role IN ('cover','logo')", (event_id,)).fetchone():
                     conn.execute("INSERT OR IGNORE INTO asset_links(asset_id,entity_type,entity_id,role,is_primary,sort_order) VALUES(?,'event',?,'cover',1,0)", (first_image_id, event_id))
                     linked_assets += 1
