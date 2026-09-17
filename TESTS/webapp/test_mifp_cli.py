@@ -176,6 +176,48 @@ def test_clean_dry_run_never_targets_import_data(tmp_path: Path) -> None:
     assert protected.read_text(encoding="utf-8") == "{}\n"
 
 
+
+def test_clean_archive_events_removes_only_archive_extension(tmp_path: Path) -> None:
+    import sqlite3
+
+    _prepare_launcher_tree(tmp_path)
+    db_path = tmp_path / "MIFPAPP" / "DATABASE" / "mifp.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE events (id INTEGER PRIMARY KEY, title TEXT NOT NULL);
+            CREATE TABLE event_archive_entries (
+                id INTEGER PRIMARY KEY,
+                event_id INTEGER NOT NULL UNIQUE,
+                FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+            );
+            CREATE TABLE news (id INTEGER PRIMARY KEY, title TEXT NOT NULL);
+            INSERT INTO events(id,title) VALUES(1,'Historical event'),(2,'Ordinary event');
+            INSERT INTO event_archive_entries(id,event_id) VALUES(10,1);
+            INSERT INTO news(id,title) VALUES(5,'Keep me');
+            """
+        )
+
+    dry = subprocess.run(
+        ["bash", "mifp", "clean", "archive-events", "--dry-run"],
+        cwd=tmp_path, text=True, capture_output=True, check=False,
+    )
+    assert dry.returncode == 0, dry.stderr
+    assert "Archive Events: 1" in dry.stdout
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM event_archive_entries").fetchone()[0] == 1
+
+    result = subprocess.run(
+        ["bash", "mifp", "clean", "archive-events", "--yes"],
+        cwd=tmp_path, text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Archive Events rimossi: 1" in result.stdout
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM event_archive_entries").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM news").fetchone()[0] == 1
+
 def test_local_launcher_validates_runtime_imports_not_only_marker() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     launcher = (repo_root / "mifp").read_text(encoding="utf-8")

@@ -32,10 +32,15 @@ def _event(*, uid="event_archive_one", slug="archive-one", schema="mifp-historic
         "summary": "Recovered event summary.",
         "description": "Recovered description. This site uses cookies Joomla boilerplate.",
         "topics": ["Quantum physics"], "topics_note": "Recovered from the programme.",
-        "people": {"chairs": [{"name": "Ada Example", "affiliation": "MIFP"}], "participants": []},
+        "people": {
+            "participants": [],
+            "chairs": [{"name": "Ada Example", "affiliation": "MIFP"}],
+            "speakers": [],
+            "committee": [],
+        },
         "program": [{"time": "09:00", "title": "Opening"}],
         "documents": [{"label": "Programme", "path": "assets/documents/programme.pdf", "kind": "pdf", "source_url": "https://old.mifp.eu/programme.pdf"}],
-        "images": [{"caption": "Event logo", "alt": "AO1 logo", "path": "assets/images/logo.png", "source_url": "https://old.mifp.eu/logo.png"}],
+        "images": [{"role": "logo", "caption": "Event logo", "alt": "AO1 logo", "path": "assets/images/logo.png", "source_url": "https://old.mifp.eu/logo.png"}],
         "sources": ["https://www.mifp.eu/archive-one.html"],
         "recovery": {"confidence": "high", "notes": ["Recovered from a static backup."]},
         "not_recovered": ["Participant affiliations were not recovered."],
@@ -96,6 +101,23 @@ def test_archive_rejects_wrong_schema_and_unsafe_member(tmp_path: Path):
     with pytest.raises(HistoricalArchiveError, match="Unsafe ZIP member"):
         inspect_historical_archive(_package(tmp_path / "unsafe.zip", unsafe=True), conn)
 
+
+
+def test_archive_requires_minimum_card_dataset(tmp_path: Path):
+    from mifp_app.services.historical_archive import HistoricalArchiveError, inspect_historical_archive
+
+    cases = [
+        ("dates", lambda event: event.pop("dates"), "dates"),
+        ("location", lambda event: event.pop("location"), "location"),
+        ("summary", lambda event: event.update(summary=""), "summary"),
+        ("committee", lambda event: event["people"].pop("committee"), "people.committee"),
+        ("logo", lambda event: event["images"][0].pop("role"), "role=logo"),
+    ]
+    for label, mutate, error in cases:
+        event = _event()
+        mutate(event)
+        with pytest.raises(HistoricalArchiveError, match=error):
+            inspect_historical_archive(_package(tmp_path / f"missing-{label}.zip", event))
 
 def test_archive_repository_filter_destination_and_detail(tmp_path: Path):
     from mifp_app.services.historical_archive import import_historical_archive
@@ -165,6 +187,12 @@ def test_historical_archive_llm_guide_tracks_import_contract(tmp_path: Path):
     record = json.loads(example)
     assert record["schema"] == "mifp-historical-event-v1"
     assert record["public_path"] == "archive/conferences/2014/mediterranean-quantum-meeting"
+    assert record["title"]
+    assert record["dates"]["text"]
+    assert record["location"]["display"]
+    assert record["summary"]
+    assert set(("participants", "chairs", "speakers", "committee")) <= set(record["people"])
+    assert [item for item in record["images"] if item.get("role") == "logo"]
     preview = inspect_historical_archive(_package(tmp_path / "guide-example.zip", record))
     assert preview["events"] == 1
     assert preview["missing_assets"] == 0

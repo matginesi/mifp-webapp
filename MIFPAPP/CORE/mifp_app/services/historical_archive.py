@@ -68,9 +68,10 @@ def build_historical_archive_guide() -> str:
         "topics": ["Quantum field theory", "Fundamental interactions"],
         "topics_note": "Topics reconstructed from the programme.",
         "people": {
+            "participants": [],
             "chairs": [{"name": "Ada Example", "affiliation": "MIFP"}],
             "speakers": [],
-            "participants": [],
+            "committee": [{"name": "Grace Example", "affiliation": "MIFP"}],
         },
         "program": [{"date": "2014-05-01", "time": "09:00", "title": "Opening session"}],
         "documents": [{
@@ -80,6 +81,7 @@ def build_historical_archive_guide() -> str:
             "source_url": "https://old.example.org/programme.pdf",
         }],
         "images": [{
+            "role": "logo",
             "caption": "Event logo",
             "alt": "Mediterranean Quantum Meeting logo",
             "path": "assets/images/logo.png",
@@ -122,6 +124,18 @@ def build_historical_archive_guide() -> str:
         "A new event is published as a non-featured canonical Event. For an existing event, the importer fills "
         "missing canonical fields but does not overwrite curated non-empty fields. Re-importing the same package "
         "is safe and updates the one-to-one archive extension.", "",
+        "## Minimum data required for every archived event", "",
+        "Every `event.json` must contain enough information to render a useful Archive entry without consulting "
+        "the original website. The following six content groups are mandatory:", "",
+        "1. **Title** — `title` must be a non-empty human-readable event title.",
+        "2. **Dates** — `dates` must contain at least one non-empty value among `start`, `end`, or `text`.",
+        "3. **Logo** — `images` must contain exactly one descriptor with `role: \"logo\"`; its `path` must point to a real packaged image in the ZIP.",
+        "4. **Location** — `location.display` must be non-empty.",
+        "5. **People** — `people` must explicitly contain the four arrays `participants`, `chairs`, `speakers`, and `committee`. Use an empty array only when that role was genuinely not recovered; record material gaps in `not_recovered`.",
+        "6. **Short description** — `summary` must be a concise, non-empty description suitable for the Archive listing.", "",
+        "Do not substitute a generic event image for the logo when a real event logo is available. If the historical "
+        "source does not contain a recoverable logo, the record is incomplete for this package contract and must be "
+        "reported for manual review rather than silently omitting the field.", "",
         "## `event.json` fields", "",
         "| Field | Required | Shape and rule |", "|---|---:|---|",
         f"| `schema` | yes | Exact string `{ARCHIVE_SCHEMA}`. |",
@@ -134,16 +148,16 @@ def build_historical_archive_guide() -> str:
         "| `acronym` | no | Historical acronym or short label. |",
         f"| `event_type` | no | Defaults to `other`. Allowed: {event_types}. |",
         "| `series_key` | no | Stable lowercase key connecting events in the same series. |",
-        f"| `dates` | no | Object with `start`, `end`, `text`, and `precision`. Allowed precision: {precisions}. |",
-        "| `location` | no | Object; use `display` for the public location string. |",
-        "| `summary` | no | Concise archive-list description. |",
+        f"| `dates` | yes | Object with `start`, `end`, `text`, and `precision`; at least one of start/end/text must be non-empty. Allowed precision: {precisions}. |",
+        "| `location` | yes | Object with a non-empty `display` value for the public location string. |",
+        "| `summary` | yes | Concise, non-empty archive-list description. |",
         "| `description` | no | Longer recovered description. Remove navigation, cookie and template boilerplate. |",
         "| `topics` | no | Array of topic strings. |",
         "| `topics_note` | no | Note explaining how topics were recovered or inferred. |",
-        "| `people` | no | Object keyed by roles such as `chairs`, `speakers`, `participants`; every value is an array. |",
+        "| `people` | yes | Object containing all four arrays: `participants`, `chairs`, `speakers`, `committee`. |",
         "| `program` | no | Array of programme entries; preserve recovered dates, times, titles and speakers. |",
         "| `documents` | no | Array of packaged document descriptors. |",
-        "| `images` | no | Array of packaged image descriptors. |",
+        "| `images` | yes | Packaged image descriptors; exactly one item must have `role: \"logo\"` and reference a real ZIP member. |",
         "| `sources` | no | Array of HTTP(S) URL strings or objects with `url` and optional `label`. |",
         "| `recovery` | no | Object containing provenance, confidence and recovery notes. |",
         "| `not_recovered` | no | Array stating material known to be missing; never invent missing facts. |", "",
@@ -152,13 +166,16 @@ def build_historical_archive_guide() -> str:
         "represent the event's archive year.", "",
         "## People and programme guidance", "",
         "People entries should use `name` and may include `affiliation`, `role`, `country`, or a source note. "
-        "Do not merge people based only on a similar name. Keep the role groups found in the source. Programme "
+        "The `people` object must always expose `participants`, `chairs`, `speakers`, and `committee` separately. "
+        "Do not merge people based only on a similar name, and do not move a person between roles without evidence. "
+        "When one person has multiple documented roles, include that person in each applicable role group. Programme "
         "entries should preserve source order; omit unknown fields instead of guessing them.", "",
         "## Packaged documents and images", "",
         "Each `documents[]` or `images[]` item must contain a relative `path`. The path is resolved from the "
         "directory containing that event's `event.json`, so every referenced file must be present in the ZIP.", "",
-        "Document descriptors may contain `label`, `kind`, `source_url`; image descriptors may contain `caption`, "
-        "`alt`, `kind`, `source_url`. Put PDFs under `assets/documents/` and images under `assets/images/`. Do not "
+        "Document descriptors may contain `label`, `kind`, `source_url`; image descriptors may contain `role`, `caption`, "
+        "`alt`, `kind`, `source_url`. The event logo must use `role: \"logo\"`. Put PDFs under `assets/documents/` and "
+        "images under `assets/images/`. Do not "
         "embed Base64 or remote-only placeholders. The importer copies packaged binaries into the managed asset "
         "store and records valid HTTP(S) historical sources as links.", "",
         "The ZIP is rejected for unsafe members, duplicate member names, excessive expanded size or suspicious "
@@ -178,6 +195,7 @@ def build_historical_archive_guide() -> str:
         "- Record uncertainty in `recovery` and known gaps in `not_recovered`.",
         "- Remove menus, cookie notices, footer text, repeated headers and unrelated page chrome.",
         "- Keep `uid`, `slug`, `category`, year and `public_path` mutually consistent.",
+        "- Do not return an event record until title, dates, logo, location, people-role groups and summary are populated according to this contract.",
         "- Deduplicate records inside the package: no repeated UID or slug.",
         "- Preserve source URLs and labels so an editor can audit the recovery.",
         "- Never include credentials, private notes, prompts or chain-of-thought.", "",
@@ -190,7 +208,8 @@ def build_historical_archive_guide() -> str:
         "```text",
         "Create a MIFP Historical Archive ZIP from the supplied source material.",
         "Treat MIFP_LLM_HISTORICAL_ARCHIVE_GUIDE.md as a strict contract.",
-        "Generate one event.json per event, package every locally available referenced asset,",
+        "Generate one event.json per event. Every event must include title, dates, one packaged logo, location,",
+        "participants/chairs/speakers/committee arrays, and a concise summary. Package every referenced asset,",
         "preserve provenance and uncertainty, and do not invent missing facts.",
         "Before returning the ZIP, verify every path and the identity/path consistency rules.",
         "```", "",
@@ -199,7 +218,10 @@ def build_historical_archive_guide() -> str:
         "- [ ] Every `event.json` is valid UTF-8 JSON with no Markdown fences.",
         "- [ ] Category, year, slug and `public_path` match the ZIP path exactly.",
         "- [ ] UIDs and slugs are stable and unique within the package.",
-        "- [ ] Every referenced document and image exists at its relative path.",
+        "- [ ] Every event has title, usable dates, location and a concise summary.",
+        "- [ ] Every event has `participants`, `chairs`, `speakers`, and `committee` arrays.",
+        "- [ ] Every event has exactly one `images[]` item with `role: \"logo\"`.",
+        "- [ ] Every referenced document and image exists at its relative path, including the logo.",
         "- [ ] Source URLs, recovery notes and known gaps are preserved.",
         "- [ ] The package has been run through **Validate only** before import.", "",
     ]
@@ -273,11 +295,31 @@ def _validate_event(raw: bytes, member: str, members: dict[str, zipfile.ZipInfo]
     public_match = _PUBLIC_PATH.fullmatch(str(event["public_path"]).strip("/"))
     if not public_match:
         raise HistoricalArchiveError(f"Unsafe public_path in {member}")
-    dates = _object(event.get("dates") or {}, f"{member}.dates")
-    location = _object(event.get("location") or {}, f"{member}.location")
-    people = _object(event.get("people") or {}, f"{member}.people")
+    dates = _object(event.get("dates"), f"{member}.dates")
+    if not any(str(dates.get(key) or "").strip() for key in ("start", "end", "text")):
+        raise HistoricalArchiveError(f"{member}.dates must contain start, end, or text")
+    location = _object(event.get("location"), f"{member}.location")
+    if not str(location.get("display") or "").strip():
+        raise HistoricalArchiveError(f"{member}.location.display is required")
+    if not str(event.get("summary") or "").strip():
+        raise HistoricalArchiveError(f"{member}.summary is required")
+    people = _object(event.get("people"), f"{member}.people")
+    required_people_roles = ("participants", "chairs", "speakers", "committee")
+    for role in required_people_roles:
+        if role not in people:
+            raise HistoricalArchiveError(f"{member}.people.{role} is required")
+        _list(people[role], f"{member}.people.{role}")
     for role, rows in people.items():
         _list(rows, f"{member}.people.{role}")
+    images = _list(event.get("images"), f"{member}.images")
+    logo_items = [
+        _object(item, f"{member}.images[{index}]")
+        for index, item in enumerate(images, 1)
+        if isinstance(item, dict) and str(item.get("role") or "").strip().casefold() == "logo"
+    ]
+    if len(logo_items) != 1:
+        raise HistoricalArchiveError(f"{member}.images must contain exactly one item with role=logo")
+    logo_path = str(logo_items[0].get("path") or "").strip()
     event_type = str(event.get("event_type") or "other").strip().casefold()
     if event_type not in EVENT_TYPES:
         raise HistoricalArchiveError(f"Invalid event_type in {member}: {event_type}")
@@ -309,6 +351,8 @@ def _validate_event(raw: bytes, member: str, members: dict[str, zipfile.ZipInfo]
                     archive_name = matches[0]
                     info = members[archive_name]
             if not info or archive_name.endswith("/"):
+                if group == "images" and relative == logo_path:
+                    raise HistoricalArchiveError(f"Required logo file is missing from ZIP: {archive_name}")
                 missing_assets.append(archive_name)
                 continue
             referenced.append({"group": group, "kind": item.get("kind") or default_kind,
