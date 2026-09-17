@@ -9,8 +9,8 @@
       <li><a href="{{ url_for('public.home') }}">Home</a></li>
       <li aria-current="page">Join MIFP</li>
     </ol>
-    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-      <span class="num serif italic" style="color:var(--mifp-red-hover);font-size:0.85rem;">—</span>
+    <div class="page-eyebrow-row">
+      <span class="page-eyebrow-mark serif italic">—</span>
       <span class="eyebrow eyebrow-red">Join MIFP</span>
     </div>
     <h1>{{ site_copy.join_title }}</h1>
@@ -28,7 +28,7 @@
       <div class="join-success-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
       </div>
-      <div class="eyebrow eyebrow-red" style="margin-bottom:16px;">{{ site_copy.join_success_title }}</div>
+      <div class="eyebrow eyebrow-red join-success-kicker">{{ site_copy.join_success_title }}</div>
       <h1>Thank you for your interest in MIFP.</h1>
       <p>{{ site_copy.join_success_text }}</p>
       <a href="{{ url_for('public.home') }}" class="btn btn-ghost">
@@ -43,8 +43,8 @@
 
       {# ── Info aside ── #}
       <aside class="join-aside">
-        <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-          <span class="num serif italic" style="color:var(--mifp-red-hover);font-size:0.85rem;">—</span>
+        <div class="page-eyebrow-row">
+          <span class="page-eyebrow-mark serif italic">—</span>
           <span class="eyebrow eyebrow-red">Join MIFP</span>
         </div>
         <h1>Membership request</h1>
@@ -78,9 +78,9 @@
           </div>
         </div>
 
-        <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--line-soft);">
-          <p style="font-size:0.78rem;color:var(--paper-faint);line-height:1.6;">
-            Your data is handled according to our <a href="{{ url_for('public.privacy') }}" style="color:var(--paper-dim);text-decoration:underline;text-underline-offset:2px;">privacy policy</a> and will not be shared without your consent.
+        <div class="join-privacy-box">
+          <p class="join-privacy-copy">
+            Your data is handled according to our <a href="{{ url_for('public.privacy') }}" class="join-privacy-link">privacy policy</a> and will not be shared without your consent.
           </p>
         </div>
       </aside>
@@ -88,7 +88,7 @@
       {# ── Form ── #}
       <main class="join-form-wrap">
         <h2>Application form</h2>
-        <p class="required-note">Fields marked with <span style="color:var(--mifp-red);">*</span> are required.</p>
+        <p class="required-note">Fields marked with <span class="required-mark">*</span> are required.</p>
 
         {% set email_err = namespace(text='') %}
         {% for e in errors or [] %}{% if 'email' in e and not email_err.text %}{% set email_err.text = e %}{% endif %}{% endfor %}
@@ -170,9 +170,9 @@
 
           <div class="join-form-grid full">
             <label>
-              <span>Motivation / note <span style="color:var(--paper-faint);font-size:0.78rem;font-weight:400;letter-spacing:0;text-transform:none;">(max 2500 chars)</span></span>
-              <div class="join-input-wrap" style="padding:0 12px;">
-                <textarea name="motivation" rows="5" maxlength="2500" placeholder="Tell us about your research interests and why you'd like to join MIFP&#10;— your background, ongoing work, and how you see yourself contributing." style="min-height:120px;">{{ form.motivation or '' }}</textarea>
+              <span>Motivation / note <span class="join-field-note">(max 2500 chars)</span></span>
+              <div class="join-input-wrap join-textarea-wrap">
+                <textarea class="join-textarea" name="motivation" rows="5" maxlength="2500" placeholder="Tell us about your research interests and why you'd like to join MIFP&#10;— your background, ongoing work, and how you see yourself contributing.">{{ form.motivation or '' }}</textarea>
               </div>
             </label>
           </div>
@@ -182,8 +182,8 @@
             <svg class="auth-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
           </button>
 
-          <p style="color:var(--paper-faint);font-size:0.78rem;line-height:1.6;margin-top:20px;">
-            By submitting this form, you consent to the storage and processing of your data for administrative review. Your information will not be shared with third parties without your explicit consent. See our <a href="{{ url_for('public.privacy') }}" style="color:var(--paper-dim);text-decoration:underline;text-underline-offset:2px;">privacy policy</a>.
+          <p class="join-privacy-copy is-separated">
+            By submitting this form, you consent to the storage and processing of your data for administrative review. Your information will not be shared with third parties without your explicit consent. See our <a href="{{ url_for('public.privacy') }}" class="join-privacy-link">privacy policy</a>.
           </p>
         </form>
       </main>

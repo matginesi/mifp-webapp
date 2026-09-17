@@ -10,8 +10,8 @@
       <li><a href="{{ url_for('public.home') }}">Home</a></li>
       <li aria-current="page">Events</li>
     </ol>
-    <div class="eyebrow-row" style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-      <span class="num serif italic" style="color:var(--mifp-red-hover);font-size:0.85rem;">—</span>
+    <div class="page-eyebrow-row">
+      <span class="page-eyebrow-mark serif italic">—</span>
       <span class="eyebrow eyebrow-red">Calendar</span>
     </div>
     <h1>{{ site_copy.events_title }}</h1>
@@ -24,13 +24,13 @@
   <div class="container-wide">
 
     {% if upcoming %}
-    <div class="section-head" style="margin-bottom:32px;">
+    <div class="section-head is-roomy">
       <div class="section-head-left">
         <div class="eyebrow-row">
           <span class="num serif italic">—</span>
           <span class="eyebrow eyebrow-red">Upcoming</span>
         </div>
-        <h2 style="font-size:1.6rem;">{{ site_copy.events_upcoming }}</h2>
+        <h2 class="section-title-compact">{{ site_copy.events_upcoming }}</h2>
       </div>
     </div>
 
@@ -83,13 +83,13 @@
     {% endif %}
 
     {% if past %}
-    <div class="section-head" style="margin-top:64px;margin-bottom:24px;">
+    <div class="section-head is-separated">
       <div class="section-head-left">
         <div class="eyebrow-row">
           <span class="num serif italic">—</span>
           <span class="eyebrow eyebrow-blue">Archive</span>
         </div>
-        <h2 style="font-size:1.6rem;">{{ site_copy.events_past }}</h2>
+        <h2 class="section-title-compact">{{ site_copy.events_past }}</h2>
       </div>
     </div>
 

@@ -85,6 +85,22 @@ def test_console_formatter_includes_structured_fields_and_redacts_secrets():
     assert "[REDACTED]" in rendered
 
 
+def test_log_redaction_covers_credentials_embedded_in_messages():
+    from mifp_app.utils.logger import redact
+
+    rendered = redact(
+        "request failed Authorization: Bearer abc.def password=hunter2 "
+        "contact=person@example.org"
+    )
+
+    assert "abc.def" not in rendered
+    assert "hunter2" not in rendered
+    assert "person@example.org" not in rendered
+    assert "[REDACTED_CREDENTIAL]" in rendered
+    assert "password=[REDACTED]" in rendered
+    assert "[REDACTED_EMAIL]" in rendered
+
+
 def test_plain_logger_errors_receive_searchable_default_event(tmp_path):
     from mifp_app.utils.logger import setup_logging, shutdown_logging
 

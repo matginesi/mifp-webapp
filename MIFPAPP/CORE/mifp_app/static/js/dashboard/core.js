@@ -15,180 +15,19 @@ const TOAST_ICONS = {
   info: 'bi-info-circle-fill',
 };
 
-/* ── Safe dashboard diagnostics ───────────────────────────── */
-const LOG_SENSITIVE_KEYS = /(?:pass(?:word|wd)?|secret|token|csrf|authorization|cookie|session|api[-_]?key|private[-_]?key|email|phone)/i;
-const LOG_EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
-const LOG_BEARER = /\b(?:bearer|basic)\s+[a-z0-9._~+/=-]+/gi;
-const LOG_SECRET_VALUE = /([?&;\s](?:pass(?:word|wd)?|secret|token|csrf|authorization|cookie|session|api[-_]?key)=)[^&;\s]+/gi;
-const CONSOLE_METHODS = {
-  error: 'error',
-  warning: 'warn',
-  warn: 'warn',
-  info: 'info',
-  success: 'info',
-  debug: 'debug',
-};
-
-function safeLogValue(value, key, depth) {
-  depth = depth || 0;
-  if (key && LOG_SENSITIVE_KEYS.test(String(key))) return '[REDACTED]';
-  if (value == null || typeof value === 'boolean' || typeof value === 'number') return value;
-  if (typeof value === 'string') {
-    return value.slice(0, 1000)
-      .replace(LOG_EMAIL, '[REDACTED_EMAIL]')
-      .replace(LOG_BEARER, '[REDACTED_CREDENTIAL]')
-      .replace(LOG_SECRET_VALUE, '$1[REDACTED]');
+function dashboardLog(level, eventName, details) {
+  const method = level === 'warning' ? 'warn' : level;
+  if (window.MIFPLog && typeof window.MIFPLog[method] === 'function') {
+    window.MIFPLog[method](eventName, details);
   }
-  if (value instanceof Error) {
-    return {
-      name: String(value.name || 'Error').slice(0, 80),
-      message: safeLogValue(value.message || 'Unknown error', 'message', depth + 1),
-      stack: safeLogValue(value.stack || '', 'stack', depth + 1),
-    };
-  }
-  if (depth >= 3) return '[MAX_DEPTH]';
-  if (Array.isArray(value)) {
-    return value.slice(0, 20).map(function (item) {
-      return safeLogValue(item, '', depth + 1);
-    });
-  }
-  if (typeof value === 'object') {
-    const output = {};
-    Object.keys(value).slice(0, 40).forEach(function (itemKey) {
-      output[itemKey] = safeLogValue(value[itemKey], itemKey, depth + 1);
-    });
-    return output;
-  }
-  return String(value).slice(0, 300);
 }
 
 function safeLogPath(value) {
-  try {
-    const url = new URL(String(value || ''), window.location.origin);
-    return url.origin === window.location.origin ? url.pathname : url.origin + url.pathname;
-  } catch (_) {
-    return String(value || '').split('?')[0].slice(0, 500);
+  if (window.MIFPLog && typeof window.MIFPLog.safePath === 'function') {
+    return window.MIFPLog.safePath(value);
   }
+  return String(value || '').split('?')[0].slice(0, 500);
 }
-
-function dashboardLog(level, eventName, details) {
-  if (typeof console === 'undefined') return;
-  const method = CONSOLE_METHODS[level] || 'log';
-  const payload = {
-    event: String(eventName || 'dashboard.event').slice(0, 120),
-    page: document.querySelector('[data-dashboard-view]')?.dataset.dashboardView || 'dashboard',
-    path: window.location.pathname,
-    at: new Date().toISOString(),
-    details: safeLogValue(details || {}, '', 0),
-  };
-  let serialized;
-  try {
-    serialized = JSON.stringify(payload);
-  } catch (_) {
-    serialized = JSON.stringify({
-      event: payload.event,
-      page: payload.page,
-      path: payload.path,
-      at: payload.at,
-      details: '[UNSERIALIZABLE]',
-    });
-  }
-  (console[method] || console.log).call(
-    console,
-    '[MIFP dashboard][' + String(level || 'info') + '] ' + serialized
-  );
-}
-
-function installNetworkLogging() {
-  if (window.__mifpNetworkLoggingInstalled) return;
-  window.__mifpNetworkLoggingInstalled = true;
-
-  const nativeFetch = window.fetch;
-  if (typeof nativeFetch === 'function') {
-    window.fetch = async function (input, init) {
-      const method = String(init?.method || input?.method || 'GET').toUpperCase();
-      const path = safeLogPath(input?.url || input);
-      const started = performance.now();
-      dashboardLog('debug', 'http.request', { method: method, path: path });
-      try {
-        const response = await nativeFetch.apply(this, arguments);
-        const details = {
-          method: method,
-          path: path,
-          status: response.status,
-          ok: response.ok,
-          duration_ms: Math.round(performance.now() - started),
-          request_id: response.headers.get('X-Request-ID') || undefined,
-        };
-        dashboardLog(response.ok ? 'debug' : (response.status >= 500 ? 'error' : 'warn'), 'http.response', details);
-        return response;
-      } catch (error) {
-        dashboardLog('error', 'http.network_error', {
-          method: method,
-          path: path,
-          duration_ms: Math.round(performance.now() - started),
-          error: error,
-        });
-        throw error;
-      }
-    };
-  }
-
-  const nativeOpen = XMLHttpRequest.prototype.open;
-  const nativeSend = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.open = function (method, url) {
-    this.__mifpLogMeta = {
-      method: String(method || 'GET').toUpperCase(),
-      path: safeLogPath(url),
-    };
-    return nativeOpen.apply(this, arguments);
-  };
-  XMLHttpRequest.prototype.send = function () {
-    const xhr = this;
-    const meta = xhr.__mifpLogMeta || { method: 'GET', path: 'unknown' };
-    const started = performance.now();
-    dashboardLog('debug', 'xhr.request', meta);
-    xhr.addEventListener('loadend', function () {
-      dashboardLog(
-        xhr.status >= 200 && xhr.status < 400 ? 'debug' : (xhr.status === 0 || xhr.status >= 500 ? 'error' : 'warn'),
-        xhr.status === 0 ? 'xhr.network_error' : 'xhr.response',
-        {
-          method: meta.method,
-          path: meta.path,
-          status: xhr.status,
-          duration_ms: Math.round(performance.now() - started),
-          request_id: xhr.getResponseHeader('X-Request-ID') || undefined,
-        }
-      );
-    }, { once: true });
-    return nativeSend.apply(this, arguments);
-  };
-}
-
-window.addEventListener('error', function (event) {
-  if (event.target && event.target !== window) {
-    const source = event.target.currentSrc || event.target.src || event.target.href || '';
-    dashboardLog('warn', 'resource.load_failed', {
-      element: event.target.tagName,
-      source: safeLogPath(source),
-    });
-    return;
-  }
-  dashboardLog('error', 'javascript.error', {
-    message: event.message,
-    source: safeLogPath(event.filename),
-    line: event.lineno,
-    column: event.colno,
-    error: event.error,
-  });
-}, true);
-
-window.addEventListener('unhandledrejection', function (event) {
-  dashboardLog('error', 'javascript.unhandled_rejection', { reason: event.reason });
-});
-
-installNetworkLogging();
-dashboardLog('info', 'page.ready', { title: document.title });
 
 function logToastToConsole(message, type) {
   dashboardLog(type === 'warning' ? 'warn' : type, 'ui.toast', {
@@ -321,13 +160,6 @@ function pickerMessage(container, message) {
   item.className = 'asset-picker-empty';
   item.textContent = message;
   container.replaceChildren(item);
-}
-
-function formatFileSize(bytes) {
-  if (!bytes || bytes <= 0) return '';
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / 1048576).toFixed(1) + ' MB';
 }
 
 function storageStatusBadge(status) {
@@ -485,7 +317,7 @@ function searchAssets() {
         var detailParts = [];
         if (a.id) detailParts.push('#' + a.id);
         if (a.kind) detailParts.push(a.kind);
-        if (a.size) detailParts.push(formatFileSize(a.size));
+        if (a.size) detailParts.push(window.MIFP.formatBytes(a.size, ''));
         if (a.usage_count !== undefined && a.usage_count !== null) detailParts.push('used ' + a.usage_count + '\u00d7');
         detailSpan.textContent = detailParts.join(' \u00b7 ');
         info.appendChild(detailSpan);
@@ -852,11 +684,5 @@ window.MIFPUI = Object.freeze({
   setFormLoading: setFormLoading,
   clearFormLoading: clearFormLoading,
   openAssetPicker: openAssetPicker,
-});
-window.MIFPLog = Object.freeze({
-  debug: function (eventName, details) { dashboardLog('debug', eventName, details); },
-  info: function (eventName, details) { dashboardLog('info', eventName, details); },
-  warn: function (eventName, details) { dashboardLog('warn', eventName, details); },
-  error: function (eventName, details) { dashboardLog('error', eventName, details); },
 });
 })();

@@ -8,6 +8,14 @@
     return document.querySelector('meta[name="csrf-token"]')?.content || '';
   }
 
+  function formatBytes(bytes, emptyLabel) {
+    var value = Number(bytes) || 0;
+    if (value <= 0) return emptyLabel === undefined ? '0 B' : String(emptyLabel);
+    if (value < 1024) return value + ' B';
+    if (value < 1048576) return (value / 1024).toFixed(1) + ' KB';
+    return (value / 1048576).toFixed(1) + ' MB';
+  }
+
   function safeMessage(status, payload) {
     var defaults = {
       401: 'Your session has expired. Sign in and try again.',
@@ -83,6 +91,11 @@
     } catch (error) {
       if (error.name === 'AbortError') {
         if (externalSignal && externalSignal.aborted) throw error;
+        window.MIFPLog?.warn('api.request_timeout', {
+          method: String(options.method || 'GET').toUpperCase(),
+          path: new URL(url, window.location.origin).pathname,
+          timeout_ms: options.timeout || 30000,
+        });
         throw new Error('The request timed out. Try again.');
       }
       if (error instanceof TypeError) throw new Error('The network is unavailable. Check the connection and try again.');
@@ -109,6 +122,7 @@
     request: request,
     once: once,
     csrfToken: csrfToken,
+    formatBytes: formatBytes,
     safeMessage: safeMessage,
   });
 })();

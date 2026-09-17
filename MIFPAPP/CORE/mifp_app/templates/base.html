@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-dashboard-prefix="{{ url_for('dashboard.index').rstrip('/') }}">
+<html lang="en" data-dashboard-prefix="{{ url_for('dashboard.index').rstrip('/') }}" data-mifp-log-level="{{ 'debug' if config.DEBUG else 'warn' }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,6 +15,7 @@
 <body class="{% block body_class %}dashboard-shell{% endblock %}">
 {% block body %}{% endblock %}
 <script src="{{ url_for('static', filename='js/vendor/bootstrap.bundle.min.js', v=static_version) }}" defer></script>
+<script src="{{ url_for('static', filename='js/logger.js', v=static_version) }}" defer></script>
 {% block vendor_scripts %}{% endblock %}
 {% block common_js %}
 <script src="{{ url_for('static', filename='js/dashboard/api.js', v=static_version) }}" defer></script>

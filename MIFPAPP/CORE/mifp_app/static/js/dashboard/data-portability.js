@@ -129,12 +129,6 @@
     });
   }
 
-  function sizeLabel(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / 1048576).toFixed(1) + ' MB';
-  }
-
   function selectionProblem(files) {
     var zipFiles = files.filter(function (file) {
       return String(file.name || '').toLowerCase().endsWith('.zip');
@@ -143,7 +137,7 @@
       return Number(config.maxZipBytes || 0) > 0 && file.size > Number(config.maxZipBytes);
     });
     if (oversizedZip) {
-      return oversizedZip.name + ' is ' + sizeLabel(oversizedZip.size) + '; the ZIP limit is ' + sizeLabel(Number(config.maxZipBytes)) + '.';
+      return oversizedZip.name + ' is ' + window.MIFP.formatBytes(oversizedZip.size) + '; the ZIP limit is ' + window.MIFP.formatBytes(Number(config.maxZipBytes)) + '.';
     }
     var oversizedJsonl = files.find(function (file) {
       return /\.jsonl?$/i.test(String(file.name || ''))
@@ -151,13 +145,13 @@
         && file.size > Number(config.maxJsonlBytes);
     });
     if (oversizedJsonl) {
-      return oversizedJsonl.name + ' is ' + sizeLabel(oversizedJsonl.size) + '; each JSON/JSONL file is limited to ' + sizeLabel(Number(config.maxJsonlBytes)) + '.';
+      return oversizedJsonl.name + ' is ' + window.MIFP.formatBytes(oversizedJsonl.size) + '; each JSON/JSONL file is limited to ' + window.MIFP.formatBytes(Number(config.maxJsonlBytes)) + '.';
     }
     var oversizedFile = files.find(function (file) {
       return Number(config.maxUploadBytes || 0) > 0 && file.size > Number(config.maxUploadBytes);
     });
     if (oversizedFile) {
-      return oversizedFile.name + ' is ' + sizeLabel(oversizedFile.size) + '; each upload is limited to ' + sizeLabel(Number(config.maxUploadBytes)) + '.';
+      return oversizedFile.name + ' is ' + window.MIFP.formatBytes(oversizedFile.size) + '; each upload is limited to ' + window.MIFP.formatBytes(Number(config.maxUploadBytes)) + '.';
     }
     return '';
   }
@@ -566,7 +560,7 @@
       var remove = document.createElement('button');
       row.className = 'transfer-selected-file';
       name.textContent = file.name;
-      meta.textContent = sizeLabel(file.size);
+      meta.textContent = window.MIFP.formatBytes(file.size);
       copy.append(name, meta);
       remove.type = 'button';
       remove.className = 'transfer-remove-file';
@@ -664,7 +658,7 @@
     xhr.upload.addEventListener('progress', function (upload) {
       if (!upload.lengthComputable) return;
       status.textContent = 'Uploading package ' + (batchIndex + 1) + ' of ' + batchTotal + '…';
-      detail.textContent = sizeLabel(upload.loaded) + ' of ' + sizeLabel(upload.total) + ' uploaded in this package';
+      detail.textContent = window.MIFP.formatBytes(upload.loaded) + ' of ' + window.MIFP.formatBytes(upload.total) + ' uploaded in this package';
     });
     xhr.upload.addEventListener('load', function () {
       logEvent('Upload ' + (batchIndex + 1) + '/' + batchTotal + ' complete · server processing started', 'done');
@@ -775,7 +769,7 @@
       skip_assets: Boolean(form.querySelector('[name="skip_assets"]')?.checked),
     });
     resetModal(dryRun ? 'Check import' : 'Import data', 'Preparing upload queue…');
-    logEvent('Selected ' + files.length + ' file(s) · ' + sizeLabel(totalBytes) + ' · ' + batches.length + ' upload(s)', 'done');
+    logEvent('Selected ' + files.length + ' file(s) · ' + window.MIFP.formatBytes(totalBytes) + ' · ' + batches.length + ' upload(s)', 'done');
     logEvent(dryRun ? 'Validation mode: database will not be changed' : 'A database backup is created before each upload', 'active');
     modal.show();
     runImportQueue(batches, dryRun, password);

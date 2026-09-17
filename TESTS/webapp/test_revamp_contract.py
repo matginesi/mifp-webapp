@@ -76,13 +76,29 @@ def test_templates_have_no_executable_inline_handlers_or_remote_embeds():
 
 def test_dashboard_toasts_are_mirrored_to_browser_console():
     core = (APP / "static/js/dashboard/core.js").read_text(encoding="utf-8")
+    logger = (APP / "static/js/logger.js").read_text(encoding="utf-8")
 
     assert "function logToastToConsole" in core
-    assert "console.error" not in core  # levels are selected through the bounded map
-    assert "error: 'error'" in core
-    assert "warning: 'warn'" in core
-    assert "success: 'info'" in core
     assert "logToastToConsole(message, type);" in core
+    assert "window.MIFPLog[method]" in core
+    assert "var LEVELS = Object.freeze" in logger
+    assert "dataset.mifpLogLevel" in logger
+    assert "SENSITIVE_KEY" in logger
+    assert "SECRET_VALUE" in logger
+    assert "console.error" not in logger  # levels are selected through the bounded map
+
+
+def test_markdown_editor_preview_is_shared_and_sanitized():
+    editor = (APP / "static/js/markdown-editor.js").read_text(encoding="utf-8")
+    institutional = (APP / "templates/dashboard/institutional.html").read_text(encoding="utf-8")
+    privacy = (APP / "templates/dashboard/institutional_privacy.html").read_text(encoding="utf-8")
+
+    assert "sanitizeMarkdown" in editor
+    assert "ALLOWED_TAGS" in editor
+    assert "replaceChildren(sanitizeMarkdown" in editor
+    assert "preview.innerHTML" not in editor
+    assert "js/markdown-editor.js" in institutional
+    assert "js/markdown-editor.js" in privacy
 
 
 def test_public_and_dashboard_theme_contract_is_documented_and_enforced():

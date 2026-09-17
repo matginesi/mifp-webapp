@@ -102,7 +102,7 @@
       closeBtn.className = 'mifp-lightbox-close';
       closeBtn.type = 'button';
       closeBtn.setAttribute('aria-label', 'Close modal');
-      closeBtn.innerHTML = '&times;';
+      closeBtn.textContent = '\u00d7';
       panel.appendChild(closeBtn);
 
       overlayImg = document.createElement('img');

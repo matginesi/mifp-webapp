@@ -172,13 +172,6 @@
     research_area: 'Research areas', sponsor: 'Sponsors', page: 'Pages',
   };
 
-  function sizeLabel(bytes) {
-    if (!bytes || bytes <= 0) return '—';
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / 1048576).toFixed(1) + ' MB';
-  }
-
   function renderCounts(counts) {
     const container = document.querySelector('[data-safety-progress] [data-safety-counts]');
     if (!container) return;
@@ -188,7 +181,10 @@
       if (value <= 0) return;
       const chip = document.createElement('span');
       chip.className = 'safety-progress-chip';
-      chip.innerHTML = `<b>${value}</b> ${COUNT_LABELS[type] || type}`;
+      const amount = document.createElement('b');
+      amount.textContent = String(value);
+      chip.appendChild(amount);
+      chip.appendChild(document.createTextNode(' ' + (COUNT_LABELS[type] || String(type).slice(0, 80))));
       container.appendChild(chip);
     });
     container.hidden = container.childElementCount === 0;
@@ -216,7 +212,7 @@
       : (progress.assets || 0);
     if (errorsElement) errorsElement.textContent = progress.errors || 0;
     if (sizeValue && progress.bytes != null && progress.bytes > 0) {
-      sizeValue.textContent = sizeLabel(progress.bytes);
+      sizeValue.textContent = window.MIFP.formatBytes(progress.bytes, '—');
       if (sizeMetric) sizeMetric.hidden = false;
     }
     renderCounts(progress.counts);

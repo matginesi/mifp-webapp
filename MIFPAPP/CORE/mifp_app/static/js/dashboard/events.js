@@ -4,6 +4,14 @@
 var showToast = window.MIFPUI.showToast;
 var eventWizard = document.getElementById('eventWizard');
 var eventLog = window.MIFPLog || { debug: function(){}, info: function(){}, warn: function(){}, error: function(){} };
+
+function showEmptyDocumentList(list, message) {
+  if (!list) return;
+  var empty = document.createElement('p');
+  empty.className = 'empty event-documents-empty';
+  empty.textContent = message;
+  list.replaceChildren(empty);
+}
 var pendingEventUploads = 0;
 
 function setEventUploadBusy(delta) {
@@ -109,9 +117,7 @@ if (eventWizard) {
     wizardForm.reset();
     wizardForm.querySelector('input[name="id"]').value = '';
     var docs = document.getElementById('wizardDocsList');
-    if (docs) {
-      docs.innerHTML = '<p class="empty" style="text-align:center;padding:.75rem;color:var(--text-3);font-size:.75rem">No documents yet. Upload a PDF, DOC or DOCX file.</p>';
-    }
+    showEmptyDocumentList(docs, 'No documents yet. Upload a PDF, DOC or DOCX file.');
     var coverPreview = document.getElementById('wizardCoverPreview');
     var coverDrop = document.getElementById('wizardCoverDrop');
     var coverImage = document.getElementById('wizardCoverImg');
@@ -291,7 +297,7 @@ function setupDocManager(prefix, listId) {
       var card = removeBtn.closest('.doc-card');
       if (card) card.remove();
       if (!list.querySelectorAll('.doc-card').length) {
-        list.innerHTML = '<p class="empty" style="text-align:center;padding:.75rem;color:var(--text-3);font-size:.75rem">No documents yet.</p>';
+        showEmptyDocumentList(list, 'No documents yet.');
       }
     }
   });

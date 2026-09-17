@@ -48,12 +48,6 @@
   var startedAt = 0;
   var refreshOnClose = false;
 
-  function formatBytes(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / 1048576).toFixed(1) + ' MB';
-  }
-
   function formatElapsed(milliseconds) {
     var seconds = Math.max(0, Math.floor(milliseconds / 1000));
     return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
@@ -86,7 +80,7 @@
     var name = document.createElement('b');
     name.textContent = file.name;
     var size = document.createElement('small');
-    size.textContent = formatBytes(file.size);
+    size.textContent = window.MIFP.formatBytes(file.size);
     selection.append(icon, name, size);
   }
 
@@ -125,7 +119,7 @@
     status.textContent = 'Uploading package…';
     detail.textContent = 'The package is staged securely before processing starts.';
     packageName.textContent = file.name;
-    packageSize.textContent = formatBytes(file.size);
+    packageSize.textContent = window.MIFP.formatBytes(file.size);
     packageState.textContent = 'Uploading';
     activity.replaceChildren();
     resultGrid.replaceChildren();

@@ -61,13 +61,13 @@
 
     {# ── Linked events ── #}
     {% if sponsor.linked_events %}
-    <div style="margin-top:64px;">
-      <div class="section-head" style="margin-bottom:24px;">
+    <div class="sponsor-events-section">
+      <div class="section-head is-compact">
         <div class="section-head-left">
           <div class="eyebrow-row">
             <span class="eyebrow eyebrow-red">Related events</span>
           </div>
-          <h2 style="font-size:1.6rem;">Events sponsored by {{ sponsor.name }}</h2>
+          <h2 class="section-title-compact">Events sponsored by {{ sponsor.name }}</h2>
         </div>
       </div>
       <div class="card-grid">
@@ -105,7 +105,7 @@
     </div>
     {% endif %}
 
-    <div style="margin-top:48px;text-align:center;">
+    <div class="sponsor-detail-actions">
       <a href="{{ url_for('public.sponsors') }}" class="btn btn-ghost">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         All Sponsors

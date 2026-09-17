@@ -27,9 +27,12 @@ from ..services.data_quality.policies import similarity
 from ..services.data_quality.quarantine import list_quarantined_records, transition_quarantined_record
 from ..services.job_manager import JobQueueFull, get_job_manager
 from ..services.operation_maintenance import maintenance_guarded
-from ..utils.logger import audit_log
+from ..utils.logger import audit_log, get_logger, log_event, log_event_throttled
 from .auth import login_required
 from .dashboard import bp
+
+
+LOGGER = get_logger("data_quality")
 
 
 def _payload() -> dict:
@@ -59,7 +62,6 @@ def _workspace_state(conn) -> tuple[dict | None, dict | None, int]:
 @bp.get("/data-quality")
 @login_required
 def data_quality_page():
-    current_app.logger.info("data_quality page load")
     workflow_counts = {"automatic": 0, "manual": 0, "informational": 0}
     with connect(Path(current_app.config["DATABASE_PATH"])) as conn:
         quarantined = list_quarantined_records(conn)
@@ -89,7 +91,13 @@ def data_quality_page():
         (name for name in ("automatic", "manual", "informational") if workflow_counts.get(name)),
         "automatic",
     )
-    current_app.logger.info("data_quality page loaded run_id=%s bundle_id=%s open=%s workflow=%s", run["id"] if run else None, bundle["id"] if bundle else None, total, workflow_counts)
+    log_event(
+        LOGGER, "data_quality.page_loaded", "Data Quality workspace loaded", level="DEBUG",
+        run_id=run["id"] if run else None,
+        bundle_id=bundle["id"] if bundle else None,
+        open_findings=total,
+        workflow_counts=workflow_counts,
+    )
     return render_template(
         "dashboard/data_quality.html", run=run, bundle=bundle, total=total,
         workflow_counts=workflow_counts, quarantined=quarantined,
@@ -169,7 +177,10 @@ def data_quality_analyze():
             (fingerprint,),
         ).lastrowid
         conn.commit()
-    current_app.logger.info("data_quality analyze started run_id=%s", run_id)
+    log_event(
+        LOGGER, "data_quality.scan_started", "Data Quality scan started",
+        run_id=run_id,
+    )
 
     app = current_app._get_current_object()
     def _run():
@@ -231,9 +242,16 @@ def data_quality_analyze_progress():
             result["summary"] = json.loads(row["summary_json"] or "{}")
         except (json.JSONDecodeError, TypeError):
             result["summary"] = {}
-        current_app.logger.info("data_quality analyze completed run_id=%s duration_ms=%s", row["id"], result["duration_ms"])
+        log_event(
+            LOGGER, "data_quality.scan_polled_completed", "Completed scan status requested",
+            level="DEBUG", run_id=row["id"], duration_ms=result["duration_ms"],
+        )
     elif row["status"] == "failed":
-        current_app.logger.warning("data_quality analyze failed run_id=%s message=%s", row["id"], row["progress_message"])
+        log_event_throttled(
+            LOGGER, "data_quality.scan_failed", "Data Quality scan failed",
+            throttle_key=str(row["id"]), interval_seconds=60,
+            run_id=row["id"], error_type="scan_failed",
+        )
     return jsonify(result)
 
 
@@ -241,7 +259,6 @@ def data_quality_analyze_progress():
 @login_required
 def data_quality_findings():
     run_id = request.args.get("run_id", type=int)
-    current_app.logger.info("data_quality list_findings run_id=%s filters=%s", run_id, {k: v for k, v in request.args.items() if k != "run_id"})
     with connect(Path(current_app.config["DATABASE_PATH"])) as conn:
         if not run_id:
             latest = latest_run(conn)
@@ -258,7 +275,10 @@ def data_quality_findings():
             run_id, **filters, limit=limit, offset=offset,
         ) if run_id else []
         total = count_findings(conn, run_id, **filters) if run_id else 0
-    current_app.logger.info("data_quality findings listed run_id=%s total=%s offset=%s", run_id, total, offset)
+    log_event(
+        LOGGER, "data_quality.findings_listed", "Data Quality findings listed", level="DEBUG",
+        run_id=run_id, total=total, offset=offset, filters=filters,
+    )
     items_html = render_template("dashboard/data_quality/_findings_list.html", findings=items)
     return jsonify({"ok": True, "run_id": run_id, "items": items, "items_html": items_html, "total": total, "offset": offset})
 
@@ -266,13 +286,15 @@ def data_quality_findings():
 @bp.get("/data-quality/findings/<int:finding_id>")
 @login_required
 def data_quality_finding(finding_id: int):
-    current_app.logger.info("data_quality get_finding finding_id=%s", finding_id)
     with connect(Path(current_app.config["DATABASE_PATH"])) as conn:
         finding = get_finding(conn, finding_id)
         if finding:
             finding = _finding_review_context(conn, finding)
     if not finding:
-        current_app.logger.warning("data_quality finding not found finding_id=%s", finding_id)
+        log_event(
+            LOGGER, "data_quality.finding_not_found", "Data Quality finding not found",
+            level="WARNING", finding_id=finding_id,
+        )
         return jsonify({"ok": False, "message": "Finding not found"}), 404
     detail_html = render_template("dashboard/data_quality/_finding_detail.html", finding=finding)
     return jsonify({"ok": True, "finding": finding, "detail_html": detail_html})
@@ -330,7 +352,10 @@ def _finding_review_context(conn: sqlite3.Connection, finding: dict) -> dict:
 def data_quality_decision(finding_id: int):
     data = _payload()
     decision = str(data.get("decision") or "")
-    current_app.logger.info("data_quality decision finding_id=%s decision=%s entity=%s", finding_id, decision, data.get("finding_type", "?"))
+    log_event(
+        LOGGER, "data_quality.decision_requested", "Data Quality decision requested",
+        finding_id=finding_id, decision=decision,
+    )
     if decision not in {"keep_separate", "same_series", "false_positive", "ignored_test_data", "reject", "defer", "ignore", "accept"}:
         return jsonify({"ok": False, "message": "Unsupported decision"}), 400
     with connect(Path(current_app.config["DATABASE_PATH"])) as conn:
@@ -446,7 +471,14 @@ _MAX_BULK_LIMIT = 1000
 def data_quality_bulk_decision():
     data = _payload()
     decision = str(data.get("decision") or "")
-    current_app.logger.info("data_quality bulk_decision decision=%s finding_ids=%s filters=%s", decision, data.get("finding_ids"), data.get("filters"))
+    requested_ids = data.get("finding_ids") if isinstance(data.get("finding_ids"), list) else []
+    submitted_filters = data.get("filters") if isinstance(data.get("filters"), dict) else {}
+    log_event(
+        LOGGER, "data_quality.bulk_decision_requested", "Bulk Data Quality decision requested",
+        decision=decision, requested_count=len(requested_ids),
+        run_id=submitted_filters.get("run_id") or data.get("run_id"),
+        all_run=bool(data.get("all_run")),
+    )
     if decision not in {"accept", "reject", "ignore", "defer",
                         "keep_separate", "same_series", "false_positive", "ignored_test_data"}:
         return jsonify({"ok": False, "message": "Unsupported decision"}), 400
@@ -548,12 +580,16 @@ def data_quality_bulk_decision():
                 except ValueError as exc:
                     failed += 1
                     failures.append({"finding_id": finding["id"], "message": str(exc)})
-            current_app.logger.info(
-                "bulk_accept done run_id=%s matched=%d applied=%d requires_manual=%d failed=%d bundle_id=%s filters=%s",
-                run_id, matched, applied, skipped_review, failed, bundle_id, filters,
+            log_event(
+                LOGGER, "data_quality.bulk_accept_completed", "Bulk automatic findings queued",
+                run_id=run_id, matched=matched, applied=applied,
+                requires_manual=skipped_review, failed=failed, bundle_id=bundle_id,
             )
             if failures:
-                current_app.logger.info("bulk_accept failures: %s", failures[:20])
+                log_event(
+                    LOGGER, "data_quality.bulk_accept_partial_failure", "Some automatic findings were not queued",
+                    level="WARNING", run_id=run_id, failure_count=len(failures),
+                )
             conn.commit()
         elif decision in {"reject", "ignore", "defer"}:
             status = "rejected" if decision == "reject" else "deferred"
@@ -588,7 +624,11 @@ def data_quality_bulk_decision():
                     failures.append({"finding_id": finding["id"], "message": str(exc)})
             conn.commit()
 
-        current_app.logger.info("data_quality bulk_decision done decision=%s applied=%s failed=%s bundle_id=%s", decision, applied, failed, bundle_id)
+        log_event(
+            LOGGER, "data_quality.bulk_decision_completed", "Bulk Data Quality decision completed",
+            decision=decision, applied=applied, failed=failed,
+            bundle_id=bundle_id or None,
+        )
         return jsonify({
             "ok": True,
             "result": {
@@ -607,7 +647,10 @@ def data_quality_bulk_decision():
 @bp.get("/data-quality/bundles/<int:bundle_id>")
 @login_required
 def data_quality_bundle(bundle_id: int):
-    current_app.logger.info("data_quality bundle_detail bundle_id=%s", bundle_id)
+    log_event(
+        LOGGER, "data_quality.bundle_requested", "Data Quality bundle requested",
+        level="DEBUG", bundle_id=bundle_id,
+    )
     with connect(Path(current_app.config["DATABASE_PATH"])) as conn:
         bundle = bundle_detail(conn, bundle_id)
     if not bundle:

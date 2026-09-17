@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-mifp-log-level="{{ 'debug' if config.DEBUG else 'warn' }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -83,6 +83,7 @@
 
   {% include "public/_footer.html" %}
   {% block extra_js %}{% endblock %}
+  <script src="{{ url_for('static', filename='js/logger.js', v=static_version) }}" defer></script>
   <script src="{{ url_for('static', filename='js/homepage.js', v=static_version) }}" defer></script>
 </body>
 </html>

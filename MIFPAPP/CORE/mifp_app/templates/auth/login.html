@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-mifp-log-level="{{ 'debug' if config.DEBUG else 'warn' }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -62,6 +62,7 @@
     </section>
   </main>
   <script src="{{ url_for('static', filename='js/vendor/bootstrap.bundle.min.js', v=static_version) }}" defer></script>
+  <script src="{{ url_for('static', filename='js/logger.js', v=static_version) }}" defer></script>
   <script src="{{ url_for('static', filename='js/dashboard/login.js', v=static_version) }}" defer></script>
 </body>
 </html>
