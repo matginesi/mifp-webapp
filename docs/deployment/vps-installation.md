@@ -144,22 +144,21 @@ sudo mifpctl config-check
 ```
 
 Il controllo mostra record correnti e attesi e spiega quali record correggere
-nel pannello Aruba; non modifica mai il provider DNS. Prima del login GHCR può
-correttamente concludere `NOT READY` anche se il DNS è già a posto.
+nel pannello Aruba; non modifica mai il provider DNS. L'assenza di credenziali
+Docker non rende il sistema `NOT READY` se il package GHCR pubblico è leggibile.
 
-### 2.3 Login registry e readiness pre-init
+### 2.3 Accesso registry e readiness pre-init
 
 ```bash
-sudo mifpctl registry-login
 sudo mifpctl config-check
 ```
 
-Inserisci username GitHub e PAT classic. Il token non viene mostrato, non passa
-nella command line e non viene scritto in `.env`; Docker lo riceve tramite
-stdin e usa il proprio credential store di root.
 `config-check` verifica anche Docker, Caddy e la possibilità di leggere il
-manifest `:latest` senza avviare container o modificare `release.env`. Per
-isolare questo solo controllo usa `sudo mifpctl registry-check`.
+manifest `:latest` anonimamente, senza avviare container o modificare
+`release.env`. Per isolare questo controllo usa `sudo mifpctl registry-check`.
+`registry-login` è opzionale: usalo solo se un package privato restituisce
+realmente `unauthorized`/`denied`. Il PAT resta nel credential store Docker e
+non viene scritto nella configurazione MIFP.
 
 ### 2.4 Inizializza la prima release
 
@@ -380,14 +379,14 @@ distribuirla né usarla per domini pubblici.
 Nella VM:
 
 ```bash
-sudo mifpctl registry-login
 sudo mifpctl config-check
 sudo mifpctl init
 sudo mifpctl doctor
 ```
 
-In local mode `config-check` salta consapevolmente il DNS pubblico. SMTP e
-backup off-site restano opzionali; admin e autenticazione GHCR no.
+In local mode `config-check` salta consapevolmente il DNS pubblico. SMTP,
+backup off-site e autenticazione GHCR restano opzionali; admin e accesso
+all'immagine no.
 
 Dalla workstation:
 

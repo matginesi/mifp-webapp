@@ -48,7 +48,7 @@ sudo mifpctl backup
 Il lifecycle è deliberatamente progressivo:
 
 ```text
-bootstrap -> configure -> registry-login -> config-check -> init -> doctor
+bootstrap -> configure -> config-check -> init -> doctor
                                                                -> deploy
                                                                -> backup/restore
 ```
@@ -114,19 +114,20 @@ bloccato non può restare appeso indefinitamente. Dopo che GitHub Actions ha
 pubblicato una release:
 
 ```bash
-sudo mifpctl registry-login
 sudo mifpctl config-check
 sudo mifpctl init
 sudo mifpctl doctor
 ```
 
-`registry-login` richiede username GitHub e PAT classic nascosto con scope minimo
-`read:packages`; il PAT passa a `docker login` via stdin e non viene salvato nei
-file MIFP. `init` scarica `ghcr.io/matginesi/mifp-webapp:latest`, lo risolve nel digest OCI
+Il package `ghcr.io/matginesi/mifp-webapp` è pubblico: `config-check` verifica
+prima il manifest anonimamente e `init` esegue normalmente un pull anonimo.
+`registry-login` rimane disponibile soltanto per eventuali package privati; il
+PAT passa a `docker login` via stdin e non viene salvato nei file MIFP. `init`
+scarica `ghcr.io/matginesi/mifp-webapp:latest`, lo risolve nel digest OCI
 immutabile, crea un DB **schema-only v10**, lo verifica e avvia la webapp. Lo
 stato persistente non contiene mai `latest`.
 `config-check` non modifica alcun file. SMTP e backup remoto mancanti sono
-opzionali; dominio/admin/DNS/login GHCR sono bloccanti. `doctor` verifica invece
+opzionali; dominio/admin/DNS e accesso all'immagine sono bloccanti. `doctor` verifica invece
 l'host e, dopo `init`, anche DB, release e healthcheck.
 Apri quindi la dashboard e importa lo ZIP prodotto dagli scraper. Sono accettati
 solo package moderni esplicitamente versionati (`mifp-content` v1 oppure
@@ -235,7 +236,6 @@ Per una VM con hostname Linux `vpsbox` e dominio applicativo locale distinto:
 sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
   --domain vpsbox.home.arpa \
   --image-repository ghcr.io/matginesi/mifp-webapp
-sudo mifpctl registry-login
 sudo mifpctl init
 sudo mifpctl doctor
 ```
@@ -414,7 +414,7 @@ siano esposte al container web.
 
 ## GHCR privato
 
-Una volta sola:
+Solo per un registry o package privato che risponde `denied`/`unauthorized`:
 
 ```bash
 sudo mifpctl registry-login

@@ -26,7 +26,7 @@ details), [hardening](deployment/hardening.md), [backups](deployment/backups.md)
 | A domain | e.g. `mifp.eu`; `www.` and `events.` subdomains will be derived |
 | DNS control | A/AAAA records for the apex, `www` and `events` |
 | Your SSH public key | See step 3 — this is what protects the host |
-| A GitHub PAT (classic) | scope **`read:packages`** only, for pulling the image |
+| A GitHub PAT (classic) | optional; only for a future private registry/package |
 | The `deploy/` directory | copied from this repository (see step 4) |
 
 You do **not** need a venv, a build toolchain, a database or any Python on the
@@ -313,19 +313,25 @@ public tree. PHP remains deny-by-default after every import and rollback.
 
 ---
 
-## 12. GHCR authentication
+## 12. GHCR access
+
+The MIFP package is public. Verify anonymous manifest access without changing a
+release:
+
+```bash
+sudo mifpctl registry-check
+```
+
+Only if GHCR actually returns `unauthorized` or `denied` for a private package,
+authenticate explicitly:
 
 ```bash
 sudo mifpctl registry-login
 ```
 
-Uses a GitHub classic PAT with **only** `read:packages`, read without echo and
+This optional command uses a GitHub classic PAT with **only** `read:packages`, read without echo and
 passed to Docker over stdin. It is stored in root's Docker credential store
 (`/root/.docker/config.json`, mode `0600`) and never in a MIFP file.
-
-```bash
-sudo mifpctl registry-check
-```
 
 ---
 

@@ -467,7 +467,7 @@ printf '%s\n' \
   "  sudo mifpctl config-check" \
   "  sudo mifpctl init" \
   "" \
-  "registry-login is optional and only needed for private packages."
+  "registry-login è opzionale e serve solo per package privati."
 
 if [[ "$DOMAIN" == *.home.arpa ]]; then
   LAN_IPS="$(hostname -I 2>/dev/null | tr ' ' '\n' | awk '/^[0-9]+\./ && $0 !~ /^127\./ {print}' | sort -u)"

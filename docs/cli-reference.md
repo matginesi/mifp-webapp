@@ -24,7 +24,7 @@
 Uso normale:
 
 ```bash
-sudo mifpctl configure [--section web|mail|registry|backup]
+sudo mifpctl configure [--section web|mail|backup]
 sudo mifpctl config-show
 sudo mifpctl config-set KEY VALUE
 sudo mifpctl config-unset KEY
@@ -46,7 +46,6 @@ Prima installazione:
 ```bash
 sudo mifpctl configure
 sudo mifpctl admin
-sudo mifpctl registry-login
 sudo mifpctl config-check
 sudo mifpctl init
 ```
@@ -56,7 +55,10 @@ inseriscono nel wizard, senza command line né shell history. `config-show`
 riporta per i segreti solo `configured`/`not configured`; `config-check` non
 scrive file e ritorna 0 quando tutti i required sono pronti, 1 altrimenti.
 Verifica inoltre Docker, Caddy e la leggibilità del manifest GHCR `:latest`;
-`registry-check` esegue soltanto quest'ultimo controllo senza cambiare release.
+`registry-check` esegue soltanto quest'ultimo controllo senza cambiare release e
+prova prima l'accesso anonimo. `registry-login` è opzionale e serve soltanto se
+un registry o package privato risponde realmente `unauthorized`/`denied`; il PAT
+rimane nel credential store Docker, mai nella configurazione MIFP.
 
 `init` è l'unico comando autorizzato a usare `latest`, solo come selector:
 `release.env` conserva sempre il digest OCI risolto. `first-deploy sha-<commit>`

@@ -487,15 +487,52 @@ do_config_check() {
     || die "Caddyfile non valido."
   # Docker publishes ports through its own iptables rules, so UFW would not
   # contain a bad mapping: every published port must be loopback-bound.
-  local published
-  published="$(awk '$1 == "-" && $2 ~ /^"/ {gsub(/"/, "", $2); print $2}' "$COMPOSE_FILE" 2>/dev/null || true)"
+  local compose_json published service host_ip host_port target_port protocol mapping_count=0
+  if ! compose_json="$(compose_with_image "$(image_repository):latest" config --format json)"; then
+    die "Impossibile normalizzare $COMPOSE_FILE con docker compose config."
+  fi
+  if ! published="$(python3 -c '
+import json
+import sys
+
+try:
+    document = json.load(sys.stdin)
+    services = document["services"]
+    if not isinstance(services, dict):
+        raise TypeError("services is not an object")
+    for service_name, service in services.items():
+        if not isinstance(service, dict):
+            raise TypeError(f"service {service_name} is not an object")
+        ports = service.get("ports") or []
+        if not isinstance(ports, list):
+            raise TypeError(f"ports for {service_name} is not a list")
+        for port in ports:
+            if not isinstance(port, dict):
+                raise TypeError(f"port for {service_name} is not normalized")
+            fields = (
+                service_name,
+                str(port.get("host_ip") or ""),
+                str(port.get("published") or "<dynamic>"),
+                str(port.get("target") or "<unknown>"),
+                str(port.get("protocol") or "tcp"),
+            )
+            if any("|" in field or "\n" in field for field in fields):
+                raise ValueError("unexpected delimiter in normalized port")
+            print("|".join(fields))
+except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    print(f"invalid normalized Compose JSON: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+' <<<"$compose_json")"; then
+    die "Impossibile ispezionare le porte normalizzate di $COMPOSE_FILE."
+  fi
   if [[ -n "$published" ]]; then
-    while IFS= read -r entry; do
-      [[ -z "$entry" ]] && continue
-      [[ "$entry" =~ ^127\.0\.0\.1:[0-9]+:[0-9]+$ ]] \
-        || die "Porta pubblicata non loopback in $COMPOSE_FILE: $entry (Docker la esporrebbe a Internet ignorando UFW)."
+    while IFS='|' read -r service host_ip host_port target_port protocol; do
+      [[ -z "$service" ]] && continue
+      ((mapping_count += 1))
+      [[ "$host_ip" == "127.0.0.1" || "$host_ip" == "::1" ]] \
+        || die "Porta pubblicata non loopback in $COMPOSE_FILE: ${service} ${host_ip:-0.0.0.0}:${host_port}:${target_port}/${protocol} (Docker la esporrebbe a Internet ignorando UFW)."
     done <<<"$published"
-    say "Compose exposure contract: OK ($(wc -l <<<"$published") mapping loopback)."
+    say "Compose exposure contract: OK ($mapping_count mapping loopback)."
   fi
   do_registry_check
   say "Host readiness: READY"

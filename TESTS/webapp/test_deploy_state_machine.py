@@ -29,7 +29,16 @@ def _env(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "MIFP_DOMAIN='example.invalid'\n",
         encoding="utf-8",
     )
-    (home / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    (home / "compose.yaml").write_text(
+        "services:\n"
+        "  web:\n"
+        "    image: ${MIFP_IMAGE:?required}\n"
+        "    ports:\n"
+        '      - "127.0.0.1:8000:8000"\n'
+        "    volumes:\n"
+        '      - "${MIFP_DATA_DIR:-/opt/mifp/data}:/app/data"\n',
+        encoding="utf-8",
+    )
     _write_executable(home / "configure.py", "#!/usr/bin/env python3\nraise SystemExit(0)\n")
     shutil.copy2(ROOT / "deploy" / "vps_config.py", home / "vps_config.py")
     shutil.copy2(ROOT / "deploy" / "check-events-archive.py", home / "check-events-archive.py")
@@ -197,6 +206,10 @@ fi
 if [ "${1:-}" = compose ]; then
   case " $* " in
     *' version '*) exit 0 ;;
+    *' config --format json '*)
+      host_ip="${FAKE_COMPOSE_HOST_IP:-127.0.0.1}"
+      printf '{"services":{"web":{"ports":[{"host_ip":"%s","target":8000,"published":"8000","protocol":"tcp"}],"volumes":[{"type":"bind","source":"%s","target":"/app/data"}],"tmpfs":["/tmp:size=256m"],"security_opt":["no-new-privileges:true"],"healthcheck":{"test":["CMD","true"]}}}}\n' "$host_ip" "${MIFP_DATA_DIR:?}"
+      exit 0 ;;
     *' down '*) [ "${FAIL_COMPOSE_DOWN:-0}" = 1 ] && exit 41 || exit 0 ;;
     *' ps '*'-q web'*) echo fake-container; exit 0 ;;
     *' up '*) printf '%s\n' "${MIFP_IMAGE:?}" > "$state/active-image"; exit 0 ;;
@@ -505,6 +518,26 @@ def test_registry_check_suggests_login_only_for_real_auth_failure(tmp_path: Path
     assert "manifest :latest assente" in missing.stderr
 
 
+def test_config_check_ignores_volume_list_items_when_checking_ports(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    assert '${MIFP_DATA_DIR:-/opt/mifp/data}:/app/data' in (home / "compose.yaml").read_text(encoding="utf-8")
+
+    result = _run(env, "config-check", check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "Compose exposure contract: OK (1 mapping loopback)." in result.stdout
+
+
+def test_config_check_rejects_real_non_loopback_port(tmp_path: Path) -> None:
+    env, _ = _env(tmp_path)
+
+    result = _run(dict(env, FAKE_COMPOSE_HOST_IP="0.0.0.0"), "config-check", check=False)
+
+    assert result.returncode != 0
+    assert "Porta pubblicata non loopback" in result.stderr
+    assert "0.0.0.0:8000:8000/tcp" in result.stderr
+
+
 def test_registry_login_uses_password_stdin_without_echoing_token(tmp_path: Path) -> None:
     env, _ = _env(tmp_path)
     token = "github-pat-test-value"
@@ -519,6 +552,11 @@ def test_registry_login_uses_password_stdin_without_echoing_token(tmp_path: Path
     assert "GHCR login successful" in output
     assert token not in output
     assert (Path(env["FAKE_DOCKER_STATE"]) / "registry-login-ok").is_file()
+    config_dir = Path(env["MIFP_CONFIG_DIR"])
+    persisted = (config_dir / "config.env").read_text(encoding="utf-8")
+    persisted += (config_dir / "secrets.env").read_text(encoding="utf-8")
+    assert "matteo" not in persisted
+    assert token not in persisted
 
 
 def test_registry_login_failure_is_clear_and_does_not_echo_token(tmp_path: Path) -> None:

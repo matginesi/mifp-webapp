@@ -146,7 +146,6 @@ Prima installazione:
 sudo bash deploy/bootstrap-vps.sh
 sudo mifpctl configure
 sudo mifpctl admin
-sudo mifpctl registry-login
 sudo mifpctl ssh-harden --operator <utente>
 sudo mifpctl config-check
 sudo mifpctl init
@@ -164,8 +163,10 @@ La configurazione progressiva vive in `/etc/mifp/config.env` (non segreti,
 migrato senza perdere i valori esistenti e resta un file runtime compatibile.
 `config-show` non stampa segreti e `config-check` è read-only.
 
-`registry-login` legge il PAT GitHub senza echo e lo passa a Docker via stdin;
-serve un PAT classic con il solo scope `read:packages`. `init` usa `latest`
+Il package `ghcr.io/matginesi/mifp-webapp` è pubblico: `config-check` e `init`
+verificano e scaricano l'immagine anonimamente. `registry-login` resta opzionale
+per eventuali package privati; legge il PAT GitHub senza echo, lo passa a Docker
+via stdin e non lo salva nella configurazione MIFP. `init` usa `latest`
 soltanto per individuare la prima immagine e registra immediatamente il digest
 OCI immutabile. I deploy successivi continuano a usare `sha-<commit>`.
 
