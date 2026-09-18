@@ -11,7 +11,6 @@ import re
 import secrets
 import shlex
 import socket
-import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -276,8 +275,10 @@ def normalize_value(key: str, value: str) -> str:
         raise ValueError("SMTP_SECURITY must be tls, starttls or none")
     elif key in {"BACKUP_ENABLED"} and value.lower() not in {"true", "false"}:
         raise ValueError(f"{key} must be true or false")
-    elif key == "BACKUP_LOCAL_RETENTION" and (not value.isdigit() or int(value) < 1):
-        raise ValueError("BACKUP_LOCAL_RETENTION must be a positive integer")
+    elif key == "BACKUP_LOCAL_RETENTION" and (not value.isdigit() or int(value) < 2):
+        # deploy/backup.sh requires >= 2: keeping a single snapshot would make
+        # the pre-restore safety snapshot delete the one being restored.
+        raise ValueError("BACKUP_LOCAL_RETENTION must be an integer >= 2")
     elif key == "ADMIN_USERNAME" and not USERNAME_RE.fullmatch(value):
         raise ValueError("invalid ADMIN_USERNAME")
     elif key == "ADMIN_PASSWORD_HASH" and value and not ADMIN_HASH_RE.fullmatch(value):

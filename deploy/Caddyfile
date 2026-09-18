@@ -25,6 +25,11 @@ __MIFP_EVENTS_DOMAIN__ {
         -Server
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        # Conference pages are Caddy-served and never pass through Flask, so
+        # the framing/object policy has to be declared here as well. Framing
+        # stays same-origin so intra-site frames keep working.
+        Content-Security-Policy "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
     }
 
     root * /opt/mifp/events
@@ -41,7 +46,30 @@ __MIFP_EVENTS_DOMAIN__ {
             path */composer.json */composer.lock
             path *.db *.sqlite *.sqlite3 *.sql *.bak *.old *.orig
         }
+        # The rules above only match a fixed set of names at one depth. These
+        # depth-independent matchers also cover the source/config extensions
+        # that legacy PHP conference sites commonly ship (.inc, .module, .yml,
+        # .log, .htpasswd, keys, certs, ...), which file_server would otherwise
+        # return verbatim, and the same sensitive names at any nesting depth.
+        # ``.well-known`` is excluded so ACME/HTTP-01 files stay reachable.
+        @events_sensitive_deep path_regexp events_deep ^/(?:.*/)?(?:\.env(?:\..*)?|\.git|\.svn|composer\.(?:json|lock)|regform/(?:settings\.ya?ml|settings\.json|registrations|src))(/|$)
+        @events_sensitive_ext path_regexp events_ext \.(?i:inc|phps|php[0-9]|pht|module|install|engine|ini|log|htpasswd|htaccess|sh|yml|yaml|toml|dist|save|swp|pem|key|crt|cer|p12|pfx|sqlite[0-9]*(?:-wal|-shm)?|db(?:-wal|-shm)?|ds_store|gitignore|ftpconfig|netrc|npmrc)$
+        # Secret *filenames* that carry no telling extension (SSH keys, cloud
+        # CLI credentials, password files) and are common in old conference
+        # trees or their backups.
+        @events_secret_name path_regexp events_secret ^/(?:.*/)?(?:id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|creds?\.json|credentials?\.json|secrets?\.json|tokens?\.json|\.?git-credentials|\.?netrc|\.?npmrc|\.?ftpconfig|\.?pgpass|\.?my\.cnf|\.?s3cfg|\.?dockercfg|\.?htpasswd|shadow|\.?bash_history|\.?zsh_history)$
+        # ``.well-known`` (ACME/verification) must stay reachable, so the
+        # dotfile rule is expressed with matcher negation: Go's RE2 engine used
+        # by Caddy does not support lookahead assertions.
+        @events_hidden {
+            not path /.well-known/*
+            path_regexp events_hidden ^/(?:.*/)?\.
+        }
         respond @events_sensitive 404
+        respond @events_sensitive_deep 404
+        respond @events_sensitive_ext 404
+        respond @events_secret_name 404
+        respond @events_hidden 404
 
         # This file exists even when empty.  Explicit PHP-enabled conference
         # prefixes are inserted here by `mifpctl events-php-enable`.

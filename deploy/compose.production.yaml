@@ -1,6 +1,11 @@
 # Production Docker Compose. The image is selected explicitly by deploy.sh;
 # production never builds application code on the VPS.
-name: mifp-production
+#
+# The project name must stay `mifp`: deploy.sh passes --project-name mifp and
+# backup.sh quiesces containers by the `com.docker.compose.project=mifp` label,
+# so an out-of-band `docker compose up` with a different name would silently
+# skip the point-in-time pause.
+name: mifp
 
 services:
   web:

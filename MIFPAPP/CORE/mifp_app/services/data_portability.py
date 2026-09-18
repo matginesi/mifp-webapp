@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import stat
 import tempfile
+import unicodedata
 import zipfile
 from collections.abc import Callable, Sequence
 from io import BytesIO
@@ -18,6 +19,7 @@ from ..config import Config
 from ..db.connection import table_exists, utc_now, sha256_file
 from ..db.migrations import SCHEMA_VERSION
 from ..domain import ENTITY_TABLES as TYPE_TO_TABLE
+from ..utils.file_safety import open_write_no_follow
 from .assets import (
     AssetWriteSession,
     conflict_safe_asset_target,
@@ -568,6 +570,21 @@ def parse_zip_payload(raw: bytes | Path) -> dict[str, Any]:
         format_version = int(manifest["format_version"])
         if format_version >= 2 and manifest.get("scope") == "all" and ZIP_STATE_NAME not in names:
             raise ValueError(f"ZIP package is missing {ZIP_STATE_NAME}")
+        if ZIP_STATE_NAME in names and (
+            manifest.get("format") != CANONICAL_FORMAT
+            or manifest.get("scope") != "all"
+            or not manifest.get("state_sha256")
+            or not manifest.get("state_counts")
+        ):
+            # Installation-owned durable state (settings, roles, content
+            # aliases, join requests) is only restorable from a full canonical
+            # export that is cryptographically bound to it. Without this an
+            # unsigned third-party content package could silently rewrite
+            # installation state such as maintenance mode.
+            raise ValueError(
+                f"{ZIP_STATE_NAME} is only accepted in a full {CANONICAL_FORMAT} package "
+                "that declares state_sha256 and state_counts"
+            )
         manifest_files = _manifest_asset_paths(manifest)
         asset_names = {name for name in names if name.startswith("assets/") and not name.endswith("/")}
         unexpected_assets = sorted(asset_names - manifest_files)
@@ -1417,7 +1434,19 @@ def _extract_zip_assets(raw: bytes | Path, assets_dir: Path, *, asset_files: lis
     root = Path(assets_dir).resolve()
     zip_source: BytesIO | Path = BytesIO(raw) if isinstance(raw, bytes) else raw
     with zipfile.ZipFile(zip_source, "r") as zf:
-        for info in zf.infolist():
+        # This may be a second open of a staged upload file, so re-apply every
+        # structural limit instead of trusting the earlier validation pass: a
+        # file replaced between the two opens must not bypass the bomb guards.
+        infos = zf.infolist()
+        if len(infos) > Config.IMPORT_MAX_FILES:
+            raise ValueError(f"ZIP package exceeds maximum file count: {Config.IMPORT_MAX_FILES}")
+        _validate_zip_members(infos)
+        unpacked = sum(info.file_size for info in infos)
+        if unpacked > Config.IMPORT_MAX_UNPACKED_BYTES:
+            raise ValueError(
+                f"ZIP package expands beyond maximum size: {Config.IMPORT_MAX_UNPACKED_BYTES} bytes"
+            )
+        for info in infos:
             name = info.filename
             if name not in allowed:
                 continue
@@ -1429,18 +1458,26 @@ def _extract_zip_assets(raw: bytes | Path, assets_dir: Path, *, asset_files: lis
             if root not in target.parents and target != root:
                 raise ValueError(f"Unsafe asset target in ZIP: {name}")
             target.parent.mkdir(parents=True, exist_ok=True)
-            with zf.open(info, "r") as src, target.open("wb") as dst:
+            with zf.open(info, "r") as src, open_write_no_follow(target) as dst:
                 shutil.copyfileobj(src, dst, length=1024 * 1024)
 
 
 def _validate_zip_members(infos: list[zipfile.ZipInfo]) -> None:
     seen: set[str] = set()
+    portable: set[str] = set()
     for info in infos:
         name = info.filename
         _validate_archive_name(name, allow_directory=True)
         if name in seen:
             raise ValueError(f"ZIP contains duplicate file name: {name}")
         seen.add(name)
+        # Case-insensitive and Unicode-normalising filesystems would map two
+        # distinct members onto one path, so the second write would silently
+        # replace the first after its per-entry checksum was verified.
+        normalized = unicodedata.normalize("NFC", name).casefold()
+        if normalized in portable:
+            raise ValueError(f"ZIP contains file names that collide on a case-insensitive filesystem: {name}")
+        portable.add(normalized)
         mode = (info.external_attr >> 16) & 0o170000
         if stat.S_ISLNK(mode):
             raise ValueError(f"ZIP contains a symbolic link: {name}")
@@ -1615,7 +1652,9 @@ def _read_durable_state(
         )
     raw = zf.read(ZIP_STATE_NAME)
     expected_hash = manifest.get("state_sha256")
-    if expected_hash and hashlib.sha256(raw).hexdigest() != expected_hash:
+    if not expected_hash:
+        raise ValueError("state.json requires state_sha256 in manifest.json")
+    if hashlib.sha256(raw).hexdigest() != expected_hash:
         raise ValueError(
             "state.json does not match the checksum in manifest.json; "
             "the archive may be incomplete, corrupt, or modified after export"

@@ -16,12 +16,13 @@ QUIESCE="${MIFP_BACKUP_QUIESCE:-1}"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
-env_value() {
-  local key="$1" line value
-  [[ -f "$ENV_FILE" ]] || return 1
-  line="$(grep -E "^${key}=" "$ENV_FILE" | tail -n 1 || true)"; [[ -n "$line" ]] || return 1
+env_value_in() {
+  local file="$1" key="$2" line value
+  [[ -f "$file" ]] || return 1
+  line="$(grep -E "^${key}=" "$file" | tail -n 1 || true)"; [[ -n "$line" ]] || return 1
   value="${line#*=}"; value="${value%\'}"; value="${value#\'}"; value="${value%\"}"; value="${value#\"}"; printf '%s' "$value"
 }
+env_value() { env_value_in "$ENV_FILE" "$1"; }
 
 [[ "$(id -u)" -eq 0 ]] || die "Esegui come root (sudo)."
 for tool in sqlite3 rsync sha256sum flock python3; do command -v "$tool" >/dev/null 2>&1 || die "Comando mancante: $tool"; done
@@ -32,16 +33,23 @@ if [[ "${MIFP_OPERATION_LOCK_HELD:-0}" != "1" ]]; then
 fi
 [[ "$QUIESCE" == "0" || "$QUIESCE" == "1" ]] || die "MIFP_BACKUP_QUIESCE deve essere 0 o 1"
 
-if [[ ! -f "$DB" || -L "$DB" ]]; then
+if [[ ! -e "$DB" ]]; then
   say "Nessun database MIFP da salvare: $DB"
   exit 0
 fi
+# A symlinked or non-regular database must fail loudly instead of turning every
+# scheduled backup into a silent no-op reported as success by systemd.
+[[ -f "$DB" && ! -L "$DB" ]] || die "Database live non regolare o symlink: $DB"
 
 KEEP="$(env_value MIFP_BACKUP_KEEP || true)"; KEEP="${KEEP:-14}"
 [[ "$KEEP" =~ ^[0-9]+$ ]] && ((KEEP >= 2)) || die "MIFP_BACKUP_KEEP deve essere un intero >= 2"
 
 SNAPSHOT_ROOT="$BACKUP_ROOT/snapshots"
 install -d -o root -g root -m 0700 "$BACKUP_ROOT" "$SNAPSHOT_ROOT"
+# A SIGKILL/power loss skips the EXIT trap, so reclaim abandoned partial
+# snapshots at startup rather than letting them accumulate until the disk fills.
+find "$SNAPSHOT_ROOT" -mindepth 1 -maxdepth 1 -type d -name '.snapshot-*.tmp' -mmin +360 \
+  -exec rm -rf -- {} + 2>/dev/null || true
 stamp="$(date -u +%Y%m%d-%H%M%S-%N)"
 tmp="$SNAPSHOT_ROOT/.snapshot-$stamp.tmp"
 final="$SNAPSHOT_ROOT/snapshot-$stamp"
@@ -84,7 +92,9 @@ fi
 sqlite3 -readonly "$DB" ".timeout 30000" ".backup '$tmp/mifp.db'"
 [[ "$(sqlite3 -readonly "$tmp/mifp.db" 'PRAGMA quick_check; PRAGMA foreign_key_check;')" == "ok" ]] \
   || die "Snapshot SQLite non valido."
-sha256sum "$tmp/mifp.db" > "$tmp/mifp.db.sha256"
+# Record the digest with a path relative to the snapshot: the previous absolute
+# temporary path made the documented `sha256sum -c mifp.db.sha256` always fail.
+( cd "$tmp" && sha256sum mifp.db > mifp.db.sha256 )
 chmod 0600 "$tmp/mifp.db" "$tmp/mifp.db.sha256"
 
 # Each directory is a real point-in-time tree. --link-dest hard-links files
@@ -121,6 +131,19 @@ else
   : > "$tmp/events-php-enabled.txt"
 fi
 chmod 0600 "$tmp/events-php-enabled.txt"
+
+# Fail closed when the allow-list points at a directory that no longer exists:
+# the restore verifier (and Caddy include renderer) reject such a snapshot, so
+# publishing one would report success for a backup that can never be restored.
+while IFS= read -r prefix; do
+  [[ -n "$prefix" ]] || continue
+  if [[ "$prefix" == *..* || "$prefix" == /* || "$prefix" == *//* ]]; then
+    die "Allow-list PHP non valida: $prefix"
+  fi
+  if [[ ! -d "$EVENTS_DIR/$prefix" || -L "$EVENTS_DIR/$prefix" ]]; then
+    die "Allow-list PHP punta a una directory mancante o non sicura: $prefix (in $EVENTS_DIR)"
+  fi
+done < "$tmp/events-php-enabled.txt"
 
 # Integrity manifest for the entire restorable snapshot, not only SQLite.
 # JSON avoids pathname ambiguities and lets restore verify the exact file set.
@@ -184,8 +207,12 @@ trap - EXIT INT TERM
 ln -sfn "$(basename "$final")" "$SNAPSHOT_ROOT/latest.tmp"
 mv -Tf "$SNAPSHOT_ROOT/latest.tmp" "$SNAPSHOT_ROOT/latest"
 
-mapfile -t old < <(find "$SNAPSHOT_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'snapshot-*' -printf '%T@ %p\n' | sort -nr | awk -v keep="$KEEP" 'NR>keep {sub(/^[^ ]+ /, ""); print}')
-for path in "${old[@]:-}"; do [[ -n "$path" ]] || continue; rm -rf -- "$path"; done
+# Local rotation. A pre-restore safety snapshot sets MIFP_BACKUP_NO_PRUNE=1 so
+# it can never delete the very snapshot the operator asked to restore.
+if [[ "${MIFP_BACKUP_NO_PRUNE:-0}" != "1" ]]; then
+  mapfile -t old < <(find "$SNAPSHOT_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'snapshot-*' -printf '%T@ %p\n' | sort -nr | awk -v keep="$KEEP" 'NR>keep {sub(/^[^ ]+ /, ""); print}')
+  for path in "${old[@]:-}"; do [[ -n "$path" ]] || continue; rm -rf -- "$path"; done
+fi
 
 # Optional encrypted/off-site replication. Configure restic explicitly; the
 # default installation has no external destination and never sends data away.
@@ -194,6 +221,13 @@ if [[ -n "$RESTIC_REPO" ]]; then
   command -v restic >/dev/null 2>&1 || die "MIFP_RESTIC_REPOSITORY è configurato ma restic non è installato."
   export RESTIC_REPOSITORY="$RESTIC_REPO"
   password_file="$(env_value MIFP_RESTIC_PASSWORD_FILE || true)"
+  if [[ -z "${RESTIC_PASSWORD:-}" ]]; then
+    # The configure wizard stores the restic password in the host-only secrets
+    # file (loaded by systemd for the timer, but not for a manual mifpctl run).
+    # Read it here so `sudo mifpctl backup` and restore-snapshot keep working.
+    secrets_file="${MIFP_CONFIG_DIR:-/etc/mifp}/secrets.env"
+    RESTIC_PASSWORD="$(env_value_in "$secrets_file" RESTIC_PASSWORD || true)"
+  fi
   if [[ -n "${RESTIC_PASSWORD:-}" ]]; then
     export RESTIC_PASSWORD
   elif [[ -n "$password_file" && -r "$password_file" ]]; then
@@ -201,7 +235,22 @@ if [[ -n "$RESTIC_REPO" ]]; then
   else
     die "Configura RESTIC_PASSWORD in /etc/mifp/secrets.env o un MIFP_RESTIC_PASSWORD_FILE leggibile."
   fi
+  # Validate the retention policy BEFORE any off-site write: a typo would
+  # otherwise publish an unprunable snapshot and only fail afterwards.
+  KEEP_DAILY="$(env_value MIFP_RESTIC_KEEP_DAILY || true)"; KEEP_DAILY="${KEEP_DAILY:-7}"
+  KEEP_WEEKLY="$(env_value MIFP_RESTIC_KEEP_WEEKLY || true)"; KEEP_WEEKLY="${KEEP_WEEKLY:-4}"
+  KEEP_MONTHLY="$(env_value MIFP_RESTIC_KEEP_MONTHLY || true)"; KEEP_MONTHLY="${KEEP_MONTHLY:-6}"
+  [[ "$KEEP_DAILY" =~ ^[0-9]+$ ]] || die "MIFP_RESTIC_KEEP_DAILY deve essere un intero non negativo"
+  [[ "$KEEP_WEEKLY" =~ ^[0-9]+$ ]] || die "MIFP_RESTIC_KEEP_WEEKLY deve essere un intero non negativo"
+  [[ "$KEEP_MONTHLY" =~ ^[0-9]+$ ]] || die "MIFP_RESTIC_KEEP_MONTHLY deve essere un intero non negativo"
   restic backup "$final" --tag mifp --tag production
+  # Local retention prunes $BACKUP_ROOT only; without this the off-site
+  # repository would grow without bound.
+  restic forget --tag mifp \
+    --keep-daily "$KEEP_DAILY" \
+    --keep-weekly "$KEEP_WEEKLY" \
+    --keep-monthly "$KEEP_MONTHLY" \
+    --prune
 fi
 
 say "Backup completato: $final"

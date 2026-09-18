@@ -60,6 +60,12 @@ domini, admin, DNS (fuori dal local mode) e login registry.
 
 ## Prima installazione, una volta sola
 
+Per la procedura completa su una VPS vuota (DNS, chiavi SSH, hardening SSH,
+firewall, segreti, GHCR, primo deploy, backup, smoke test di disaster recovery e
+checklist finale) usa il runbook dedicato:
+
+**[docs/DEPLOY_NEW_VPS.md](docs/DEPLOY_NEW_VPS.md)**
+
 Prerequisiti: Ubuntu e accesso SSH con `sudo`. Il DNS può essere completato
 anche dopo il bootstrap.
 
@@ -368,17 +374,28 @@ Prima di considerare una VPS pronta:
 ```text
 [ ] sudo mifpctl doctor -> Doctor: OK
 [ ] sudo mifpctl security-check -> Security check: OK
-[ ] solo SSH, 80 e 443 sono listener pubblici attesi
+[ ] solo SSH, 80 e 443 sono listener pubblici attesi (v4 e v6)
+[ ] sudo mifpctl ssh-harden --operator <utente> applicato e provato da una
+    nuova sessione (sshd -T: PasswordAuthentication no)
+[ ] unattended-upgrades attivo e Automatic-Reboot false;
+    /var/run/reboot-required assente
 [ ] Caddyfile valido e backend Flask solo su 127.0.0.1:8000
 [ ] container non-root, rootfs read-only, no-new-privileges, niente docker.sock
 [ ] /etc/mifp/secrets.env è 0600; Docker config root è 0600 se presente
+[ ] /etc/mifp è custodito fuori dalla VPS (escrow dei segreti)
 [ ] PHP eventi è deny-by-default e la allow-list è stata revisionata
 [ ] backup locale riuscito e restore provato almeno una volta
+[ ] backup off-site verificato, se configurato
 ```
 
-`security-check` è diagnostico e non modifica la macchina. Segnala anche file
-world-writable, staging residui, link/file speciali nei tree eventi, listener TCP
-inaspettati e credenziali backup esposte per errore al container web.
+La checklist operativa completa, con i comandi di verifica, è in
+[docs/DEPLOY_NEW_VPS.md](docs/DEPLOY_NEW_VPS.md).
+
+`security-check` è diagnostico e non modifica la macchina. Verifica la policy SSH
+**effettiva** (`sshd -T`), che UFW sia attivo con le regole IPv4 e IPv6 attese, i
+permessi dei file, i listener pubblici inaspettati, l'isolamento del container, la
+freschezza e l'integrità dell'ultimo backup, e che le credenziali di backup non
+siano esposte al container web.
 
 ## GHCR privato
 

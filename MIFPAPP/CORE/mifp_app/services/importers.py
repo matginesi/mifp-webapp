@@ -567,6 +567,12 @@ def _validate_assets(raw: Any, line_no: int) -> list[dict[str, Any]]:
             raise ImportValidationError(f"Line {line_no}: assets[{idx}] unknown keys: {', '.join(sorted(unknown))}")
         if not item.get("path") and not item.get("url"):
             raise ImportValidationError(f"Line {line_no}: assets[{idx}] requires path or url")
+        # A record-supplied path is a package-relative reference, never a local
+        # filesystem path. Without this check an imported JSONL could name any
+        # readable file on the server and have it published as a public asset.
+        record_path = str(item.get("path") or "").strip()
+        if record_path:
+            _validate_asset_db_path(record_path, line_no)
         role = str(item.get("role") or "attachment").strip().lower()
         if role not in ASSET_ROLES:
             raise ImportValidationError(f"Line {line_no}: assets[{idx}] invalid role: {role}")
@@ -928,9 +934,18 @@ def _materialize_asset(
         )
     if db_path:
         path = Path(db_path)
-        if not path.is_absolute():
-            source_dir = asset_source_dir or assets_dir
-            path = source_dir.parent / path if path.parts[:1] == ("assets",) else source_dir / path
+        if path.is_absolute():
+            # _validate_assets already rejects absolute record paths; keep a
+            # second guard here so no code path can read an arbitrary file.
+            raise ImportValidationError(f"unsafe asset path: {db_path}")
+        source_dir = Path(asset_source_dir or assets_dir)
+        root = source_dir.parent if path.parts[:1] == ("assets",) else source_dir
+        root = root.resolve()
+        path = (root / path).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise ImportValidationError(f"asset path escapes the import package: {db_path}") from exc
         if not path.is_file():
             url = spec.get("url") or ""
             if url:

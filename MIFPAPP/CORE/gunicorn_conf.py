@@ -5,8 +5,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-
-load_dotenv(Path(__file__).resolve().with_name(".env"), override=False)
+# Honour the same kill switch as ``mifp_app.config``: production Compose sets
+# MIFP_LOAD_DOTENV=0 so a bind-mounted .env can never inject Gunicorn settings.
+if os.getenv("MIFP_LOAD_DOTENV", "1").strip().lower() in {"1", "true", "yes", "on"}:
+    load_dotenv(Path(__file__).resolve().with_name(".env"), override=False)
 
 from mifp_app.utils.runtime_capacity import configured_count
 

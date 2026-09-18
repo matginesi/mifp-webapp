@@ -182,6 +182,11 @@ class Config:
     WTF_CSRF_ENABLED = os.getenv('CSRF_ENABLED', '1') in {'1','true','True','yes','on'}
     LOGIN_LOCKOUT_SECONDS = int(os.getenv('LOGIN_LOCKOUT_SECONDS', '60'))
     LOGIN_IP_MAX_ATTEMPTS = int(os.getenv('LOGIN_IP_MAX_ATTEMPTS', '10'))
+    # Second, per-account bound for *failed* passwords only. It is checked after
+    # the password verdict, so a correct password always succeeds and this can
+    # never lock the administrator out; it only slows guessing from many IPs.
+    LOGIN_ACCOUNT_MAX_ATTEMPTS = int(os.getenv('LOGIN_ACCOUNT_MAX_ATTEMPTS', '30'))
+    LOGIN_ACCOUNT_LOCKOUT_SECONDS = int(os.getenv('LOGIN_ACCOUNT_LOCKOUT_SECONDS', '900'))
     IMPORT_MAX_ZIP_BYTES = int(os.getenv('IMPORT_MAX_ZIP_BYTES', str(768 * 1024 * 1024)))
     # JSON/JSONL and ZIP metadata are parsed in memory. Keep their individual
     # limits well below the global HTTP upload ceiling to avoid memory spikes.
@@ -212,6 +217,13 @@ class Config:
     IMPORT_MAX_UNPACKED_BYTES = int(os.getenv('IMPORT_MAX_UNPACKED_BYTES', str(1024 * 1024 * 1024)))
     ASSET_REMOTE_MAX_BYTES = int(os.getenv('ASSET_REMOTE_MAX_BYTES', str(64 * 1024 * 1024)))
     ASSET_DOWNLOAD_TIMEOUT_SECONDS = float(os.getenv('ASSET_DOWNLOAD_TIMEOUT_SECONDS', '10'))
+    # Per-socket timeout above; this is the wall-clock bound for one complete
+    # download including every retry, so a slow-drip server cannot pin a
+    # background worker indefinitely.
+    ASSET_DOWNLOAD_TOTAL_TIMEOUT_SECONDS = max(
+        ASSET_DOWNLOAD_TIMEOUT_SECONDS,
+        float(os.getenv('ASSET_DOWNLOAD_TOTAL_TIMEOUT_SECONDS', '120')),
+    )
     ASSET_DOWNLOAD_MAX_ATTEMPTS = max(1, int(os.getenv('ASSET_DOWNLOAD_MAX_ATTEMPTS', '3')))
     ASSET_RECOVERY_MAX_ASSETS_PER_RUN = max(1, int(os.getenv('ASSET_RECOVERY_MAX_ASSETS_PER_RUN', '30')))
     ASSET_RECOVERY_MAX_RUN_ATTEMPTS = max(1, int(os.getenv('ASSET_RECOVERY_MAX_RUN_ATTEMPTS', '3')))

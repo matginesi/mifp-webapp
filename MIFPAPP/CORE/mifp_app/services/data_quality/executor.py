@@ -567,7 +567,21 @@ def _apply_split(conn: sqlite3.Connection, plan: dict) -> None:
     conn.execute(f'UPDATE "{table}" SET review_status=\'quarantined\',updated_at=CURRENT_TIMESTAMP WHERE id=?', (source_id,))
 
 
-def verify_invariants(conn: sqlite3.Connection, skip_date_inversion: bool = False) -> list[str]:
+def verify_invariants(
+    conn: sqlite3.Connection,
+    skip_date_inversion: bool = False,
+    *,
+    repair: bool = False,
+) -> list[str]:
+    """Report content invariants; delete orphan link rows only when asked.
+
+    ``repair`` is opt-in because deleting rows is destructive: a function whose
+    name promises verification must not silently mutate the archive. Callers
+    that genuinely want the cleanup (``apply_bundle``, after a verified backup
+    and inside the same transaction as the change that produced the orphans)
+    must pass ``repair=True`` explicitly. The returned list is identical in both
+    modes — it always names every problem found.
+    """
     errors: list[str] = []
     tables_map = {"member": "members", "event": "events", "news": "news",
                   "publication": "publications", "sponsor": "sponsors",
@@ -579,8 +593,9 @@ def verify_invariants(conn: sqlite3.Connection, skip_date_inversion: bool = Fals
         table = tables_map.get(et)
         if table and not conn.execute(f'SELECT 1 FROM "{table}" WHERE id=?', (eid,)).fetchone():
             errors.append(f"orphan entity_link: {et} id={eid} references non-existent {table} row")
-            conn.execute("DELETE FROM entity_links WHERE id=?", (row["id"],))
-            orphan_el += 1
+            if repair:
+                conn.execute("DELETE FROM entity_links WHERE id=?", (row["id"],))
+                orphan_el += 1
     if orphan_el:
         log.info("verify_invariants cleaned %d orphan entity_link(s)", orphan_el)
 
@@ -590,8 +605,9 @@ def verify_invariants(conn: sqlite3.Connection, skip_date_inversion: bool = Fals
         table = tables_map.get(et)
         if table and not conn.execute(f'SELECT 1 FROM "{table}" WHERE id=?', (eid,)).fetchone():
             errors.append(f"orphan asset_link: {et} id={eid} references non-existent {table} row")
-            conn.execute("DELETE FROM asset_links WHERE id=?", (row["id"],))
-            orphan_al += 1
+            if repair:
+                conn.execute("DELETE FROM asset_links WHERE id=?", (row["id"],))
+                orphan_al += 1
     if orphan_al:
         log.info("verify_invariants cleaned %d orphan asset_link(s)", orphan_al)
 
@@ -649,6 +665,7 @@ def apply_bundle(db_path: Path, bundle_id: int) -> dict:
     conn = connect(db_path)
     try:
         conn.execute("BEGIN IMMEDIATE")
+        baseline_fk = {tuple(row) for row in conn.execute("PRAGMA foreign_key_check").fetchall()}
         bundle, rows = _bundle_rows(conn, bundle_id)
         if bundle["status"] != "validated":
             raise ValueError("bundle must pass validation immediately before application")
@@ -689,15 +706,31 @@ def apply_bundle(db_path: Path, bundle_id: int) -> dict:
                 raise
             conn.execute("UPDATE quality_findings SET status='resolved',updated_at=CURRENT_TIMESTAMP WHERE id=?", (finding_id,))
             conn.execute("UPDATE quality_bundle_items SET status='applied' WHERE id=?", (item_id,))
-        fk_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
-        if fk_violations:
-            log.warning("apply_bundle foreign key violations (ignored): %s", [(r[0], r[1], r[2]) for r in fk_violations])
-        invariant_errors = verify_invariants(conn, skip_date_inversion=True)
+        fk_violations = {tuple(row) for row in conn.execute("PRAGMA foreign_key_check").fetchall()}
+        # A merge/clean plan that leaves dangling references means the content
+        # archive is corrupted. Compare against the pre-apply baseline so a
+        # pre-existing problem cannot block every bundle, but a violation this
+        # bundle introduced always rolls the whole transaction back instead of
+        # being logged and committed as a success.
+        introduced = sorted(fk_violations - baseline_fk)
+        if introduced:
+            log.error("apply_bundle introduced foreign key violations bundle_id=%s rows=%s", bundle_id, introduced[:5])
+            raise ValueError(
+                f"Bundle left the database inconsistent: {len(introduced)} foreign key violation(s)"
+            )
+        invariant_errors = verify_invariants(conn, skip_date_inversion=True, repair=True)
+        repaired_links = sum(1 for e in invariant_errors if e.startswith("orphan "))
+        if repaired_links:
+            log.warning(
+                "apply_bundle removed %d orphan link row(s) bundle_id=%s", repaired_links, bundle_id
+            )
         if invariant_errors:
             log.warning("apply_bundle invariant issues (ignored): %s", '; '.join(invariant_errors[:10]))
         records_removed = sum(max(0, len(p.get("record_ids") or []) - 1) for p in plans if p.get("action_type") == "merge_records")
         report = {
-            "valid": True, "errors": [], "warnings": [],
+            "valid": True, "errors": [],
+            "warnings": list(invariant_errors[:10]),
+            "repaired_links": repaired_links,
             "operations": len(plans), "plans": plans, "aliases": aliases,
             "assets_preserved": assets, "files_quarantined": 0,
             "records_removed": records_removed,

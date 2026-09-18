@@ -90,8 +90,17 @@ def _delete_db_asset(conn, asset_id: int) -> bool:
         resolved = fpath.resolve()
         if resolved.is_file() and (resolved.parent == assets_root or assets_root in resolved.parents):
             resolved.unlink()
-    except OSError:
-        pass
+    except OSError as exc:
+        # Report the failure instead of dropping the row: a "cleaned up" count
+        # that includes files still on disk hides disk growth and makes the
+        # recovery archive the only remaining record of the file.
+        current_app.logger.warning(
+            "asset file delete failed id=%s path=%s error=%s",
+            asset_id,
+            fpath,
+            type(exc).__name__,
+        )
+        return False
     conn.execute("DELETE FROM assets WHERE id=?", (asset_id,))
     return True
 

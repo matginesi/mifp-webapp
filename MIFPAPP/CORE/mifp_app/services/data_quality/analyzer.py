@@ -565,8 +565,20 @@ def _save_progress(conn: sqlite3.Connection, run_id: int, pct: int, message: str
     try:
         conn.execute("UPDATE quality_runs SET progress_pct=?,progress_message=? WHERE id=?", (pct, message[:200], run_id))
         conn.commit()
-    except Exception:
-        pass
+    except sqlite3.Error as exc:
+        # Progress reporting must never abort a scan, but a persistent write
+        # failure should stay visible instead of freezing the dashboard with no
+        # explanation.
+        from ...utils.logger import get_logger, log_event_throttled
+
+        log_event_throttled(
+            get_logger("data-quality"),
+            "data_quality.progress_write_failed",
+            "Data Quality progress could not be persisted",
+            interval_seconds=60,
+            run_id=run_id,
+            error_type=type(exc).__name__,
+        )
 
 
 def analyze(

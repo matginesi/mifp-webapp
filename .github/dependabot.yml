@@ -1,0 +1,34 @@
+version: 2
+# Keeps pinned dependencies and GitHub Actions current with reviewable PRs.
+# Security-relevant ecosystems only; nothing here auto-merges.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Base image digest and apt package drift in the production image.
+  - package-ecosystem: docker
+    directory: /MIFPAPP/CORE
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: pip
+    directory: /MIFPAPP/CORE
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: pip
+    directory: /SCRAPERS
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: pip
+    directory: /MIFPAPP/DATABASE
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3

@@ -61,9 +61,16 @@ if [[ -z "$SSH_PORT" ]]; then
     SSH_PORT="$(awk '{print $4}' <<<"$SSH_CONNECTION")"
   elif [[ -n "${SSH_CLIENT:-}" ]]; then
     SSH_PORT="$(awk '{print $3}' <<<"$SSH_CLIENT")"
-  else
-    SSH_PORT=22
   fi
+fi
+if [[ -z "$SSH_PORT" ]]; then
+  # No interactive session (cloud-init, provider console): ask sshd itself
+  # instead of assuming 22. Enabling the firewall with the wrong port would
+  # lock the operator out of the host.
+  SSH_PORT="$(sshd -T 2>/dev/null | awk '$1 == "port" {print $2; exit}')" || true
+fi
+if [[ -z "$SSH_PORT" ]]; then
+  die "Impossibile determinare la porta SSH (nessuna sessione SSH attiva e sshd non leggibile). Rilancia con --ssh-port N."
 fi
 [[ "$SSH_PORT" =~ ^[0-9]+$ ]] && ((SSH_PORT >= 1 && SSH_PORT <= 65535)) || die "Porta SSH non valida: $SSH_PORT"
 [[ -f "$SCRIPT_DIR/configure.py" && -f "$SCRIPT_DIR/vps_config.py" && -f "$SCRIPT_DIR/backup.sh" && -f "$SCRIPT_DIR/mifpctl" && -f "$SCRIPT_DIR/local-hosts.sh" ]] \
@@ -71,20 +78,43 @@ fi
 
 say "Installo i pacchetti di base"
 export DEBIAN_FRONTEND=noninteractive
+# A concurrent or previously interrupted run can leave dpkg half-configured;
+# repair it first so the install below cannot fail obscurely.
+mkdir -p /run/lock
+exec 9>/run/lock/mifp-bootstrap.lock
+flock -n 9 || die "Un altro bootstrap MIFP è in corso."
+dpkg --configure -a >/dev/null 2>&1 || true
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg debian-keyring debian-archive-keyring apt-transport-https \
-  python3 sqlite3 rsync restic ufw util-linux php-fpm php-cli php-mbstring php-curl
+  python3 sqlite3 rsync restic ufw util-linux php-fpm php-cli php-mbstring php-curl \
+  unattended-upgrades needrestart update-notifier-common fail2ban python3-systemd
 
 say "Configuro Docker Engine dal repository ufficiale"
 install -m 0755 -d /etc/apt/keyrings
+# Pin the signing key to its published fingerprint: TLS alone would let a
+# DNS/TLS compromise install a rogue key trusted for every future docker-ce
+# package. Override only after verifying the new fingerprint out of band.
+DOCKER_KEY_FINGERPRINT="${MIFP_DOCKER_KEY_FINGERPRINT:-9DC858229FC7DD38854AE2D88D81803C0EBFCD88}"
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
+DOCKER_KEY_ACTUAL="$(gpg --batch --with-colons --import-options show-only --import /etc/apt/keyrings/docker.asc 2>/dev/null | awk -F: '/^fpr:/{print $10; exit}')"
+[[ -n "$DOCKER_KEY_ACTUAL" ]] || die "Impossibile leggere la chiave APT di Docker."
+[[ "$DOCKER_KEY_ACTUAL" == "$DOCKER_KEY_FINGERPRINT" ]] \
+  || die "Fingerprint della chiave Docker inattesa: $DOCKER_KEY_ACTUAL (atteso $DOCKER_KEY_FINGERPRINT). Verifica la chiave e aggiorna MIFP_DOCKER_KEY_FINGERPRINT."
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $VERSION_CODENAME stable" \
   > /etc/apt/sources.list.d/docker.list
 
 say "Configuro Caddy dal repository ufficiale"
+# Same reasoning as Docker. Caddy rotates this key occasionally; if the check
+# fails, verify the new fingerprint against the official install page and set
+# MIFP_CADDY_KEY_FINGERPRINT explicitly.
+CADDY_KEY_FINGERPRINT="${MIFP_CADDY_KEY_FINGERPRINT:-65760C51EDEA2017CEA2CA15155B6D79CA56EA34}"
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
   | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+CADDY_KEY_ACTUAL="$(gpg --batch --with-colons --import-options show-only --import /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null | awk -F: '/^fpr:/{print $10; exit}')"
+[[ -n "$CADDY_KEY_ACTUAL" ]] || die "Impossibile leggere la chiave APT di Caddy."
+[[ "$CADDY_KEY_ACTUAL" == "$CADDY_KEY_FINGERPRINT" ]] \
+  || die "Fingerprint della chiave Caddy inattesa: $CADDY_KEY_ACTUAL (atteso $CADDY_KEY_FINGERPRINT). Verifica la chiave e aggiorna MIFP_CADDY_KEY_FINGERPRINT."
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
   > /etc/apt/sources.list.d/caddy-stable.list
 chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
@@ -92,6 +122,22 @@ chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.
 apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin caddy
 systemctl enable --now docker.service
+
+# Daemon-wide safety defaults: survive a docker restart without killing the
+# app, and bound log growth for any future service that forgets a logging block.
+if [[ ! -f /etc/docker/daemon.json ]]; then
+  say "Configuro i default del daemon Docker"
+  install -d -m 0755 /etc/docker
+  cat > /etc/docker/daemon.json <<'EOF_DOCKER_DAEMON'
+{
+  "live-restore": true,
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" }
+}
+EOF_DOCKER_DAEMON
+  chmod 0644 /etc/docker/daemon.json
+  systemctl restart docker.service
+fi
 
 docker info >/dev/null 2>&1 || die "Docker è installato ma il daemon non risponde."
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 non è disponibile."
@@ -167,8 +213,13 @@ php_admin_value[session.save_path] = $MIFP_HOME/events-private/sessions
 php_admin_value[upload_tmp_dir] = $MIFP_HOME/events-private/tmp
 php_admin_value[display_errors] = Off
 php_admin_value[log_errors] = On
+php_admin_value[error_log] = /var/log/php-mifp-events.log
 php_admin_value[expose_php] = Off
 php_admin_value[cgi.fix_pathinfo] = 0
+# An imported conference tree must not ship a .user.ini that re-enables
+# auto_prepend_file or loosens any of the values above.
+php_admin_value[user_ini.filename] =
+php_admin_flag[allow_url_include] = Off
 php_admin_value[session.cookie_secure] = 1
 php_admin_value[session.cookie_httponly] = 1
 php_admin_value[session.cookie_samesite] = Lax
@@ -178,9 +229,10 @@ php_admin_value[max_execution_time] = 30
 php_admin_value[upload_max_filesize] = 10M
 php_admin_value[post_max_size] = 12M
 php_admin_value[max_file_uploads] = 5
-php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen
+php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,putenv
 EOF_PHP_POOL
 chmod 0644 "$PHP_POOL_DIR/mifp-events.conf"
+install -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0640 /dev/null /var/log/php-mifp-events.log
 PHP_FPM_BIN="$(command -v "php-fpm${PHP_VERSION}" || true)"
 [[ -n "$PHP_FPM_BIN" ]] || die "Binario PHP-FPM non trovato per PHP $PHP_VERSION"
 "$PHP_FPM_BIN" -t || die "Configurazione PHP-FPM non valida."
@@ -203,6 +255,13 @@ install -o root -g root -m 0750 "$SCRIPT_DIR/local-hosts.sh" "$MIFP_HOME/local-h
 install -o root -g root -m 0755 "$SCRIPT_DIR/mifpctl" /usr/local/sbin/mifpctl
 install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-backup.service" /etc/systemd/system/mifp-backup.service
 install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-backup.timer" /etc/systemd/system/mifp-backup.timer
+# The unit is written for the default layout; rewrite the two paths when the
+# operator overrides MIFP_HOME / MIFP_CONFIG_DIR so the timer cannot silently
+# run a non-existent script.
+if [[ "$MIFP_HOME" != "/opt/mifp" || "${MIFP_CONFIG_DIR:-/etc/mifp}" != "/etc/mifp" ]]; then
+  sed -i -e "s|/opt/mifp|$MIFP_HOME|g" -e "s|/etc/mifp|${MIFP_CONFIG_DIR:-/etc/mifp}|g" \
+    /etc/systemd/system/mifp-backup.service
+fi
 systemctl daemon-reload
 
 say "Inizializzo la configurazione progressiva"
@@ -245,19 +304,39 @@ if [[ -n "$DOMAIN" ]]; then
   else
     MIFP_TLS_DIRECTIVE=""
   fi
+  # Render to a temporary file and validate BEFORE replacing the live config:
+  # an invalid render must never be able to break a running Caddy.
+  CADDY_TMP="$(mktemp /etc/caddy/.mifp-caddy.XXXXXX)"
   sed -e "s/__MIFP_DOMAIN__/$DOMAIN/g" \
     -e "s/__MIFP_WWW_DOMAIN__/$WWW_DOMAIN/g" \
     -e "s/__MIFP_EVENTS_DOMAIN__/$EVENTS_DOMAIN/g" \
     -e "s/__MIFP_TLS__/$MIFP_TLS_DIRECTIVE/g" \
-    "$SCRIPT_DIR/Caddyfile" > /etc/caddy/Caddyfile
+    "$SCRIPT_DIR/Caddyfile" > "$CADDY_TMP"
+  chown root:caddy "$CADDY_TMP"
+  chmod 0644 "$CADDY_TMP"
+  caddy fmt --overwrite "$CADDY_TMP" >/dev/null
+  if ! caddy validate --config "$CADDY_TMP" --adapter caddyfile >/dev/null; then
+    rm -f "$CADDY_TMP"
+    die "Caddyfile generato non valido: la configurazione live non è stata modificata."
+  fi
+  mv -f "$CADDY_TMP" /etc/caddy/Caddyfile
 else
   say "Configuro Caddy in attesa del dominio"
   bash "$SCRIPT_DIR/local-hosts.sh" --clear "${MIFP_HOSTS_FILE:-/etc/hosts}"
-  cat > /etc/caddy/Caddyfile <<'EOF_CADDY_PENDING'
+  CADDY_TMP="$(mktemp /etc/caddy/.mifp-caddy.XXXXXX)"
+  cat > "$CADDY_TMP" <<'EOF_CADDY_PENDING'
 :80 {
     respond "MIFP host ready; run sudo mifpctl configure" 503
 }
 EOF_CADDY_PENDING
+  chown root:caddy "$CADDY_TMP"
+  chmod 0644 "$CADDY_TMP"
+  caddy fmt --overwrite "$CADDY_TMP" >/dev/null
+  if ! caddy validate --config "$CADDY_TMP" --adapter caddyfile >/dev/null; then
+    rm -f "$CADDY_TMP"
+    die "Caddyfile di attesa non valido: la configurazione live non è stata modificata."
+  fi
+  mv -f "$CADDY_TMP" /etc/caddy/Caddyfile
 fi
 chown root:caddy /etc/caddy/Caddyfile
 chmod 0644 /etc/caddy/Caddyfile
@@ -270,8 +349,6 @@ EOF_EVENTS_PHP
 fi
 chown root:caddy /etc/caddy/mifp-events-php.caddy
 chmod 0644 /etc/caddy/mifp-events-php.caddy
-caddy fmt --overwrite /etc/caddy/Caddyfile
-caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 systemctl enable --now caddy.service
 # Refresh supplementary group membership (mifp-events-public) on re-bootstrap.
 systemctl restart caddy.service
@@ -289,13 +366,95 @@ if [[ "$DOMAIN" == *.home.arpa ]]; then
     "  /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt"
 fi
 
+say "Configuro aggiornamenti di sicurezza automatici"
+# Security updates only, and never an automatic reboot of a production host.
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF_AUTO_UPGRADES'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+EOF_AUTO_UPGRADES
+cat > /etc/apt/apt.conf.d/52mifp-unattended <<'EOF_MIFP_UNATTENDED'
+// MIFP: apply security updates only. The Docker and Caddy third-party
+// repositories have no -security suite, so they are NOT auto-updated here and
+// must be patched deliberately (see docs/DEPLOY_NEW_VPS.md).
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "false";
+EOF_MIFP_UNATTENDED
+chmod 0644 /etc/apt/apt.conf.d/20auto-upgrades /etc/apt/apt.conf.d/52mifp-unattended
+systemctl enable --now unattended-upgrades.service >/dev/null 2>&1 || true
+
+say "Configuro la protezione brute-force SSH (fail2ban)"
+cat > /etc/fail2ban/jail.d/mifp-sshd.local <<EOF_FAIL2BAN
+# MIFP: SSH-only brute-force protection. Application login throttling is
+# handled inside the webapp, not here.
+[DEFAULT]
+backend  = systemd
+ignoreip = 127.0.0.1/8 ::1
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+banaction = ufw
+banaction_allports = ufw
+
+[sshd]
+enabled = true
+port    = $SSH_PORT
+EOF_FAIL2BAN
+chmod 0644 /etc/fail2ban/jail.d/mifp-sshd.local
+systemctl enable --now fail2ban.service >/dev/null 2>&1 || true
+
 say "Configuro firewall"
+# UFW only filters IPv6 when IPV6=yes; without this a public v6 address would be
+# reachable while the v4 rules look correct.
+if [[ -f /etc/default/ufw ]]; then
+  sed -i 's/^IPV6=.*/IPV6=yes/' /etc/default/ufw
+  grep -q '^IPV6=yes' /etc/default/ufw || printf 'IPV6=yes\n' >> /etc/default/ufw
+fi
 ufw default deny incoming >/dev/null
 ufw default allow outgoing >/dev/null
-ufw allow "$SSH_PORT/tcp" >/dev/null
+# `limit` adds basic connection-rate limiting on top of the fail2ban jail.
+ufw limit "$SSH_PORT/tcp" >/dev/null
 ufw allow 80/tcp >/dev/null
 ufw allow 443/tcp >/dev/null
 ufw --force enable >/dev/null
+# Fail closed: never leave the host with the firewall up but the SSH rule
+# missing, which would lock the operator out.
+ufw status verbose | grep -qE "(^|[[:space:]])${SSH_PORT}/tcp" \
+  || die "Regola UFW per la porta SSH $SSH_PORT assente: verifica manualmente prima di disconnetterti."
+ufw status verbose | grep -q "(v6)" \
+  || die "UFW non mostra regole IPv6: verifica /etc/default/ufw prima di considerare l'host protetto."
+
+say "Riepilogo post-condizioni"
+POSTCONDITIONS_OK=1
+for unit in docker.service caddy.service "php${PHP_VERSION}-fpm.service" fail2ban.service; do
+  if systemctl is-active --quiet "$unit"; then
+    printf '  OK   %s attivo\n' "$unit"
+  else
+    printf '  FAIL %s NON attivo\n' "$unit" >&2
+    POSTCONDITIONS_OK=0
+  fi
+done
+for path in "$MIFP_HOME/data" "$MIFP_HOME/events" "$MIFP_HOME/events-private" /etc/mifp/config.env /etc/mifp/secrets.env; do
+  if [[ -e "$path" ]]; then
+    printf '  OK   %s\n' "$path"
+  else
+    printf '  FAIL %s mancante\n' "$path" >&2
+    POSTCONDITIONS_OK=0
+  fi
+done
+if ufw status | grep -q "Status: active"; then
+  printf '  OK   ufw attivo\n'
+else
+  printf '  FAIL ufw non attivo\n' >&2
+  POSTCONDITIONS_OK=0
+fi
+[[ "$POSTCONDITIONS_OK" == "1" ]] || die "Bootstrap completato con post-condizioni mancanti: risolvile prima di procedere."
 
 say "Host bootstrap completed"
 printf '%s\n' \

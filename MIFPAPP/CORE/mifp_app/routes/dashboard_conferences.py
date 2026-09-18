@@ -21,6 +21,7 @@ from werkzeug.utils import secure_filename
 
 from ..db.connection import connect
 from ..services.conference_packages import (
+    MAX_EDITOR_PACKAGE_BYTES,
     load_stored_package,
     looks_like_editor_package,
     normalize_public_path,
@@ -135,7 +136,19 @@ def _apply_conference_import(site: dict, config_upload=None, package_upload=None
     if package_upload and package_upload.filename:
         if not package_upload.filename.lower().endswith(".zip"):
             raise ValueError("Conference packages must use the .zip extension.")
-        raw = package_upload.read()
+        # Reject oversized uploads from the declared length before buffering the
+        # whole body in memory: the parsed-package limit is enforced later, but
+        # reading first would already have allocated the full request.
+        declared = getattr(package_upload, "content_length", None)
+        if declared is not None and declared > MAX_EDITOR_PACKAGE_BYTES:
+            raise ValueError(
+                f"Conference package exceeds the {MAX_EDITOR_PACKAGE_BYTES // (1024 * 1024)} MB limit."
+            )
+        raw = package_upload.read(MAX_EDITOR_PACKAGE_BYTES + 1)
+        if len(raw) > MAX_EDITOR_PACKAGE_BYTES:
+            raise ValueError(
+                f"Conference package exceeds the {MAX_EDITOR_PACKAGE_BYTES // (1024 * 1024)} MB limit."
+            )
         if looks_like_editor_package(raw):
             stored = store_editor_package(
                 raw,

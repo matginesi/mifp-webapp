@@ -34,7 +34,19 @@ def send_mail(app, *, to: str, subject: str, body: str, reply_to: str | None = N
         msg["Reply-To"] = _valid_email(reply_to)
     msg.set_content(body or "", subtype="plain", charset="utf-8")
     if provider == "console":
-        log.info("console mail\n%s", msg.as_string())
+        # Join-request notifications carry personal data (name, affiliation,
+        # motivation). Ordinary logs must not retain it, so only metadata is
+        # logged at INFO and the full message is restricted to DEBUG; the
+        # provider is refused outright in production.
+        if str(app.config.get("ENV", "")).lower() == "production":
+            raise RuntimeError("MAIL_PROVIDER=console is not allowed in production")
+        log.info(
+            "console mail subject=%s to=%s body_bytes=%d",
+            _clean_header(subject)[:180],
+            to,
+            len(body or ""),
+        )
+        log.debug("console mail body\n%s", msg.as_string())
         return True
     if provider == "smtp":
         host = app.config.get("SMTP_HOST")

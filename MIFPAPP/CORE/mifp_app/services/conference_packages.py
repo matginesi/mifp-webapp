@@ -20,6 +20,7 @@ import re
 import shutil
 import stat
 import tempfile
+import unicodedata
 import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
@@ -28,6 +29,8 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import yaml
+
+from ..utils.file_safety import open_write_no_follow
 
 MAX_EDITOR_PACKAGE_BYTES = 512 * 1024 * 1024
 MAX_EDITOR_EXPANDED_BYTES = 512 * 1024 * 1024
@@ -202,6 +205,9 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> tuple[list[_ArchiveEntry]
             or "\x00" in name
             or "\\" in name
             or path.is_absolute()
+            # PurePosixPath("C:/x").is_absolute() is False; a drive-letter first
+            # component must be rejected for parity with the portability loader.
+            or ":" in path.parts[0]
             or any(
                 part in {"", ".", ".."} or len(part.encode("utf-8")) > 255
                 for part in path.parts
@@ -226,6 +232,7 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> tuple[list[_ArchiveEntry]
     prefix = _root_prefix(raw_names)
     entries: list[_ArchiveEntry] = []
     normalized_names: set[str] = set()
+    portable_names: set[str] = set()
     for info in infos:
         normalized = info.filename[len(prefix) :] if prefix else info.filename
         if not normalized:
@@ -234,6 +241,12 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> tuple[list[_ArchiveEntry]
         suffix = path.suffix.lower()
         if normalized in normalized_names:
             raise ValueError(f"Duplicate normalized path in Conference Editor ZIP: {normalized}")
+        portable = unicodedata.normalize("NFC", normalized).casefold()
+        if portable in portable_names:
+            raise ValueError(
+                f"Paths collide on a case-insensitive filesystem in Conference Editor ZIP: {normalized}"
+            )
+        portable_names.add(portable)
         if suffix in _BLOCKED_EXECUTABLE_SUFFIXES:
             raise ValueError(f"Unsupported executable file in Conference Editor ZIP: {normalized}")
         if suffix == ".php" and (not path.parts or path.parts[0] != "regform"):
@@ -409,7 +422,7 @@ def _extract_editor_package(raw: bytes, destination: Path, package: ConferencePa
                 resolved_parent.relative_to(destination.resolve())
             except ValueError as exc:
                 raise ValueError(f"Unsafe extraction path: {entry.normalized_name}") from exc
-            with archive.open(entry.info) as source, target.open("wb") as output:
+            with archive.open(entry.info) as source, open_write_no_follow(target) as output:
                 shutil.copyfileobj(source, output, length=1024 * 1024)
             os.chmod(target, 0o640)
 

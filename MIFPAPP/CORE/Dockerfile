@@ -29,7 +29,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates fonts-dejavu-core libffi8 libgdk-pixbuf-2.0-0 libharfbuzz-subset0 \
        libjpeg62-turbo libopenjp2-7 libpango-1.0-0 libpangoft2-1.0-0 shared-mime-info \
+       libpcre2-8-0 \
     && rm -rf /var/lib/apt/lists/*
+# libpcre2-8-0 is named explicitly so apt upgrades it to the current
+# security-patched candidate; the pinned base digest ships 10.42-1, which trivy
+# reports with three HIGH CVEs that are already fixed in bookworm-security.
 
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv

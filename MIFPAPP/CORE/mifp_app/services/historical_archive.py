@@ -503,6 +503,13 @@ def inspect_historical_archive(path: Path, conn: sqlite3.Connection | None = Non
         seen_uid: set[str] = set()
         seen_slug: set[str] = set()
         for name in event_members:
+            # Check the declared member size before reading it into memory: the
+            # unpacked-size cap is enforced across the whole archive, so one
+            # oversized event.json must be rejected rather than buffered first.
+            if members[name].file_size > Config.IMPORT_MAX_MANIFEST_BYTES:
+                raise HistoricalArchiveError(
+                    f"Historical event record is too large: {name}"
+                )
             event = _validate_event(zf.read(name), name, members)
             if event["uid"] in seen_uid or event["slug"] in seen_slug:
                 raise HistoricalArchiveError(f"Duplicate event identity in package: {name}")

@@ -102,7 +102,11 @@ def test_ci_cd_workflow_tests_builds_only() -> None:
     assert 'http://127.0.0.1:${port}/ready' in text
     assert 'http://127.0.0.1:${port}/health' in text
     assert "promote-latest:" in text
-    assert "needs: [build, verify-image]" in text
+    # `latest` is promoted only after BOTH the boot verification and the image
+    # CVE scan have passed.
+    assert "needs: [build, verify-image, image-scan]" in text
+    assert "trivy image" in text
+    assert "--ignore-unfixed" in text
     assert 'imagetools create --tag "$REPOSITORY:latest" "$REPOSITORY@$DIGEST"' in text
     # Deployment to VPS has been removed - users deploy manually
     assert "ssh-action" not in text
@@ -217,7 +221,20 @@ def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     assert "--admin-if-missing" not in script
     assert 'install -o root -g root -m 0750 "$SCRIPT_DIR/vps_config.py"' in script
     assert "Host bootstrap completed" in script
-    assert "caddy fmt --overwrite /etc/caddy/Caddyfile" in script
+    # The live Caddyfile must never be written before it validates: render to a
+    # temp file, format+validate it, then publish atomically.
+    assert 'mktemp /etc/caddy/.mifp-caddy.XXXXXX' in script
+    assert 'caddy fmt --overwrite "$CADDY_TMP"' in script
+    assert 'caddy validate --config "$CADDY_TMP" --adapter caddyfile' in script
+    assert 'mv -f "$CADDY_TMP" /etc/caddy/Caddyfile' in script
+    # Host security baseline: security-only unattended upgrades (never an
+    # automatic reboot), SSH brute-force protection, and pinned apt keys.
+    assert "unattended-upgrades" in script
+    assert 'Unattended-Upgrade::Automatic-Reboot "false"' in script
+    assert "fail2ban" in script
+    assert "MIFP_DOCKER_KEY_FINGERPRINT" in script
+    assert "MIFP_CADDY_KEY_FINGERPRINT" in script
+    assert "ufw limit" in script
     assert 'if [[ "$DOMAIN" == *.home.arpa ]]' in script
     assert 'MIFP_TLS_DIRECTIVE="tls internal"' in script
     assert 'MIFP_TLS_DIRECTIVE=""' in script
@@ -247,7 +264,12 @@ def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
 
     assert "hygiene:" in workflow
     assert "python tools/check_repo_hygiene.py" in workflow
-    assert workflow.count("needs: [hygiene, test, audit]") == 2
+    # The publish path is gated on the secret scan as well as the test/audit
+    # jobs, and `latest` is promoted only after the image scan passes.
+    assert workflow.count("needs: [hygiene, test, audit, secrets]") == 2
+    assert "needs: [build, verify-image, image-scan]" in workflow
+    assert "secrets:" in workflow
+    assert "gitleaks git ." in workflow
 
     assert '"SCRAPERS/OUTPUTS"' in packager
     assert '"MIFPAPP/DATABASE/uploads"' in packager

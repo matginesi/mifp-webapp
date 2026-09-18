@@ -186,7 +186,7 @@ def data_quality_analyze():
     def _run():
         try:
             with app.app_context(), connect(db_path) as c:
-                result = analyze(c, run_id=run_id, assets_dir=assets_dir)
+                analyze(c, run_id=run_id, assets_dir=assets_dir)
         except Exception as exc:
             try:
                 with connect(db_path) as c:
@@ -365,11 +365,6 @@ def data_quality_decision(finding_id: int):
         if decision == "accept":
             workflow = str(finding.get("workflow") or finding_workflow(finding))
             plan = finding.get("plan") or {}
-            record_ids = [
-                int(value)
-                for value in (finding.get("record_ids") or [])
-                if str(value).isdigit()
-            ]
 
             # Every manual finding must have a real path to completion.
             # If the plan exposes no editable choice (no merge target, no field

@@ -503,7 +503,6 @@ def control_safety_operations_run():
         if operation == "export":
             export_owner = session.get("admin_username")
             export_session_key = download_jobs.session_key()
-            app = current_app._get_current_object()
 
             def build(path, progress) -> dict:
                 def report(message: str, pct: int, records: int = 0, assets: int = 0, errors: int = 0, counts: dict | None = None, total_assets: int = 0) -> None:
@@ -549,7 +548,6 @@ def control_safety_operations_run():
         if operation == "excel":
             export_owner = session.get("admin_username")
             export_session_key = download_jobs.session_key()
-            app = current_app._get_current_object()
 
             def build(path, progress) -> dict:
                 member_count = 0

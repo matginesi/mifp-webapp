@@ -987,3 +987,28 @@ class TestMergeDetectionAndApplication:
             assert remaining[0]["review_status"] == "published"
         finally:
             os.unlink(tmp.name)
+
+
+def test_verify_invariants_reports_without_repairing_by_default():
+    """Verification must be non-destructive unless repair is explicit."""
+    import sqlite3
+    from pathlib import Path
+
+    from mifp_app.services.data_quality.executor import verify_invariants
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    schema = Path(__file__).resolve().parents[2] / "MIFPAPP" / "CORE" / "mifp_app" / "db" / "schema.sql"
+    conn.executescript(schema.read_text(encoding="utf-8"))
+    conn.execute("INSERT INTO entity_links(entity_type, entity_id, url) VALUES('member', 999, 'https://orphan.example')")
+    conn.commit()
+
+    errors = verify_invariants(conn)
+    assert any("orphan entity_link" in e for e in errors)
+    remaining = conn.execute("SELECT COUNT(*) FROM entity_links").fetchone()[0]
+    assert remaining == 1, "verify_invariants must not delete rows without repair=True"
+
+    errors = verify_invariants(conn, repair=True)
+    assert any("orphan entity_link" in e for e in errors)
+    remaining = conn.execute("SELECT COUNT(*) FROM entity_links").fetchone()[0]
+    assert remaining == 0, "repair=True must remove the orphan row"

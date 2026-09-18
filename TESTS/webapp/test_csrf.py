@@ -49,3 +49,51 @@ def test_post_with_valid_csrf_token_passes(client):
         csrf2 = sess.get("_csrf_token", "")
     resp = client.post("/dashboard/settings", data={"_csrf_token": csrf2})
     assert resp.status_code != 400
+
+
+def _login_token(client) -> str:
+    page = client.get("/login")
+    match = re.search(rb'name="_csrf_token" value="([^"]+)"', page.data)
+    assert match is not None
+    return match.group(1).decode("utf-8")
+
+
+def test_anonymous_form_issues_client_binding_cookie(client):
+    """Rendering a form must also set the double-submit binding cookie."""
+    _login_token(client)
+    cookie = client.get_cookie("mifp_csrf")
+    assert cookie is not None
+    assert cookie.http_only is True
+    assert cookie.same_site  # SameSite is explicitly set
+
+
+def test_scraped_token_cannot_be_replayed_by_another_client(app):
+    """A token lifted from a public page must not validate without the cookie
+    that was issued to the browser it was rendered for (CSRF replay)."""
+    victim = app.test_client()
+    stolen = _login_token(victim)
+    assert victim.get_cookie("mifp_csrf") is not None
+
+    attacker = app.test_client()
+    assert attacker.get_cookie("mifp_csrf") is None
+    attacker.post(
+        "/login",
+        data={
+            "login_username": "admin",
+            "login_password": "secret123",
+            "_csrf_token": stolen,
+        },
+    )
+    with attacker.session_transaction() as sess:
+        assert not sess.get("admin_logged_in"), "replayed token must not authenticate"
+
+
+def test_stateless_token_validation_requires_the_cookie(app):
+    """Directly: a freshly minted anonymous token is only valid when the
+    matching client cookie is present on the request."""
+    from mifp_app import _stateless_csrf_token, _validate_stateless_csrf
+
+    with app.test_request_context("/"):
+        token = _stateless_csrf_token()
+        assert _validate_stateless_csrf(token) is False
+

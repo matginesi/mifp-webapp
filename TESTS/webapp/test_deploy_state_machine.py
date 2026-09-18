@@ -330,11 +330,56 @@ def test_security_check_passes_on_hardened_preinit_host(tmp_path: Path) -> None:
     Path(env["MIFP_DOCKER_CONFIG_FILE"]).chmod(0o600)
     bin_dir = Path(env["PATH"].split(":", 1)[0])
     _write_executable(bin_dir / "ss", "#!/bin/sh\nexit 0\n")
+    # A hardened host must expose an effective sshd policy and an active
+    # firewall; security-check verifies both instead of assuming them.
+    _write_executable(
+        bin_dir / "sshd",
+        "#!/bin/sh\n"
+        "[ \"$1\" = -T ] || exit 0\n"
+        "printf 'port 22\\npasswordauthentication no\\npermitrootlogin prohibit-password\\n'\n",
+    )
+    _write_executable(
+        bin_dir / "ufw",
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  status) printf 'Status: active\\n\\nTo Action From\\n-- ------ ----\\n22/tcp LIMIT Anywhere (v6)\\n80/tcp ALLOW Anywhere (v6)\\n443/tcp ALLOW Anywhere (v6)\\n' ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+    )
 
     result = _run(env, "security-check")
 
     assert "Security check: OK" in result.stdout
     assert "Container checks: NOT INITIALIZED" in result.stdout
+    assert "SSH password authentication disabled" in result.stdout
+    assert "Firewall active" in result.stdout
+    assert "Firewall IPv6 rules present" in result.stdout
+
+
+def test_security_check_fails_when_ssh_password_auth_is_enabled(tmp_path: Path) -> None:
+    """The check must not report OK on a host that still allows password SSH."""
+    env, home = _env(tmp_path)
+    (home / "events").mkdir()
+    (home / "events-private").mkdir()
+    config_dir = Path(env["MIFP_CONFIG_DIR"])
+    (config_dir / "config.env").chmod(0o640)
+    (config_dir / "secrets.env").chmod(0o600)
+    Path(env["MIFP_DOCKER_CONFIG_FILE"]).chmod(0o600)
+    bin_dir = Path(env["PATH"].split(":", 1)[0])
+    _write_executable(bin_dir / "ss", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        bin_dir / "sshd",
+        "#!/bin/sh\n[ \"$1\" = -T ] || exit 0\nprintf 'port 22\\npasswordauthentication yes\\npermitrootlogin yes\\n'\n",
+    )
+    _write_executable(
+        bin_dir / "ufw",
+        "#!/bin/sh\ncase \"$1\" in status) printf 'Status: active\\n22/tcp LIMIT Anywhere (v6)\\n80/tcp ALLOW Anywhere (v6)\\n443/tcp ALLOW Anywhere (v6)\\n' ;; *) exit 0 ;; esac\n",
+    )
+
+    result = _run(env, "security-check", check=False)
+
+    assert result.returncode != 0
+    assert "PasswordAuthentication" in result.stdout
 
 
 def test_init_uses_latest_only_as_selector_and_persists_clean_digest(tmp_path: Path) -> None:

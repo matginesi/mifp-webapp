@@ -8,7 +8,8 @@ import unicodedata
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-from ..fingerprints import stable_fingerprint
+# Re-exported for the data-quality package: analyzer/executor import it from here.
+from ..fingerprints import stable_fingerprint as stable_fingerprint
 
 
 _SPACE = re.compile(r"\s+")

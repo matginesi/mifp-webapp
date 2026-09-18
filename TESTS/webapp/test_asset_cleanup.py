@@ -86,6 +86,41 @@ class TestAssetCleanup:
         with pytest.raises(ValueError, match="Zip Slip"):
             import_assets_from_zip(conn, assets_dir, zip_path, dry_run=False)
 
+    def test_import_assets_from_zip_does_not_write_through_symlink(self, tmp_path):
+        """A symlink already present in the assets root must never redirect an
+        extracted archive member outside that root."""
+        from mifp_app.services.asset_cleanup import import_assets_from_zip
+
+        conn = _conn()
+        assets_dir = tmp_path / "assets"
+        (assets_dir / "image").mkdir(parents=True)
+        outside = tmp_path / "outside.txt"
+        outside.write_bytes(b"original")
+        (assets_dir / "image" / "evil.txt").symlink_to(outside)
+
+        manifest = {
+            "version": 1,
+            "exported_at": "2024-01-01T00:00:00",
+            "export_type": "full",
+            "assets": [
+                {
+                    "filename": "evil.txt",
+                    "path": "image/evil.txt",
+                    "kind": "other",
+                    "file_included": True,
+                    "checksum": "symlink-check",
+                }
+            ],
+        }
+        zip_path = tmp_path / "symlink.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("manifest.json", json.dumps(manifest))
+            zf.writestr("files/image/evil.txt", b"attacker")
+
+        with pytest.raises((OSError, ValueError)):
+            import_assets_from_zip(conn, assets_dir, zip_path, dry_run=False)
+        assert outside.read_bytes() == b"original"
+
     def test_import_assets_from_zip_rejects_duplicate_members(self, tmp_path):
         from mifp_app.services.asset_cleanup import extract_zip_manifest
 

@@ -11,6 +11,37 @@ from urllib.parse import urlsplit
 
 
 _CSRF_TIMEOUT = 7200  # stateless CSRF token expiry (seconds)
+_CSRF_COOKIE_NAME = "mifp_csrf"
+
+
+def _valid_csrf_client(value: str) -> bool:
+    return len(value) == 32 and all(ch in "0123456789abcdef" for ch in value)
+
+
+def _csrf_client_value() -> str:
+    """Return the anonymous double-submit binding value for this client.
+
+    The signed token alone is replayable: anybody can fetch a fresh one from a
+    public form and embed it in a cross-site POST. Binding the signature to a
+    random value that is also stored in a SameSite cookie means the attacker's
+    page can obtain a token but cannot make the victim's browser send the
+    matching cookie, so the signature no longer validates. The cookie is created
+    here and written by :func:`issue_csrf_cookie` so a token rendered in this
+    request is always bound to the value the response will set.
+    """
+    from flask import g, request
+
+    cached = getattr(g, "_mifp_csrf_client", None)
+    if cached:
+        return cached
+    value = request.cookies.get(_CSRF_COOKIE_NAME, "")
+    if not _valid_csrf_client(value):
+        value = secrets.token_hex(16)
+        g._mifp_csrf_client_issued = value
+    g._mifp_csrf_client = value
+    return value
+
+
 def _stateless_csrf_token() -> str:
     """HMAC-signed CSRF token for anonymous visitors (no session cookie)."""
     from flask import current_app
@@ -21,14 +52,14 @@ def _stateless_csrf_token() -> str:
         secret_key = str(secret_key or "").encode()
     sig = hmac.new(
         secret_key,
-        f"{nonce}:{ts}".encode(),
+        f"{nonce}:{ts}:{_csrf_client_value()}".encode(),
         hashlib.sha256,
     ).hexdigest()
     return f"{ts}:{nonce}:{sig}"
 
 
 def _validate_stateless_csrf(token: str) -> bool:
-    from flask import current_app
+    from flask import current_app, request
     try:
         ts_str, nonce, sig = token.split(":", 2)
         ts = int(ts_str)
@@ -43,12 +74,15 @@ def _validate_stateless_csrf(token: str) -> bool:
             return False
         if len(sig) != 64 or any(ch not in "0123456789abcdef" for ch in sig):
             return False
+        client = request.cookies.get(_CSRF_COOKIE_NAME, "")
+        if not _valid_csrf_client(client):
+            return False
         secret_key = current_app.secret_key
         if not isinstance(secret_key, bytes):
             secret_key = str(secret_key or "").encode()
         expected = hmac.new(
             secret_key,
-            f"{nonce}:{ts_str}".encode(),
+            f"{nonce}:{ts_str}:{client}".encode(),
             hashlib.sha256,
         ).hexdigest()
         return secrets.compare_digest(expected, sig)
@@ -107,7 +141,7 @@ def create_app():
     from werkzeug.middleware.proxy_fix import ProxyFix
 
     from .config import Config
-    from .db.connection import connect, connect_readonly
+    from .db.connection import connect_readonly
     from .routes.auth import bp as auth_bp
     from .routes.dashboard import bp as dashboard_bp
     from .routes.maintenance import bp as maintenance_bp
@@ -120,7 +154,6 @@ def create_app():
         init_request_logging,
         log_event,
         log_event_throttled,
-        log_exception,
         security_event,
         setup_logging,
     )
@@ -250,27 +283,37 @@ def create_app():
         is_logged_in = session.get("admin_logged_in")
 
         # Tokens remain the primary CSRF control. When browsers send Origin or
-        # Referer, also reject cross-origin admin writes as defense in depth.
-        if is_logged_in and request.path.startswith("/dashboard/"):
-            source = request.headers.get("Origin") or request.headers.get("Referer")
-            if source:
-                source_parts = urlsplit(source)
-                expected_parts = urlsplit(request.host_url)
-                if (
-                    source_parts.scheme not in {"http", "https"}
-                    or source_parts.netloc.casefold() != expected_parts.netloc.casefold()
-                ):
-                    security_event(
-                        "csrf.origin_rejected",
-                        "cross-origin dashboard write rejected",
-                        severity="warning",
-                        ip=get_client_ip(),
-                        path=request.path,
-                    )
-                    return jsonify({
-                        "error": "origin_rejected",
-                        "request_id": getattr(g, "request_id", "-"),
-                    }), 403
+        # Referer, also reject cross-origin writes. This applies to every
+        # state-changing request, not only authenticated dashboard writes: an
+        # anonymous token can be fetched from a public form (/join, /login) and
+        # replayed in a cross-site POST, and no session cookie is involved for
+        # SameSite to protect. Requests without either header (non-browser
+        # clients) still fall back to token validation alone.
+        source = request.headers.get("Origin") or request.headers.get("Referer")
+        if source:
+            source_parts = urlsplit(source)
+            expected_parts = urlsplit(request.host_url)
+            if (
+                source_parts.scheme not in {"http", "https"}
+                or source_parts.netloc.casefold() != expected_parts.netloc.casefold()
+            ):
+                security_event(
+                    "csrf.origin_rejected",
+                    "cross-origin write rejected",
+                    severity="warning",
+                    ip=get_client_ip(),
+                    path=request.path,
+                )
+                rid = getattr(g, "request_id", "-")
+                if wants_json_response():
+                    return jsonify({"error": "origin_rejected", "request_id": rid}), 403
+                return render_template(
+                    "errors/error.html",
+                    code=403,
+                    title="Forbidden",
+                    message="This form was submitted from another site and was rejected.",
+                    request_id=rid,
+                ), 403
 
         if request.path == "/login" and request.method == "POST":
             if supplied and (_validate_stateless_csrf(supplied) if not is_logged_in else (
@@ -313,6 +356,26 @@ def create_app():
             security_event("admin.write_rate_limited", "dashboard write rate limit exceeded", severity="warning", ip=get_client_ip(), path=request.path)
             return jsonify({"error": "rate_limited"}), 429
         return None
+
+    @app.after_request
+    def issue_csrf_cookie(response):
+        """Persist the anonymous CSRF client binding created for this response.
+
+        Only set when a token was actually minted during the request, so pages
+        that render no form never emit the cookie.
+        """
+        issued = getattr(g, "_mifp_csrf_client_issued", None)
+        if issued:
+            response.set_cookie(
+                _CSRF_COOKIE_NAME,
+                issued,
+                max_age=_CSRF_TIMEOUT,
+                httponly=True,
+                secure=bool(app.config.get("SESSION_COOKIE_SECURE", False)),
+                samesite=str(app.config.get("SESSION_COOKIE_SAMESITE", "Lax")),
+                path="/",
+            )
+        return response
 
     @app.after_request
     def security_headers(response):

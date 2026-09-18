@@ -86,8 +86,17 @@ def _metric_flusher_loop() -> None:
         time.sleep(_METRIC_FLUSH_INTERVAL_SECONDS)
         try:
             flush_metric_buffer()
-        except Exception:
-            pass
+        except Exception as exc:
+            # Never let the flusher die or the request path block, but do not
+            # hide a repeated programming error either: a throttled warning
+            # keeps the failure diagnosable without flooding the log.
+            log_event_throttled(
+                logging.getLogger("mifp.metrics"),
+                "metrics.flusher_failed",
+                "privacy-safe metric flush failed",
+                interval_seconds=300,
+                error_type=type(exc).__name__,
+            )
 
 
 def flush_metric_buffer(db_path: str | None = None) -> int:
@@ -392,7 +401,6 @@ def setup_logging(
     ``max_bytes`` is positive; otherwise falls back to WatchedFileHandler for external
     logrotate/Docker.
     """
-    rotation = max_bytes > 0
     global _listener, _queue_handler, _logging_signature, _logging_pid
     mifp_logger = logging.getLogger("mifp")
     log_dir = Path(log_dir)

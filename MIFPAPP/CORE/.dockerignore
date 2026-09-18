@@ -6,8 +6,11 @@ secrets/
 .venv/
 venv/
 env/
-__pycache__/
-*.py[cod]
+# Docker matches these patterns per path component, so a bare "__pycache__/"
+# only excludes the top level and nested packages would ship stale .pyc files
+# compiled by the developer's interpreter.
+**/__pycache__/
+**/*.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -18,6 +21,13 @@ backups/
 exports/
 uploads/
 instance/
+# Runtime content must never enter the image build context. Packaged JSON
+# configuration under config/ and mifp_app/ is intentionally NOT excluded.
+assets/
+conferences/
+*.jsonl
+*.log
+config.local.*
 *.db
 *.sqlite
 *.sqlite3

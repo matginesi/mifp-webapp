@@ -293,7 +293,15 @@ def _begin(
             "Secure maintenance in progress. Please try again shortly.",
         )
         conn.commit()
-        _write_marker(database_path, operation)
+        try:
+            _write_marker(database_path, operation)
+        except OSError:
+            # The maintenance guard is already committed. If the marker cannot
+            # be written the context manager would never reach its ``finally``,
+            # leaving the public site gated until the crash reaper expires.
+            # Roll the guard back and fail the operation instead.
+            _finish(database_path, operation)
+            raise
         return count
 
 

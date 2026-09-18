@@ -5,6 +5,7 @@ import os
 import shutil
 import stat
 import tempfile
+import unicodedata
 import zipfile
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -13,6 +14,7 @@ from typing import Any
 
 from ..config import Config
 from ..runtime_storage import require_free_space
+from ..utils.file_safety import open_write_no_follow
 from .assets import resolve_db_asset_path
 from .dashboard_repository import asset_usage
 
@@ -165,11 +167,18 @@ def _validate_asset_zip(zf: zipfile.ZipFile) -> None:
     if unpacked > Config.IMPORT_MAX_UNPACKED_BYTES:
         raise ValueError(f"ZIP package expands beyond maximum size: {Config.IMPORT_MAX_UNPACKED_BYTES} bytes")
     seen: set[str] = set()
+    portable: set[str] = set()
     for info in infos:
         name = _validate_asset_archive_path(info.filename.rstrip("/"))
         if name in seen:
             raise ValueError(f"ZIP contains duplicate file name: {name}")
         seen.add(name)
+        normalized = unicodedata.normalize("NFC", name).casefold()
+        if normalized in portable:
+            raise ValueError(
+                f"ZIP contains file names that collide on a case-insensitive filesystem: {name}"
+            )
+        portable.add(normalized)
         mode = (info.external_attr >> 16) & 0o170000
         if stat.S_ISLNK(mode):
             raise ValueError(f"ZIP contains a symbolic link: {name}")
@@ -256,7 +265,7 @@ def import_assets_from_zip(
                 except ValueError as exc:
                     raise ValueError(f"Zip Slip: attempted path traversal in {archive_path}") from exc
                 target.parent.mkdir(parents=True, exist_ok=True)
-                with zf.open(archive_path) as src, open(target, "wb") as dst:
+                with zf.open(archive_path) as src, open_write_no_follow(target) as dst:
                     shutil.copyfileobj(src, dst)
                 storage_status = "local"
 

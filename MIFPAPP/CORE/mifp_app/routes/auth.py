@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import time
 from functools import wraps
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for
@@ -51,6 +53,36 @@ def _check_rate_limit() -> bool:
     )
 
 
+def _account_rate_key(username: str) -> str:
+    """Opaque, stable limiter key for a submitted login name.
+
+    Hashed so the shared rate-limit store never holds an account name. The key
+    is derived from whatever was submitted, so it is created for non-existent
+    names too and cannot be used to probe which accounts exist.
+    """
+    normalized = str(username or "").strip().casefold().encode("utf-8", "replace")
+    return hashlib.sha256(normalized).hexdigest()[:32]
+
+
+def _account_failure_allowed(username: str) -> bool:
+    """Record a failed attempt for this login name and report whether it is
+    still inside the per-account bound.
+
+    This is only consulted *after* the password check has already failed, so a
+    correct password always authenticates and the bound can never lock the real
+    administrator out — it only throttles guessing.
+    """
+    if current_app.config.get("TESTING"):
+        return True
+    limit = int(current_app.config.get("LOGIN_ACCOUNT_MAX_ATTEMPTS", 30))
+    window = float(current_app.config.get("LOGIN_ACCOUNT_LOCKOUT_SECONDS", 900))
+    if limit <= 0 or window <= 0:
+        return True
+    return ip_rate_allowed(
+        "login_account", _account_rate_key(username), limit=limit, window_seconds=window
+    )
+
+
 @bp.get("/login")
 def login():
     if session.get("admin_logged_in"):
@@ -82,7 +114,11 @@ def login_post():
     expected_user = current_app.config.get("ADMIN_USERNAME") or "admin"
     expected_hash = current_app.config.get("ADMIN_PASSWORD_HASH", "")
 
-    if username == expected_user and admin_password_matches(password, expected_hash):
+    # Verify the password before comparing the username so the response time
+    # cannot reveal whether the submitted login name exists: the expensive hash
+    # check must run for every attempt, not only for a correct username.
+    password_ok = admin_password_matches(password, expected_hash)
+    if hmac.compare_digest(str(username), str(expected_user)) and password_ok:
         session.clear()
         import secrets
         session["admin_logged_in"] = True
@@ -98,6 +134,23 @@ def login_post():
 
     # Always log failed attempts and use generic message (don't reveal if user exists)
     security_event("auth.login_failed", "failed admin login", username=username, ip=get_client_ip())
+    if not _account_failure_allowed(username):
+        # Same wording as the IP limiter and the same password-first ordering,
+        # so this reveals nothing about the account and cannot lock out the
+        # real administrator (a correct password is accepted above).
+        security_event(
+            "auth.account_rate_limited",
+            "login account rate limit exceeded",
+            severity="warning",
+            username=username,
+            ip=get_client_ip(),
+        )
+        flash(
+            f"Too many attempts. Please try again in "
+            f"{int(current_app.config.get('LOGIN_ACCOUNT_LOCKOUT_SECONDS', 900))} seconds.",
+            "error",
+        )
+        return redirect(failure_url)
     flash("Invalid credentials.", "error")
     return redirect(failure_url)
 

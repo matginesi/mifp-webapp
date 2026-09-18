@@ -202,9 +202,6 @@ def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(name)s | %(levelname)-8s | %(message)s', datefmt='%Y-%m-%dT%H:%M:%S')
     args = parser.parse_args()
     
-    # Handle webapp-dir
-    webapp_dir = Path(args.webapp_dir)
-    
     # Override assets dir if provided
     if args.assets_dir:
         from . import config as bd_config
@@ -216,7 +213,6 @@ def main():
     if not args.jsonl_dir:
         args.jsonl_dir = [str(DEFAULT_JSONL_DIR)]
     
-    # Build db_path from webapp_dir if not specified
     if args.db:
         db_path = Path(args.db)
     else:

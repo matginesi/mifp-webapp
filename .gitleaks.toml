@@ -1,0 +1,42 @@
+# gitleaks configuration for the MIFP repository.
+#
+# The scan is fail-closed: with this file in place, `gitleaks git .` and
+# `gitleaks dir .` must report zero leaks, and any new match fails the CI
+# `secrets` job. The allow-list below is deliberately narrow — it names the
+# exact known test fixtures and the exact generated/runtime paths that
+# .gitignore and .dockerignore already keep out of the repository, so a real
+# credential is never suppressed.
+
+title = "MIFP"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known fake test fixtures and generated runtime state (never committed)."
+
+# Generated at test/runtime; excluded from Git, from the Docker build context and
+# from the packaged source tree.
+paths = [
+  '''\.mifp-test-runtime\..*''',
+  '''\.pytest_cache/''',
+  '''__pycache__/''',
+  '''\.ruff_cache/''',
+  '''MIFPAPP/DATABASE/logs/''',
+  '''MIFPAPP/DATABASE/backups/''',
+  '''MIFPAPP/DATABASE/exports/''',
+  '''MIFPAPP/CORE/\.env\.example''',
+  '''deploy/\.env\.production\.example''',
+]
+
+# Matched against the whole line so the surrounding key name is part of the
+# signature. Every entry is an exact, obviously-fake literal used by a test, or
+# a UI settings key that merely contains the word "key".
+regexTarget = "line"
+regexes = [
+  '''0123456789abcdef0123456789abcdef''',
+  '''a-preserved-secret-that-is-long-enough-1234567890''',
+  '''must-not-be-stored''',
+  '''mifp-test-suite-secret''',
+  '''config__privacy__notice_storage_key''',
+]

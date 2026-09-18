@@ -145,11 +145,16 @@ sudo bash deploy/bootstrap-vps.sh
 sudo mifpctl configure
 sudo mifpctl admin
 sudo mifpctl registry-login
+sudo mifpctl ssh-harden --operator <utente>
 sudo mifpctl config-check
 sudo mifpctl init
 sudo mifpctl doctor
 sudo mifpctl security-check
 ```
+
+Procedura completa per una VPS nuova (DNS, SSH, firewall, backup, smoke test di
+disaster recovery, checklist finale):
+[avvio su una VPS nuova](docs/DEPLOY_NEW_VPS.md).
 
 Il bootstrap prepara soltanto l'host e può terminare senza dominio o admin.
 La configurazione progressiva vive in `/etc/mifp/config.env` (non segreti,
@@ -217,10 +222,13 @@ docs/                documentazione corrente
 - [Gestione Conference](docs/conference-sites.md)
 - [Formato di import](docs/import-format.md)
 - [Riferimento CLI](docs/cli-reference.md)
+- [Avvio su una VPS nuova](docs/DEPLOY_NEW_VPS.md)
 - [Panoramica deploy](DEPLOYMENT.md)
 - [Installazione VPS](docs/deployment/vps-installation.md)
 - [Backup](docs/deployment/backups.md)
 - [Hardening](docs/deployment/hardening.md)
+- [Audit di sicurezza](docs/audit/MIFP_PRODUCTION_SECURITY_AUDIT.md)
+- [Revisione manutenibilità](docs/audit/MIFP_MAINTAINABILITY_REVIEW.md)
 
 Questo è l'unico README del repository; documenti storici/temporanei non fanno
 parte del codebase operativo.

@@ -217,6 +217,36 @@ def _is_blocked_ip(value: str) -> bool:
     )
 
 
+def _ip_literal(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Parse any host notation that the resolver (or a browser) treats as an IP.
+
+    ``ipaddress`` accepts only canonical literals, while ``getaddrinfo`` also
+    accepts legacy IPv4 forms such as ``2130706433`` (decimal), ``0x7f.0.0.1``
+    (hex), ``0177.0.0.1`` (octal) and ``127.1`` (short). IDN hosts such as
+    ``①②⑦.0.0.1`` are normalised to ``127.0.0.1`` by the resolver as well.
+    Returning ``None`` means "this is a real hostname and needs DNS resolution"
+    rather than "this host is safe".
+    """
+    candidates = [host]
+    try:
+        idna = host.encode("idna").decode("ascii")
+    except (UnicodeError, ValueError):
+        idna = ""
+    if idna and idna != host:
+        candidates.append(idna)
+    for candidate in candidates:
+        try:
+            return ipaddress.ip_address(candidate)
+        except ValueError:
+            pass
+        # ``inet_aton`` is what the resolver uses for legacy numeric hosts.
+        try:
+            return ipaddress.IPv4Address(socket.inet_aton(candidate))
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 def _host_allowed_by_config(hostname: str) -> bool:
     allowed = Config.ASSET_ALLOWED_DOMAINS
     if not allowed:
@@ -261,7 +291,12 @@ def _validate_and_resolve(url: str, *, resolve_dns: bool = False) -> tuple[str, 
     if parsed.username or parsed.password:
         raise ValueError("Remote asset URLs cannot contain credentials")
     host = parsed.hostname.lower().rstrip(".")
-    if host in _BLOCKED_HOSTS or host.endswith(".local") or _is_blocked_ip(host):
+    literal = _ip_literal(host)
+    if (
+        host in _BLOCKED_HOSTS
+        or host.endswith(".local")
+        or (literal is not None and _is_blocked_ip(str(literal)))
+    ):
         raise ValueError(f"Remote asset host is not allowed: {host}")
     if not _host_allowed_by_config(host):
         raise ValueError(f"Remote asset host is outside ASSET_ALLOWED_DOMAINS: {host}")
@@ -568,12 +603,18 @@ def _download_with_retries(
     expected_kind: str | None = None,
     max_retries: int = 3,
     base_delay: float = 1.0,
+    total_timeout: float | None = None,
 ) -> tuple[Path, str, str]:
-    """Download a URL with a bounded total attempt count.
+    """Download a URL with a bounded total attempt count and wall-clock budget.
 
     ``max_retries`` is shared by every fallback URL, so adding URL candidates
-    never multiplies the request count.
+    never multiplies the request count.  ``timeout`` is a per-socket-operation
+    timeout, so a server that drips one byte at a time could otherwise hold a
+    background worker open indefinitely; ``total_timeout`` bounds the whole
+    call (all attempts included).
     """
+    budget = Config.ASSET_DOWNLOAD_TOTAL_TIMEOUT_SECONDS if total_timeout is None else total_timeout
+    deadline = time.monotonic() + max(float(budget), 0.0)
     last_exc: Exception | None = None
     candidates: list[tuple[str, str | None]] = []
     for candidate in _download_url_candidates(url):
@@ -585,6 +626,8 @@ def _download_with_retries(
         candidate_url, pinned_ip = candidates[candidate_index % len(candidates)]
         candidate_index += 1
         attempts += 1
+        if time.monotonic() >= deadline:
+            raise ValueError(f"Remote asset download exceeded its time budget: {candidate_url}")
         parsed = urlparse(candidate_url)
         for ch in parsed.path:
             if (ch and ord(ch) < 32) or ch == ' ':
@@ -611,6 +654,10 @@ def _download_with_retries(
                     tmp_path = Path(tmp.name)
                     total = 0
                     while True:
+                        if time.monotonic() >= deadline:
+                            raise ValueError(
+                                f"Remote asset download exceeded its time budget: {candidate_url}"
+                            )
                         chunk = response.read(1024 * 256)
                         if not chunk:
                             break
@@ -652,7 +699,11 @@ def _is_permanent_download_error(exc: Exception) -> bool:
             return False
         return True
     if isinstance(exc, HTTPError):
-        return exc.code in {400, 401, 403, 404, 405, 410, 413, 415, 422}
+        # 3xx never reaches here as a success: ``_SecureRedirectHandler`` refuses
+        # a hop that fails re-validation by returning ``None``, which urllib
+        # surfaces as an HTTPError carrying the redirect status. Retrying a
+        # policy refusal would only repeat the same blocked request.
+        return exc.code in {301, 302, 303, 307, 308, 400, 401, 403, 404, 405, 410, 413, 415, 422}
     return False
 
 

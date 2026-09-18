@@ -30,6 +30,8 @@ LOCAL_HOSTS_HELPER="$MIFP_HOME/local-hosts.sh"
 PHP_FPM_SERVICE_FILE="$MIFP_HOME/php-fpm.service"
 BACKUP_SCRIPT="$MIFP_HOME/backup.sh"
 LOCK_FILE="${MIFP_DEPLOY_LOCK_FILE:-/run/lock/mifp-deploy.lock}"
+SSHD_DROPIN="${MIFP_SSHD_DROPIN:-/etc/ssh/sshd_config.d/99-mifp-hardening.conf}"
+SSHD_ROLLBACK="${MIFP_SSHD_ROLLBACK:-/root/.mifp-sshd-rollback.conf}"
 RUNTIME_UID="${MIFP_RUNTIME_UID:-10001}"
 RUNTIME_GID="${MIFP_RUNTIME_GID:-10001}"
 COMPOSE_BASE=(docker compose --project-name mifp --project-directory "$MIFP_HOME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
@@ -59,6 +61,8 @@ Uso normale:
   sudo mifpctl backup                     snapshot point-in-time DB + file/eventi
   sudo mifpctl doctor                     diagnostica completa
   sudo mifpctl security-check             audit read-only di superficie e permessi host
+  sudo mifpctl ssh-harden --operator USER disabilita password SSH (staged, validato)
+  sudo mifpctl ssh-rollback               rimuove il drop-in SSH e ricarica sshd
   sudo mifpctl fix-permissions            corregge ownership dati solo su richiesta
   sudo mifpctl events-import /backup/root importa/sostituisce events.mifp.eu in modo atomico
   sudo mifpctl events-rollback            scambia events/ con l'import precedente
@@ -451,6 +455,18 @@ do_config_check() {
   systemctl is-active caddy.service >/dev/null 2>&1 || die "Caddy non è attivo."
   caddy validate --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null 2>&1 \
     || die "Caddyfile non valido."
+  # Docker publishes ports through its own iptables rules, so UFW would not
+  # contain a bad mapping: every published port must be loopback-bound.
+  local published
+  published="$(awk '$1 == "-" && $2 ~ /^"/ {gsub(/"/, "", $2); print $2}' "$COMPOSE_FILE" 2>/dev/null || true)"
+  if [[ -n "$published" ]]; then
+    while IFS= read -r entry; do
+      [[ -z "$entry" ]] && continue
+      [[ "$entry" =~ ^127\.0\.0\.1:[0-9]+:[0-9]+$ ]] \
+        || die "Porta pubblicata non loopback in $COMPOSE_FILE: $entry (Docker la esporrebbe a Internet ignorando UFW)."
+    done <<<"$published"
+    say "Compose exposure contract: OK ($(wc -l <<<"$published") mapping loopback)."
+  fi
   do_registry_check
   say "Host readiness: READY"
 }
@@ -549,7 +565,10 @@ do_rollback() {
 snapshot_live_database() {
   local label="$1" live="$DATA_DIR/mifp.db" saved
   saved="$DATA_DIR/backups/${label}-$(date -u +%Y%m%d-%H%M%S-%N).db"
-  sqlite3 "$live" ".backup '$saved'"
+  # The webapp is still running here, so use the SQLite backup API with a busy
+  # timeout and a read-only source handle: without it a concurrent WAL writer
+  # makes this fail with SQLITE_BUSY before any swap happens.
+  sqlite3 -readonly "$live" ".timeout 30000" ".backup '$saved'"
   [[ "$(sqlite3 -readonly "$saved" 'PRAGMA quick_check; PRAGMA foreign_key_check;')" == "ok" ]] \
     || die "Backup di sicurezza non valido: $saved"
   chown "$RUNTIME_UID:$RUNTIME_GID" "$saved"; chmod 0640 "$saved"
@@ -724,9 +743,15 @@ for dirname in directories:
             expected.add(path.relative_to(root).as_posix())
 
 if set(files) != expected:
-    missing = sorted(expected - set(files))
-    extra = sorted(set(files) - expected)
-    raise SystemExit(f"snapshot file set mismatch; missing={missing[:5]} extra={extra[:5]}")
+    # `files` is the on-disk walk, `expected` the manifest keys: name the two
+    # sets by what they actually mean so an incident is not diagnosed backwards.
+    stored_but_absent_from_disk = sorted(expected - set(files))
+    present_but_unlisted = sorted(set(files) - expected)
+    raise SystemExit(
+        "snapshot file set mismatch; "
+        f"listed_in_manifest_but_missing_on_disk={stored_but_absent_from_disk[:5]} "
+        f"present_on_disk_but_not_in_manifest={present_but_unlisted[:5]}"
+    )
 
 for relative, wanted in files.items():
     rel = Path(relative)
@@ -758,7 +783,10 @@ restore_snapshot_files() {
   for name in assets conferences config; do
     [[ -d "$snapshot/$name" && ! -L "$snapshot/$name" ]] || die "Snapshot incompleta o non sicura: $name/"
     install -d -o "$RUNTIME_UID" -g "$RUNTIME_GID" -m 0750 "$DATA_DIR/$name"
-    rsync -a --delete --chown="$RUNTIME_UID:$RUNTIME_GID" "$snapshot/$name/" "$DATA_DIR/$name/"
+    # --chmod normalises modes even when the snapshot was produced elsewhere;
+    # plain `rsync -a` would re-apply the snapshot's own modes and undo the
+    # `install -d -m 0750` above.
+    rsync -a --delete --chmod=D750,F640 --chown="$RUNTIME_UID:$RUNTIME_GID" "$snapshot/$name/" "$DATA_DIR/$name/"
   done
 
   version="$(snapshot_manifest_version "$snapshot")"
@@ -766,9 +794,9 @@ restore_snapshot_files() {
     [[ -d "$snapshot/events" && ! -L "$snapshot/events" ]] || die "Snapshot incompleta o non sicura: events/"
     [[ -d "$snapshot/events-private" && ! -L "$snapshot/events-private" ]] || die "Snapshot incompleta o non sicura: events-private/"
     install -d -o root -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$EVENTS_DIR"
-    rsync -a --delete --chown="root:$EVENTS_PUBLIC_GROUP" "$snapshot/events/" "$EVENTS_DIR/"
+    rsync -a --delete --chmod=D750,F640 --chown="root:$EVENTS_PUBLIC_GROUP" "$snapshot/events/" "$EVENTS_DIR/"
     install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$EVENTS_PRIVATE_DIR"
-    rsync -a --delete --chown="$EVENTS_PHP_USER:$EVENTS_PHP_USER" "$snapshot/events-private/" "$EVENTS_PRIVATE_DIR/"
+    rsync -a --delete --chmod=D700,F600 --chown="$EVENTS_PHP_USER:$EVENTS_PHP_USER" "$snapshot/events-private/" "$EVENTS_PRIVATE_DIR/"
     install -o root -g root -m 0644 "$snapshot/events-php-enabled.txt" "$EVENTS_PHP_STATE"
     install_events_php_include
   fi
@@ -788,9 +816,15 @@ do_restore_snapshot() {
   preflight_image_db "$current" "$snapshot/mifp.db"
 
   backup_root="${MIFP_BACKUP_ROOT:-/var/backups/mifp}"
-  MIFP_OPERATION_LOCK_HELD=1 "$BACKUP_SCRIPT" >/dev/null
+  # MIFP_BACKUP_NO_PRUNE keeps the pre-restore safety snapshot from rotating:
+  # the oldest snapshot it would delete is exactly the one being restored.
+  MIFP_OPERATION_LOCK_HELD=1 MIFP_BACKUP_NO_PRUNE=1 "$BACKUP_SCRIPT" >/dev/null
   saved_root="$(readlink -f -- "$backup_root/snapshots/latest")"
   [[ -d "$saved_root" && "$saved_root" != "$snapshot" ]] || die "Impossibile creare snapshot di sicurezza pre-restore."
+  # Re-assert the source snapshot immediately before taking the service down, so
+  # any future loss aborts while the site is still serving.
+  [[ -f "$snapshot/mifp.db" && ! -L "$snapshot/mifp.db" ]] \
+    || die "Snapshot sorgente scomparsa dopo la snapshot di sicurezza: $snapshot"
   verify_snapshot_integrity "$saved_root" || die "Snapshot di sicurezza pre-restore non valida: $saved_root"
 
   step "Fermo MIFP e ripristino snapshot completa"
@@ -1022,6 +1056,32 @@ do_restart() { local current; validate_production_env; ensure_tools; prepare_run
 
 do_backup() { [[ -x "$BACKUP_SCRIPT" ]] || die "Manca $BACKUP_SCRIPT"; "$BACKUP_SCRIPT"; }
 
+# Report backup health without restoring anything: the newest published snapshot
+# must be found, fresh, and pass the same integrity verification restore uses.
+check_backup_health() {
+  local backup_root latest newest_age_h check_output
+  backup_root="${MIFP_BACKUP_ROOT:-/var/backups/mifp}"
+  if [[ ! -d "$backup_root/snapshots" ]]; then
+    # Not a defect before the first backup has ever run (or when backups are
+    # disabled); the runbook checklist covers enabling the timer.
+    say "Backups: NOT CONFIGURED (${backup_root}/snapshots missing)"
+    return 0
+  fi
+  latest="$(readlink -f -- "$backup_root/snapshots/latest" 2>/dev/null || true)"
+  if [[ -z "$latest" || ! -d "$latest" ]]; then
+    say "Backups: ERROR (no published snapshot)"; return 1
+  fi
+  if ! check_output="$(verify_snapshot_integrity "$latest" 2>&1)"; then
+    say "Backups: ERROR (latest snapshot fails verification: ${check_output})"; return 1
+  fi
+  newest_age_h=$(( ( $(date +%s) - $(stat -c %Y "$latest") ) / 3600 ))
+  if (( newest_age_h > 48 )); then
+    say "Backups: ERROR (latest snapshot is ${newest_age_h}h old)"; return 1
+  fi
+  say "Backups: OK ($(basename "$latest"), ${newest_age_h}h old, verified)"
+  return 0
+}
+
 do_doctor() {
   local failed=0 current db="$DATA_DIR/mifp.db" domain events_domain php_service
   local min_mb available_kb available_mb target db_check
@@ -1043,6 +1103,12 @@ do_doctor() {
     say "Events filesystem: OK"
   else
     say "Events filesystem: ERROR"; failed=1
+  fi
+  check_backup_health || failed=1
+  if [[ -f /var/run/reboot-required ]]; then
+    say "Host reboot: REQUIRED to finish applying updates (/var/run/reboot-required)"; failed=1
+  else
+    say "Host reboot: not required"
   fi
   php_service="$(events_php_service || true)"
   if [[ -n "$php_service" ]] && systemctl is-active "$php_service" >/dev/null 2>&1 && [[ -S "$EVENTS_PHP_SOCKET" ]]; then
@@ -1106,6 +1172,63 @@ do_security_check() {
     security_ok "Caddy configuration"
   else
     security_error "Caddy configuration invalid"
+  fi
+
+  # Effective SSH policy (not the file text): sshd -T is the only trustworthy
+  # source because provider/cloud-init drop-ins can override ours.
+  if has sshd && sshd -T >/dev/null 2>&1; then
+    local ssh_effective
+    ssh_effective="$(sshd -T 2>/dev/null)"
+    if grep -qx 'passwordauthentication no' <<<"$ssh_effective"; then
+      security_ok "SSH password authentication disabled"
+    else
+      security_error "SSH PasswordAuthentication is not 'no' (run: mifpctl ssh-harden --operator USER)"
+    fi
+    if grep -qxE 'permitrootlogin (no|prohibit-password|without-password)' <<<"$ssh_effective"; then
+      security_ok "SSH root login restricted"
+    else
+      security_error "SSH PermitRootLogin allows password root login (run: mifpctl ssh-harden --operator USER)"
+    fi
+  else
+    # A missing sshd is a limitation, not a finding: report it truthfully
+    # instead of claiming the SSH policy is safe.
+    say "WARN: sshd not available; SSH policy NOT VERIFIED"
+  fi
+
+  if has ufw; then
+    if ufw status 2>/dev/null | grep -q 'Status: active'; then
+      security_ok "Firewall active"
+      local ufw_status
+      ufw_status="$(ufw status verbose 2>/dev/null || true)"
+      for rule in 80/tcp 443/tcp; do
+        grep -qE "(^|[[:space:]])${rule}" <<<"$ufw_status" \
+          && security_ok "Firewall allows $rule" || security_error "missing UFW rule for $rule"
+      done
+      local ssh_rule_port
+      ssh_rule_port="$(sshd -T 2>/dev/null | awk '$1 == "port" {print $2; exit}')"
+      ssh_rule_port="${ssh_rule_port:-22}"
+      if grep -qE "(^|[[:space:]])${ssh_rule_port}/tcp" <<<"$ufw_status"; then
+        security_ok "Firewall allows SSH ($ssh_rule_port/tcp)"
+      else
+        security_error "missing UFW rule for the SSH port $ssh_rule_port/tcp"
+      fi
+      grep -q '(v6)' <<<"$ufw_status" \
+        && security_ok "Firewall IPv6 rules present" \
+        || security_error "UFW shows no IPv6 rules: check IPV6=yes in /etc/default/ufw"
+    else
+      security_error "UFW is not active"
+    fi
+  else
+    say "WARN: ufw not available; firewall NOT VERIFIED"
+  fi
+
+  if [[ -f /var/run/reboot-required ]]; then
+    security_error "host requires a reboot to finish applying updates (/var/run/reboot-required)"
+  else
+    security_ok "No pending reboot"
+  fi
+  if [[ -f /var/run/reboot-required.pkgs ]]; then
+    say "Packages requiring reboot:"; sed 's/^/  - /' /var/run/reboot-required.pkgs || true
   fi
 
   bad="$(find "$MIFP_HOME" -xdev -perm -0002 -print -quit 2>/dev/null || true)"
@@ -1188,6 +1311,108 @@ do_security_check() {
   say "Security check: OK"
 }
 
+do_ssh_harden() {
+  local operator="" home akf p found=0 expected tmp
+  while (($#)); do case "$1" in
+    --operator) [[ $# -ge 2 ]] || die "--operator richiede un valore"; operator="$2"; shift 2 ;;
+    --operator=*) operator="${1#*=}"; shift ;;
+    -h|--help) say "Uso: mifpctl ssh-harden [--operator USER]"; return 0 ;;
+    *) die "Uso: mifpctl ssh-harden [--operator USER]" ;;
+  esac; done
+  step "SSH hardening (staged, validato prima del reload)"
+
+  has sshd || die "sshd non trovato: impossibile validare la configurazione."
+  [[ -n "$operator" ]] || operator="${SUDO_USER:-}"
+  [[ -n "$operator" && "$operator" != "root" ]] \
+    || die "Specifica l'utente operatore con --operator USER (deve avere accesso via chiave)."
+  id "$operator" >/dev/null 2>&1 || die "Utente inesistente: $operator"
+
+  # 1. Refuse to disable password auth unless a usable public key already exists
+  #    for the operator. This is the step that prevents a lockout.
+  home="$(getent passwd "$operator" | cut -d: -f6)"
+  akf="$(sshd -T 2>/dev/null | awk '$1 == "authorizedkeysfile" {print $2; exit}')"
+  akf="${akf:-.ssh/authorized_keys}"
+  for p in $akf; do
+    p="${p//%h/$home}"; p="${p//%u/$operator}"
+    [[ "$p" = /* ]] || p="$home/$p"
+    if [[ -s "$p" ]] && grep -Eq '^(ssh-(rsa|ed25519)|ecdsa-sha2-|sk-)' "$p"; then found=1; break; fi
+  done
+  (( found )) || die "L'utente $operator non ha chiavi pubbliche autorizzate in $home: rifiuto di disabilitare l'autenticazione a password."
+
+  sshd -t || die "sshd_config non valido PRIMA delle modifiche: risolvilo manualmente."
+
+  # 2. Make sure the drop-in directory is actually Included (older images may
+  #    not have it) and that our file wins over cloud-init drop-ins.
+  install -d -m 0755 /etc/ssh/sshd_config.d
+  if ! grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config; then
+    tmp="$(mktemp /etc/ssh/.sshd_config.XXXXXX)"
+    { printf 'Include /etc/ssh/sshd_config.d/*.conf\n'; cat /etc/ssh/sshd_config; } > "$tmp"
+    chmod --reference=/etc/ssh/sshd_config "$tmp"
+    chown --reference=/etc/ssh/sshd_config "$tmp"
+    mv -f "$tmp" /etc/ssh/sshd_config
+  fi
+
+  # 3. Write the drop-in. No port change, no AllowUsers, no source-IP match.
+  cat > "$SSHD_DROPIN" <<'EOF_SSHD_HARDENING'
+# Managed by `mifpctl ssh-harden`. Remove this file and reload sshd to revert.
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+MaxAuthTries 3
+MaxSessions 4
+LoginGraceTime 30
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding no
+PermitTunnel no
+ClientAliveInterval 300
+ClientAliveCountMax 2
+EOF_SSHD_HARDENING
+  chown root:root "$SSHD_DROPIN"
+  chmod 0644 "$SSHD_DROPIN"
+  cp -a "$SSHD_DROPIN" "$SSHD_ROLLBACK"
+  chmod 0600 "$SSHD_ROLLBACK"
+
+  # 4. Validate, assert the EFFECTIVE values, and only then reload.
+  if ! sshd -t; then
+    rm -f "$SSHD_DROPIN"
+    die "sshd -t fallito: drop-in rimosso, configurazione SSH invariata."
+  fi
+  expected="$(sshd -T 2>/dev/null)"
+  if ! grep -qx 'passwordauthentication no' <<<"$expected"; then
+    rm -f "$SSHD_DROPIN"
+    die "PasswordAuthentication non è effettiva (un drop-in con nome precedente la sovrascrive). Hardening annullato."
+  fi
+  if ! grep -qxE 'permitrootlogin (no|prohibit-password|without-password)' <<<"$expected"; then
+    rm -f "$SSHD_DROPIN"
+    die "PermitRootLogin non è effettivo. Hardening annullato."
+  fi
+  if systemctl list-unit-files 'ssh.service' >/dev/null 2>&1; then
+    systemctl reload ssh.service
+  else
+    systemctl reload sshd.service
+  fi
+  if ! systemctl is-active --quiet ssh.service && ! systemctl is-active --quiet sshd.service; then
+    rm -f "$SSHD_DROPIN"
+    systemctl restart ssh.service 2>/dev/null || systemctl restart sshd.service 2>/dev/null || true
+    die "Il reload di sshd ha lasciato il servizio inattivo: hardening annullato."
+  fi
+  say "SSH hardening applicato: password disabilitate, root solo con chiave."
+  say "Rollback: rm -f $SSHD_DROPIN && systemctl reload ssh"
+  say "Le sessioni SSH già aperte restano attive: verifica con una nuova connessione prima di chiuderle."
+}
+
+do_ssh_rollback() {
+  step "Ripristino della configurazione SSH"
+  if [[ -f "$SSHD_DROPIN" ]]; then
+    rm -f "$SSHD_DROPIN"
+  fi
+  sshd -t || die "sshd_config non valido dopo la rimozione del drop-in: intervento manuale richiesto."
+  systemctl reload ssh.service 2>/dev/null || systemctl reload sshd.service
+  say "Drop-in rimosso e sshd ricaricato."
+}
+
 do_admin() {
   local args=(admin --env-file "$ENV_FILE") current; shift || true
   while (($#)); do case "$1" in --username) [[ $# -ge 2 ]] || die "--username richiede un valore"; args+=(--username "$2"); shift 2 ;; --username=*) args+=("$1"); shift ;; *) die "Uso: mifpctl admin [--username NAME]" ;; esac; done
@@ -1217,7 +1442,7 @@ do_config_unset() {
 
 command="${1:-status}"
 case "$command" in
-  init|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|rollback-upgrade|rollback|--rollback|restart|stop|admin|admin-reset-password|configure|config-set|config-unset|fix-permissions|security-check|events-import|events-rollback|events-php-enable|events-php-disable)
+  init|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|rollback-upgrade|rollback|--rollback|restart|stop|admin|admin-reset-password|configure|config-set|config-unset|fix-permissions|security-check|ssh-harden|ssh-rollback|events-import|events-rollback|events-php-enable|events-php-disable)
     mkdir -p "$(dirname "$LOCK_FILE")"; exec 9>"$LOCK_FILE"; flock -n 9 || die "Un'altra operazione MIFP è già in corso." ;;
 esac
 case "$command" in
@@ -1239,6 +1464,8 @@ case "$command" in
   backup) do_backup ;;
   doctor) do_doctor ;;
   security-check) do_security_check ;;
+  ssh-harden) shift; do_ssh_harden "$@" ;;
+  ssh-rollback) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl ssh-rollback"; do_ssh_rollback ;;
   fix-permissions) do_fix_permissions ;;
   events-import) shift; do_events_import "$@" ;;
   events-rollback) do_events_rollback ;;

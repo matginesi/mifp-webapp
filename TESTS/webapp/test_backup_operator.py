@@ -23,6 +23,7 @@ def _backup_env(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     (home / "events" / "PLMCN-2025" / "index.html").write_text("historic", encoding="utf-8")
     (home / "events-private" / "registrations").mkdir(parents=True)
     (home / "events-private" / "registrations" / "future.csv").write_text("private", encoding="utf-8")
+    (home / "events" / "PLMCN-2027" / "regform").mkdir(parents=True)
     (home / "events-php-enabled.txt").write_text("PLMCN-2027/regform\n", encoding="utf-8")
     (data / "mifp.db").write_bytes(b"SQLite format 3\x00" + b"x" * 200)
     (home / ".env").write_text("MIFP_BACKUP_KEEP='2'\n", encoding="utf-8")
@@ -136,3 +137,55 @@ def test_backup_rejects_symlinks_in_restorable_trees(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "link simbolico" in result.stderr
     assert not _snapshots(backup_root)
+
+
+def test_backup_rejects_stale_php_allowlist_before_publishing(tmp_path: Path) -> None:
+    """A snapshot whose PHP allow-list names a missing directory can never be
+    restored, so the writer must refuse it instead of reporting success."""
+    env, _data, backup_root = _backup_env(tmp_path)
+    home = Path(env["MIFP_HOME"])
+    (home / "events-php-enabled.txt").write_text("GONE-2024/regform\n", encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", str(BACKUP)], env=env, check=False, text=True, capture_output=True
+    )
+
+    assert result.returncode != 0
+    assert "Allow-list PHP" in result.stderr
+    assert _snapshots(backup_root) == []
+    assert not list((backup_root / "snapshots").glob(".snapshot-*"))
+
+
+def test_backup_does_not_publish_when_live_db_is_a_symlink(tmp_path: Path) -> None:
+    """A symlinked live database must fail loudly, not report a successful
+    no-op every night."""
+    env, data, backup_root = _backup_env(tmp_path)
+    real = data / "real.db"
+    (data / "mifp.db").rename(real)
+    (data / "mifp.db").symlink_to(real)
+
+    result = subprocess.run(
+        ["bash", str(BACKUP)], env=env, check=False, text=True, capture_output=True
+    )
+
+    assert result.returncode != 0
+    assert "symlink" in result.stderr
+    assert _snapshots(backup_root) == []
+
+
+def test_no_prune_preserves_the_source_snapshot_for_restore(tmp_path: Path) -> None:
+    """The pre-restore safety snapshot must never rotate away older snapshots:
+    the oldest one is exactly what the operator may be restoring."""
+    env, _data, backup_root = _backup_env(tmp_path)
+    # KEEP=2 from the fixture: three runs normally leave only two snapshots.
+    for _ in range(3):
+        subprocess.run(["bash", str(BACKUP)], env=env, check=True, text=True, capture_output=True)
+    kept = _snapshots(backup_root)
+    assert len(kept) == 2, "rotation should keep exactly MIFP_BACKUP_KEEP snapshots"
+    oldest_before = kept[0]
+
+    no_prune = dict(env, MIFP_BACKUP_NO_PRUNE="1")
+    subprocess.run(["bash", str(BACKUP)], env=no_prune, check=True, text=True, capture_output=True)
+
+    assert oldest_before.is_dir(), "MIFP_BACKUP_NO_PRUNE must not delete the oldest snapshot"
+    assert len(_snapshots(backup_root)) == 3

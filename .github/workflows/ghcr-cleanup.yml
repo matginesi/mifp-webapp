@@ -1,16 +1,22 @@
 name: Prune GHCR image versions
 
-# Keeps the registry small: every CI run publishes a new sha-<sha> image
-# version, so old versions are pruned here. The promoted "latest" tag is never
-# deleted. Run manually after a cleanup, or let the weekly schedule keep it tidy.
+# Keeps the registry small: every CI run publishes a new sha-<commit> image
+# version, so old versions are pruned here.
+#
+# IMPORTANT: GitHub's container API reports each version's `name` as its
+# digest (`sha256:...`); the human tags live in `metadata.container.tags`.
+# `actions/delete-package-versions` matches `ignore-versions` against that
+# digest, so a pattern such as `^latest$` never matches anything. Retention is
+# therefore expressed only as "keep the N most recent versions", and the job
+# refuses to run with a window small enough to delete the promoted image.
 
 on:
   workflow_dispatch:
     inputs:
       min_versions_to_keep:
-        description: "Most-recent image versions to keep in addition to 'latest'"
+        description: "Most-recent image versions to keep (minimum 5)"
         required: false
-        default: "0"
+        default: "30"
   schedule:
     - cron: "23 3 * * 0"
 
@@ -22,11 +28,25 @@ jobs:
   prune:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate retention window
+        env:
+          MIN_TO_KEEP: ${{ github.event.inputs.min_versions_to_keep || '30' }}
+        run: |
+          case "$MIN_TO_KEEP" in
+            ''|*[!0-9]*)
+              echo "min_versions_to_keep must be a non-negative integer" >&2
+              exit 1
+              ;;
+          esac
+          if [ "$MIN_TO_KEEP" -lt 5 ]; then
+            echo "Refusing to keep fewer than 5 versions: the promoted 'latest'" >&2
+            echo "image must always survive a prune." >&2
+            exit 1
+          fi
       - name: Delete old container image versions
-        uses: actions/delete-package-versions@v5
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5
         with:
           package-name: mifp-webapp
           package-type: container
-          min-versions-to-keep: ${{ github.event.inputs.min_versions_to_keep || '0' }}
-          ignore-versions: '^latest$'
+          min-versions-to-keep: ${{ github.event.inputs.min_versions_to_keep || '30' }}
           delete-only-untagged-versions: 'false'

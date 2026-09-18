@@ -14,6 +14,44 @@ def test_validate_external_asset_url_blocks_loopback_host():
             validate_external_asset_url(url)
 
 
+def test_validate_external_asset_url_blocks_non_canonical_ip_literals():
+    """Legacy/IDN spellings resolve to the same blocked address, so they must
+    be rejected even though ``ipaddress`` cannot parse them."""
+    from mifp_app.services.assets import validate_external_asset_url
+
+    for host in (
+        "2130706433",          # decimal loopback
+        "0x7f.0.0.1",          # hex octet
+        "0x7f000001",          # full hex
+        "0177.0.0.1",          # octal octet
+        "017700000001",        # full octal
+        "127.1",               # short form
+        "0",                   # 0.0.0.0
+        "①②⑦.0.0.1",           # IDN normalised by the resolver to 127.0.0.1
+        "169.254.169.254",     # cloud metadata
+    ):
+        with pytest.raises(ValueError):
+            validate_external_asset_url(f"http://{host}/x.jpg")
+
+
+def test_ip_literal_leaves_real_hostnames_unresolved():
+    from mifp_app.services.assets import _ip_literal
+
+    assert _ip_literal("example.com") is None
+    assert str(_ip_literal("2130706433")) == "127.0.0.1"
+    assert str(_ip_literal("8.8.8.8")) == "8.8.8.8"
+
+
+def test_refused_redirect_is_a_permanent_download_error():
+    """A refused redirect hop must not be retried as if it were transient."""
+    from urllib.error import HTTPError
+
+    from mifp_app.services.assets import _is_permanent_download_error
+
+    assert _is_permanent_download_error(HTTPError("http://x/", 302, "Found", None, None)) is True
+    assert _is_permanent_download_error(HTTPError("http://x/", 404, "Not Found", None, None)) is True
+
+
 def test_validate_external_asset_url_rejects_credentials():
     from mifp_app.services.assets import validate_external_asset_url
 
