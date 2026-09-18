@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -14,6 +15,13 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Bound network stalls in pip itself; shell steps below add hard wall-clock
+  # limits as a second layer.
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_DEFAULT_TIMEOUT: "45"
+  PIP_RETRIES: "4"
+
 # Third-party actions are pinned to full commit SHAs (tag in the comment) so a
 # moved tag or an upstream account takeover cannot run different code in a job
 # that holds packages:write. .github/dependabot.yml keeps the pins current.
@@ -21,6 +29,7 @@ jobs:
   hygiene:
     name: Reject runtime/generated repository data
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -89,6 +98,7 @@ jobs:
   secrets:
     name: Scan tracked files and Git history for secrets
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -100,18 +110,21 @@ jobs:
         run: |
           # A missing/corrupt download fails this step, which is visibly distinct
           # from the scan step below reporting actual leaks.
-          curl -sSfL -o gitleaks.tgz \
+          curl --fail --silent --show-error --location \
+            --connect-timeout 10 --max-time 120 --retry 3 --retry-delay 2 --retry-all-errors \
+            -o gitleaks.tgz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
           tar xzf gitleaks.tgz gitleaks
       - name: Scan the full Git history
-        run: ./gitleaks git . --no-banner --redact --config .gitleaks.toml
+        run: timeout --foreground 4m ./gitleaks git . --no-banner --redact --config .gitleaks.toml
       - name: Scan the checked-out tree
-        run: ./gitleaks dir . --no-banner --redact --config .gitleaks.toml
+        run: timeout --foreground 4m ./gitleaks dir . --no-banner --redact --config .gitleaks.toml
 
   test:
     name: Test runtime + data pipeline
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -119,36 +132,38 @@ jobs:
           python-version: "3.12"
       - name: Install tested dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r MIFPAPP/CORE/requirements.lock
-          python -m pip install -r SCRAPERS/requirements.txt -r MIFPAPP/DATABASE/requirements.txt pytest
+          timeout --foreground 3m python -m pip install --upgrade pip
+          timeout --foreground 10m python -m pip install -r MIFPAPP/CORE/requirements.lock
+          timeout --foreground 10m python -m pip install -r SCRAPERS/requirements.txt -r MIFPAPP/DATABASE/requirements.txt pytest
       - name: Run non-browser repository tests
         env:
           MIFP_TEST_AUTO_INSTALL: "0"
-        run: bash test_all.sh --suite quick
+        run: timeout --foreground 20m bash test_all.sh --suite quick
 
   audit:
     name: Audit Python dependencies
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
       - name: Install pinned audit tool
-        run: python -m pip install --disable-pip-version-check "pip-audit==2.10.1"
+        run: timeout --foreground 5m python -m pip install --disable-pip-version-check "pip-audit==2.10.1"
       - name: Audit runtime dependencies
-        run: python -m pip_audit -r MIFPAPP/CORE/requirements.lock
+        run: timeout --foreground 5m python -m pip_audit -r MIFPAPP/CORE/requirements.lock
       - name: Audit scraper dependencies
-        run: python -m pip_audit -r SCRAPERS/requirements.txt
+        run: timeout --foreground 5m python -m pip_audit -r SCRAPERS/requirements.txt
       - name: Audit database pipeline dependencies
-        run: python -m pip_audit -r MIFPAPP/DATABASE/requirements.txt
+        run: timeout --foreground 5m python -m pip_audit -r MIFPAPP/DATABASE/requirements.txt
 
   build-pr:
     name: Build Docker image (pull requests only)
     needs: [hygiene, test, audit, secrets]
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -167,6 +182,7 @@ jobs:
     needs: [hygiene, test, audit, secrets]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -194,6 +210,7 @@ jobs:
     name: Verify published production image
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: read
@@ -206,13 +223,13 @@ jobs:
       - name: Pull immutable image
         env:
           IMAGE: ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}
-        run: docker pull "$IMAGE"
+        run: timeout --foreground 5m docker pull "$IMAGE"
       - name: Provision schema-only test database
         env:
           IMAGE: ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}
         run: |
           docker volume create mifp-image-verify-data
-          docker run --rm --network none --entrypoint python \
+          timeout --foreground 2m docker run --rm --network none --entrypoint python \
             --volume mifp-image-verify-data:/app/data \
             "$IMAGE" -m mifp_app.db.manage init /app/data/mifp.db
       - name: Start image and verify health endpoints
@@ -271,6 +288,7 @@ jobs:
     name: Scan production image for fixable HIGH/CRITICAL CVEs
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
       contents: read
       packages: read
@@ -287,7 +305,9 @@ jobs:
         run: |
           # Infrastructure failure (download/checksum) fails this step, which is
           # distinguishable in the UI from the scan step reporting findings.
-          curl -sSfL -o trivy.tgz \
+          curl --fail --silent --show-error --location \
+            --connect-timeout 10 --max-time 120 --retry 3 --retry-delay 2 --retry-all-errors \
+            -o trivy.tgz \
             "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_SHA256}  trivy.tgz" | sha256sum -c -
           tar xzf trivy.tgz trivy
@@ -298,14 +318,15 @@ jobs:
           # `--ignore-unfixed` keeps the gate actionable: Debian base packages
           # with no available patch would otherwise fail every run forever.
           # Unfixed findings are reviewed in docs/audit, not silenced silently.
-          docker pull "$IMAGE"
-          ./trivy image --no-progress --severity HIGH,CRITICAL --ignore-unfixed \
+          timeout --foreground 5m docker pull "$IMAGE"
+          timeout --foreground 12m ./trivy image --no-progress --severity HIGH,CRITICAL --ignore-unfixed \
             --exit-code 1 "$IMAGE"
 
   promote-latest:
     name: Promote verified image to latest
     needs: [build, verify-image, image-scan]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       packages: write
@@ -320,4 +341,4 @@ jobs:
         env:
           REPOSITORY: ghcr.io/${{ github.repository }}
           DIGEST: ${{ needs.build.outputs.digest }}
-        run: docker buildx imagetools create --tag "$REPOSITORY:latest" "$REPOSITORY@$DIGEST"
+        run: timeout --foreground 5m docker buildx imagetools create --tag "$REPOSITORY:latest" "$REPOSITORY@$DIGEST"

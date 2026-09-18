@@ -176,9 +176,12 @@ sudo mifpctl logs
 sudo mifpctl rollback
 ```
 
-I micrositi storici di `events.mifp.eu` sono file host-side, non record Flask:
+I micrositi storici di `events.mifp.eu` sono file host-side, non record Flask.
+Prima della pubblicazione il backup passa un preflight che blocca symlink, file
+speciali e materiale privato/secret-like:
 
 ```bash
+sudo mifpctl events-check /path/al/backup/document-root
 sudo mifpctl events-import /path/al/backup/document-root
 ```
 

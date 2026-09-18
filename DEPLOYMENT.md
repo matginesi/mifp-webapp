@@ -103,8 +103,11 @@ password in `/etc/mifp/secrets.env` (`0600`). `config-set` rifiuta i segreti in
 command line: usa `configure --section mail|backup`. Il PAT GHCR rimane soltanto
 nel credential store Docker di root.
 
-La CI esegue in parallelo test e audit delle dipendenze; la build/publish GHCR
-parte solo se entrambi sono verdi. Dopo che GitHub Actions ha pubblicato una release:
+La CI esegue in parallelo hygiene, secret scan, test e audit delle dipendenze; la
+build/publish GHCR parte solo se tutti i gate sono verdi. Ogni job ha un
+`timeout-minutes` esplicito, i comandi di rete più delicati hanno retry + timeout
+e la concurrency cancella i run obsoleti sullo stesso ref: un runner bloccato non
+può restare appeso indefinitamente. Dopo che GitHub Actions ha pubblicato una release:
 
 ```bash
 sudo mifpctl registry-login
@@ -137,13 +140,21 @@ solo package moderni esplicitamente versionati (`mifp-content` v1 oppure
   ...
 ```
 
-Per importare il backup storico completo della vecchia document root:
+Per importare il backup storico completo della vecchia document root, esegui prima
+il preflight read-only e poi l'import:
 
 ```bash
+sudo mifpctl events-check /path/al/backup/events.mifp.eu
 sudo mifpctl events-import /path/al/backup/events.mifp.eu
 ```
 
-L'import rifiuta symlink e file speciali, non attraversa altri filesystem, copia in staging, normalizza i permessi e sostituisce
+Passa **la document root pubblica degli eventi**, non un backup completo dell'hosting.
+Il preflight rifiuta symlink, file speciali, mount annidati e payload che non devono
+mai entrare nel tree pubblico (`.env`, repository `.git`, database/dump SQL, chiavi,
+credential file e vecchi dati di registrazione). Segnala inoltre file PHP e riferimenti
+residui a `old.mifp.eu` senza eseguirli o modificarli.
+
+L'import riesegue lo stesso preflight come gate, copia in staging, normalizza i permessi e sostituisce
 `/opt/mifp/events` con un rename atomico. Prima dello switch azzera sempre la
 allow-list PHP: un nuovo tree non eredita mai codice eseguibile dal precedente.
 Il tree precedente resta in `/opt/mifp/events.previous` e può essere scambiato

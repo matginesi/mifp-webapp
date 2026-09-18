@@ -122,6 +122,38 @@ def test_ci_workflow_runs_the_non_browser_repository_suite() -> None:
     assert "pip-audit" in text
 
 
+
+def test_github_actions_are_bounded_and_cancel_stale_runs() -> None:
+    import yaml
+
+    root = _repo_root()
+    ci_path = root / ".github" / "workflows" / "ci-cd.yml"
+    cleanup_path = root / ".github" / "workflows" / "ghcr-cleanup.yml"
+    ci = yaml.safe_load(ci_path.read_text(encoding="utf-8"))
+    cleanup = yaml.safe_load(cleanup_path.read_text(encoding="utf-8"))
+
+    for workflow, path in ((ci, ci_path), (cleanup, cleanup_path)):
+        jobs = workflow.get("jobs") or {}
+        assert jobs, f"no jobs in {path}"
+        for name, job in jobs.items():
+            timeout = job.get("timeout-minutes")
+            assert isinstance(timeout, int) and 1 <= timeout <= 60, (path, name, timeout)
+
+    assert ci["concurrency"]["cancel-in-progress"] is True
+    assert cleanup["concurrency"]["cancel-in-progress"] is True
+
+    ci_text = ci_path.read_text(encoding="utf-8")
+    assert "--connect-timeout 10 --max-time 120 --retry 3" in ci_text
+    assert "timeout --foreground 20m bash test_all.sh --suite quick" in ci_text
+    assert "timeout --foreground 12m ./trivy image" in ci_text
+    assert "workflow_dispatch:" in ci_text
+
+    cleanup_text = cleanup_path.read_text(encoding="utf-8")
+    assert "actions/delete-package-versions" not in cleanup_text
+    assert "tools/prune_ghcr_versions.py" in cleanup_text
+    assert "timeout --foreground 10m python3" in cleanup_text
+
+
 def test_docker_build_context_stays_in_core() -> None:
     dockerfile = _read("MIFPAPP/CORE/Dockerfile")
     assert "FROM" in dockerfile
@@ -220,6 +252,7 @@ def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     assert "systemctl disable --now mifp-backup.timer" in script
     assert "--admin-if-missing" not in script
     assert 'install -o root -g root -m 0750 "$SCRIPT_DIR/vps_config.py"' in script
+    assert 'install -o root -g root -m 0750 "$SCRIPT_DIR/check-events-archive.py"' in script
     assert "Host bootstrap completed" in script
     # The live Caddyfile must never be written before it validates: render to a
     # temp file, format+validate it, then publish atomically.

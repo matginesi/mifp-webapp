@@ -96,7 +96,9 @@ Internet
 
 I siti storici possono quindi essere copiati 1:1 nella document root con
 `mifpctl events-import`; non devono essere convertiti in un package editor per
-essere pubblicati. I package `mifp-conference-editor` conservati sotto
+essere pubblicati. Prima dell'import usa `mifpctl events-check <document-root>`:
+il preflight rifiuta materiale privato/secret-like e oggetti filesystem non sicuri,
+e l'import riesegue automaticamente lo stesso gate. I package `mifp-conference-editor` conservati sotto
 `data/conferences/` restano invece sorgenti/staging della dashboard e possono
 essere pubblicati nello stesso filesystem in una fase successiva.
 

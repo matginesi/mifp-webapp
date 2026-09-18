@@ -442,11 +442,17 @@ Backup immediato:
 sudo mifpctl backup
 ```
 
-Import del document root eventi:
+Preflight e import del document root eventi:
 
 ```bash
+sudo mifpctl events-check /percorso/al/document-root
 sudo mifpctl events-import /percorso/al/document-root
 ```
+
+`events-check` è read-only e blocca prima della pubblicazione symlink, file speciali,
+filesystem annidati, `.env`, repository VCS, database/dump, chiavi/credential e dati
+legacy di registrazione. Usa come sorgente la document root pubblica, non l'intero
+backup dell'account hosting.
 
 Import e rollback completi azzerano sempre la allow-list PHP. PHP resta
 deny-by-default. Abilita soltanto un path verificato che contiene realmente

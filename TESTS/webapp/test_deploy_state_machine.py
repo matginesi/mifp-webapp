@@ -32,6 +32,7 @@ def _env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     (home / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
     _write_executable(home / "configure.py", "#!/usr/bin/env python3\nraise SystemExit(0)\n")
     shutil.copy2(ROOT / "deploy" / "vps_config.py", home / "vps_config.py")
+    shutil.copy2(ROOT / "deploy" / "check-events-archive.py", home / "check-events-archive.py")
     shutil.copy2(ROOT / "deploy" / "Caddyfile", home / "Caddyfile.example")
     shutil.copy2(ROOT / "deploy" / "local-hosts.sh", home / "local-hosts.sh")
     config_dir = tmp_path / "mifp-config"

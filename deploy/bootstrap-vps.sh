@@ -73,7 +73,8 @@ if [[ -z "$SSH_PORT" ]]; then
   die "Impossibile determinare la porta SSH (nessuna sessione SSH attiva e sshd non leggibile). Rilancia con --ssh-port N."
 fi
 [[ "$SSH_PORT" =~ ^[0-9]+$ ]] && ((SSH_PORT >= 1 && SSH_PORT <= 65535)) || die "Porta SSH non valida: $SSH_PORT"
-[[ -f "$SCRIPT_DIR/configure.py" && -f "$SCRIPT_DIR/vps_config.py" && -f "$SCRIPT_DIR/backup.sh" && -f "$SCRIPT_DIR/mifpctl" && -f "$SCRIPT_DIR/local-hosts.sh" ]] \
+[[ -f "$SCRIPT_DIR/configure.py" && -f "$SCRIPT_DIR/vps_config.py" && -f "$SCRIPT_DIR/check-events-archive.py" \
+  && -f "$SCRIPT_DIR/backup.sh" && -f "$SCRIPT_DIR/mifpctl" && -f "$SCRIPT_DIR/local-hosts.sh" ]] \
   || die "Cartella deploy incompleta: copia tutti i file deploy/."
 
 say "Installo i pacchetti di base"
@@ -248,6 +249,7 @@ install -o root -g root -m 0644 "$SCRIPT_DIR/compose.production.yaml" "$MIFP_HOM
 install -o root -g root -m 0750 "$SCRIPT_DIR/deploy.sh" "$MIFP_HOME/deploy.sh"
 install -o root -g root -m 0750 "$SCRIPT_DIR/configure.py" "$MIFP_HOME/configure.py"
 install -o root -g root -m 0750 "$SCRIPT_DIR/vps_config.py" "$MIFP_HOME/vps_config.py"
+install -o root -g root -m 0750 "$SCRIPT_DIR/check-events-archive.py" "$MIFP_HOME/check-events-archive.py"
 install -o root -g root -m 0644 "$SCRIPT_DIR/.env.production.example" "$MIFP_HOME/.env.example"
 install -o root -g root -m 0644 "$SCRIPT_DIR/Caddyfile" "$MIFP_HOME/Caddyfile.example"
 install -o root -g root -m 0750 "$SCRIPT_DIR/backup.sh" "$MIFP_HOME/backup.sh"

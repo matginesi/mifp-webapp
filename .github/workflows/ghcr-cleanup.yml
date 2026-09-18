@@ -1,14 +1,9 @@
 name: Prune GHCR image versions
 
-# Keeps the registry small: every CI run publishes a new sha-<commit> image
-# version, so old versions are pruned here.
-#
-# IMPORTANT: GitHub's container API reports each version's `name` as its
-# digest (`sha256:...`); the human tags live in `metadata.container.tags`.
-# `actions/delete-package-versions` matches `ignore-versions` against that
-# digest, so a pattern such as `^latest$` never matches anything. Retention is
-# therefore expressed only as "keep the N most recent versions", and the job
-# refuses to run with a window small enough to delete the promoted image.
+# Every CI run publishes an immutable sha-<commit> image. Keep a bounded history
+# without depending on a third-party JavaScript cleanup action/runtime.
+# The repository-owned Python tool always protects `latest`, keeps the newest N
+# versions, caps API pagination/deletions, and has bounded HTTP retries/timeouts.
 
 on:
   workflow_dispatch:
@@ -24,10 +19,18 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: ghcr-cleanup-${{ github.repository }}
+  cancel-in-progress: true
+
 jobs:
   prune:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - name: Validate retention window
         env:
           MIN_TO_KEEP: ${{ github.event.inputs.min_versions_to_keep || '30' }}
@@ -39,14 +42,18 @@ jobs:
               ;;
           esac
           if [ "$MIN_TO_KEEP" -lt 5 ]; then
-            echo "Refusing to keep fewer than 5 versions: the promoted 'latest'" >&2
-            echo "image must always survive a prune." >&2
+            echo "Refusing to keep fewer than 5 image versions." >&2
             exit 1
           fi
+
       - name: Delete old container image versions
-        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5
-        with:
-          package-name: mifp-webapp
-          package-type: container
-          min-versions-to-keep: ${{ github.event.inputs.min_versions_to_keep || '30' }}
-          delete-only-untagged-versions: 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MIN_TO_KEEP: ${{ github.event.inputs.min_versions_to_keep || '30' }}
+        run: |
+          PACKAGE_NAME="${GITHUB_REPOSITORY#*/}"
+          timeout --foreground 10m python3 tools/prune_ghcr_versions.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --package-name "$PACKAGE_NAME" \
+            --min-versions-to-keep "$MIN_TO_KEEP" \
+            --max-deletions 100

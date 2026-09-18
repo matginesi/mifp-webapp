@@ -77,7 +77,7 @@ __MIFP_EVENTS_DOMAIN__ {
 
         # Any PHP-like file not caught by an explicit allow-list rule above is
         # never served as source code and never executed.
-        @events_php_source path *.php *.phtml *.phar
+        @events_php_source path_regexp events_php_source \.(?i:php|phtml|phar|php[0-9])$
         respond @events_php_source 404
 
         file_server

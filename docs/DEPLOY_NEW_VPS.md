@@ -295,6 +295,24 @@ or in a chat message.
 
 ---
 
+## Historical `events.mifp.eu` archive
+
+The `events.<domain>` vhost is served directly by Caddy from `/opt/mifp/events`;
+it is not part of the Flask container. After DNS points `events.<domain>` to the
+VPS, validate and publish the old public document root with:
+
+```bash
+sudo mifpctl events-check /path/to/events-document-root
+sudo mifpctl events-import /path/to/events-document-root
+curl -I https://events.<domain>/.mifp-events-health
+```
+
+Do not point `events-import` at a full hosting-account backup. The preflight blocks
+secret/private payloads, special files and symlinks before anything reaches the
+public tree. PHP remains deny-by-default after every import and rollback.
+
+---
+
 ## 12. GHCR authentication
 
 ```bash

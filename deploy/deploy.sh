@@ -8,6 +8,7 @@ ENV_FILE="$MIFP_HOME/.env"
 ENV_EXAMPLE="$MIFP_HOME/.env.example"
 CONFIG_HELPER="$MIFP_HOME/configure.py"
 VPS_CONFIG_HELPER="$MIFP_HOME/vps_config.py"
+EVENTS_CHECKER="$MIFP_HOME/check-events-archive.py"
 CONFIG_DIR="${MIFP_CONFIG_DIR:-/etc/mifp}"
 PUBLIC_CONFIG_FILE="$CONFIG_DIR/config.env"
 SECRETS_FILE="$CONFIG_DIR/secrets.env"
@@ -64,6 +65,7 @@ Uso normale:
   sudo mifpctl ssh-harden --operator USER disabilita password SSH (staged, validato)
   sudo mifpctl ssh-rollback               rimuove il drop-in SSH e ricarica sshd
   sudo mifpctl fix-permissions            corregge ownership dati solo su richiesta
+  sudo mifpctl events-check /backup/root  preflight read-only del backup storico
   sudo mifpctl events-import /backup/root importa/sostituisce events.mifp.eu in modo atomico
   sudo mifpctl events-rollback            scambia events/ con l'import precedente
   sudo mifpctl events-php-list            mostra i path autorizzati a eseguire PHP
@@ -414,15 +416,28 @@ init_db_with_image() {
 }
 
 do_registry_login() {
-  local username token=""
+  local username token="" stty_state=""
   has docker || die "Docker non disponibile. Riesegui bootstrap-vps.sh."
   [[ -t 0 ]] || die "registry-login richiede un terminale interattivo."
   printf 'GitHub username: ' >&2
   IFS= read -r username
   [[ "$username" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}$ ]] \
     || die "GitHub username non valido."
+
+  # Disable terminal echo *before* printing the PAT prompt. `read -s` toggles
+  # echo only after it starts reading, leaving a small race in PTY/CI tests
+  # (and for a very fast paste) where the token can be echoed.
+  stty_state="$(stty -g)" || die "Impossibile leggere lo stato del terminale."
+  stty -echo || die "Impossibile disabilitare l'echo del terminale."
+  trap 'stty "$stty_state" >/dev/null 2>&1 || true' INT TERM
   printf 'GitHub PAT classic (scope read:packages): ' >&2
-  IFS= read -r -s token
+  if ! IFS= read -r token; then
+    stty "$stty_state" || true
+    printf '\n' >&2
+    die "Lettura del token GHCR interrotta."
+  fi
+  stty "$stty_state" || die "Impossibile ripristinare l'echo del terminale."
+  trap - INT TERM
   printf '\n' >&2
   [[ -n "$token" ]] || die "Token vuoto."
   if printf '%s\n' "$token" | docker login ghcr.io --username "$username" --password-stdin; then
@@ -975,18 +990,38 @@ do_events_php_disable() {
   say "PHP disabilitato per $prefix."
 }
 
-do_events_import() {
-  local source="${1:-}" stage bad
-  [[ -n "$source" ]] || die "Uso: mifpctl events-import /path/document-root"
-  source="$(readlink -f -- "$source")"
+run_events_archive_check() {
+  local source="${1:-}" quiet="${2:-0}" args=()
+  [[ -n "$source" ]] || die "Uso: mifpctl events-check /path/document-root"
+  [[ -f "$EVENTS_CHECKER" && ! -L "$EVENTS_CHECKER" ]] \
+    || die "Manca $EVENTS_CHECKER. Riesegui deploy/bootstrap-vps.sh con la cartella deploy aggiornata."
+  [[ "$quiet" == "1" ]] && args+=(--quiet)
+  python3 "$EVENTS_CHECKER" "$source" "${args[@]}"
+}
+
+do_events_check() {
+  local source="${1:-}"
+  [[ -n "$source" ]] || die "Uso: mifpctl events-check /path/document-root"
   [[ -d "$source" && ! -L "$source" ]] || die "Directory sorgente non valida: $source"
+  source="$(readlink -f -- "$source")"
+  [[ -d "$source" ]] || die "Directory sorgente non valida: $source"
+  run_events_archive_check "$source" 0
+}
+
+do_events_import() {
+  local source="${1:-}" stage
+  [[ -n "$source" ]] || die "Uso: mifpctl events-import /path/document-root"
+  [[ -d "$source" && ! -L "$source" ]] || die "Directory sorgente non valida: $source"
+  source="$(readlink -f -- "$source")"
+  [[ -d "$source" ]] || die "Directory sorgente non valida: $source"
   [[ "$source" != "/" ]] || die "Rifiuto di usare / come document root eventi."
   [[ "$source" != "$MIFP_HOME" && "$source" != "$EVENTS_DIR" && "$source" != "$EVENTS_DIR"/* ]] \
     || die "La sorgente non può coincidere con o stare dentro il tree MIFP live."
   case "$EVENTS_DIR/" in "$source/"*) die "La sorgente non può contenere il tree MIFP live." ;; esac
   has rsync || die "Comando richiesto non disponibile: rsync"
-  bad="$(find "$source" -xdev \( -type l -o -type b -o -type c -o -type p -o -type s \) -print -quit)"
-  [[ -z "$bad" ]] || die "Backup eventi non sicuro: symlink o file speciale trovato: $bad"
+  # The checker is also a publication gate: do not rely only on Caddy deny
+  # rules to hide private material that should never enter the public tree.
+  run_events_archive_check "$source" 0 || die "Backup eventi rifiutato dal preflight."
 
   stage="$MIFP_HOME/.events-stage-$$"
   rm -rf -- "$stage"
@@ -1508,6 +1543,7 @@ case "$command" in
   ssh-harden) shift; do_ssh_harden "$@" ;;
   ssh-rollback) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl ssh-rollback"; do_ssh_rollback ;;
   fix-permissions) do_fix_permissions ;;
+  events-check) shift; [[ $# -eq 1 ]] || die "Uso: mifpctl events-check /path/document-root"; do_events_check "$@" ;;
   events-import) shift; do_events_import "$@" ;;
   events-rollback) do_events_rollback ;;
   events-php-list) do_events_php_list ;;
