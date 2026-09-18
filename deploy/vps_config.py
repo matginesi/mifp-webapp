@@ -19,7 +19,7 @@ from typing import Callable
 PUBLIC_KEYS = (
     "ENVIRONMENT", "HOSTNAME", "PUBLIC_IPV4", "PUBLIC_IPV6", "TIMEZONE",
     "DOMAIN", "WWW_DOMAIN", "EVENTS_DOMAIN", "IMAGE_REPOSITORY",
-    "REGISTRY", "REGISTRY_USERNAME", "DNS_PROVIDER", "DNS_EXPECTED_IPV4",
+    "REGISTRY", "DNS_PROVIDER", "DNS_EXPECTED_IPV4",
     "DNS_EXPECTED_IPV6", "MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT",
     "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME",
     "BACKUP_ENABLED", "BACKUP_LOCAL_RETENTION", "RESTIC_REPOSITORY",
@@ -339,9 +339,9 @@ def check_configuration(
             else:
                 notes.append(f"DNS {host}: OK ({', '.join(sorted(current))})")
     if registry_authenticated(docker_config):
-        notes.append("Registry authentication: configured")
+        notes.append("Registry authentication: configured (optional)")
     else:
-        errors.append("Registry authentication: missing required (run sudo mifpctl registry-login)")
+        notes.append("Registry authentication: not configured (optional; public images use anonymous access)")
     smtp_fields = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS")
     if values.get("SMTP_HOST"):
         missing_smtp = [key for key in smtp_fields if not values.get(key)]
@@ -388,7 +388,7 @@ def print_show(values: dict[str, str], docker_config: Path) -> None:
         ("Environment", ("ENVIRONMENT", "HOSTNAME", "PUBLIC_IPV4", "PUBLIC_IPV6", "TIMEZONE")),
         ("Web", ("DOMAIN", "WWW_DOMAIN", "EVENTS_DOMAIN", "IMAGE_REPOSITORY")),
         ("DNS", ("DNS_PROVIDER", "DNS_EXPECTED_IPV4", "DNS_EXPECTED_IPV6")),
-        ("Registry", ("REGISTRY", "REGISTRY_USERNAME")),
+        ("Registry", ("REGISTRY",)),
         ("Mail", ("MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME")),
         ("Backups", ("BACKUP_ENABLED", "BACKUP_LOCAL_RETENTION", "RESTIC_REPOSITORY")),
         ("Application", ("ADMIN_USERNAME",)),
@@ -405,7 +405,6 @@ def print_show(values: dict[str, str], docker_config: Path) -> None:
 WIZARD_SECTIONS = {
     "web": ("ENVIRONMENT", "DOMAIN", "WWW_DOMAIN", "EVENTS_DOMAIN", "IMAGE_REPOSITORY", "PUBLIC_IPV4", "PUBLIC_IPV6"),
     "mail": ("MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME", "SMTP_PASSWORD"),
-    "registry": ("REGISTRY_USERNAME",),
     "backup": ("BACKUP_ENABLED", "BACKUP_LOCAL_RETENTION", "RESTIC_REPOSITORY", "RESTIC_PASSWORD"),
 }
 

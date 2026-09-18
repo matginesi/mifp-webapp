@@ -47,8 +47,7 @@ usage() {
 MIFP production operator
 
 Uso normale:
-  sudo mifpctl registry-login             login interattivo a GHCR (PAT read:packages)
-  sudo mifpctl configure [--section NAME] wizard progressivo (web/mail/registry/backup)
+  sudo mifpctl configure [--section NAME] wizard progressivo (web/mail/backup)
   sudo mifpctl config-show                riepilogo senza mostrare segreti
   sudo mifpctl config-set KEY VALUE       aggiorna un valore non segreto
   sudo mifpctl config-unset KEY           rimuove un valore
@@ -75,6 +74,7 @@ PHP conferenze (deny-by-default):
   sudo mifpctl events-php-disable PLMCN-2027/regform
 
 Manutenzione rara:
+  sudo mifpctl registry-login             login opzionale per package privati (PAT read:packages)
   sudo mifpctl first-deploy sha-<commit>  primo avvio compatibile con selector esplicito
   sudo mifpctl init-db sha-<commit>        crea solo il DB schema-only
   sudo mifpctl upgrade-db sha-<commit> /path/new.db
@@ -446,7 +446,6 @@ do_registry_login() {
       chown root:root "$DOCKER_CONFIG_FILE"
       chmod 0600 "$DOCKER_CONFIG_FILE"
     fi
-    config_cli set REGISTRY_USERNAME "$username" >/dev/null
     say "GHCR login successful."
     return 0
   fi
@@ -455,13 +454,29 @@ do_registry_login() {
 }
 
 do_registry_check() {
-  local repository
+  local repository anonymous_config anonymous_output authenticated_output
   has docker || die "Docker non disponibile. Riesegui bootstrap-vps.sh."
   docker info >/dev/null 2>&1 || die "Docker daemon non raggiungibile."
   repository="$(image_repository)"
-  docker manifest inspect "$repository:latest" >/dev/null 2>&1 \
-    || die "GHCR non accessibile o manifest :latest assente. Esegui: sudo mifpctl registry-login"
-  say "Registry: OK ($repository:latest leggibile; nessuna release modificata)"
+  anonymous_config="$(mktemp -d)"
+  if anonymous_output="$(DOCKER_CONFIG="$anonymous_config" docker manifest inspect "$repository:latest" 2>&1)"; then
+    rm -rf -- "$anonymous_config"
+    say "Registry: OK ($repository:latest leggibile anonimamente; nessuna release modificata)"
+    return 0
+  fi
+  if grep -Eqi 'denied|unauthorized|authentication required|status code: 40[13]|status: 40[13]' <<<"$anonymous_output"; then
+    if authenticated_output="$(docker manifest inspect "$repository:latest" 2>&1)"; then
+      rm -rf -- "$anonymous_config"
+      say "Registry: OK ($repository:latest leggibile con credenziali Docker; nessuna release modificata)"
+      return 0
+    fi
+    rm -rf -- "$anonymous_config"
+    [[ -z "$authenticated_output" ]] || printf '%s\n' "$authenticated_output" >&2
+    registry_auth_error
+  fi
+  rm -rf -- "$anonymous_config"
+  [[ -z "$anonymous_output" ]] || printf '%s\n' "$anonymous_output" >&2
+  die "GHCR non accessibile o manifest :latest assente: $repository:latest"
 }
 
 do_config_check() {

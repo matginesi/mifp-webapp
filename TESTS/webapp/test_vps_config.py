@@ -162,16 +162,18 @@ def test_fake_dns_detects_wrong_record_without_contacting_provider(tmp_path: Pat
     assert any("DNS mifp.eu: OK" in note for note in notes)
 
 
-def test_registry_auth_is_required_but_pat_is_never_copied(tmp_path: Path) -> None:
+def test_public_ghcr_is_ready_without_credentials_and_pat_is_never_copied(tmp_path: Path) -> None:
     module, store = _store(tmp_path)
     store.save(_ready_values())
     docker_config = tmp_path / "docker.json"
     docker_config.write_text("{}", encoding="utf-8")
-    errors, _ = module.check_configuration(store.values(), docker_config=docker_config)
-    assert any("Registry authentication" in error for error in errors)
-    docker_config.write_text('{"auths":{"ghcr.io":{"auth":"PAT-only-in-docker"}}}', encoding="utf-8")
-    errors, _ = module.check_configuration(store.values(), docker_config=docker_config)
+    errors, notes = module.check_configuration(store.values(), docker_config=docker_config)
     assert errors == []
+    assert "Registry authentication: not configured (optional; public images use anonymous access)" in notes
+    docker_config.write_text('{"auths":{"ghcr.io":{"auth":"PAT-only-in-docker"}}}', encoding="utf-8")
+    errors, notes = module.check_configuration(store.values(), docker_config=docker_config)
+    assert errors == []
+    assert "Registry authentication: configured (optional)" in notes
     assert "PAT-only-in-docker" not in store.config.read_text(encoding="utf-8")
     assert "PAT-only-in-docker" not in store.secrets_path.read_text(encoding="utf-8")
 

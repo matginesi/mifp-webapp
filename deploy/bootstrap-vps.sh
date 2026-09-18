@@ -464,9 +464,10 @@ printf '%s\n' \
   "Next:" \
   "  sudo mifpctl configure" \
   "  sudo mifpctl admin" \
-  "  sudo mifpctl registry-login" \
   "  sudo mifpctl config-check" \
-  "  sudo mifpctl init"
+  "  sudo mifpctl init" \
+  "" \
+  "registry-login is optional and only needed for private packages."
 
 if [[ "$DOMAIN" == *.home.arpa ]]; then
   LAN_IPS="$(hostname -I 2>/dev/null | tr ' ' '\n' | awk '/^[0-9]+\./ && $0 !~ /^127\./ {print}' | sort -u)"

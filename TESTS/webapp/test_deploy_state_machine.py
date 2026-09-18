@@ -50,7 +50,7 @@ def _env(tmp_path: Path) -> tuple[dict[str, str], Path]:
         encoding="utf-8",
     )
     docker_config = tmp_path / "docker-config.json"
-    docker_config.write_text('{"auths":{"ghcr.io":{"auth":"test"}}}\n', encoding="utf-8")
+    docker_config.write_text('{}\n', encoding="utf-8")
     hosts_file = tmp_path / "hosts"
     hosts_file.write_text("127.0.0.1 localhost\n", encoding="utf-8")
     caddy_dir = tmp_path / "caddy"
@@ -149,6 +149,12 @@ digest_for() {
   esac
 }
 if [ "${1:-}" = info ]; then exit 0; fi
+if [ "${1:-}" = manifest ] && [ "${2:-}" = inspect ]; then
+  printf '%s\n' "${DOCKER_CONFIG:-authenticated}" >> "$state/manifest-configs"
+  if [ "${FAIL_MANIFEST_AUTH:-0}" = 1 ]; then echo 'denied: requested access to the resource is denied (status: 403)' >&2; exit 1; fi
+  if [ "${FAIL_MANIFEST_MISSING:-0}" = 1 ]; then echo 'manifest unknown' >&2; exit 1; fi
+  exit 0
+fi
 if [ "${1:-}" = pull ]; then
   if [ "${FAIL_PULL:-0}" = 1 ]; then echo 'unauthorized: authentication required' >&2; exit 1; fi
   echo "Pulling from example/mifp"
@@ -472,6 +478,31 @@ def test_pull_auth_failure_explains_registry_login(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "GHCR authentication required" in result.stderr
     assert "sudo mifpctl registry-login" in result.stderr
+
+
+def test_registry_check_uses_anonymous_access_without_credentials(tmp_path: Path) -> None:
+    env, _ = _env(tmp_path)
+
+    result = _run(env, "registry-check", check=False)
+
+    assert result.returncode == 0
+    assert "leggibile anonimamente" in result.stdout
+    configs = (Path(env["FAKE_DOCKER_STATE"]) / "manifest-configs").read_text(encoding="utf-8").splitlines()
+    assert len(configs) == 1
+    assert configs[0] != "authenticated"
+
+
+def test_registry_check_suggests_login_only_for_real_auth_failure(tmp_path: Path) -> None:
+    env, _ = _env(tmp_path)
+
+    denied = _run(dict(env, FAIL_MANIFEST_AUTH="1"), "registry-check", check=False)
+    assert denied.returncode != 0
+    assert "sudo mifpctl registry-login" in denied.stderr
+
+    missing = _run(dict(env, FAIL_MANIFEST_MISSING="1"), "registry-check", check=False)
+    assert missing.returncode != 0
+    assert "sudo mifpctl registry-login" not in missing.stderr
+    assert "manifest :latest assente" in missing.stderr
 
 
 def test_registry_login_uses_password_stdin_without_echoing_token(tmp_path: Path) -> None:
