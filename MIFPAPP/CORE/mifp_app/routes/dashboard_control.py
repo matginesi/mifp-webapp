@@ -16,7 +16,6 @@ from ..services.control_center import (
     backup_inventory,
     content_quality_checks,
     data_quality_workflow_summary,
-    global_search,
     incident_groups,
     link_hygiene,
     process_activity,
@@ -24,6 +23,7 @@ from ..services.control_center import (
     storage_health,
     verify_backup,
 )
+from ..services.search import run_search
 from ..services.dashboard_repository import search_logs
 from ..services import download_jobs
 from ..services.exporters import export_members_xlsx
@@ -710,17 +710,24 @@ def site_texts():
 @bp.get("/search")
 @login_required
 def dashboard_search():
-    query = request.args.get("q", "").strip()[:120]
-    with connect(current_app.config["DATABASE_PATH"]) as conn:
-        results = global_search(conn, query)
-    for result in results:
-        section = result["section"]
-        if section == "events":
-            result["url"] = url_for("dashboard.events", q=result["title"])
-        elif section == "pages":
-            result["url"] = url_for("dashboard.site_texts")
-        elif section == "assets":
-            result["url"] = url_for("dashboard.assets_page", q=result["title"])
-        else:
-            result["url"] = url_for("dashboard.content", section=section, q=result["title"])
-    return render_template("dashboard/control/search.html", query=query, results=results)
+    raw_query = request.args.get("q", "")
+    try:
+        with connect(current_app.config["DATABASE_PATH"]) as conn:
+            result = run_search(conn, raw_query, scope="dashboard", limit=50)
+    except Exception:
+        current_app.logger.exception("dashboard search failed")
+        result = {
+            "query": "",
+            "results": [],
+            "total": 0,
+            "limit": 50,
+            "offset": 0,
+            "has_more": False,
+            "failed": True,
+        }
+    return render_template(
+        "dashboard/control/search.html",
+        query=result["query"],
+        results=result["results"],
+        failed=result["failed"],
+    )

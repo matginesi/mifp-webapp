@@ -1,0 +1,54 @@
+{% extends "public/base.html" %}
+{% block title %}Search — MIFP{% endblock %}
+{% block meta_description %}Search events, archive records, news, members, publications, research areas and pages across the MIFP website.{% endblock %}
+{% block extra_css %}<link href="{{ url_for('static', filename='css/archive.css', v=static_version) }}" rel="stylesheet">{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div class="container-wide">
+    <ol class="mifp-breadcrumb"><li><a href="{{ url_for('public.home') }}">Home</a></li><li aria-current="page">Search</li></ol>
+    <div class="eyebrow-row"><span class="num serif italic">—</span><span class="eyebrow eyebrow-red">Site search</span></div>
+    <h1>Search MIFP</h1>
+    <p>Find events, historical archive records, news, members, publications, research areas and pages.</p>
+    <div class="accent-bar"></div>
+  </div>
+</section>
+
+<section class="section-sm archive-index-section">
+  <div class="container-wide">
+    <form class="archive-filters" method="get" action="{{ url_for('public.search') }}" role="search" aria-label="Search the site">
+      <label class="archive-search"><span>Search</span><span class="archive-input-wrap"><i class="bi bi-search" aria-hidden="true"></i><input name="q" value="{{ result.query }}" placeholder="Title, name, topic, location" autofocus autocomplete="off"></span></label>
+      <div class="archive-filter-actions"><button class="btn btn-primary" type="submit">Search</button></div>
+    </form>
+
+    {% if result.failed and not result.results %}
+    <div class="empty-state"><div class="empty-state-icon"><i class="bi bi-exclamation-triangle"></i></div><p>Search is temporarily unavailable.</p><p>Please try again in a moment.</p></div>
+    {% elif result.query %}
+    <div class="section-head archive-results-head">
+      <div class="section-head-left"><div class="eyebrow-row"><span class="num serif italic">—</span><span class="eyebrow eyebrow-blue">Results</span></div><h2>{{ result.total }} match{{ '' if result.total == 1 else 'es' }}</h2></div>
+    </div>
+    {% if result.results %}
+    <div class="archive-event-list">
+      {% for item in result.results %}
+      <article class="archive-event-row">
+        <div class="archive-event-date"><strong>{{ item.group }}</strong><span>{{ item.date }}</span></div>
+        <div class="archive-event-copy">
+          <div class="archive-event-tags"><span class="tag red">{{ item.group }}</span></div>
+          <h3><a href="{{ item.url }}">{{ item.title }}</a></h3>
+          {% if item.subtitle %}<p>{{ item.subtitle }}</p>{% endif %}
+          {% if item.excerpt %}<p>{{ item.excerpt }}</p>{% endif %}
+        </div>
+        <a class="archive-event-action" href="{{ item.url }}" aria-label="Open {{ item.title }}"><i class="bi bi-chevron-right"></i></a>
+      </article>
+      {% endfor %}
+    </div>
+    {% if result.has_more %}
+    <p><a class="btn btn-outline" href="{{ url_for('public.search', q=result.query, page=page + 1) }}">More results</a></p>
+    {% endif %}
+    {% else %}
+    <div class="empty-state"><div class="empty-state-icon"><i class="bi bi-search"></i></div><p>No results for “{{ result.query }}”.</p><p>Try a different title, name, topic or location.</p></div>
+    {% endif %}
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

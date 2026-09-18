@@ -542,51 +542,6 @@ def safe_settings(config: dict[str, Any], database_settings: dict[str, str]) -> 
     return items
 
 
-def global_search(conn: sqlite3.Connection, query: str, limit_per_table: int = 8) -> list[dict[str, Any]]:
-    query = query.strip()[:120]
-    if len(query) < 2:
-        return []
-    targets = (
-        ("members", "Members", "display_name", "members"),
-        ("news", "News", "title", "news"),
-        ("events", "Events", "title", "events"),
-        ("publications", "Publications", "title", "publications"),
-        ("research_areas", "Research areas", "title", "research"),
-        ("sponsors", "Sponsors", "name", "sponsors"),
-        ("pages", "Public text records", "title", "pages"),
-        ("assets", "Assets", "filename", "assets"),
-    )
-    results: list[dict[str, Any]] = []
-    pattern = f"%{query}%"
-    for table, group, title_col, section in targets:
-        if not table_exists(conn, table):
-            continue
-        search_cols = [title_col]
-        columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-        for optional in ("slug", "original_filename", "source_url"):
-            if optional in columns:
-                search_cols.append(optional)
-        where = " OR ".join(f"{column} LIKE ?" for column in search_cols)
-        rows = conn.execute(
-            f"SELECT id,{title_col} AS item_title "
-            f"{',slug' if 'slug' in columns else ''} FROM {table} "
-            f"WHERE {where} ORDER BY id DESC LIMIT ?",
-            (*([pattern] * len(search_cols)), limit_per_table),
-        ).fetchall()
-        for row in rows:
-            results.append(
-                {
-                    "table": table,
-                    "group": group,
-                    "section": section,
-                    "id": int(row["id"]),
-                    "title": str(row["item_title"] or f"Record {row['id']}"),
-                    "slug": str(row["slug"] or "") if "slug" in row.keys() else "",
-                }
-            )
-    return results
-
-
 def incident_groups(log_dir: Path, limit: int = 500) -> dict[str, Any]:
     rows = search_logs(log_dir, q=None, level="ALL", limit=limit)
     groups: dict[tuple[str, str], dict[str, Any]] = {}

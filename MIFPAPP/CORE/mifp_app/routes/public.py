@@ -41,6 +41,7 @@ from ..services.public_repository import (
     event_public_destination,
     sitemap_dynamic_entries,
 )
+from ..services.search import run_search
 from ..utils.logger import audit_log, security_event
 from ..utils.security import get_client_ip, ip_rate_allowed
 
@@ -237,6 +238,34 @@ def archive_detail(category: str, year: int, slug: str):
     if not event:
         abort(404)
     return render_template("public/archive_detail.html", event=event)
+
+
+@bp.get("/search")
+def search():
+    raw_query = request.args.get("q", "")
+    page_number = max(1, request.args.get("page", 1, type=int) or 1)
+    limit = 20
+    try:
+        with connect_readonly(current_app.config["DATABASE_PATH"]) as conn:
+            result = run_search(
+                conn,
+                raw_query,
+                scope="public",
+                limit=limit,
+                offset=(page_number - 1) * limit,
+            )
+    except Exception:
+        current_app.logger.exception("public search failed")
+        result = {
+            "query": "",
+            "results": [],
+            "total": 0,
+            "limit": limit,
+            "offset": 0,
+            "has_more": False,
+            "failed": True,
+        }
+    return render_template("public/search.html", result=result, page=page_number)
 
 
 # ---------------------------------------------------------------------------
