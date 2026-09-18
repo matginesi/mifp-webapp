@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "tools" / "prune_ghcr_versions.py"
+SCRIPT = ROOT / ".github" / "scripts" / "prune_ghcr_versions.py"
 SPEC = importlib.util.spec_from_file_location("prune_ghcr_versions", SCRIPT)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)

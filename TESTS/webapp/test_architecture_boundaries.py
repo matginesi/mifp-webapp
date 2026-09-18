@@ -150,7 +150,7 @@ def test_github_actions_are_bounded_and_cancel_stale_runs() -> None:
 
     cleanup_text = cleanup_path.read_text(encoding="utf-8")
     assert "actions/delete-package-versions" not in cleanup_text
-    assert "tools/prune_ghcr_versions.py" in cleanup_text
+    assert ".github/scripts/prune_ghcr_versions.py" in cleanup_text
     assert "timeout --foreground 10m python3" in cleanup_text
 
 

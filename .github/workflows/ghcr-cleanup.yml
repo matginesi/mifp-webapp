@@ -52,7 +52,7 @@ jobs:
           MIN_TO_KEEP: ${{ github.event.inputs.min_versions_to_keep || '30' }}
         run: |
           PACKAGE_NAME="${GITHUB_REPOSITORY#*/}"
-          timeout --foreground 10m python3 tools/prune_ghcr_versions.py \
+          timeout --foreground 10m python3 .github/scripts/prune_ghcr_versions.py \
             --repository "$GITHUB_REPOSITORY" \
             --package-name "$PACKAGE_NAME" \
             --min-versions-to-keep "$MIN_TO_KEEP" \
