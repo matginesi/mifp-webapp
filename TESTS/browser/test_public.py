@@ -140,6 +140,37 @@ class TestPublicRoutes:
         dismiss.click()
         expect(banner.first).not_to_be_visible(timeout=3000)
 
+        page.goto(f"{live_server}/privacy")
+        page.wait_for_load_state("networkidle")
+        expect(page.locator("#cookie-banner")).not_to_be_visible()
+
+        page.goto(f"{live_server}/dashboard/institutional/cookie")
+        page.wait_for_load_state("networkidle")
+        token = csrf_token(page)
+        assert token
+        response = page.request.post(
+            f"{live_server}/dashboard/institutional/privacy/banner/force",
+            form={"_csrf_token": token},
+        )
+        assert response.ok
+        page.goto(f"{live_server}/")
+        page.wait_for_load_state("networkidle")
+        expect(page.locator("#cookie-banner")).to_be_visible()
+
+    @pytest.mark.parametrize("route", ["/privacy", "/cookie-policy", "/manifesto"])
+    @screenshot_on_failure
+    def test_institutional_pages_do_not_overflow_mobile_viewport(self, live_server, page, route):
+        page.set_viewport_size({"width": 375, "height": 812})
+        page.goto(f"{live_server}{route}")
+        page.wait_for_load_state("networkidle")
+
+        overflow = page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
+        assert overflow <= 1, f"{route} overflows the mobile viewport by {overflow}px"
+
+        for table in page.locator(".institutional-document .md-body table").all():
+            expect(table).to_be_visible()
+            assert table.evaluate("el => getComputedStyle(el).overflowX") == "auto"
+
     @screenshot_on_failure
     def test_navbar_responsive(self, live_server, page):
         page.set_viewport_size({"width": 480, "height": 800})

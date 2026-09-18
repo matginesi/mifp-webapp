@@ -56,13 +56,13 @@
 
           <h2>3. The cookie notice</h2>
           <p>The website shows a short informational notice on public pages. It summarises the two strictly necessary cookies described above and links to this policy.</p>
-          <p>The notice is <b>informational only</b>. It does not ask for consent and it has no "accept" or "reject" choices. Closing it only hides it for the current page view: no cookie, no <code>localStorage</code> entry and no server-side record is created or updated by dismissing it. Because there is nothing optional to consent to, no consent is collected.</p>
+          <p>The notice is <b>informational only</b>. It does not ask for consent and it has no "accept" or "reject" choices. Closing it stores only the notice revision in <code>localStorage</code>, so the same revision is not shown again. The value is not sent to MIFP or used for tracking. Publishing a new revision from the dashboard makes the notice appear again. Because there is nothing optional to consent to, no consent is collected.</p>
 
           <h2>4. Administrator session cookie</h2>
           <p><code>mifp_admin_session</code> is set only after a successful login to the administrative dashboard. It is never sent to a visitor who has not logged in and it grants no access to the public site. Blocking it prevents dashboard access, which is the expected behaviour of a strictly necessary authentication cookie.</p>
 
           <h2>5. Local storage</h2>
-          <p>The public website does not use <code>localStorage</code> or session storage at all, and neither does the membership application form. The administrator dashboard uses a single entry, <code>mifp-dashboard-sidebar-collapsed</code>, to remember whether the navigation sidebar was left collapsed: a purely client-side interface preference that never leaves the browser and is not used to identify anyone.</p>
+          <p>The public website uses one <code>localStorage</code> entry, <code>mifp-cookie-notice-revision</code>, solely to remember which informational notice revision you closed. It contains no personal details, never leaves the browser and is not used to identify or track anyone. The public website does not otherwise use local or session storage. The administrator dashboard separately uses <code>mifp-dashboard-sidebar-collapsed</code> for its navigation preference.</p>
 
           <h2>6. Third-party services</h2>
           <p>This website does not embed external scripts, widgets, fonts or stylesheets. All assets are served from the same server as the site, and no external domain is contacted while you browse it.</p>

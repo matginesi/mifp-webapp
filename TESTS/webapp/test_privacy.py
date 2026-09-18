@@ -98,10 +98,11 @@ def test_join_form_uses_compact_fields_and_keeps_honeypot(app):
     assert 'M22 11h-6' in html
 
 
-def test_public_site_has_no_cookie_notice_or_browser_storage(app):
+def test_public_cookie_notice_uses_only_revision_storage(app):
     html = app.test_client().get("/").get_data(as_text=True)
 
-    assert "cookie-notice" not in html
-    assert "cookieDismiss" not in html
+    assert 'id="cookie-banner"' in html
     homepage_js = (Path(app.static_folder) / "js" / "homepage.js").read_text(encoding="utf-8")
-    assert "localStorage" not in homepage_js
+    assert "mifp-cookie-notice-revision" in homepage_js
+    assert "localStorage.setItem(storageKey, revision)" in homepage_js
+    assert "localStorage.getItem(storageKey) === revision" in homepage_js

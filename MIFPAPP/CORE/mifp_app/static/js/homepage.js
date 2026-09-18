@@ -367,18 +367,36 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 })();
 
-/* Cookie notice dismiss — page-local by design (no tracking storage). */
+/* Cookie notice acknowledgement — remembered only for the current revision. */
 (function() {
   var banner = document.getElementById('cookie-banner');
   if (!banner) return;
-  if (banner.getAttribute('data-force-show') !== '0') {
-    banner.style.removeProperty('display');
-    banner.hidden = false;
+
+  var storageKey = 'mifp-cookie-notice-revision';
+  var revision = banner.getAttribute('data-force-show') || '0';
+  try {
+    if (window.localStorage.getItem(storageKey) === revision) {
+      banner.hidden = true;
+      banner.style.display = 'none';
+      return;
+    }
+  } catch (error) {
+    window.MIFPLog?.warn('cookie_notice.storage_read_failed', {
+      error: error?.name || 'StorageError'
+    });
   }
+
   var btn = document.getElementById('cookie-banner-close');
   if (!btn) return;
   btn.addEventListener('click', function() {
     if (banner.classList.contains('is-dismissing')) return;
+    try {
+      window.localStorage.setItem(storageKey, revision);
+    } catch (error) {
+      window.MIFPLog?.warn('cookie_notice.storage_write_failed', {
+        error: error?.name || 'StorageError'
+      });
+    }
     banner.classList.add('is-dismissing');
     window.setTimeout(function() {
       banner.hidden = true;

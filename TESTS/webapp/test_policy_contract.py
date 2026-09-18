@@ -80,18 +80,14 @@ def test_policies_do_not_claim_anonymous_visitors_never_get_cookies(path):
         assert absolute not in text, (path, absolute)
 
 
-def test_cookie_policy_does_not_claim_a_banner_dismissal_is_persisted():
-    """The notice is informational; dismissing it must not be described as stored."""
-    text = _read(COOKIE_POLICY).lower()
-    for claim in (
-        "dismissed the cookie information notice",
-        "remember whether you have dismissed",
-        "remember that you dismissed",
-    ):
-        assert claim not in text, claim
-    # It must describe the notice honestly instead.
+def test_cookie_policy_describes_revision_acknowledgement_without_fake_consent():
+    """Only the acknowledged notice revision is stored locally."""
+    text = _flat(COOKIE_POLICY).lower()
     assert "informational only" in text
     assert "no server-side record" in text
+    assert "mifp-cookie-notice-revision" in text
+    assert "not used to identify or track" in text
+    assert "new notice revision" in text
 
 
 @pytest.mark.parametrize("path", POLICY_FILES)

@@ -57,11 +57,14 @@ behaviour for a strictly necessary authentication cookie.
 The website shows a short informational notice on public pages. It summarises the
 two strictly necessary cookies described above and links to this policy.
 
-The notice is **informational only**. It does not ask for consent, it has no
-"accept" or "reject" choices, and closing it is not recorded anywhere: dismissing it
-only hides it for the current page view, and doing so creates no cookie, no
-`localStorage` entry and no server-side record. Because there is nothing optional to
-consent to, no consent is collected. Its link points to this policy.
+The notice is **informational only**. It does not ask for consent and it has no
+"accept" or "reject" choices. Closing it records no consent and sends nothing to
+MIFP: it stores only the notice revision in your browser's `localStorage`. This
+prevents the same notice from appearing again on later pages or visits. No cookie
+is created and there is no server-side record; the value is not used to identify
+or track you. If MIFP publishes a new notice revision from the dashboard, the
+revised notice is shown again. Because there is nothing optional to consent to, no
+consent is collected. Its link points to this policy.
 
 ### Aggregate statistics
 
@@ -73,7 +76,13 @@ storage on, or reading from, your device, they are not cookies.
 
 ### Local storage
 
-The **public website does not use `localStorage` or session storage at all**.
+The public website uses one `localStorage` entry,
+`mifp-cookie-notice-revision`, solely to remember which version of the
+informational cookie notice you closed. The value contains only a revision token;
+it is not sent to the server, does not expire automatically and is replaced when
+you close a later revision. Removing site data from your browser deletes it.
+
+The public website does not otherwise use `localStorage` or session storage.
 
 The administrator dashboard uses a single `localStorage` entry,
 `mifp-dashboard-sidebar-collapsed`, to remember whether the navigation sidebar was

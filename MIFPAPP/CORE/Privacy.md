@@ -135,7 +135,7 @@ We do not use automated decision-making or profiling based on personal data. Mem
 
 This website sets **only strictly necessary cookies**: `mifp_admin_session`, created after a successful dashboard login, and `mifp_csrf`, a short-lived cookie created only on pages that render a form needing cross-site request forgery protection (currently `/join`, `/login` and the maintenance page). Ordinary public browsing sets no cookie at all.
 
-There are no analytics, advertising, marketing, profiling or third-party cookies. The website shows a short informational notice about these strictly necessary cookies. It is not a consent request: dismissing it stores nothing, and no consent is collected because there is no optional storage or tracking to authorise. Full details, including cookie names and lifetimes, are in the [Cookie Policy](/cookie-policy).
+There are no analytics, advertising, marketing, profiling or third-party cookies. The website shows a short informational notice about these strictly necessary cookies. It is not a consent request: closing it stores only the notice revision in your browser's `localStorage`, so the same revision is not shown again. The value is not sent to MIFP or used for tracking. No consent is collected because there is no optional storage or tracking to authorise. Full details, including cookie names, lifetimes and the notice preference, are in the [Cookie Policy](/cookie-policy).
 
 ## 14. Changes to This Policy
 

@@ -44,7 +44,7 @@
           </aside>
         </div>
       </div>
-      <p class="banner-preview-note"><i class="bi bi-shield-check"></i> Informational notice only. No analytics, tracking or consent gate.</p>
+      <p class="banner-preview-note"><i class="bi bi-shield-check"></i> Closing the notice remembers this revision in the browser. No analytics, tracking or consent gate.</p>
       <form method="post" action="{{ url_for('dashboard.institutional_privacy_force_banner') }}" class="banner-force-form"
             data-confirm="Enable the cookie banner and publish a new display revision?">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
