@@ -27,7 +27,7 @@ os.environ["ASSETS_DIR"] = str(_TEST_RUNTIME / "assets")
 os.environ["EXPORT_DIR"] = str(_TEST_RUNTIME / "exports")
 os.environ["LOG_DIR"] = str(_TEST_RUNTIME / "logs")
 os.environ["CONFERENCES_DIR"] = str(_TEST_RUNTIME / "conferences")
-os.environ["BANNER_SETTINGS_PATH"] = str(_TEST_RUNTIME / "config" / "banner_settings.json")
+os.environ["RUNTIME_CONFIG_DIR"] = str(_TEST_RUNTIME / "config")
 os.environ["TMPDIR"] = str(_TEST_RUNTIME / "tmp")
 
 for pkg in ("MIFPAPP/CORE", "SCRAPERS", "MIFPAPP/DATABASE/tools"):

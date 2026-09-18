@@ -1231,6 +1231,47 @@ do_security_check() {
     say "Packages requiring reboot:"; sed 's/^/  - /' /var/run/reboot-required.pkgs || true
   fi
 
+  # Effective Docker daemon configuration. The bootstrap installs secure
+  # defaults only when the operator has no daemon.json of their own, so the
+  # effective state is what matters here, not the file we would have written.
+  # TCP API exposure is a real exposure (error); live-restore and daemon-wide
+  # log rotation are resilience/observability settings (WARN only), and
+  # per-service limits in compose remain in force either way.
+  local docker_tcp=0 live_restore log_driver log_max_size
+  if [[ -f /etc/docker/daemon.json ]] \
+     && grep -qE '"hosts"[[:space:]]*:[[:space:]]*\[[^]]*tcp://' /etc/docker/daemon.json 2>/dev/null; then
+    security_error "Docker daemon is configured with a TCP API socket (/etc/docker/daemon.json)"
+    docker_tcp=1
+  fi
+  if has ps && ps -eo args= 2>/dev/null | grep -E '(^|/)dockerd( |$)' | grep -qE '(-H|--host)[= ]tcp://'; then
+    security_error "dockerd is running with a TCP API socket"
+    docker_tcp=1
+  fi
+  if has ss && ss -H -lnt 2>/dev/null | awk '{print $4}' | grep -qE ':(2375|2376)$'; then
+    security_error "a Docker API TCP port (2375/2376) is listening"
+    docker_tcp=1
+  fi
+  (( docker_tcp )) || security_ok "Docker daemon TCP API not exposed"
+
+  if has docker && docker info >/dev/null 2>&1; then
+    live_restore="$(docker info --format '{{.LiveRestoreEnabled}}' 2>/dev/null || true)"
+    if [[ "$live_restore" == "true" ]]; then
+      security_ok "Docker live-restore"
+    else
+      say "WARN: Docker live-restore is disabled; a daemon restart stops the webapp. Add it via /etc/docker/daemon.json (bootstrap sets it only when no daemon.json exists)."
+    fi
+    log_driver="$(docker info --format '{{.LoggingDriver}}' 2>/dev/null || true)"
+    log_max_size=""
+    if [[ -f /etc/docker/daemon.json ]] && has python3; then
+      log_max_size="$(python3 -c 'import json; d=json.load(open("/etc/docker/daemon.json")); print((d.get("log-opts") or {}).get("max-size", ""))' 2>/dev/null || true)"
+    fi
+    if [[ -n "$log_max_size" ]]; then
+      security_ok "Docker daemon log rotation ($log_max_size)"
+    else
+      say "WARN: no daemon-level Docker log rotation (log-driver=${log_driver:-unknown}); the compose services set their own 10m x 3 limits, so growth is bounded for MIFP itself."
+    fi
+  fi
+
   bad="$(find "$MIFP_HOME" -xdev -perm -0002 -print -quit 2>/dev/null || true)"
   [[ -z "$bad" ]] && security_ok "World-writable MIFP paths" || security_error "world-writable path: $bad"
 

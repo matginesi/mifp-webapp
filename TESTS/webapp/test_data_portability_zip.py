@@ -139,7 +139,7 @@ def test_complete_roundtrip_restores_durable_state_and_unlinked_assets(tmp_path:
         "INSERT INTO pages(slug,title,type,body,review_status) "
         "VALUES('privacy','Privacy','privacy','Complete body','published')"
     )
-    source.execute("INSERT INTO settings(key,value) VALUES('cookie_banner_force_version','7')")
+    source.execute("INSERT INTO settings(key,value) VALUES('settings_roundtrip_probe','7')")
     source.execute(
         "INSERT INTO join_requests(first_name,last_name,email,status,member_id,created_at) "
         "VALUES('Alice','Example','join@example.test','approved',?,'2026-07-28 10:00:00')",
@@ -185,7 +185,7 @@ def test_complete_roundtrip_restores_durable_state_and_unlinked_assets(tmp_path:
     assert first["errors"] == second["errors"] == []
     assert target.execute("SELECT body FROM pages WHERE slug='privacy'").fetchone()[0] == "Complete body"
     assert target.execute(
-        "SELECT value FROM settings WHERE key='cookie_banner_force_version'"
+        "SELECT value FROM settings WHERE key='settings_roundtrip_probe'"
     ).fetchone()[0] == "7"
     assert target.execute("SELECT label FROM roles WHERE name='editor'").fetchone()[0] == "Editorial board"
     assert target.execute("SELECT COUNT(*) FROM join_requests WHERE email='join@example.test'").fetchone()[0] == 1

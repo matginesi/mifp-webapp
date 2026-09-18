@@ -1,9 +1,15 @@
+/* MIFP public-site styles — SINGLE CANONICAL BUNDLE.
 
-/* Source section: MIFPAPP/CORE/mifp_app/static/css/public/00-tokens.css */
+   There is no build step and no split source tree: this file is served as-is,
+   and the `static/css/public` source directory does not exist
+   (TESTS/webapp/test_revamp_contract.py enforces that it never comes back).
+   The `SECTION` banners below are plain reading aids for a file of this size —
+   they are not generator inputs. The late institutional-refinement and
+   hero-contract layers intentionally supersede the earlier home blocks. */
+
+
 /* ════════════════════════════════════════════════════════════════
-   MIFP Public Site — 00-tokens.css
-   Font faces, design tokens, base reset, typography helpers
-   Part of public_site.css (split for maintainability).
+   SECTION — Font faces, design tokens, base reset, typography helpers
    ════════════════════════════════════════════════════════════════ */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -132,156 +138,6 @@
 .skip-link:focus { transform: translateY(0); }
 .nav-menu-open { overflow: hidden; }
 
-.cookie-banner {
-  position: fixed;
-  left: 50%;
-  bottom: 16px;
-  z-index: 300;
-  width: min(calc(100% - 32px), 820px);
-  color: var(--paper);
-  background: var(--surface-glow), rgba(16,23,34,.96);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  box-shadow: 0 24px 64px rgba(0,0,0,.48), 0 1px 0 rgba(255,255,255,.04) inset;
-  backdrop-filter: blur(18px) saturate(120%);
-  -webkit-backdrop-filter: blur(18px) saturate(120%);
-  overflow: hidden;
-  transform: translateX(-50%);
-  animation: cookieFadeIn .26s ease-out;
-}
-.cookie-banner::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--mifp-red);
-}
-.cookie-banner.is-dismissing {
-  opacity: 0;
-  transform: translate(-50%, calc(100% + 24px));
-  transition: opacity 160ms ease, transform 200ms ease;
-}
-@keyframes cookieFadeIn {
-  from { opacity: 0; transform: translate(-50%, calc(100% + 20px)); }
-  to { opacity: 1; transform: translate(-50%, 0); }
-}
-.cookie-banner-body {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 1rem;
-  min-height: 88px;
-  padding: 1rem 1rem 1rem 1.15rem;
-}
-.cookie-banner-icon {
-  display: inline-flex;
-  width: 2.6rem;
-  height: 2.6rem;
-  align-items: center;
-  justify-content: center;
-  color: #efaaa3;
-  background: rgba(185,43,34,.09);
-  border: 1px solid rgba(212,70,59,.3);
-  border-radius: var(--r-sm);
-}
-.cookie-banner-icon svg { width: 1.1rem; height: 1.1rem; }
-.cookie-banner-copy { min-width: 0; }
-.cookie-banner-kicker {
-  display: block;
-  margin-bottom: .3rem;
-  color: var(--paper);
-  font-size: .66rem;
-  font-weight: 700;
-  letter-spacing: .15em;
-  line-height: 1.1;
-  text-transform: uppercase;
-}
-.cookie-banner-copy p {
-  max-width: 62rem;
-  margin: 0;
-  color: var(--paper-dim);
-  font-size: .8rem;
-  line-height: 1.55;
-}
-.cookie-banner-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: .55rem;
-}
-.cookie-banner-policy,
-.cookie-banner-close {
-  display: inline-flex;
-  min-height: 2.55rem;
-  align-items: center;
-  justify-content: center;
-  gap: .4rem;
-  padding: .58rem .78rem;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  font-size: .72rem;
-  font-weight: 750;
-  line-height: 1;
-  text-decoration: none;
-  white-space: nowrap;
-  transition: color var(--t), background var(--t), border-color var(--t), transform var(--t);
-}
-.cookie-banner-policy {
-  color: var(--paper-mute);
-  background: rgba(255,255,255,.025);
-}
-.cookie-banner-policy svg { width: .78rem; height: .78rem; }
-.cookie-banner-close svg {
-  width: .82rem;
-  height: .82rem;
-  color: currentColor;
-  opacity: .82;
-  transition: color var(--t), opacity var(--t), transform var(--t);
-}
-.cookie-banner-policy:hover {
-  color: var(--paper);
-  background: var(--ink-800);
-  border-color: var(--ink-500);
-}
-.public-site button.cookie-banner-close {
-  width: 2.55rem;
-  flex: 0 0 2.55rem;
-  padding: 0;
-  color: var(--paper-mute);
-  background: transparent;
-  border-color: transparent;
-  border-radius: 50%;
-  box-shadow: none;
-}
-.public-site button.cookie-banner-close:hover {
-  color: #fff;
-  background: rgba(180,35,24,.18);
-  border-color: rgba(212,47,35,.28);
-  transform: none;
-}
-.public-site button.cookie-banner-close:hover svg {
-  color: var(--paper);
-  opacity: 1;
-  transform: rotate(90deg);
-}
-.cookie-banner-policy:focus-visible,
-.public-site button.cookie-banner-close:focus-visible {
-  outline: 2px solid var(--mifp-blue-soft);
-  outline-offset: 2px;
-}
-@media (max-width: 760px) {
-  .cookie-banner { bottom: 10px; width: min(calc(100% - 20px), 620px); }
-  .cookie-banner-body { grid-template-columns: auto minmax(0, 1fr); padding: .85rem .85rem .85rem 1rem; }
-  .cookie-banner-actions { grid-column: 1 / -1; justify-content: flex-end; padding-left: 3rem; }
-}
-@media (max-width: 480px) {
-  .cookie-banner-body { gap: .6rem; }
-  .cookie-banner-icon { width: 2rem; height: 2rem; }
-  .cookie-banner-copy p { font-size: .72rem; }
-  .cookie-banner-actions { padding-left: 0; }
-  .cookie-banner-policy { flex: 1 1 auto; padding-inline: .5rem; }
-  .public-site button.cookie-banner-close { flex: 0 0 2.55rem; }
-}
 
 .public-site main {
   flex: 1;
@@ -341,11 +197,8 @@
 .eyebrow-red { color: var(--mifp-red-hover); }
 .eyebrow-blue { color: var(--mifp-blue-soft); }
 
-/* Source section: MIFPAPP/CORE/mifp_app/static/css/public/20-navbar.css */
 /* ════════════════════════════════════════════════════════════════
-   MIFP Public Site — 20-navbar.css
-   Navbar + mobile menu
-   Part of public_site.css (split for maintainability).
+   SECTION — Navbar + mobile menu
    ════════════════════════════════════════════════════════════════ */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -610,11 +463,8 @@
 }
 
 /* ========================================================================== */
-/* Source section: MIFPAPP/CORE/mifp_app/static/css/public/30-layout.css */
 /* ════════════════════════════════════════════════════════════════
-   MIFP Public Site — 30-layout.css
-   Buttons, sections & headers, empty states
-   Part of public_site.css (split for maintainability).
+   SECTION — Buttons, sections & headers, empty states
    ════════════════════════════════════════════════════════════════ */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -781,11 +631,8 @@
   font-family: var(--f-serif); font-style: italic;
 }
 
-/* Source section: MIFPAPP/CORE/mifp_app/static/css/public/40-home.css */
 /* ════════════════════════════════════════════════════════════════
-   MIFP Public Site — 40-home.css
-   Home hero, stats bar, manifesto band
-   Part of public_site.css (split for maintainability).
+   SECTION — Home hero, stats bar, manifesto band
    ════════════════════════════════════════════════════════════════ */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1000,11 +847,8 @@
   .inst-band { padding: 80px 0; }
 }
 
-/* Source section: MIFPAPP/CORE/mifp_app/static/css/public/50-cards.css */
 /* ════════════════════════════════════════════════════════════════
-   MIFP Public Site — 50-cards.css
-   Event/news/generic cards + past events rows
-   Part of public_site.css (split for maintainability).
+   SECTION — Event/news/generic cards + past events rows
    ════════════════════════════════════════════════════════════════ */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1119,8 +963,8 @@
   .card-cover { max-height: 100px; aspect-ratio: 16/9; }
 }
 
-@media (max-width: 1024px) { .card-grid { grid-template-columns: repeat(2, 1fr); } .card-grid.cols-4 { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 640px)  { .card-grid, .card-grid.cols-2, .card-grid.cols-4 { grid-template-columns: 1fr; } }
+@media (max-width: 1024px) { .card-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px)  {.card-grid{ grid-template-columns: 1fr; } }
 
 @media (prefers-reduced-motion: reduce) {
   .card:hover { transform: none; }
@@ -1165,11 +1009,8 @@
 .past-row:hover .past-arrow { color: var(--mifp-red-hover); transform: translateX(4px); }
 .past-arrow svg { width: 14px; height: 14px; }
 
-/* Source section: MIFPAPP/CORE/mifp_app/static/css/public/60-news.css */
 /* ════════════════════════════════════════════════════════════════
-   MIFP Public Site — 60-news.css
-   News layout, filter panels, pagination
-   Part of public_site.css (split for maintainability).
+   SECTION — News layout, filter panels, pagination
    ════════════════════════════════════════════════════════════════ */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1426,11 +1267,8 @@
   margin-left: 12px;
 }
 
-/* Source section: MIFPAPP/CORE/mifp_app/static/css/public/70-members.css */
 /* ════════════════════════════════════════════════════════════════
-   MIFP Public Site — 70-members.css
-   Members grid + sponsor grid
-   Part of public_site.css (split for maintainability).
+   SECTION — Members grid + sponsor grid
    ════════════════════════════════════════════════════════════════ */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1688,11 +1526,8 @@
   .sponsor-modal-logo { width: 7.5rem; height: 7.5rem; }
 }
 
-/* Source section: MIFPAPP/CORE/mifp_app/static/css/public/80-detail.css */
 /* ════════════════════════════════════════════════════════════════
-   MIFP Public Site — 80-detail.css
-   Detail pages, research areas, publications
-   Part of public_site.css (split for maintainability).
+   SECTION — Detail pages, research areas, publications
    ════════════════════════════════════════════════════════════════ */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -2243,11 +2078,8 @@
 .pub-pdf-badge:hover { background: rgba(23,92,211,0.2); color: #9bbaef; }
 .pub-pdf-badge svg { width: 11px; height: 11px; }
 
-/* Source section: MIFPAPP/CORE/mifp_app/static/css/public/90-forms.css */
 /* ════════════════════════════════════════════════════════════════
-   MIFP Public Site — 90-forms.css
-   Join form, sponsor modal, cookie banner
-   Part of public_site.css (split for maintainability).
+   SECTION — Join form, sponsor modal, cookie banner
    ════════════════════════════════════════════════════════════════ */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -2499,11 +2331,8 @@
 }
 
 
-/* Source section: MIFPAPP/CORE/mifp_app/static/css/public/95-footer.css */
 /* ════════════════════════════════════════════════════════════════
-   MIFP Public Site — 95-footer.css
-   Footer
-   Part of public_site.css (split for maintainability).
+   SECTION — Footer
    ════════════════════════════════════════════════════════════════ */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -2621,11 +2450,12 @@
 }
 .footer-logo { width: 34px; height: 34px; object-fit: contain; }
 
-/* Source section: MIFPAPP/CORE/mifp_app/static/css/public/99-utility.css */
 /* ════════════════════════════════════════════════════════════════
-   MIFP Public Site — 99-utility.css
-   Utility classes + responsive overrides
-   Part of public_site.css (split for maintainability).
+   SECTION — Late institutional refinement and responsive overrides
+   This block is NOT a utility sheet: it carries the institutional
+   editorial layer and the current hero contract, which intentionally
+   supersede the earlier home/layout rules above, plus print, error and
+   login pages and the reduced-motion contract.
    ════════════════════════════════════════════════════════════════ */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -2960,7 +2790,6 @@
 .section-head-left h2 { font-size: clamp(1.8rem, 3vw, 2.7rem); }
 .section-head-left p { max-width: 48rem; }
 
-/* Navigation uses the shared institutional component defined above. */
 
 /* Homepage supporting sections. The hero contract is defined once below. */
 .stats { background: var(--ink-850); border-block: 1px solid var(--line); }
@@ -2993,7 +2822,6 @@
 .btn { min-height: 44px; border-radius: var(--r-sm); box-shadow: none; }
 .detail-info-card, .news-featured, .news-side { border-radius: var(--r); box-shadow: none; }
 
-/* Utilities */
 
 /* Responsive */
 @media (max-width: 768px) {
@@ -3288,7 +3116,7 @@
   .hero-foot-inner > span { max-width: 26ch; }
 }
 
-/* Print */
+/* Error and login pages */
 .error-page { min-height: 100vh; display: grid; place-items: center; padding: 2rem 1.25rem; }
 .error-card { width: min(100%, 520px); padding: clamp(2rem, 6vw, 3rem); text-align: center; background: var(--ink-850); border: 1px solid var(--line); border-left: 3px solid var(--mifp-red); border-radius: var(--r-lg); }
 .error-code { margin-bottom: 1rem; color: var(--mifp-red-hover); font: 400 clamp(3.5rem, 12vw, 5rem)/1 var(--f-serif); }

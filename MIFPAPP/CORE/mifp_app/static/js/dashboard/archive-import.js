@@ -34,6 +34,7 @@
   var packageName = document.getElementById('archivePackageName');
   var packageSize = document.getElementById('archivePackageSize');
   var packageState = document.getElementById('archivePackageState');
+  var packageTotem = document.getElementById('archivePackageTotem');
   var cancelButton = document.getElementById('archiveCancel');
   var closeButton = document.getElementById('archiveClose');
   var metrics = {
@@ -48,9 +49,13 @@
   var startedAt = 0;
   var refreshOnClose = false;
 
-  function formatElapsed(milliseconds) {
-    var seconds = Math.max(0, Math.floor(milliseconds / 1000));
-    return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
+  // Operation-totem contract: the label is free text, the tone is one of the
+  // shared states (idle|queued|working|success|warning|error) written to
+  // `data-state`. Keeping both in one call is what stops this widget from
+  // drifting into its own private state classes again.
+  function setPackageState(label, state) {
+    if (packageState) packageState.textContent = label;
+    if (packageTotem) packageTotem.dataset.state = state;
   }
 
   function selectedMode() {
@@ -97,11 +102,9 @@
   }
 
   function setProgress(value, message, description) {
-    var safe = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
-    progressTrack.classList.remove('is-loading');
-    progress.style.width = safe + '%';
-    progressTrack.setAttribute('aria-valuenow', String(safe));
-    percent.textContent = safe + '%';
+    // Geometry/ARIA come from the shared primitive; the status and detail lines
+    // are specific to the archive panel.
+    window.MIFPUI.setProgressBar(progressTrack, progress, percent, value);
     if (message) status.textContent = message;
     if (description != null) detail.textContent = description;
   }
@@ -120,7 +123,7 @@
     detail.textContent = 'The package is staged securely before processing starts.';
     packageName.textContent = file.name;
     packageSize.textContent = window.MIFP.formatBytes(file.size);
-    packageState.textContent = 'Uploading';
+    setPackageState('Uploading', 'working');
     activity.replaceChildren();
     resultGrid.replaceChildren();
     Object.keys(metrics).forEach(function (key) { metrics[key].textContent = '0'; });
@@ -131,7 +134,7 @@
     startedAt = Date.now();
     elapsed.textContent = '00:00';
     clearInterval(timer);
-    timer = window.setInterval(function () { elapsed.textContent = formatElapsed(Date.now() - startedAt); }, 500);
+    timer = window.setInterval(function () { elapsed.textContent = window.MIFPUI.elapsedLabel(Date.now() - startedAt); }, 500);
     log('Package upload started', 'active');
   }
 
@@ -150,15 +153,20 @@
     clearInterval(timer);
     var data = payload.result || {};
     var ok = payload.ok === true;
+    var cancelled = !ok && Boolean(payload.message && payload.message.toLowerCase().includes('cancel'));
     working.hidden = true;
     result.hidden = false;
     cancelButton.hidden = true;
     closeButton.hidden = false;
     resultMark.className = 'transfer-result-mark' + (ok ? '' : ' is-error');
     resultMark.innerHTML = ok ? '<i class="bi bi-check-lg"></i>' : '<i class="bi bi-x-lg"></i>';
+    setPackageState(
+      ok ? (mode === 'import' ? 'Imported' : 'Validated') : (cancelled ? 'Cancelled' : 'Failed'),
+      ok ? 'success' : (cancelled ? 'warning' : 'error')
+    );
     resultTitle.textContent = ok
       ? (mode === 'import' ? 'Archive imported' : 'Package validated')
-      : (payload.message && payload.message.toLowerCase().includes('cancel') ? 'Import cancelled' : 'Archive import failed');
+      : (cancelled ? 'Import cancelled' : 'Archive import failed');
     resultMessage.textContent = ok
       ? (mode === 'import'
         ? 'Historical records and valid assets are now connected to canonical events.'
@@ -177,14 +185,14 @@
   function handleEvent(event, mode) {
     if (event.event === 'queued') {
       cancelUrl = event.cancel_url;
-      packageState.textContent = 'Queued';
+      setPackageState('Queued', 'queued');
       status.textContent = 'Package queued';
       detail.textContent = 'Waiting for an available archive worker.';
       log('Package accepted by the import queue', 'done');
       return;
     }
     if (event.event === 'progress') {
-      packageState.textContent = mode === 'import' ? 'Importing' : 'Validating';
+      setPackageState(mode === 'import' ? 'Importing' : 'Validating', 'working');
       setProgress(event.percent, event.message, mode === 'import' ? 'Events and assets are processed transactionally.' : 'No database changes are being written.');
       log(event.message || 'Processing package', 'active');
       return;

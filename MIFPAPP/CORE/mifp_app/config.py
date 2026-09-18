@@ -108,6 +108,11 @@ class Config:
     ) in {'1','true','True','yes','on'}
     ADMIN_SESSION_HOURS = int(os.getenv('ADMIN_SESSION_HOURS', '8'))
     JOIN_MAX_PER_IP_HOUR = int(os.getenv('JOIN_MAX_PER_IP_HOUR', '5'))
+    # Retention for *closed* membership applications. The privacy policy promises
+    # that rejected/archived join requests are not kept forever; the value is
+    # applied by the protected safety-cleanup procedure, never by a background
+    # job. Pending/in_review requests and approved members are never touched.
+    JOIN_REQUEST_RETENTION_DAYS = max(0, int(os.getenv('JOIN_REQUEST_RETENTION_DAYS', '730')))
     JOIN_STORE_RAW_IP = os.getenv('JOIN_STORE_RAW_IP', '0') in {'1','true','True','yes','on'}
     MAIL_PROVIDER = os.getenv('MAIL_PROVIDER', 'disabled').strip().lower()
     MAIL_FROM = os.getenv('MAIL_FROM', 'no-reply@mifp.eu')
@@ -130,10 +135,16 @@ class Config:
     EXPORT_RETENTION_DAYS = max(0, int(os.getenv('EXPORT_RETENTION_DAYS', '1')))
     EXPORT_MAX_FILES = max(1, int(os.getenv('EXPORT_MAX_FILES', '30')))
     EXPORT_MAX_BYTES = max(1, int(os.getenv('EXPORT_MAX_MB', '2048'))) * 1024 * 1024
-    BANNER_SETTINGS_PATH = _path_from_config(
-        "banner_settings_path",
-        "BANNER_SETTINGS_PATH",
-        "config/banner_settings.json",
+    # Runtime configuration directory: the storage anchor for small, mutable
+    # runtime files (and the capacity probe for that filesystem). It used to be
+    # derived from the retired cookie-banner settings file; the legacy
+    # BANNER_SETTINGS_PATH variable is still honoured so existing deployments keep
+    # pointing at the same directory.
+    _legacy_banner_path = os.getenv("BANNER_SETTINGS_PATH", "").strip()
+    RUNTIME_CONFIG_DIR = _path_from_config(
+        "runtime_config_dir",
+        "RUNTIME_CONFIG_DIR",
+        str(Path(_legacy_banner_path).parent) if _legacy_banner_path else "config",
     )
     CONFERENCES_DIR = _path_from_config(
         "conferences_dir", "CONFERENCES_DIR", "../DATABASE/conferences"
@@ -146,6 +157,11 @@ class Config:
         'json' if os.getenv('LOG_JSON', '0') in {'1','true','True','yes','on'} else 'text',
     ).strip().lower()
     LOG_JSON = LOG_FORMAT == 'json'
+    # Optional per-destination overrides. Both fall back to LOG_FORMAT, so an
+    # existing deployment keeps exactly the format it has today; set them to
+    # split the durable record (files) from what a human reads in `docker logs`.
+    LOG_FILE_FORMAT = os.getenv('LOG_FILE_FORMAT', LOG_FORMAT).strip().lower()
+    LOG_CONSOLE_FORMAT = os.getenv('LOG_CONSOLE_FORMAT', LOG_FORMAT).strip().lower()
     LOG_OUTPUT = os.getenv('LOG_OUTPUT', 'both').strip().lower()
     LOG_COLORS = os.getenv('LOG_COLORS', 'auto').strip().lower()
     LOG_MAX_BYTES = int(os.getenv('LOG_MAX_BYTES', '5000000'))
@@ -260,7 +276,7 @@ class Config:
                 "EXPORT_DIR": os.getenv("EXPORT_DIR", ""),
                 "LOG_DIR": os.getenv("LOG_DIR", ""),
                 "CONFERENCES_DIR": os.getenv("CONFERENCES_DIR", ""),
-                "BANNER_SETTINGS_PATH": os.getenv("BANNER_SETTINGS_PATH", ""),
+                "RUNTIME_CONFIG_DIR": os.getenv("RUNTIME_CONFIG_DIR", "") or os.getenv("BANNER_SETTINGS_PATH", ""),
                 "TMPDIR": os.getenv("TMPDIR", ""),
             }
             missing = [f"{name} (missing value)" for name, value in required_values.items() if not value]
@@ -283,7 +299,7 @@ class Config:
                 exports=cls.EXPORT_DIR,
                 logs=cls.LOG_DIR,
                 conferences=cls.CONFERENCES_DIR,
-                config_dir=cls.BANNER_SETTINGS_PATH.parent,
+                config_dir=cls.RUNTIME_CONFIG_DIR,
                 temporary=cls.TMP_DIR,
             ),
             require_database=cls.ENV == "production",

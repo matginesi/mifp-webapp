@@ -60,6 +60,41 @@ def test_production_compose_never_builds_an_image() -> None:
     assert "target: runtime" not in text
 
 
+def test_production_compose_publishes_only_loopback_ports() -> None:
+    """Docker publishes ports through its own iptables rules, so a UFW rule
+    cannot contain a bad mapping: every published port must be bound to
+    loopback.
+
+    This is the authoritative check for the invariant because it parses the file
+    as YAML. The fast fail-closed gate in the CI `hygiene` job enforces the same
+    rule with the standard library only (that job installs no dependencies);
+    keep the two in step if the contract ever changes.
+    """
+    root = _repo_root()
+    compose = yaml.safe_load(
+        (root / "deploy/compose.production.yaml").read_text(encoding="utf-8")
+    )
+
+    for name, service in compose["services"].items():
+        assert service.get("network_mode") != "host", f"service {name} uses host networking"
+
+        ports = service.get("ports") or []
+        assert ports, f"service {name} publishes no port; Caddy could not reach the webapp"
+
+        for entry in ports:
+            if isinstance(entry, str):
+                # Short syntax: [HOST_IP:]HOST_PORT:CONTAINER_PORT[/PROTOCOL]
+                host_ip = entry.split(":", 1)[0]
+            elif isinstance(entry, dict):
+                host_ip = entry.get("host_ip")
+            else:  # pragma: no cover - defensive
+                raise AssertionError(f"unexpected port entry {entry!r} in service {name}")
+            assert host_ip in {"127.0.0.1", "::1"}, (
+                f"service {name} publishes {entry!r} on {host_ip!r}; Docker would expose it "
+                "to the Internet regardless of UFW"
+            )
+
+
 def test_container_entrypoint_verifies_production_database_without_migrating() -> None:
     root = _repo_root()
     entrypoint = (root / "MIFPAPP/CORE/docker-entrypoint.sh").read_text(encoding="utf-8")

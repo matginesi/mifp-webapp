@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
 import mimetypes
 import secrets
 import time
@@ -101,6 +100,55 @@ def _csrf_token() -> str:
     return _stateless_csrf_token()
 
 
+class _LazyCsrfToken:
+    """Render-time CSRF token for the Jinja context.
+
+    The context processor runs for **every** request, so minting the token there
+    would bind an anonymous client and set the ``mifp_csrf`` cookie on ordinary
+    read-only pages such as ``/``, ``/events`` or ``/privacy``. This object mints
+    on first render instead, so a page that renders no form never receives the
+    cookie, while every existing ``{{ csrf_token }}`` usage keeps working
+    unchanged.
+
+    It deliberately quacks like a string: Jinja renders it through ``__html__``
+    or ``str()``, and inline ``{{ { 'csrfToken': csrf_token } }}`` blocks go
+    through ``__repr__``, which is how the plain token behaved before.
+    """
+
+    __slots__ = ("_value",)
+
+    def __init__(self) -> None:
+        self._value: str | None = None
+
+    def _mint(self) -> str:
+        if self._value is None:
+            self._value = _csrf_token()
+        return self._value
+
+    def __str__(self) -> str:
+        return self._mint()
+
+    def __repr__(self) -> str:
+        return repr(self._mint())
+
+    def __html__(self) -> str:
+        from markupsafe import escape
+
+        return str(escape(self._mint()))
+
+    def __eq__(self, other: object) -> bool:
+        return str(self) == other
+
+    def __hash__(self) -> int:
+        return hash(str(self))
+
+    def __bool__(self) -> bool:
+        return bool(self._mint())
+
+    def __len__(self) -> int:
+        return len(self._mint())
+
+
 def _is_tmpfs(path) -> bool:
     """Return True when path lives on a tmpfs (ephemeral RAM) filesystem."""
     candidate = Path(path)
@@ -165,6 +213,8 @@ def create_app():
         Config.LOG_LEVEL,
         json_logs=Config.LOG_JSON,
         log_format=Config.LOG_FORMAT,
+        file_format=Config.LOG_FILE_FORMAT,
+        console_format=Config.LOG_CONSOLE_FORMAT,
         output=Config.LOG_OUTPUT,
         max_bytes=Config.LOG_MAX_BYTES,
         backup_count=Config.LOG_BACKUP_COUNT,
@@ -239,7 +289,8 @@ def create_app():
         from datetime import datetime
 
         from .services.site_copy import copy_values
-        token = _csrf_token()
+        # Lazy on purpose: minting here would set `mifp_csrf` on every public page.
+        token = _LazyCsrfToken()
         site_settings = dict(Config.SITE_DEFAULTS)
         if not getattr(g, "maintenance_active", False):
             try:
@@ -254,18 +305,6 @@ def create_app():
                     interval_seconds=60,
                     error_type=type(exc).__name__,
                 )
-        try:
-            _banner_path = Path(app.config["BANNER_SETTINGS_PATH"])
-            if _banner_path.exists():
-                site_settings.update(json.loads(_banner_path.read_text()))
-        except Exception as exc:
-            log_event_throttled(
-                get_logger("runtime"),
-                "runtime.banner_settings_read_failed",
-                "Banner settings could not be read; database/default values are in use",
-                interval_seconds=60,
-                error_type=type(exc).__name__,
-            )
         return {
             "csrf_token": token, "csp_nonce": getattr(g, "csp_nonce", ""),
             "now": datetime.now(), "site_settings": site_settings,
@@ -449,7 +488,7 @@ def create_app():
             "database": available_bytes(db_path.parent),
             "assets": available_bytes(Config.ASSETS_DIR),
             "conferences": available_bytes(Config.CONFERENCES_DIR),
-            "config": available_bytes(Config.BANNER_SETTINGS_PATH.parent),
+            "config": available_bytes(Config.RUNTIME_CONFIG_DIR),
             "exports": available_bytes(Config.EXPORT_DIR),
             "logs": available_bytes(Config.LOG_DIR),
             "temporary": available_bytes(Config.TMP_DIR),
@@ -463,7 +502,7 @@ def create_app():
             "database_ok": db_ok,
             "assets_dir_exists": Config.ASSETS_DIR.exists(),
             "conferences_dir_exists": Config.CONFERENCES_DIR.exists(),
-            "config_dir_exists": Config.BANNER_SETTINGS_PATH.parent.exists(),
+            "config_dir_exists": Config.RUNTIME_CONFIG_DIR.exists(),
             "exports_dir_exists": Config.EXPORT_DIR.exists(),
             "backups_dir_exists": (Config.DATABASE_PATH.parent / "backups").exists(),
             "log_dir_exists": Config.LOG_DIR.exists(),
@@ -485,7 +524,7 @@ def create_app():
                 "database": db_path.parent,
                 "assets": Config.ASSETS_DIR,
                 "conferences": Config.CONFERENCES_DIR,
-                "config": Config.BANNER_SETTINGS_PATH.parent,
+                "config": Config.RUNTIME_CONFIG_DIR,
                 "exports": Config.EXPORT_DIR,
                 "logs": Config.LOG_DIR,
                 "temporary": Config.TMP_DIR,

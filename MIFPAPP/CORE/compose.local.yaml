@@ -25,7 +25,7 @@ services:
       TMPDIR: /app/data/tmp
       LOG_DIR: /app/data/logs
       CONFERENCES_DIR: /app/data/conferences
-      BANNER_SETTINGS_PATH: /app/data/config/banner_settings.json
+      RUNTIME_CONFIG_DIR: /app/data/config
       LOG_OUTPUT: stdout
       LOG_FORMAT: text
     user: "${MIFP_UID:-1000}:${MIFP_GID:-1000}"

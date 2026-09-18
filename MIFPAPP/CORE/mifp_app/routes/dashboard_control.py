@@ -615,7 +615,9 @@ def control_safety_operations_run():
             "Cleanup completed safely: "
             f"{report['exports_removed']} export(s), "
             f"{report['backups_removed']} old backup(s), "
-            f"{report['metrics_deleted']} expired metric row(s).",
+            f"{report['metrics_deleted']} expired metric row(s), "
+            f"{report['join_requests_deleted']} expired join request(s), "
+            f"{report['log_files_removed']} rotated log file(s).",
             "success",
         )
     except Exception:

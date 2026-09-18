@@ -51,7 +51,7 @@
       </div>
       <div class="modal-body">
         <section class="wizard-panel is-active" data-conference-create-step="1">
-          <div class="event-wizard-grid">
+          <div class="wizard-field-grid">
             <label class="field wide"><span>Conference title</span><input class="form-control form-control-sm" name="title" required maxlength="200"></label>
             <label class="field"><span>Acronym</span><input class="form-control form-control-sm" name="acronym" maxlength="40" placeholder="PLMCN"></label>
             <label class="field"><span>Year</span><input class="form-control form-control-sm" name="year" type="number" min="2000" max="2200"></label>
@@ -62,7 +62,7 @@
           </div>
         </section>
         <section class="wizard-panel" data-conference-create-step="2">
-          <div class="event-wizard-grid">
+          <div class="wizard-field-grid">
             <label class="field"><span>Start date</span><input class="form-control form-control-sm" type="date" name="start_date"></label>
             <label class="field"><span>End date</span><input class="form-control form-control-sm" type="date" name="end_date"></label>
             <label class="field"><span>Venue</span><input class="form-control form-control-sm" name="venue"></label>
@@ -75,7 +75,7 @@
         </section>
         <section class="wizard-panel" data-conference-create-step="3">
           <div class="control-note"><i class="bi bi-info-circle"></i><span>Preferred: import the ZIP exported by mifp-conference-editor. Legacy config.yaml/internal packages remain supported during the transition.</span></div>
-          <div class="event-wizard-grid">
+          <div class="wizard-field-grid">
             <label class="field wide"><span>Import config.yaml</span><input class="form-control form-control-sm" type="file" name="config_file" accept=".yaml,.yml"><small>Updates every supported website setting.</small></label>
             <label class="field wide"><span>Import conference ZIP</span><input class="form-control form-control-sm" type="file" name="package_file" accept=".zip"><small>Recognizes mifp-conference-editor packages automatically and preserves them as immutable source snapshots.</small></label>
             <label class="field wide"><span>Additional assets</span><input class="form-control form-control-sm" type="file" name="assets" accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.doc,.docx,.csv" multiple><small>Internal/legacy builder only. For a Conference Editor package, keep assets inside the editor project and export a new ZIP.</small></label>

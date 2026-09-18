@@ -1,5 +1,5 @@
 {% extends "dashboard/layout.html" %}
-{% from "dashboard/_components.html" import page_header %}
+{% from "dashboard/_components.html" import page_header, operation_totem %}
 {% block page_title %}Archive{% endblock %}
 
 {% block content %}
@@ -137,7 +137,7 @@
             <div class="transfer-metrics"><div><span>Events</span><b id="archiveMetricEvents">0</b></div><div><span>Documents</span><b id="archiveMetricDocuments">0</b></div><div><span>Images</span><b id="archiveMetricImages">0</b></div><div><span>People</span><b id="archiveMetricPeople">0</b></div></div>
           </div>
           <div class="transfer-right">
-            <div class="archive-package-totem"><i class="bi bi-file-earmark-zip"></i><div><b id="archivePackageName">Historical package</b><small id="archivePackageSize">Waiting for upload</small></div><span id="archivePackageState">Queued</span></div>
+            {{ operation_totem('bi-file-earmark-zip', 'archivePackageName', 'Historical package', meta_id='archivePackageSize', meta='Waiting for upload', state='idle', state_id='archivePackageState', state_label='Queued', totem_id='archivePackageTotem') }}
             <div class="transfer-activity"><span class="transfer-activity-label">Activity</span><div class="transfer-activity-log" id="archiveActivityLog"></div></div>
           </div>
         </div></div>

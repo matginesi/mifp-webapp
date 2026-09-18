@@ -1,9 +1,8 @@
 {% extends "dashboard/layout.html" %}
-{% from "dashboard/_components.html" import page_header, empty_state, export_dropdown %}
+{% from "dashboard/_components.html" import page_header, export_dropdown %}
 {% block page_title %}Events{% endblock %}
 {% block extra_js %}
 {{ super() }}
-<script src="{{ url_for('static', filename='js/dashboard/events.js') }}" defer></script>
 <script src="{{ url_for('static', filename='js/dashboard/content.js') }}" defer></script>
 {% endblock %}
 {% block content %}
@@ -16,8 +15,7 @@
 {% set hints = {'is_featured': 'If Yes, shown in the homepage forthcoming block when the event dates are forthcoming'} %}
 {% set empty_value %}<span class="cell-text">&mdash;</span>{% endset %}
 
-{% call page_header('Content', 'Events', 'Manage event records. Click a row to edit inline.') %}
-    <button class="btn btn-primary btn-sm" type="button" data-event-wizard="new"><i class="bi bi-plus-lg"></i> New Event</button>
+{% call page_header('Content', 'Events', 'Review and edit canonical event records. Events are created by the import pipeline, not by hand.') %}
     <a href="{{ url_for('dashboard.data_portability') }}" class="btn btn-outline btn-sm"><i class="bi bi-box-arrow-in-down"></i> Import bundle</a>
 {% endcall %}
 
@@ -227,5 +225,4 @@
   </section>
 </div>
 
-{% include "dashboard/_event_wizard.html" %}
 {% endblock %}

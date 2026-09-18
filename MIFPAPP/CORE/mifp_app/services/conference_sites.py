@@ -22,6 +22,38 @@ PEOPLE_COLUMNS = (
     "name", "email", "affiliation", "country", "role",
     "contribution_title", "bio", "website_url", "sort_order",
 )
+# Explicit public projections. Everything written into the generated package is
+# listed here by name; "stored in the database" is never treated as "public".
+#
+# PUBLIC_PEOPLE_FIELDS mirrors exactly what the generated people page renders:
+# a name, an affiliation, a role and an optional contribution title. The internal
+# contact address (`email`), the ordering column (`sort_order`), the database `id`
+# and the optional `country`/`bio`/`website_url` columns are deliberately absent:
+# nothing in the generated site displays them, and publishing a personal e-mail
+# address in a public JSON file is a disclosure the source data never intended.
+PUBLIC_PEOPLE_FIELDS = (
+    "name", "affiliation", "role", "contribution_title",
+)
+# The public conference identity: what the deployed static site describes about
+# itself. Operational and packaging state (row id, deploy status, source/package
+# metadata, checksums, internal paths, stored config_json, import timestamps and
+# the non-public contact address) is intentionally not published here — it lives
+# in the database and in the operator-facing tooling instead.
+PUBLIC_CONFERENCE_FIELDS = (
+    "slug", "title", "acronym", "year", "start_date", "end_date",
+    "venue", "city", "country", "canonical_url", "description",
+    "registration_url",
+)
+# Configuration that older packages and stored configs may still carry. Retired
+# keys are accepted and dropped instead of failing an import that used to be
+# valid, and they are never written back out. Both entries described client-side
+# storage that this builder has never implemented: the generated site is fully
+# static and stores no visitor preference at all.
+RETIRED_CONFERENCE_CONFIG: dict[str, set[str]] = {
+    "privacy": {"show_notice", "notice_storage_key"},
+    "appearance": {"remember_theme"},
+}
+RETIRED_CONFIG_SECTIONS = frozenset({"privacy"})
 ALLOWED_ASSET_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".webp", ".gif",
     ".pdf", ".doc", ".docx", ".csv",
@@ -45,11 +77,6 @@ DEFAULT_CONFERENCE_CONFIG: dict[str, dict[str, Any]] = {
     "appearance": {
         "default_mode": "dark",
         "default_palette": 0,
-        "remember_theme": True,
-    },
-    "privacy": {
-        "show_notice": True,
-        "notice_storage_key": "conference-privacy-notice",
     },
     "registration": {
         "enabled": False,
@@ -114,14 +141,36 @@ def _validate_iso_datetime(value: str, label: str) -> str:
     return value
 
 
+def _drop_retired_config(saved: dict) -> dict:
+    """Remove retired sections/keys from a stored or parsed config.
+
+    Applied on the way in so a legacy config cannot smuggle a settings section
+    back into the generated ``config.yaml``.
+    """
+    cleaned = {
+        section: dict(values)
+        for section, values in saved.items()
+        if isinstance(values, dict) and section not in RETIRED_CONFIG_SECTIONS
+    }
+    for section, retired_keys in RETIRED_CONFERENCE_CONFIG.items():
+        values = cleaned.get(section)
+        if isinstance(values, dict):
+            for key in retired_keys:
+                values.pop(key, None)
+    return cleaned
+
+
 def conference_config(raw: str | dict | None, site: dict | None = None) -> dict:
     try:
         saved = json.loads(raw) if isinstance(raw, str) and raw.strip() else (raw or {})
     except (TypeError, json.JSONDecodeError):
         saved = {}
+    if not isinstance(saved, dict):
+        saved = {}
+    saved = _drop_retired_config(saved)
     config = json.loads(json.dumps(DEFAULT_CONFERENCE_CONFIG))
     for section, defaults in config.items():
-        incoming = saved.get(section) if isinstance(saved, dict) else None
+        incoming = saved.get(section)
         if isinstance(incoming, dict):
             defaults.update(incoming)
     if site:
@@ -139,8 +188,6 @@ def config_from_form(form, current: dict) -> dict:
     config = conference_config(current)
     boolean_fields = {
         ("runtime", "debug"),
-        ("appearance", "remember_theme"),
-        ("privacy", "show_notice"),
         ("registration", "enabled"),
         ("registration", "open_in_new_tab"),
         ("countdown", "enabled"),
@@ -150,8 +197,7 @@ def config_from_form(form, current: dict) -> dict:
     allowed = {
         "deployment": ("environment", "localhost_base_path", "nginx_base_path"),
         "runtime": ("debug", "console_log_level"),
-        "appearance": ("default_mode", "default_palette", "remember_theme"),
-        "privacy": ("show_notice", "notice_storage_key"),
+        "appearance": ("default_mode", "default_palette"),
         "registration": (
             "enabled", "section_anchor", "nav_label", "topbar_label",
             "button_label", "open_in_new_tab", "plan_button_label",
@@ -190,9 +236,6 @@ def config_from_form(form, current: dict) -> dict:
         )
     except ValueError as exc:
         raise ValueError("Palette and countdown interval must be numbers.") from exc
-    privacy_key = config["privacy"]["notice_storage_key"]
-    if not re.fullmatch(r"[A-Za-z0-9._-]{3,80}", privacy_key):
-        raise ValueError("Privacy storage key contains unsupported characters.")
     for key in ("participant_url", "student_url", "accompanying_url"):
         config["registration"][key] = validate_public_url(config["registration"][key])
 
@@ -231,7 +274,7 @@ def config_to_yaml(config: dict) -> str:
         return json.dumps(str(value), ensure_ascii=False)
 
     lines = ["# Generated by the MIFP conference service."]
-    for section in ("deployment", "runtime", "appearance", "privacy", "registration"):
+    for section in ("deployment", "runtime", "appearance", "registration"):
         lines.append(f"\n{section}:")
         for key, value in config[section].items():
             lines.append(f"  {key}: {scalar(value)}")
@@ -258,13 +301,26 @@ def parse_config_yaml(raw: bytes) -> dict:
         raise ValueError("config.yaml is not valid UTF-8 YAML.") from exc
     if not isinstance(loaded, dict):
         raise ValueError("config.yaml must contain a mapping of configuration sections.")
+    # Packages produced before the retired client-storage settings were dropped
+    # still carry them. Accept and ignore those instead of failing an import that
+    # used to be valid.
+    for section in RETIRED_CONFIG_SECTIONS:
+        values = loaded.get(section)
+        if isinstance(values, dict):
+            unexpected = set(values) - RETIRED_CONFERENCE_CONFIG.get(section, set())
+            if unexpected:
+                raise ValueError(
+                    f"Unsupported config.yaml key: {section}.{sorted(unexpected)[0]}"
+                )
+            loaded.pop(section)
     unknown_sections = set(loaded) - set(DEFAULT_CONFERENCE_CONFIG)
     if unknown_sections:
         raise ValueError(f"Unsupported config.yaml section: {sorted(unknown_sections)[0]}")
     for section, values in loaded.items():
         if not isinstance(values, dict):
             raise ValueError(f"config.yaml section {section} must be a mapping.")
-        unknown_keys = set(values) - set(DEFAULT_CONFERENCE_CONFIG[section])
+        allowed_keys = set(DEFAULT_CONFERENCE_CONFIG[section]) | RETIRED_CONFERENCE_CONFIG.get(section, set())
+        unknown_keys = set(values) - allowed_keys
         if unknown_keys:
             raise ValueError(
                 f"Unsupported config.yaml key: {section}.{sorted(unknown_keys)[0]}"
@@ -420,10 +476,10 @@ def _page(title: str, site: dict, config: dict, body: str, *, active: str) -> st
         f'<a class="{"active" if key.lower() == active else ""}" href="{base}{href}">{key}</a>'
         for key, href in links
     )
-    privacy = (
-        '<aside class="privacy-notice">This conference site stores only your theme and privacy-notice preferences.</aside>'
-        if config["privacy"]["show_notice"] else ""
-    )
+    # The generated site is fully static: it sets no cookies and stores no
+    # client-side preferences. It used to carry a notice claiming it remembered a
+    # theme and privacy-notice choice, which was never true for this builder.
+    # Uploaded Conference Editor packages are untouched and keep their own text.
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -433,7 +489,7 @@ def _page(title: str, site: dict, config: dict, body: str, *, active: str) -> st
 <link rel="stylesheet" href="{base}assets/site.css"></head>
 <body data-theme="{esc(config["appearance"]["default_mode"])}"><header><a class="brand" href="{base}index.html">{esc(site.get("acronym") or site["title"])}</a>
 <nav>{nav}</nav></header><main>{body}</main>
-{privacy}<footer>{esc(site["title"])} · {esc(site.get("city") or "")}</footer></body></html>"""
+<footer>{esc(site["title"])} · {esc(site.get("city") or "")}</footer></body></html>"""
 
 
 def build_site_zip(
@@ -550,7 +606,7 @@ def build_site_zip(
         (root / "venue.html").write_text(_page("Venue", site, config, venue, active="venue"), encoding="utf-8")
 
         public_people = [
-            {field: row.get(field) for field in PEOPLE_COLUMNS}
+            {field: row.get(field) for field in PUBLIC_PEOPLE_FIELDS}
             for row in people
         ]
         (root / "people.json").write_text(
@@ -562,7 +618,13 @@ def build_site_zip(
                 json.dumps(program_rows, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-        (root / "conference.json").write_text(json.dumps(site, ensure_ascii=False, indent=2), encoding="utf-8")
+        public_conference = {
+            field: site.get(field) for field in PUBLIC_CONFERENCE_FIELDS
+        }
+        (root / "conference.json").write_text(
+            json.dumps(public_conference, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
         (root / "config.yaml").write_text(config_to_yaml(config), encoding="utf-8")
         packaged_assets = sorted(
             path.name for path in assets.iterdir() if path.is_file() and path.name != "site.css"

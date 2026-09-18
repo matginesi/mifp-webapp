@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
-import os
 import sqlite3
-import time
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -195,39 +192,6 @@ def _write_institutional_body(slug: str, content: str) -> None:
         conn.commit()
 
 
-def _read_banner_config() -> dict[str, str]:
-    path = Path(current_app.config["BANNER_SETTINGS_PATH"])
-    if path.is_symlink():
-        raise RuntimeError("Banner settings path cannot be a symbolic link")
-    if not path.exists():
-        return {}
-    if not path.is_file():
-        raise RuntimeError("Banner settings path is not a regular file")
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise RuntimeError("Banner settings must contain a JSON object")
-    return {str(key): str(value) for key, value in payload.items()}
-
-
-def _write_banner_config(data: dict[str, str]) -> None:
-    path = Path(current_app.config["BANNER_SETTINGS_PATH"])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_symlink():
-        raise RuntimeError("Banner settings path cannot be a symbolic link")
-    current = _read_banner_config()
-    current.update(data)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        temporary.chmod(0o640)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
 def asset_capabilities(table: str) -> dict[str, Any]:
     fields = PRIMARY_ASSET_FIELDS.get(table, {})
     return {
@@ -322,6 +286,12 @@ def content(section):
     if not table:
         flash("Invalid section.", "error")
         return redirect(url_for("dashboard.index"))
+    if table == "events":
+        # Canonical events are never authored through the generic content
+        # workspace. Sending this legacy path (including any POST) to the
+        # dedicated events screen keeps exactly one event surface, so no hidden
+        # form can insert a canonical event.
+        return redirect(url_for("dashboard.events"))
     q = request.args.get("q", "").strip() or None
     edit_id = request.args.get("edit", type=int)
     page = request.args.get("page", 1, type=int)
@@ -477,24 +447,17 @@ def events_record_json(record_id):
     return jsonify({"record": dict(record), "assets": assets, "links": links, "cover_url": cover})
 
 
-def _event_has_publishable_cover(conn, record_id: int | None, form) -> bool:
-    """Return whether the submitted event will retain a usable public cover.
+def _event_has_publishable_cover(conn, record_id: int) -> bool:
+    """Return whether the event being updated will retain a usable public cover.
 
     Inline edits do not submit asset fields, so existing cover/logo links must be
-    considered. The event wizard explicitly manages the complete asset set; when
-    it submits ``manage_event_assets=1`` an empty cover field means no cover.
+    considered. Archived events keep their recovered media and are therefore
+    publishable without a locally linked cover image.
     """
-    submitted_cover = str(form.get("cover_asset_id") or "").strip()
-    if submitted_cover:
-        return True
-
-    if record_id and conn.execute(
+    if conn.execute(
         "SELECT 1 FROM event_archive_entries WHERE event_id=?", (record_id,)
     ).fetchone():
         return True
-
-    if form.get("manage_event_assets") == "1" or not record_id:
-        return False
 
     return conn.execute(
         """
@@ -511,49 +474,16 @@ def _event_has_publishable_cover(conn, record_id: int | None, form) -> bool:
     ).fetchone() is not None
 
 
-def _process_event_assets(conn, event_id: int, form) -> dict[str, int]:
-    entity_type = "event"
-    linked = {"cover": 0, "documents": 0}
-
-    conn.execute("DELETE FROM asset_links WHERE entity_type=? AND entity_id=?", (entity_type, event_id))
-
-    cover_id = form.get("cover_asset_id")
-    if cover_id:
-        try:
-            cover_id = int(cover_id)
-            if not conn.execute("SELECT 1 FROM assets WHERE id=?", (cover_id,)).fetchone():
-                raise ValueError("cover asset does not exist")
-            conn.execute(
-                "INSERT INTO asset_links(asset_id, entity_type, entity_id, role, is_primary, sort_order) VALUES(?,?,?,?,?,?)",
-                (cover_id, entity_type, event_id, "cover", 1, 0),
-            )
-            linked["cover"] = 1
-        except (TypeError, ValueError) as exc:
-            raise ValueError("The selected event cover is invalid") from exc
-
-    doc_ids = form.getlist("doc_asset_id")
-
-    for i, aid in enumerate(doc_ids):
-        if not str(aid or "").strip():
-            continue
-        try:
-            asset_id = int(aid)
-            if not conn.execute("SELECT 1 FROM assets WHERE id=?", (asset_id,)).fetchone():
-                raise ValueError("document asset does not exist")
-            conn.execute(
-                "INSERT INTO asset_links(asset_id, entity_type, entity_id, role, is_primary, sort_order) VALUES(?,?,?,?,?,?)",
-                (asset_id, entity_type, event_id, "document", 0, i + 1),
-            )
-            linked["documents"] += 1
-        except (TypeError, ValueError) as exc:
-            raise ValueError("One of the selected event documents is invalid") from exc
-
-    return linked
-
-
 @bp.route("/events", methods=["GET", "POST"])
 @login_required
 def events():
+    """Review and edit canonical events.
+
+    This endpoint is an UPDATE-only surface. Canonical events are created by the
+    ingestion pipelines (importers, historical archive, data portability), never
+    by a dashboard form, so a POST without a valid existing ``id`` is rejected
+    before any write happens.
+    """
     table = "events"
     today = date.today()
 
@@ -561,17 +491,24 @@ def events():
         if request.method == "POST":
             form_data = dict(request.form)
             form_data.pop("_csrf_token", None)
-            record_id = form_data.pop("id", None)
-            is_new = not record_id
+            record_id = str(form_data.pop("id", "") or "").strip()
             current_app.logger.info(
-                "event save started mode=%s fields=%s submitted_cover=%s manage_assets=%s documents=%s",
-                "create" if is_new else "update",
+                "event save started fields=%s",
                 sorted(form_data),
-                bool(request.form.get("cover_asset_id")),
-                request.form.get("manage_event_assets") == "1",
-                len([value for value in request.form.getlist("doc_asset_id") if value]),
             )
             try:
+                if not record_id:
+                    raise ValueError(
+                        "Events are created by the import pipeline and cannot be "
+                        "created from the dashboard."
+                    )
+                try:
+                    numeric_id = int(record_id)
+                except ValueError as exc:
+                    raise ValueError("The event identifier is not valid.") from exc
+                if not conn.execute("SELECT 1 FROM events WHERE id=?", (numeric_id,)).fetchone():
+                    raise ValueError("The event being edited no longer exists.")
+
                 if not str(form_data.get("title") or "").strip():
                     raise ValueError("Event title is required")
                 if not form_data.get("review_status"):
@@ -584,8 +521,7 @@ def events():
                         missing.append("description")
                     if not (form_data.get("location") or form_data.get("remote_url")):
                         missing.append("location or external URL")
-                    existing_record_id = int(record_id) if record_id else None
-                    if not _event_has_publishable_cover(conn, existing_record_id, request.form):
+                    if not _event_has_publishable_cover(conn, numeric_id):
                         missing.append("cover image")
                     if missing:
                         raise ValueError(
@@ -601,36 +537,23 @@ def events():
                     conn,
                     table,
                     form_data,
-                    int(record_id) if record_id else None,
+                    numeric_id,
                     commit=False,
                 )
-                linked = {"cover": 0, "documents": 0}
-                if request.form.get("manage_event_assets") == "1":
-                    linked = _process_event_assets(conn, saved_id, request.form)
                 conn.commit()
-                audit_log("event.create" if is_new else "event.update", "event save", record_id=saved_id)
+                audit_log("event.update", "event save", record_id=saved_id)
                 current_app.logger.info(
-                    "event save completed mode=%s record_id=%s asset_mode=%s cover_links_added=%s document_links_added=%s",
-                    "create" if is_new else "update",
+                    "event save completed record_id=%s",
                     saved_id,
-                    "managed" if request.form.get("manage_event_assets") == "1" else "preserved",
-                    linked["cover"],
-                    linked["documents"],
                 )
                 flash("Event saved.", "success")
             except ValueError as exc:
                 conn.rollback()
-                current_app.logger.warning(
-                    "event save rejected mode=%s reason=%s",
-                    "create" if is_new else "update", exc,
-                )
+                current_app.logger.warning("event save rejected reason=%s", exc)
                 flash(str(exc), "error")
             except sqlite3.IntegrityError as exc:
                 conn.rollback()
-                current_app.logger.warning(
-                    "event save conflict mode=%s error=%s",
-                    "create" if is_new else "update", exc,
-                )
+                current_app.logger.warning("event save conflict error=%s", exc)
                 flash("The event conflicts with an existing slug or identifier.", "error")
             except Exception:
                 conn.rollback()
@@ -713,97 +636,45 @@ def institutional():
 
 
 # ---------------------------------------------------------------------------
-# Cookie policy management
+# Privacy and cookie policy management
 # ---------------------------------------------------------------------------
 
 @bp.route("/institutional/cookie", methods=["GET", "POST"])
 @login_required
 def institutional_cookie():
     """Route older bookmarks into the consolidated Privacy & Cookies workspace."""
-    if request.method == "POST":
-        action = request.form.get("_action", "")
-        if action == "save_page":
-            body = request.form.get("body", "").strip()
-            _write_institutional_body("cookie-policy", body)
-            audit_log("cookie.update", "cookie policy saved")
-            flash("Cookie policy saved.", "success")
-            return redirect(url_for("dashboard.institutional_privacy", tab="cookie"))
-        if action == "save_settings":
-            current = _read_banner_config()
-            banner_theme = request.form.get("cookie_banner_theme", current.get("cookie_banner_theme", "brand"))
-            if banner_theme not in {"brand", "neutral"}:
-                banner_theme = "brand"
-            _write_banner_config({
-                "cookie_banner_enabled": "1" if request.form.get("cookie_banner_enabled") == "1" else "0",
-                "cookie_banner_text": request.form.get("cookie_banner_text", "").strip()[:500],
-                "cookie_banner_link_enabled": "1" if request.form.get("cookie_banner_link_enabled") == "1" else current.get("cookie_banner_link_enabled", "1"),
-                "cookie_banner_dismiss_label": request.form.get("cookie_banner_dismiss_label", current.get("cookie_banner_dismiss_label", "Dismiss")).strip()[:40] or "Dismiss",
-                "cookie_banner_theme": banner_theme,
-            })
-            audit_log("cookie.settings", "cookie settings saved")
-            flash("Cookie banner settings saved.", "success")
-            return redirect(url_for("dashboard.institutional_privacy") + "#banner-settings-title")
+    if request.method == "POST" and request.form.get("_action") == "save_page":
+        body = request.form.get("body", "").strip()
+        _write_institutional_body("cookie-policy", body)
+        audit_log("cookie.update", "cookie policy saved")
+        flash("Cookie policy saved.", "success")
     return redirect(url_for("dashboard.institutional_privacy", tab="cookie"))
 
-
-# ---------------------------------------------------------------------------
-# Privacy + Cookie banner management
-# ---------------------------------------------------------------------------
 
 @bp.route("/institutional/privacy", methods=["GET", "POST"])
 @login_required
 def institutional_privacy():
+    """Edit the two public policy documents.
+
+    There is no cookie-banner administration here: the public site sets only
+    strictly necessary cookies, so there is nothing optional to configure and no
+    consent gate to manage.
+    """
     if request.method == "POST":
         action = request.form.get("_action", "")
         if action == "save_privacy":
-            body = request.form.get("body", "").strip()
-            _write_institutional_body("privacy", body)
+            _write_institutional_body("privacy", request.form.get("body", "").strip())
             audit_log("privacy.update", "privacy page saved")
             flash("Privacy page saved.", "success")
         elif action == "save_cookie":
-            body = request.form.get("cookie_body", "").strip()
-            _write_institutional_body("cookie-policy", body)
+            _write_institutional_body("cookie-policy", request.form.get("cookie_body", "").strip())
             audit_log("cookie.update", "cookie policy saved from privacy page")
             flash("Cookie policy saved.", "success")
-        elif action == "save_banner":
-            banner_enabled = "1" if request.form.get("cookie_banner_enabled") == "1" else "0"
-            banner_text = request.form.get("cookie_banner_text", "").strip()[:500]
-            force_show = _read_banner_config().get("banner_force_show", "0")
-            link_enabled = "1" if request.form.get("cookie_banner_link_enabled") == "1" else "0"
-            dismiss_label = request.form.get("cookie_banner_dismiss_label", "").strip()[:40] or "Dismiss"
-            banner_theme = request.form.get("cookie_banner_theme", "brand")
-            if banner_theme not in {"brand", "neutral"}:
-                banner_theme = "brand"
-            _write_banner_config({
-                "cookie_banner_enabled": banner_enabled,
-                "cookie_banner_text": banner_text,
-                "banner_force_show": force_show,
-                "cookie_banner_link_enabled": link_enabled,
-                "cookie_banner_dismiss_label": dismiss_label,
-                "cookie_banner_theme": banner_theme,
-            })
-            audit_log("banner.settings", "banner settings saved")
-            flash("Banner settings saved.", "success")
-        if action == "save_cookie":
             return redirect(url_for("dashboard.institutional_privacy", tab="cookie"))
-        if action == "save_banner":
-            return redirect(url_for("dashboard.institutional_privacy") + "#banner-settings-title")
         return redirect(url_for("dashboard.institutional_privacy"))
 
-    privacy_body = _read_institutional_body("privacy")
-    cookie_body = _read_institutional_body("cookie-policy")
-    settings = _read_banner_config()
-    return render_template("dashboard/institutional_privacy.html", privacy_body=privacy_body, cookie_body=cookie_body, settings=settings)
-
-
-@bp.post("/institutional/privacy/banner/force")
-@login_required
-def institutional_privacy_force_banner():
-    revision = str(time.time_ns())
-    _write_banner_config({
-        "cookie_banner_enabled": "1",
-        "banner_force_show": revision,
-    })
-    audit_log("banner.force_show", "cookie banner forced for all visitors", revision=revision)
-    flash("Cookie banner forced. It will be shown to every visitor on their next page view.", "success")
-    return redirect(url_for("dashboard.institutional_privacy") + "#banner-settings-title")
+    return render_template(
+        "dashboard/institutional_privacy.html",
+        privacy_body=_read_institutional_body("privacy"),
+        cookie_body=_read_institutional_body("cookie-policy"),
+    )

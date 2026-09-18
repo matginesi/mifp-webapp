@@ -3,71 +3,140 @@
 **Repository:** `MifpWebNew`
 **Audit date:** 2026-09-18
 **Scope owner:** autonomous production refactor & hardening task
+**Rounds:** baseline → first hardening round → second pre-deployment hardening round (see *Round chronology*)
 **Method:** manual code-path tracing, executable reproductions against the real
 modules, static analysis (`ruff`, `bandit`), dependency audit (`pip-audit`),
-repository/history inspection, Docker image build + inspection + runtime smoke
-test, CI/CD and infrastructure-as-code review.
+dedicated secret scanning with `gitleaks` (full history + working tree),
+Docker image build + inspection + runtime smoke test + Trivy CVE scan,
+rendered-and-executed Caddy configuration testing, `shellcheck`, and
+CI/CD plus infrastructure-as-code review.
+
+> **THREE-ROUND STRUCTURE — read this first.** This document grew chronologically:
+>
+> | Round | What it covers |
+> | --- | --- |
+> | **Baseline** | State of the repository before any change (873 tests green, hygiene clean) |
+> | **Round 1** | Maintainability + production security audit; ZIP/CI/SSRF findings |
+> | **Round 2** | Pre-deployment hardening performed before any VPS was purchased; SSH/updates/disaster-recovery findings |
+> | **Current final state** | Everything both rounds fixed, plus what genuinely remains |
+>
+> Narrative sections that describe the repository *at the time of round 1* are
+> explicitly marked **HISTORICAL (end of round 1)**. Their findings and their
+> then-current "open" items are kept as a record, but they are **not** statements
+> about the repository today. The authoritative current status is
+> **PRE-DEPLOYMENT READINESS** near the end of this document.
+
+### Current status (authoritative)
+
+```text
+SECURITY POSTURE        READY TO DEPLOY SAFELY
+LIVE PRODUCTION         NOT LIVE-PRODUCTION VERIFIED
+VPS LIVE CHECKS         NOT YET APPLICABLE  (no VPS exists yet)
+```
+
+No production host exists, was contacted, or is claimed to have been verified.
+Every host-level control in this report is a **code/infrastructure-as-code**
+result. The live-host checks are listed in
+[`docs/DEPLOY_NEW_VPS.md`](../DEPLOY_NEW_VPS.md) under *WHEN THE VPS IS
+PURCHASED* and are repeated in the *PRE-DEPLOYMENT READINESS* section.
 
 ---
 
 ## Executive Summary
 
-**Baseline posture before this task: MODERATE RISK.**
-**Posture after the fixes applied in this task: WELL HARDENED WITH MINOR FINDINGS.**
+### Baseline (before any change)
 
-No **CRITICAL** vulnerability was found. There is no unauthenticated remote code
-execution, no unauthenticated disclosure of the database, and no path from a
-public request to a shell or to arbitrary SQL. The application ships with a
+**Baseline posture: MODERATE RISK** — 873 tests green, repository hygiene clean,
+no CRITICAL exposure, but three HIGH findings present and several residual
+weaknesses.
+
+No **CRITICAL** vulnerability was found in any round. There is no unauthenticated
+remote code execution, no unauthenticated disclosure of the database, and no path
+from a public request to a shell or to arbitrary SQL. The application ships with a
 genuinely strong control set: a read-only, non-root, capability-dropped
 container on a loopback-only port; a deny-by-default PHP vhost; a per-request
 nonce-based CSP and full security-header set; SQLite everywhere parameterized
 behind identifier allowlists; SSRF validation with per-hop DNS pinning; and a
 validated, integrity-checked backup/restore path.
 
-Three **HIGH** findings were confirmed. None of them were reachable by an
+### Round 1 — maintainability and application security
+
+Three **HIGH** findings were confirmed and fixed. None was reachable by an
 anonymous Internet user:
 
 | ID | Severity | What it allowed | Reachability | Status |
 | --- | --- | --- | --- | --- |
-| `MIFP-ZIP-001` | HIGH | Import of a crafted JSONL/ZIP record copied **any readable local file** into the public asset library, then served it unauthenticated at `/media/…` | Authenticated admin imports an untrusted/LLM-generated package | **FIXED** |
-| `MIFP-ZIP-002` | HIGH | A `mifp-content` package could install unsigned durable state (settings, roles, join requests, slug redirects), including forcing maintenance mode | Same | **FIXED** |
-| `MIFP-CI-001` | HIGH | Weekly GHCR prune deleted **every** image version including the one carrying `latest`, breaking `mifpctl init`, `deploy` and registry rollback | Unattended scheduled workflow | **FIXED** |
+| `MIFP-ZIP-001` | HIGH | Import of a crafted JSONL/ZIP record copied **any readable local file** into the public asset library, then served it unauthenticated at `/media/…` | Authenticated admin imports an untrusted/LLM-generated package | **FIXED (round 1)** |
+| `MIFP-ZIP-002` | HIGH | A `mifp-content` package could install unsigned durable state (settings, roles, join requests, slug redirects), including forcing maintenance mode | Same | **FIXED (round 1)** |
+| `MIFP-CI-001` | HIGH | Weekly GHCR prune deleted **every** image version including the one carrying `latest`, breaking `mifpctl init`, `deploy` and registry rollback | Unattended scheduled workflow | **FIXED (round 1)** |
 
-A **second hardening round** was performed afterwards, before a VPS existed.
-It confirmed three further **HIGH** findings — none exploitable by an anonymous
-Internet user — and fixed all three: SSH hardening was neither automated nor
-verified while `security-check` falsely reported success (`MIFP-SSH-001`); the
-host had no security-update automation or reboot policy (`MIFP-UPD-001`); and
-`restore-snapshot` could rotate away the very snapshot being restored and then
-abort *after* stopping the service (`MIFP-BK-001`). It also closed the previous
-round's open CSRF, rate-limit, data-quality and archive items, scanned the full
-Git history with a dedicated secret scanner (clean), pinned every CI action to a
-commit SHA, added a secret-scan and an image-CVE gate in front of `latest`
-promotion, and produced a clean-VPS runbook. See **PRE-DEPLOYMENT READINESS**
-for the full matrix. **The current posture is READY TO DEPLOY SAFELY — it is not
-LIVE-PRODUCTION VERIFIED, because no VPS exists.**
+Two **MEDIUM** findings were also confirmed and fixed in round 1 (an SSRF
+validation gap on legacy numeric IP notations, and a `state.json`/integrity issue
+in the asset importer), together with a set of **LOW** findings that were almost
+all silent-failure and logging problems rather than exploitable defects.
 
-The two application HIGH findings both sit behind the admin login, which is why
-the baseline is *moderate* rather than *high risk*: they are real and
-consequential, but they require a privileged action that is itself the intended
-trust boundary. `MIFP-CI-001` is the most operationally dangerous item found
-because it is deterministic and unattended, and because the damage (an emptied
-container registry) is not recoverable from the repository.
+The two application HIGH findings sit behind the admin login, which is why the
+baseline is *moderate* rather than *high risk*: they are real and consequential,
+but they require a privileged action that is itself the intended trust boundary.
+`MIFP-CI-001` was the most operationally dangerous item found because it is
+deterministic and unattended, and because the damage (an emptied container
+registry) is not recoverable from the repository.
 
-Two **MEDIUM** findings were also confirmed and fixed (an SSRF validation gap
-on legacy numeric IP notations, and a `state.json`/integrity issue in the asset
-importer), together with a set of **LOW** findings that were almost all
-silent-failure and logging problems rather than exploitable defects.
+Round 1 ended by explicitly listing what was **still open** — SSH hardening not
+automated, no host security-update automation, unpinned GitHub Actions, no image
+CVE scanning, no dedicated secret scan of Git history, and several archive and
+disaster-recovery gaps. **All of those were addressed in round 2**, except the
+items recorded under *Residual Risks (current)*.
 
-Everything that remains open is either an operator/GitHub-side action
-(SSH hardening automation, action SHA pinning, image CVE scanning) or a
-deliberate, documented design trade-off. Section *Remediation Summary*
-separates these explicitly.
+### Round 2 — pre-deployment hardening (no VPS existed yet)
 
-**Honest limitation:** no live VPS was reachable from this environment. All
-infrastructure conclusions are derived from infrastructure-as-code and the
-operator tooling; a read-only production verification checklist is provided in
-*Residual Risks* instead of invented live results.
+Round 2 was performed *before* a VPS was purchased, specifically to close
+everything that could be closed without a live host. It confirmed three further
+**HIGH** findings — none exploitable by an anonymous Internet user — and fixed
+all three:
+
+* `MIFP-SSH-001` — SSH hardening was neither automated nor verified, and
+  `security-check` falsely reported success on a host still accepting password
+  (and password root) logins.
+* `MIFP-UPD-001` — the host had no security-update automation, no reboot policy
+  and no reboot-required reporting.
+* `MIFP-BK-001` — `restore-snapshot` could rotate away the very snapshot being
+  restored and then abort *after* stopping the service.
+
+It also closed round 1's open CSRF, per-account rate-limit, data-quality and
+archive items; scanned the **full Git history** with a dedicated secret scanner
+(clean); pinned every CI action to a commit SHA; and added a secret-scan job and
+an image-CVE gate in front of `latest` promotion. A clean-VPS runbook was
+produced at [`docs/DEPLOY_NEW_VPS.md`](../DEPLOY_NEW_VPS.md).
+
+### Current final state
+
+**READY TO DEPLOY SAFELY — NOT LIVE-PRODUCTION VERIFIED — VPS LIVE CHECKS NOT
+YET APPLICABLE.**
+
+Every finding from both rounds is fixed except the short, explicitly listed set in
+*Residual Risks (current)*. Nothing remains that requires code changes before a
+VPS is provisioned; what remains either requires an actual host, is an accepted
+design trade-off, or is an unavoidable unpatchable base-image CVE.
+
+---
+
+## Round chronology — what changed when
+
+| Area | Baseline | End of round 1 | Current (end of round 2) |
+| --- | --- | --- | --- |
+| Application security | 3 HIGH + 2 MEDIUM + LOW open | HIGH/MEDIUM fixed; CSRF/rate-limit/archive items **open** | All fixed; `MIFP-CSRF-001`, `MIFP-AUTH-002`, `MIFP-ERR-001`, `MIFP-ZIP-003…007` closed |
+| SSH on the future host | untouched prose only | **open** (documented operator action) | `mifpctl ssh-harden` (staged, lockout-safe) + `security-check` verifies **effective** policy |
+| Host security updates | none | **open** | security-only `unattended-upgrades`, auto-reboot **false**, reboot-required in `doctor`/`security-check` |
+| Firewall | allow-before-enable only | adequate, IPv6/limit unasserted | `ufw limit`, IPv6 asserted, SSH rule verified before finishing |
+| GitHub Actions | tags unpinned | **open** (tag pinning) | **pinned to commit SHAs**; Dependabot keeps them current |
+| Image CVE scanning | none | **open** | Trivy job gating `latest`; `libpcre2` fixed ⇒ **0 fixable HIGH/CRITICAL** |
+| Git-history secrets | no scanner available | **acknowledged gap** | **gitleaks over the full history (76 commits) + working tree: clean** |
+| Caddy validation | manual only | manual only | rendered-and-executed with `caddy:2-alpine`; **bootstrap validates before publishing** |
+| Disaster recovery | restore path present | **round-1 review only** | `MIFP-BK-001…013` reproduced and fixed; fixtures added |
+| Shell quality | unchecked | unchecked | `bash -n` clean + `shellcheck -S warning` clean |
+| Test suite | 873 pass | 877 pass | **890 pass** (807 + 35 + 48) |
+
 
 ---
 
@@ -93,23 +162,33 @@ operator tooling; a read-only production verification checklist is provided in
 | PHP conference archive | `deploy/Caddyfile` PHP rules, `deploy/bootstrap-vps.sh` pool setup, `deploy/deploy.sh` allow-list management |
 | Deployment tooling | `deploy/deploy.sh`, `deploy/mifpctl`, `deploy/bootstrap-vps.sh`, `deploy/vps_config.py`, `deploy/configure.py`, `deploy/compose.production.yaml`, `deploy/backup.sh`, `deploy/mifp-backup.{service,timer}`, `deploy/local-hosts.sh`, root `mifp` launcher |
 | Backups / DR | `deploy/backup.sh`, snapshot verification and restore paths in `deploy/deploy.sh`, snapshot manifest format |
-| Tests | `TESTS/webapp/**`, `TESTS/database/**`, `TESTS/scraper/**` (873 baseline tests) |
+| Tests | `TESTS/webapp/**`, `TESTS/database/**`, `TESTS/scraper/**` — **873 at baseline**, 877 after round 1, **890** at the current state |
 
 ### Not available / not inspected
 
-* **Live VPS.** No authorized access from this environment. No `mifpctl
-  config-check` / `security-check` / `doctor` output is reported here because
-  none was produced. Infrastructure findings are code-derived.
+* **A production VPS.** There is no production host: none has been provisioned,
+  so no `mifpctl config-check` / `security-check` / `doctor` output exists and
+  none is reported here. Every host-level conclusion in this document is derived
+  from infrastructure-as-code and the operator tooling. This is **not** a failed
+  check — it is *not yet applicable*.
 * **Actual historical conference PHP content.** The site *application* code that
   runs under PHP-FPM is not in this repository. Only the PHP **platform**
   configuration (pool, socket, allow-list, Caddy gating) was audited.
 * **GitHub organisation settings.** Branch protection, required reviewers,
   environment secrets, and package visibility are not visible from the
   checkout. They are listed as required operator actions.
-* **Git history content scan with a dedicated scanner.** `gitleaks` was not
-  available and could not be installed in this environment; history was
-  inspected with `git log`/`git ls-files`/pattern search and the repository
-  hygiene checker instead. This is recorded as a residual gap.
+* **A real restic off-site backend.** Restic control flow was exercised with a
+  recording stub; repository creation, encryption and backend failure modes are
+  unverified.
+* **The real ownership transitions** (`10001:10001`, `mifp-events`,
+  `mifp-events-public`) during restore, because the audit ran unprivileged.
+  Mode/ownership conclusions combine fixture observations with code reading.
+
+> Round 1 recorded a gap here: *"gitleaks was not available … history was not
+> scanned with a signature database."* **That gap is closed** — see
+> *Secret-history scan* in the PRE-DEPLOYMENT READINESS section. The same applies
+> to the round-1 notes about `trivy`, `shellcheck` and `caddy` being unavailable:
+> all three were installed or run in round 2.
 
 ---
 
@@ -205,18 +284,34 @@ These were confirmed by reading the code and, where possible, by executing it.
   and backup.
 * Snapshot integrity manifest (SHA-256 per file, exact file-set match, symlink
   and special-file rejection); SQLite copied with the Backup API plus
-  `.timeout 30000` and `quick_check`/`foreign_key_check`.
-* `security-check` independently audits container isolation, secret file modes
-  and unexpected public listeners.
+  `.timeout 30000` and `quick_check`/`foreign_key_check`; pre-restore safety
+  snapshots do not rotate (`MIFP_BACKUP_NO_PRUNE=1`).
+* `security-check` independently audits container isolation, secret file modes,
+  unexpected public listeners, the **effective** SSH policy (`sshd -T`), the
+  firewall state and IPv6 rules, the **effective Docker daemon configuration**
+  (TCP API exposure, live-restore, daemon-level log rotation), and the
+  freshness/integrity of the newest backup. `doctor` additionally verifies
+  backups and reports a pending reboot.
+* `bootstrap-vps.sh` configures pinned apt signing keys, security-only
+  unattended upgrades (auto-reboot disabled), a fail2ban SSH jail, Docker daemon
+  defaults, and validates the rendered Caddyfile **before** publishing it.
 * PRs get no secrets (`pull_request`, not `pull_request_target`); workflow
   default token is `contents: read`; `packages: write` only on publish/promote;
-  the immutable-image → verify-by-digest → promote sequence is preserved.
+  third-party actions are pinned to commit SHAs; a secret-scan job and an
+  image-CVE scan gate the publish and promotion path.
 * Caddy: ACME for public domains, `tls internal` only for `.home.arpa`,
-  `/ready` blocked externally, no directory browsing, PHP deny-by-default.
+  `/ready` blocked externally, no directory browsing, dotfile/secret/key files
+  denied on the events vhost, PHP deny-by-default.
 
 ---
 
-## Findings
+## Findings — round 1 (historical record)
+
+> **HISTORICAL.** The findings below were raised and fixed in round 1. Each
+> carries the status it had at the end of round 1; where round 2 changed that
+> status, the per-ID table in *PRE-DEPLOYMENT READINESS → Findings from this
+> round* is authoritative. Nothing in this section describes the current state
+> of the repository unless it says **FIXED**.
 
 Severity: `CRITICAL` / `HIGH` / `MEDIUM` / `LOW` / `INFO`.
 Status: `OPEN` / `FIXED` / `MITIGATED` / `ACCEPTED` / `NOT REPRODUCIBLE` / `INFORMATIONAL`.
@@ -418,9 +513,11 @@ Status: `OPEN` / `FIXED` / `MITIGATED` / `ACCEPTED` / `NOT REPRODUCIBLE` / `INFO
 ### MIFP-CSRF-001 — Anonymous CSRF token was not bound to the client
 
 * **Severity:** MEDIUM
-* **Status:** MITIGATED (token binding still open)
+* **Status:** **FIXED (completed in round 2)** — round 1 added Origin/Referer
+  enforcement; round 2 added the double-submit client binding below.
 * **Component:** `mifp_app/__init__.py` (`_stateless_csrf_token`,
-  `_validate_stateless_csrf`, `validate_csrf`)
+  `_validate_stateless_csrf`, `validate_csrf`, `_csrf_client_value`,
+  `issue_csrf_cookie`)
 * **Evidence:** the anonymous token is `ts:nonce:HMAC(secret, nonce:ts)`; nothing
   ties it to a cookie or session, and validation only checks the HMAC, the
   2-hour window and the shape. An attacker could `GET /join`, scrape a fresh
@@ -433,21 +530,29 @@ Status: `OPEN` / `FIXED` / `MITIGATED` / `ACCEPTED` / `NOT REPRODUCIBLE` / `INFO
   the per-IP join limit reduce abuse.
 * **Existing mitigating controls:** HMAC-signed tokens with `compare_digest`;
   honeypot field; `JOIN_MAX_PER_IP_HOUR`; duplicate-email rejection.
-* **Implemented solution:** Origin/Referer validation now applies to **every**
-  state-changing request rather than only authenticated dashboard writes
-  (`mifp_app/__init__.py`). Browser cross-site form posts always carry `Origin`,
-  so they are rejected with 403 before token validation; requests without either
-  header (non-browser clients) continue to rely on the token alone. Verified
-  live against the built production image: a cross-origin `POST /login` returns
-  `403`.
-* **Regression test:** `TESTS/webapp/test_dashboard_security.py` (existing
-  cross-origin rejection) plus `TESTS/webapp/test_csrf.py`.
-* **Residual risk (OPEN):** a determined attacker who can strip `Origin`/
-  `Referer` (non-browser client) is still only stopped by the stateless token,
-  which is replayable. The complete fix is a double-submit cookie binding
-  (include a random cookie value in the HMAC and require it on POST). This is
-  recorded as open follow-up work rather than rushed, because it touches the
-  hottest authentication path.
+* **Implemented solution (round 1):** Origin/Referer validation now applies to
+  **every** state-changing request rather than only authenticated dashboard
+  writes (`mifp_app/__init__.py`). Browser cross-site form posts always carry
+  `Origin`, so they are rejected with 403 before token validation; requests
+  without either header (non-browser clients) continue to rely on the token
+  alone. Verified live against the built production image: a cross-origin
+  `POST /login` returns `403`.
+* **Implemented solution (round 2 — closes the finding):** the anonymous token
+  signature is now bound to a random value also stored in a `mifp_csrf`
+  double-submit cookie (`HttpOnly`, `SameSite` from config, `Secure` when
+  configured). The attacker's page can still obtain a token, but cannot make the
+  victim's browser send a matching cookie, so the signature no longer validates.
+  The cookie is issued only when a token is actually minted for a response.
+  Verified on the running production image: `GET /login` sets `mifp_csrf`, and a
+  token scraped by one client is refused when replayed by another.
+* **Regression test:** `TESTS/webapp/test_csrf.py` (client-binding cookie,
+  cross-client replay rejection, validation requires the cookie),
+  `TESTS/webapp/test_dashboard_security.py` (cross-origin rejection), plus
+  `TESTS/webapp/test_join_requests.py`.
+* **Residual risk:** a non-browser client that strips `Origin`/`Referer` is still
+  stopped only by the token **and** the cookie it must also present — it can no
+  longer succeed by replaying a scraped token alone. Low residual, recorded in
+  *Residual Risks (current)*.
 
 ---
 
@@ -616,7 +721,10 @@ Status: `OPEN` / `FIXED` / `MITIGATED` / `ACCEPTED` / `NOT REPRODUCIBLE` / `INFO
 * **Implemented solution:** added those patterns. Packaged JSON configuration
   (`config/*.json`, `mifp_app/config/*.json`) is deliberately **not** excluded —
   an over-broad `*.json` rule was tried and rejected during this task because it
-  would have removed `banner_settings.json` and `webapp.json` from the image.
+  would have removed the runtime JSON configuration then present in the image.
+  *(Later note: `banner_settings.json` was removed together with the obsolete
+  public cookie notice; the runtime configuration directory is now
+  `RUNTIME_CONFIG_DIR`.)*
 * **Regression test:** the image build plus the runtime smoke test confirm both
   JSON files are present at `/app/config/`.
 
@@ -702,21 +810,30 @@ Status: `OPEN` / `FIXED` / `MITIGATED` / `ACCEPTED` / `NOT REPRODUCIBLE` / `INFO
 
 ### MIFP-AUTH-002 — Brute-force protection is per-IP only
 
-* **Severity:** LOW — **Status:** OPEN
+* **Severity:** LOW — **Status:** **FIXED (round 2)**
 * **Component:** `routes/auth.py`, `utils/security.py`
-* **Evidence:** only the source IP is keyed; there is no per-account counter,
+* **Evidence:** only the source IP was keyed; there was no per-account counter,
   lockout or progressive delay. `ip_rate_allowed` records *every* attempt
-  (successes included), so 10 attempts/60 s/IP is the only bound. With
+  (successes included), so 10 attempts/60 s/IP was the only bound. With
   `TRUST_PROXY=0` behind a proxy, `get_client_ip()` returns the proxy address
   and 10 attempts/minute can lock the whole site out of login.
 * **Impact:** weak protection for weak admin passwords; potential accidental
   self-denial behind a misconfigured proxy.
 * **Existing mitigating controls:** a shared SQLite limiter across workers; a
   high PBKDF2 cost; no username enumeration after `MIFP-AUTH-001`.
-* **Recommended solution:** add a second limiter keyed on the normalized
-  username with a longer window, and document/fail-closed the `TRUST_PROXY`
-  requirement. Recorded as open — it changes login behaviour and deserved a
-  dedicated test design rather than an end-of-task change.
+* **Implemented solution (round 2):** a second, per-account limiter
+  (`LOGIN_ACCOUNT_MAX_ATTEMPTS` = 30 / `LOGIN_ACCOUNT_LOCKOUT_SECONDS` = 900)
+  records **failed** passwords only, keyed on a SHA-256 of the case-folded,
+  trimmed submitted name so the shared store never holds an account name and a
+  non-existent name is throttled identically (no existence oracle). It is
+  consulted *after* the password verdict, so a correct password always
+  authenticates and the bound can never lock out the real administrator — it only
+  slows guessing from many source addresses. The failure message is identical to
+  the IP-limiter message.
+* **Regression test:** `TESTS/webapp/test_rate_limiter.py`
+  (`test_account_rate_key_is_opaque_and_case_insensitive`,
+  `test_account_failure_bound_is_scoped_to_the_submitted_name`,
+  `test_account_failure_bound_is_disabled_under_testing`).
 
 ---
 
@@ -752,67 +869,78 @@ Status: `OPEN` / `FIXED` / `MITIGATED` / `ACCEPTED` / `NOT REPRODUCIBLE` / `INFO
 
 ## Remediation Summary
 
-### Fixed during this task
+### Fixed in round 1
 
 `MIFP-ZIP-001`, `MIFP-ZIP-002`, `MIFP-CI-001` (HIGH);
-`MIFP-SSRF-001`, `MIFP-ERR-001`, `MIFP-DEPLOY-001`, `MIFP-BACKUP-001` (MEDIUM);
+`MIFP-SSRF-001`, `MIFP-ERR-001` (partial), `MIFP-DEPLOY-001`,
+`MIFP-BACKUP-001` (MEDIUM);
 `MIFP-SSRF-002`, `MIFP-SSRF-003`, `MIFP-FS-001`, `MIFP-DOCKER-005`,
 `MIFP-DOCKER-001`, `MIFP-DOCKER-004`, `MIFP-ERR-002`, `MIFP-ERR-003`,
 `MIFP-ERR-004`, `MIFP-ERR-005`, `MIFP-LOG-001`, `MIFP-AUTH-001`,
 `MIFP-BACKUP-002`, `MIFP-BACKUP-003` (LOW/INFO).
 
-### Still open
+### Fixed in round 2
 
-> **Superseded status (second round).** The table below is the state at the end
-> of the first round. In the follow-up round all rows except `MIFP-DOCKER-002`,
-> `MIFP-DOCKER-003` (partially mitigated by the new CI image scan and
-> Dependabot) and the `MIFP-ERR-001` mutation follow-up were **closed**; see
-> **PRE-DEPLOYMENT READINESS → Findings from this round** for the per-ID status.
+HIGH: `MIFP-SSH-001`, `MIFP-UPD-001`, `MIFP-BK-001`.
+MEDIUM: `MIFP-CADDY-001`, `MIFP-CADDY-002`, `MIFP-BK-002`, `MIFP-BK-003`,
+`MIFP-BK-004`, `MIFP-FW-001`, `MIFP-FW-002`, `MIFP-FW-003`, `MIFP-CI-002`,
+`MIFP-CSRF-001`, `MIFP-ERR-001` (completed).
+LOW/INFO: `MIFP-PHP-001`, `MIFP-DOCKERD-001`, `MIFP-BOOT-001`,
+`MIFP-BOOT-002`, `MIFP-BOOT-003`, `MIFP-UPD-002`, `MIFP-SEC-001`,
+`MIFP-AUTH-002`, `MIFP-BK-005`…`MIFP-BK-010`, `MIFP-BK-012`,
+`MIFP-VPS-001`, `MIFP-ZIP-003`…`MIFP-ZIP-007`.
 
-| ID | Severity | Why it is open |
-| --- | --- | --- |
-| `MIFP-CSRF-001` | MEDIUM | Origin/Referer enforcement implemented; full double-submit cookie binding on the anonymous token is deferred because it changes the hottest auth path. |
-| `MIFP-AUTH-002` | LOW | Per-account brute-force limiter needs a deliberate behavioural change and tests. |
-| `MIFP-ERR-001` follow-up | LOW | `verify_invariants` still repairs by deleting rows while presented as a check; it should become an explicit repair step. |
-| `MIFP-ZIP-003` | LOW | The ZIP is opened twice (validate, then extract) from a `Path`; only exploitable by a same-uid process rewriting the staged upload. Extracting from one handle is the fix. |
-| `MIFP-ZIP-004` | LOW | No case/Unicode-normalisation collision check on archive member names (matters only on case-insensitive filesystems). |
-| `MIFP-ZIP-005` | LOW | `historical_archive` reads a member before its size check (bounded overall by the unpacked-size cap). |
-| `MIFP-ZIP-006` | LOW | The Conference Editor upload is buffered in memory before the 512 MB check (admin-only). |
-| `MIFP-ZIP-007` | INFO | Drive-letter components are not rejected in conference package names (Linux target, containment already enforced). |
-| `MIFP-VPS-001` | LOW | Bootstrap fetches Docker/Caddy apt signing keys without pinning a fingerprint. |
-| `MIFP-VPS-002` | LOW | SSH hardening (no password auth, no direct root login, rate limiting) is documented but not automated by `bootstrap-vps.sh`. |
-| `MIFP-DEPLOY-003` | LOW | Legacy config values migrated from older `.env` files bypass `normalize_value` before `sed` renders the Caddyfile; the file is overwritten before `caddy validate` runs. |
-| `MIFP-DEPLOY-004` | LOW | `compose.production.yaml` declares `name: mifp-production` while the operator uses `--project-name mifp`; an out-of-band `docker compose up` would silently skip backup quiescing. |
-| `MIFP-DOCKER-002` | LOW | One `secrets.env` is shared as `env_file`; `RESTIC_PASSWORD` is explicitly blanked today, but a future host-only key would leak by default. |
-| `MIFP-DOCKER-003` | LOW | No image/OS CVE scan in CI (`.github/dependabot.yml` was added to cover update discovery). |
-| `MIFP-CI-002` | MEDIUM | Third-party actions remain pinned to mutable major tags. |
+The per-ID table with evidence is in *PRE-DEPLOYMENT READINESS → Findings from
+this round*.
 
-### Requires production / operator action
+### Still open — current state
 
-1. **Validate the modified Caddyfile before reload**, then apply it:
-   `caddy validate --config deploy/Caddyfile --adapter caddyfile` on a copy, then
-   `sudo mifpctl`-managed install. Confirm a sample conference still renders and
-   that `.inc`/`.yml`/`.log` URLs now return 404.
-2. **Confirm the GHCR retention window** (`ghcr-cleanup.yml`, default 30) covers
-   the intended rollback horizon, and verify after the first run that
-   `:latest` still resolves.
-3. **Harden SSH on the VPS** (not automated here, to avoid locking the operator
-   out): key-only authentication, `PermitRootLogin prohibit-password`, sane
-   `MaxAuthTries`, and optionally `ufw limit` on the SSH port. Validate with
-   `sshd -t` before reloading.
-4. **Enable unattended security updates** (or an equivalent host-patching
-   process) on the VPS.
-5. **Pin GitHub Actions to commit SHAs** and let Dependabot
-   (`.github/dependabot.yml`, added) keep them current.
-6. **Re-provision `/opt/mifp/data` ownership** if it predates the current
-   `mifpctl` and is not `10001:10001`.
-7. **Run the read-only production verification checklist** below.
+| ID | Severity | Status | Why |
+| --- | --- | --- | --- |
+| `MIFP-DOCKER-002` | LOW | ACCEPTED | One `secrets.env` is shared as `env_file`. `RESTIC_PASSWORD` is explicitly blanked in `environment:` (verified), but a *future* host-only key would need a matching blank override. Documented in the compose file. |
+| `MIFP-DOCKER-003` | LOW | MITIGATED | Image/OS CVE scanning now runs in CI (Trivy, gates `latest`) and Dependabot tracks the base digest. 85 **unfixed** base-package CVEs remain, assessed as not reachable by this application. |
+| `MIFP-ERR-001` follow-up | LOW | OPEN (reduced) | `verify_invariants` is now non-destructive by default and `apply_bundle` passes `repair=True` explicitly and reports `repaired_links`. A dedicated, separately audited repair workflow would still be better. |
+| `MIFP-BK-011` | LOW | DOCUMENTED | `restic init` / `restic check` are operator steps; now documented in the runbook. |
+| `MIFP-BK-013` | INFO | ACCEPTED | Restic password is never on argv/logs; it is plaintext in `/etc/mifp/secrets.env` on the protected host and inherited by the unit's children (root-only readable). |
+| `MIFP-SQL-001` / `MIFP-SQL-002` | INFO | ACCEPTED | Latent identifier interpolation in two helpers whose only callers pass constants (scanner false positives). |
+| `assert` statements (B101) | INFO | ACCEPTED | Two internal invariants, not security boundaries; unaffected by the production Gunicorn configuration. |
+
+### Previously listed as "requires operator action" — now resolved in code
+
+Round 1 ended with a list of items it deliberately left to the operator. **All of
+these are now implemented and no longer require manual steps**, and they are kept
+here only so the round-1 text is not misread:
+
+| Round-1 operator action | Current state |
+| --- | --- |
+| Harden SSH manually on the VPS | `sudo mifpctl ssh-harden --operator USER` (staged, validates before reload, rolls back on failure); `mifpctl ssh-rollback` reverts |
+| Enable unattended security updates manually | Bootstrap configures security-only `unattended-upgrades` with auto-reboot disabled and reboot-required reporting |
+| Pin GitHub Actions to commit SHAs | Done (all third-party actions pinned); Dependabot keeps them current |
+| (implicit) add image CVE scanning | Trivy job gates `latest` promotion |
+| (implicit) scan Git history for secrets | gitleaks in CI + run manually over the full history (clean) |
+| Validate the modified Caddyfile before applying | Bootstrap renders to a temp file, `caddy fmt` + `caddy validate`, then atomic `mv`; the shipped Caddyfile was loaded and exercised with `caddy:2-alpine` |
+
+### Requires an actual VPS (not yet applicable)
+
+Nothing here is a failure — these checks simply cannot exist until a host does:
+
+* Verify OS/version, applied security updates and `reboot-required` state.
+* Verify key-only SSH login from a new session and audit `sshd -T`.
+* Verify UFW is active with IPv4 **and** IPv6 rules, and that only SSH/80/443
+  listen publicly.
+* Verify the TLS certificate, DNS resolution and HTTP→HTTPS redirect.
+* Verify container isolation and that Flask is loopback-only.
+* Run the timer, produce a real snapshot, perform the isolated restore drill.
+* Escrow `/etc/mifp` outside the host.
+* `sudo mifpctl security-check` and `sudo mifpctl doctor` **on the host**.
+
+See the checklist in [`docs/DEPLOY_NEW_VPS.md`](../DEPLOY_NEW_VPS.md).
 
 ### Requires credential rotation
 
 None. No credential, token, key or password was found in the repository, in the
-tracked file set, or in the commit history (see *Repository / GitHub Exposure
-Review*). No rotation is required as a result of this audit.
+tracked file set, or in the **complete Git history** (verified with `gitleaks`
+over the full history). No rotation is required as a result of this audit.
 
 ### Requires external provider / GitHub settings
 
@@ -829,7 +957,10 @@ Review*). No rotation is required as a result of this audit.
   default (it previously implied `mifp.eu`).
 * Soft-delete/cleanup can leave orphan files on disk when a delete fails; the
   cleanup report is now truthful and the orphan scanner can still find them.
-* `verify_invariants` repairs by deletion (see open follow-up).
+* `apply_bundle` repairs orphan links by deletion inside its transaction, now
+  explicitly and with a reported count (`repaired_links`).
+* `/etc/mifp` is deliberately **not** inside the snapshots; secrets are escrowed
+  out of band.
 * No full-disk encryption (out of scope by instruction).
 
 ---
@@ -841,11 +972,11 @@ Review*). No rotation is required as a result of this audit.
 | Are runtime DBs excluded? | **Yes** | `.gitignore` excludes `*.db`, `*.db-shm`, `*.db-wal`, `*.sqlite*`, `rate_limit.sqlite3`; `git ls-files` tracks no database. A local `MIFPAPP/DATABASE/mifp.db` exists and is untracked. |
 | Are exports excluded? | **Yes** | `exports/`, `MIFPAPP/DATABASE/exports/` ignored; no export tracked. |
 | Are backups excluded? | **Yes** | `backups/`, `MIFPAPP/DATABASE/backups/`, `*.bak` ignored; the only tracked files there are `.gitkeep`. |
-| Are `.env` files excluded? | **Yes** | `.env` and `.env.*` ignored at the root, in `MIFPAPP/CORE/.gitignore` and in `.dockerignore`; `MIFPAPP/CORE/.env` exists locally and is untracked. The two intentional templates (`MIFPAPP/CORE/.env.example`, `deploy/.env.production.example`) are re-included with `!` rules. |
+| Are `.env` files excluded? | **Yes** | `.env` and `.env.*` ignored at the root, in `MIFPAPP/CORE/.gitignore` and in `.dockerignore`; `MIFPAPP/CORE/.env` exists locally and is untracked. The two intentional templates (`MIFPAPP/CORE/.env.example`, `deploy/.env.production.example`) are tracked **and are deliberately not allow-listed**, so a credential pasted into either one is detected by the secret scan. |
 | Are secrets excluded? | **Yes** | `secrets/`, `*.key`, `*.pem`, `*.crt`, `*.token`, `*.secret`, `credentials*.json` ignored; the hygiene checker fails on secret-like tracked files and passed. |
 | Are scraper outputs excluded? | **Yes** | `SCRAPERS/OUTPUTS/`, `*.jsonl`, `*.ndjson` ignored; only 12 scraper *source* files are tracked. |
 | Are conference / import archives excluded? | **Yes** | `*.zip`, `*.tar`, `*.tar.gz`, `*.tgz` ignored. Multiple large archives exist in the working tree (`MIFP_DS_NEW_V3.zip`, `SEP26_complete.zip`, …) and are all untracked. |
-| Was Git history scanned? | **Partially** | `git log`, `git ls-files`, targeted pattern searches and `tools/check_repo_hygiene.py` were run. A dedicated secret scanner (`gitleaks`) was **not available** in this environment, so history was not scanned with a signature database. This is an acknowledged gap. |
+| Was Git history scanned? | **Yes — clean** | `gitleaks 8.30.1` (release binary, SHA-256 verified against the published checksum file) over the **entire** history: `gitleaks` scanned 74 commits (the repository has 76; `git rev-list --count HEAD`) / 13.4 MB, `no leaks found`; plus a working-tree scan and a clean-checkout scan of the tracked file set. Round 1 could only do `git log`/`git ls-files`/pattern search because no scanner was available; that gap is closed. Details in *Secret-history scan*. |
 | Was any credential discovered? | **No** | No tracked file matches password/token/key patterns; the hygiene checker reports 330 tracked files with no secret-like content. No credential value appears anywhere in this report. |
 | Does the Docker build accidentally include local/runtime files? | **No** | After the `.dockerignore` fixes, a fresh `--no-cache` build contains only `/app` application code, `config/*.json`, the markdown documents and the virtualenv — verified by listing the image filesystem. No `.env`, no DB, no assets, no bytecode, no `.git`. |
 
@@ -898,7 +1029,7 @@ Internet
   │     │     └── GET /ready                  (blocked at Caddy; deploy/healthcheck only)
   │     ├── events.mifp.eu → static files + opt-in PHP-FPM at explicit prefixes
   │     └── /ready blocked from the Internet
-  ├── SSH (key auth; operator-managed)         ← recommended hardening
+  ├── SSH (key auth; `mifpctl ssh-harden` disables passwords, root key-only)
   └── HTTP :80 → redirect to HTTPS
 
 Outbound from the app
@@ -911,51 +1042,60 @@ Persistent state
   └── /opt/mifp/events (host static tree, PHP deny-by-default)
 
 Supply chain
-  ├── GitHub Actions → GHCR immutable image → VPS
+  ├── GitHub Actions → GHCR immutable image → VPS (actions pinned to commit SHAs)
   ├── Pinned Python dependency lock (pip-audit: clean)
-  └── Digest-pinned base image (no automated CVE scan yet)     ← open
+  ├── Pinned base image digest + Dependabot (docker ecosystem)
+  └── Secret scan (gitleaks) + image CVE scan (Trivy) gate `latest` promotion
 ```
 
 ---
 
-## Residual Risks
+## Residual Risks at the end of round 1 — HISTORICAL SNAPSHOT
 
-Stated plainly, without claiming the system is "secure" in absolute terms.
+> **HISTORICAL.** This is the residual-risk list exactly as it stood at the end of
+> round 1, kept so the audit trail is complete. **It is superseded.** The
+> authoritative current list is *Residual Risks (current)* in the
+> PRE-DEPLOYMENT READINESS section. Each item below is annotated with what
+> round 2 actually did, so a reader cannot mistake it for today's state.
 
-1. **Live infrastructure is unverified.** Caddy, TLS, firewall, SSH daemon
-   configuration, Docker daemon settings, disk/inode headroom and the systemd
-   backup timer were audited only as code. They must be confirmed on the host.
-2. **`verify_invariants` mutates while checking.** A Data Quality apply can
-   silently delete orphan rows as part of "verification". Foreign-key
-   corruption introduced by a bundle now rolls back, but the repair-by-deletion
-   behaviour remains and should be extracted and audited explicitly.
-3. **Anonymous CSRF token is still replayable by a non-browser client.**
-   Browser cross-site posts are now blocked by Origin/Referer enforcement, but
-   the complete fix (double-submit cookie binding) is not implemented.
-4. **No per-account login lockout.** Protection remains per-IP; a distributed
-   attacker with many source addresses is not slowed beyond the shared limit.
-5. **`secrets.env` is shared wholesale with the web container.** Only
-   `RESTIC_PASSWORD` is blanked today; a future host-only secret added to that
-   file would be exposed unless a matching blank override is remembered.
-6. **No image or OS-package CVE scanning.** `pip-audit` covers Python
-   dependencies and currently reports zero known vulnerabilities, but the
-   Debian runtime packages and the base image are unscanned and the digest is
-   pinned with no update automation (Dependabot was added for discovery).
-7. **Archive handling still has defensive depth to add:** the ZIP is opened
-   twice, member names are not checked for case/Unicode-normalisation
-   collisions, the historical archive reads before its size check, and the
-   Conference Editor upload is buffered in memory. None is currently
-   exploitable given the existing caps, and all are listed as open.
-8. **Git history was not scanned with a secret-signature database.**
-   `gitleaks` was unavailable. The tracked file set, `.gitignore` layers and the
-   hygiene checker are clean, but the history claim is weaker than it would be
-   with a dedicated scanner.
-9. **Operator action remains load-bearing:** SSH hardening, apt-key fingerprint
-   verification, action SHA pinning, Caddy validation, and the production
-   checklist below. The platform is well hardened *as code*; the host's posture
-   depends on these steps actually being performed.
+1. **Live infrastructure is unverified.** → **Still true, for a different and
+   stronger reason: no VPS exists yet.** This is *NOT YET APPLICABLE*, not a
+   failed check. Current: see *WHEN THE VPS IS PURCHASED*.
+2. **`verify_invariants` mutates while checking.** → **FIXED in round 2**: the
+   function is non-destructive by default and `apply_bundle` opts into
+   `repair=True` explicitly and reports `repaired_links`. A dedicated repair
+   workflow remains a nice-to-have (still listed today).
+3. **Anonymous CSRF token replayable by a non-browser client.** → **FIXED in
+   round 2**: the anonymous token is now bound to a `SameSite` double-submit
+   cookie (`mifp_csrf`, `HttpOnly`), in addition to Origin/Referer enforcement.
+4. **No per-account login lockout.** → **FIXED in round 2**: a second
+   per-account limiter throttles *failed* passwords only (checked after the
+   password verdict, so a correct password can never be locked out), keyed on a
+   hashed, case-folded login name so it leaks nothing about account existence.
+5. **`secrets.env` shared wholesale with the web container.** → **Still open
+   (accepted)** — unchanged, and listed in the current residual risks.
+6. **No image or OS-package CVE scanning.** → **FIXED in round 2**: a pinned
+   Trivy job scans the immutable digest and gates `latest` promotion;
+   `libpcre2` was updated so **0 fixable HIGH/CRITICAL** remain. 85 *unfixed*
+   base-package CVEs remain and are assessed as unreachable.
+7. **Archive handling still had defensive depth to add** (double OPEN,
+   case/Unicode collisions, read-before-size-check, buffered upload). → **ALL
+   FIXED in round 2** (`MIFP-ZIP-003`…`007`).
+8. **Git history not scanned with a secret-signature database.** → **FIXED in
+   round 2**: `gitleaks 8.30.1` over the full commit history and the working tree:
+   `no leaks found`.
+9. **Operator action remains load-bearing** (SSH hardening, apt-key fingerprint
+   verification, action SHA pinning). → **FIXED in round 2**: all three are now
+   implemented in code (staged `mifpctl ssh-harden`; fingerprint-pinned apt keys;
+   SHA-pinned actions). What remains operator-dependent is genuinely host-side —
+   see *Requires an actual VPS*.
 
-### Read-only production verification checklist
+### Read-only production verification checklist (from round 1)
+
+Kept for reference. The maintained, current version is the *WHEN THE VPS IS
+PURCHASED* checklist in PRE-DEPLOYMENT READINESS and in
+[`docs/DEPLOY_NEW_VPS.md`](../DEPLOY_NEW_VPS.md), which additionally covers SSH
+hardening state, host patching, fail2ban, backup freshness and secret escrow.
 
 Run these on the VPS; none of them modifies state.
 
@@ -992,9 +1132,7 @@ sudo ls -1 /var/backups/mifp/snapshots | tail -3
 
 ---
 
----
-
-## PRE-DEPLOYMENT READINESS (second round — no VPS exists yet)
+## PRE-DEPLOYMENT READINESS (round 2 — no VPS exists yet)
 
 This section records the follow-up hardening round performed **before** any VPS
 was purchased. Its purpose is to close every residual gap that could be closed
@@ -1005,12 +1143,12 @@ production host was contacted, and there is no production host to contact.
 
 | Area | Result | Evidence |
 | --- | --- | --- |
-| Application | **VERIFIED** | 805 webapp + 35 scraper + 48 database tests pass; residual CSRF/rate-limit/data-quality findings closed |
+| Application | **VERIFIED** | 807 webapp + 35 scraper + 48 database tests pass; residual CSRF/rate-limit/data-quality findings closed |
 | Tests | **VERIFIED** | `bash test_all.sh --suite quick` green after every change |
 | Docker image | **VERIFIED** | real `--no-cache` build, boots non-root, `/health` 200, `/ready` 200, zero bytecode, config JSON present |
 | Docker CVE scan | **VERIFIED** | Trivy 0.74.0: 0 fixable HIGH/CRITICAL after the targeted `libpcre2` update; 85 unfixed base-package findings documented as unreachable |
 | CI/CD | **VERIFIED** | actions pinned to commit SHAs; secret-scan job; image-scan job gates `latest` promotion; loopback-port contract check |
-| Git history secrets | **VERIFIED (clean)** | gitleaks 8.30.1 over all 73 commits and the working tree: no real finding (3 test fixtures allow-listed by exact value) |
+| Git history secrets | **VERIFIED (clean)** | gitleaks 8.30.1 over the full history (76 commits) and the working tree: no real finding (4 exact fake-fixture literals allow-listed; env templates deliberately scanned) |
 | Deployment scripts | **VERIFIED** | `bash -n` and `shellcheck -S warning` clean across `deploy/`; SSH/UFW/apt-key/daemon/bootstrap hardening applied |
 | Backup logic | **VERIFIED** | local fixtures reproduce and now pass the DR scenarios (rotation, stale allow-list, symlinked DB, tampered snapshot, symlink/FIFO rejection) |
 | Caddy config | **VERIFIED** | rendered and loaded by `caddy:2-alpine`; deny/allow matrix exercised over HTTP against a synthetic events tree |
@@ -1100,20 +1238,38 @@ and the other backup failure modes.
 ### Secret-history scan (closes the previous round's gap)
 
 `gitleaks 8.30.1` (release binary, SHA-256 verified against the published
-checksum file) was run over the **entire** history (73 commits, 13.3 MB) and the
-working tree:
+checksum file) was run over the **entire** history (76 commits; gitleaks scanned
+74, 13.4 MB), the tracked file set as a clean checkout, and the working tree:
 
 ```text
-gitleaks git . --config .gitleaks.toml   ->  no leaks found
-gitleaks dir . --config .gitleaks.toml   ->  clean except the local untracked dev .env
+gitleaks git .  --config .gitleaks.toml   ->  no leaks found
+gitleaks dir .mifp-tools/clean --config .gitleaks.toml   ->  no leaks found
+gitleaks dir .  --config .gitleaks.toml   ->  clean except the local untracked, gitignored dev .env
 ```
 
 The default rules matched three sites, all verified to be **fake test fixtures**
 (`SECRET_KEY=0123456789abcdef…`, `SECRET_KEY='a-preserved-secret-that-is-long-enough…'`,
 and the UI settings key `config__privacy__notice_storage_key`). They are
 allow-listed **by exact value** in `.gitleaks.toml`; no real credential was ever
-committed, so **no rotation is required** and no history rewrite is needed. The
-scan now runs in CI as a `secrets` job that gates the publish path.
+committed, so **no rotation is required** and no history rewrite is needed.
+
+**Allowlist scope (tightened in the cleanup pass).** `.gitleaks.toml` now
+contains only:
+
+* generated/untracked paths that `.gitignore` already excludes
+  (`.mifp-test-runtime.*`, `.pytest_cache/`, `__pycache__/`, `.ruff_cache/`,
+  `MIFPAPP/DATABASE/{logs,backups,exports}/`) — these can only ever affect a
+  local working-tree scan; and
+* four exact fake-fixture literals matched against the whole line.
+
+The versioned environment **templates** (`MIFPAPP/CORE/.env.example`,
+`deploy/.env.production.example`) are deliberately **not** allow-listed, because
+pasting a real credential into a tracked example file is exactly what the scan
+must catch. Verified by probe: the unmodified template scans clean, and a
+synthetic high-entropy credential appended to a copy of it **was detected**
+(the probe lived only in a scratch directory and was removed; it never entered
+the repository). The scan runs in CI as a `secrets` job that gates the publish
+path.
 
 ### Docker image CVE scan
 
@@ -1155,17 +1311,72 @@ docker/build-push-action@c3c9e263…        # v7
 * New `image-scan` job: pinned Trivy with checksum verification, scanning the
   **immutable digest**; `latest` is now promoted only after
   `needs: [build, verify-image, image-scan]`.
-* New loopback-port contract check in the `hygiene` job.
+* New loopback-port contract check in the `hygiene` job (scoped to the `ports:`
+  block only; a volumes/`tmpfs` list must never be mistaken for port mappings —
+  see the cleanup-pass note below).
 * The publish path is gated on `needs: [hygiene, test, audit, secrets]`.
 * Workflow default permissions remain `contents: read`; only publish/promote opt
   into `packages: write`.
 * Download/checksum failures fail a *distinct* step from the scan step, so
   infrastructure problems are distinguishable from real findings.
 
-### Residual risks after this round
+### Cleanup pass (round 2b) — report reconciliation and two tightenings
 
-1. **Live infrastructure remains unverified** — by definition, until a VPS
-   exists. Use the checklist below.
+A short final pass reconciled this document's chronology (baseline → round 1 →
+round 2 → current) so that no obsolete *current-state* claim survives, and made
+two substantive changes.
+
+**1. `.gitleaks.toml` tightened.** The broad exclusions for the two tracked
+environment **templates** were removed. `MIFPAPP/CORE/.env.example` and
+`deploy/.env.production.example` are now scanned like any other file, because
+pasting a real credential into a versioned example is exactly what secret
+scanning must catch. The remaining allow-list entries are generated/untracked
+paths that `.gitignore` already excludes, plus four exact fake-fixture literals.
+Verified by probe: the unmodified template scans clean, and a synthetic
+high-entropy credential appended to a **copy** of it was detected (the probe
+existed only in a scratch directory and was removed). Trimming the now-redundant
+`mifp-test-suite-secret` entry showed it was unnecessary.
+
+**2. Docker daemon diagnostic added to `security-check`.** The bootstrap still
+writes `/etc/docker/daemon.json` **only when one does not already exist**, so an
+operator's configuration is never overwritten. `security-check` therefore
+inspects the *effective* state instead of the file we would have written:
+
+* **error** — a `tcp://` API socket in `daemon.json`, on the `dockerd` command
+  line, or listening on 2375/2376 (a TCP Docker API is remote root);
+* **WARN** — `live-restore` disabled, or no daemon-level log rotation. Neither is
+  an exposure because the compose services already cap their own logs at
+  10 MB × 3.
+
+Both probes are guarded by tool availability (`docker info --format`, optional
+`python3`/`ps`/`ss`), so an unusual Docker installation degrades to a warning
+rather than a false failure. Regression test:
+`TESTS/webapp/test_deploy_state_machine.py::test_security_check_fails_when_docker_tcp_api_is_exposed`.
+The runbook (step 8) documents the error/WARN split and a non-destructive
+`daemon.json` merge for adding the defaults.
+
+**3. CI Compose exposure-contract step corrected.** The gate added in round 2
+scanned every `- "…"` line in `deploy/compose.production.yaml`, so it treated the
+volume mount `${MIFP_DATA_DIR:-/opt/mifp/data}:/app/data` as a published port and
+failed the `hygiene` job with a false positive. It now parses only the `ports:`
+block, scoped by indentation (and still handling flow style), and it remains
+fail-closed in both directions: a non-loopback mapping such as `"8000:8000"` is
+rejected, and removing the `ports:` section entirely is also rejected because
+Caddy could then not reach the webapp. Verified against five cases — the real
+file, an added non-loopback port, a removed `ports:` block, a volumes-only file,
+and a flow-style mapping. A YAML-based invariant
+(`TESTS/webapp/test_docker_compose_contract.py::test_production_compose_publishes_only_loopback_ports`)
+now also enforces "every published port is loopback-bound" from the test suite,
+which is the authoritative check because it parses the file as YAML; the two are
+cross-referenced in comments so they cannot silently drift.
+
+### Residual Risks (current)
+
+This is the authoritative residual-risk list for the repository as it stands.
+
+1. **Live infrastructure remains unverified — because no VPS exists yet.** Not a
+   failed check: *NOT YET APPLICABLE*. Use the checklist below when a host is
+   provisioned.
 2. **`verify_invariants` is now non-destructive by default**, but
    `apply_bundle` still repairs orphan links by deletion inside its transaction;
    that deletion is explicit (`repair=True`) and reported (`repaired_links`), but
@@ -1224,16 +1435,29 @@ checklist, reproduced here for the future live audit:
 
 ## Audit Tooling Used
 
-| Tool | Version / availability | Result |
-| --- | --- | --- |
-| `pytest` via `test_all.sh --suite quick` | Python 3.14.7, pytest 9.1.1 | 873 tests pass at baseline; all pass after the changes |
-| `tools/check_repo_hygiene.py` | in-repo | OK — 330 tracked files, no runtime data/secrets |
-| `pip-audit` | isolated audit venv | **No known vulnerabilities** in CORE lock, SCRAPERS or DATABASE requirement sets |
-| `bandit` | isolated audit venv | 0 HIGH, 144 MEDIUM (all B608 identifier interpolation — traced and dismissed), 7 LOW (config-key false positives, 2 asserts, 2 fixed `except: pass`) |
-| `ruff` (`F401,F811,F821,F823,F841,E722`) | isolated audit venv | clean after removing dead imports/locals |
-| `docker build` + `docker run` | Docker 29.8.1 | image builds; boots; `/health` 200, `/ready` 200, anon dashboard redirect, cross-origin POST 403 |
-| `shellcheck`, `gitleaks`, `trivy`, `grype`, `hadolint`, `caddy` | **not available** | gap recorded; manual review + `bash -n` syntax checks used instead |
-| `bash -n` on all shell entry points | available | all syntax-clean |
+Tools actually executed during the two rounds. Versions are the ones observed at
+audit time; scanners were installed into an **isolated audit environment**, never
+into the application runtime or the production image.
+
+| Tool | Version | Round(s) | Result |
+| --- | --- | --- | --- |
+| `pytest` via `test_all.sh --suite quick` | Python 3.14.7, pytest 9.1.1 | 1 + 2 | **Baseline 873 pass** (historical) → 877 after round 1 → **890 pass currently** (807 webapp + 35 scraper + 48 database) |
+| `tools/check_repo_hygiene.py` | in-repo | 1 + 2 | OK — 330 tracked files; no runtime data, DB/dump, archive, secret or >5 MiB file |
+| `pip-audit` | isolated audit venv | 1 + 2 | **No known vulnerabilities** in `MIFPAPP/CORE/requirements.lock`, `SCRAPERS/requirements.txt`, `MIFPAPP/DATABASE/requirements.txt` |
+| `bandit` | 1.9.4 | 1 + 2 | **0 HIGH**; 144 MEDIUM, all B608 identifier interpolation, each traced and dismissed; 7 LOW (config-key false positives, 2 `assert` invariants, `except: pass` sites subsequently fixed) |
+| `ruff` (`F401,F811,F821,F823,F841,E722`) | 0.16.8 | 1 + 2 | Clean — dead imports/locals removed rather than suppressed |
+| `gitleaks` | 8.30.1 | **2** | Full history (76 commits; 74 scanned / 13.4 MB) + working tree + clean-checkout scan of all tracked files: **no leaks found**. Four exact fake-fixture literals are allow-listed; the env templates are deliberately *not* allow-listed and a synthetic credential injected into one was detected. *Unavailable in round 1 — that gap is now closed.* |
+| `trivy image` | 0.74.0 | **2** | 88 → **0 fixable HIGH/CRITICAL** after the `libpcre2` update; 0 Python-package findings; 85 unfixed base-package CVEs documented as unreachable. *Unavailable in round 1.* |
+| `shellcheck` | 0.11.0 | **2** | `-S warning` **clean** across `deploy/*.sh`, `deploy/mifpctl`, `mifp`. *Unavailable in round 1.* |
+| `caddy validate` + routing matrix | `caddy:2-alpine` | **2** | `Valid configuration`; deny/allow matrix executed over HTTP against a synthetic events tree (`/ready`→404, dotfiles/keys/creds→404, `data.json`/`.well-known`→200). *Unavailable in round 1.* |
+| `docker build` / `docker run` / `docker inspect` | Docker 29.8.1 | 1 + 2 | Image builds (`--no-cache`), boots as non-root on a read-only rootfs, `/health` 200, `/ready` 200, home 200, anon dashboard redirect, cross-origin `POST /login` 403, `mifp_csrf` cookie issued, zero `.pyc` in the image |
+| `bash -n` on every shell entry point | available | 1 + 2 | All syntax-clean |
+| `git diff --check` / `--stat` / `--` | available | 2 | No whitespace errors; change set reviewed for unrelated churn |
+
+**Not used, and why:** `grype`, `hadolint` and `docker scout` were not installed;
+Trivy covers the image-CVE requirement and the Dockerfile is small enough for
+direct review. No scanner output is reproduced verbatim in this report — every
+finding was investigated individually and false positives were removed.
 
 ---
 

@@ -70,3 +70,37 @@
   <div class="editor-section-body">{{ caller() }}</div>
 </section>
 {%- endmacro %}
+
+{#- Operation totem: the single contract for "an operation the dashboard is
+    running, queued or has finished" (see `.operation-totem` in dashboard.css).
+
+    `state` is one of idle | queued | working | success | warning | error and is
+    written to `data-state`; it is the ONLY tone mechanism, so a new operation
+    widget cannot invent its own state classes. `facts` is an optional sequence
+    of (label, value, element_id) triples rendered as the facts row.
+
+    `icon_id` addresses the icon itself; it is only needed by the comfortable
+    transfer variant, whose icon is a wrapper element rather than the glyph.
+
+    Pass the live-updating text nodes as (element_id) so the existing dashboard
+    JS keeps addressing them by id: the ids are part of the JS contract.
+-#}
+{% macro operation_totem(icon, title_id, title, meta_id='', meta='', state='idle', state_id='', state_label='', variant='', totem_id='', eyebrow_id='', eyebrow='', facts=[], icon_id='') -%}
+<div class="operation-totem{{ ' operation-totem--' ~ variant if variant else '' }}"{% if totem_id %} id="{{ totem_id }}"{% endif %} data-state="{{ state }}">
+  {% if icon_id %}<div class="operation-totem__icon" id="{{ icon_id }}"><i class="bi {{ icon }}" aria-hidden="true"></i></div>
+  {%- else %}<i class="bi {{ icon }} operation-totem__icon" aria-hidden="true"></i>{% endif %}
+  <div class="operation-totem__body">
+    {% if eyebrow %}<small class="operation-totem__eyebrow"{% if eyebrow_id %} id="{{ eyebrow_id }}"{% endif %}>{{ eyebrow }}</small>{% endif %}
+    <b class="operation-totem__title"{% if title_id %} id="{{ title_id }}"{% endif %}>{{ title }}</b>
+    {% if meta or meta_id %}<small class="operation-totem__meta"{% if meta_id %} id="{{ meta_id }}"{% endif %}>{{ meta }}</small>{% endif %}
+  </div>
+  <span class="operation-totem__state"{% if state_id %} id="{{ state_id }}"{% endif %}>{{ state_label or state }}</span>
+  {% if facts %}
+  <div class="operation-totem__facts">
+    {% for label, value, element_id in facts %}
+    <span><small>{{ label }}</small><b{% if element_id %} id="{{ element_id }}"{% endif %}>{{ value }}</b></span>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{%- endmacro %}

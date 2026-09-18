@@ -36,7 +36,6 @@ DASHBOARD_GET = [
 ]
 
 DASHBOARD_CONTENT = [
-    "/dashboard/content/events",
     "/dashboard/content/news",
     "/dashboard/content/members",
     "/dashboard/content/sponsors",
@@ -75,7 +74,6 @@ class TestDashboardRoutes:
             ("content-list", "/dashboard/content/news", None),
             ("content-editor", "/dashboard/content/news", "[data-create-record-open]"),
             ("events", "/dashboard/events", None),
-            ("event-wizard", "/dashboard/events", "[data-event-wizard='new']"),
             ("assets", "/dashboard/assets", None),
             ("import-export", "/dashboard/data-portability", None),
             ("data-quality", "/dashboard/data-quality", None),
@@ -261,28 +259,6 @@ class TestDashboardRoutes:
 
         assert chart_js_has_data(page) or page.locator(".dash-empty-state, .empty").count() > 0
 
-    @screenshot_on_failure
-    def test_content_crud_create_event(self, live_server, page):
-        _login(page, live_server)
-        page.goto(f"{live_server}/dashboard/events")
-        page.wait_for_load_state("networkidle")
-
-        add_btn = page.locator("[data-event-wizard='new']")
-        expect(add_btn).to_be_visible()
-        add_btn.click()
-        expect(page.locator("#eventWizard")).to_be_visible()
-
-        title_input = page.locator("#eventWizardForm input[name='title']")
-        expect(title_input).to_be_visible()
-        test_title = f"Browser Test Event {__import__('time').time()}"
-        title_input.fill(test_title)
-        page.locator("#wizardNext").click()
-        page.locator("#wizardNext").click()
-        page.locator("#wizardSubmit").click()
-        page.wait_for_load_state("networkidle")
-
-        assert test_title in page.text_content("body")
-
     @pytest.mark.parametrize(
         "section,field,label",
         [
@@ -422,7 +398,12 @@ class TestDashboardRoutes:
         expect(page.locator("body")).to_contain_text("Asset uploaded")
 
     @screenshot_on_failure
-    def test_event_sections_and_cover_upload(self, live_server, page):
+    def test_event_workspace_lists_events_without_manual_creation(self, live_server, page):
+        """The events workspace reviews/edits events; it never authors them.
+
+        Creation belongs to the ingestion pipelines, so the page must expose no
+        create affordance while the forthcoming/past grouping keeps working.
+        """
         errors: list[str] = []
         failed_responses: list[str] = []
         page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
@@ -437,17 +418,8 @@ class TestDashboardRoutes:
 
         expect(page.get_by_role("heading", name="Current and upcoming events")).to_be_visible()
         expect(page.get_by_role("heading", name="Past events")).to_be_visible()
-
-        page.locator("[data-event-wizard='new']").click()
-        expect(page.locator("#eventWizard")).to_be_visible()
-        page.locator("#eventWizardForm input[name='title']").fill("Browser Cover Event")
-        page.locator("#wizardNext").click()
-        page.locator("#wizardNext").click()
-        page.locator("#wizardCoverInput").set_input_files(
-            str(WEBAPP_DIR / "mifp_app/static/img/logo-mifp.png")
-        )
-        expect(page.locator("#wizardCoverPreview")).to_be_visible(timeout=10000)
-        expect(page.locator("#wizardCoverAssetId")).not_to_have_value("")
+        expect(page.locator("[data-event-wizard]")).to_have_count(0)
+        expect(page.locator("#eventWizard")).to_have_count(0)
         assert not errors, errors
         assert not failed_responses, failed_responses
 

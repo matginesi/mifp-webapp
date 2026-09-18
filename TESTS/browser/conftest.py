@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import json
 import shutil
 import socket
 import sqlite3
@@ -124,15 +123,7 @@ def live_server(tmp_path_factory):
     assets_dir.mkdir()
     (server_dir / "exports").mkdir()
     (server_dir / "logs").mkdir()
-    banner_path = server_dir / "banner_settings.json"
-    banner_path.write_text(json.dumps({
-        "cookie_banner_enabled": "1",
-        "cookie_banner_text": "Browser test cookie notice.",
-        "cookie_banner_link_enabled": "1",
-        "cookie_banner_dismiss_label": "Dismiss",
-        "cookie_banner_theme": "brand",
-        "banner_force_show": "browser-test",
-    }), encoding="utf-8")
+    (server_dir / "config").mkdir()
     user, password = _admin_credentials()
     env["SECRET_KEY"] = "browser-test-secret-key"
     env["ADMIN_USERNAME"] = user
@@ -144,7 +135,7 @@ def live_server(tmp_path_factory):
     env["EXPORT_DIR"] = str(server_dir / "exports")
     env["CONFERENCES_DIR"] = str(server_dir / "conferences")
     env["LOG_DIR"] = str(server_dir / "logs")
-    env["BANNER_SETTINGS_PATH"] = str(banner_path)
+    env["RUNTIME_CONFIG_DIR"] = str(server_dir / "config")
     env["LOG_ACCESS_ENABLED"] = "0"
     env["AUTO_SYNC_CONFERENCES_ON_STARTUP"] = "0"
     with socket.socket() as sock:

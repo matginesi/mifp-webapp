@@ -700,7 +700,7 @@ def dashboard_alerts(conn: sqlite3.Connection, log_dir: Path | None = None, asse
             "type": "info",
             "label": "Upcoming event",
             "message": f"{row['title']} — {row['start_date']}",
-            "action_url": "/dashboard/content/events",
+            "action_url": "/dashboard/events",
         })
 
     # Editorial: content with drafts older than 14 days

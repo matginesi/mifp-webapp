@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -112,6 +113,64 @@ def prune_runtime_exports(
         max_bytes=max_bytes,
         max_age_days=max_age_days,
     ):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        removed.append(path)
+    return removed
+
+
+# Log streams whose rotated history may be aged out by the protected cleanup.
+# `errors`, `audit` and `security` are deliberately absent: they are the
+# security-relevant evidence trail and are left to the deployment operator's
+# external rotation policy.
+LOG_RETENTION_STREAMS = ("mifp_app", "access")
+LOG_RETENTION_EXEMPT_STREAMS = ("errors", "audit", "security")
+
+
+def _rotated_log_name(stream: str) -> "re.Pattern[str]":
+    # RotatingFileHandler appends `.N`; an external logrotate adds `.N` or a
+    # compressed `.N.gz`. The *active* file has no numeric suffix and must never
+    # match, because it is the file currently being written.
+    return re.compile(rf"^{re.escape(stream)}\.(?:jsonl|log)\.\d+(?:\.gz)?$")
+
+
+def runtime_log_retention_plan(log_dir: Path, *, max_age_days: int) -> list[Path]:
+    """List rotated application/access log files outside the retention window."""
+    log_dir = Path(log_dir)
+    if max_age_days <= 0 or not log_dir.is_dir() or log_dir.is_symlink():
+        return []
+    root = log_dir.resolve()
+    cutoff = time.time() - max_age_days * 86400
+    victims: list[Path] = []
+    for stream in LOG_RETENTION_STREAMS:
+        pattern = _rotated_log_name(stream)
+        try:
+            entries = sorted(log_dir.iterdir())
+        except OSError:
+            continue
+        for path in entries:
+            if not pattern.match(path.name):
+                continue
+            # Never follow a symlink out of the log directory.
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                if path.resolve().parent != root:
+                    continue
+                stat = path.stat()
+            except OSError:
+                continue
+            if stat.st_mtime < cutoff:
+                victims.append(path)
+    return sorted(victims)
+
+
+def prune_runtime_logs(log_dir: Path, *, max_age_days: int) -> list[Path]:
+    """Delete aged rotated application/access logs, never the active file."""
+    removed: list[Path] = []
+    for path in runtime_log_retention_plan(log_dir, max_age_days=max_age_days):
         try:
             path.unlink()
         except FileNotFoundError:

@@ -232,16 +232,8 @@
     fileInput.setCustomValidity(message || '');
   }
 
-  function elapsedLabel(milliseconds) {
-    var seconds = Math.max(0, Math.floor(milliseconds / 1000));
-    return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
-  }
-
   function setProgress(value) {
-    var safe = Math.max(0, Math.min(100, Math.round(value)));
-    progress.parentElement.classList.remove('is-loading');
-    progress.style.width = safe + '%';
-    percent.textContent = safe + '%';
+    window.MIFPUI.setProgressBar(progress.parentElement, progress, percent, value);
   }
 
   function logEvent(message, state) {
@@ -292,7 +284,7 @@
     startedAt = Date.now();
     elapsed.textContent = '00:00';
     clearInterval(clockTimer);
-    clockTimer = window.setInterval(function () { elapsed.textContent = elapsedLabel(Date.now() - startedAt); }, 500);
+    clockTimer = window.setInterval(function () { elapsed.textContent = window.MIFPUI.elapsedLabel(Date.now() - startedAt); }, 500);
     working.hidden = false;
     result.hidden = true;
     footer.hidden = false;
@@ -330,7 +322,7 @@
 
   function showResult(payload) {
     clearInterval(clockTimer);
-    elapsed.textContent = elapsedLabel(Date.now() - startedAt);
+    elapsed.textContent = window.MIFPUI.elapsedLabel(Date.now() - startedAt);
     logEvent(payload.title_text || 'Transfer completed', payload.icon_modifier === 'is-error' ? 'error' : payload.icon_modifier === 'is-warning' ? 'active' : 'done');
     working.hidden = true;
     result.hidden = false;

@@ -2,10 +2,17 @@
 #
 # The scan is fail-closed: with this file in place, `gitleaks git .` and
 # `gitleaks dir .` must report zero leaks, and any new match fails the CI
-# `secrets` job. The allow-list below is deliberately narrow — it names the
-# exact known test fixtures and the exact generated/runtime paths that
-# .gitignore and .dockerignore already keep out of the repository, so a real
-# credential is never suppressed.
+# `secrets` job.
+#
+# Deliberately NOT allow-listed: the versioned environment *templates*
+# (`MIFPAPP/CORE/.env.example`, `deploy/.env.production.example`). Pasting a real
+# credential into a tracked example file is exactly what secret scanning must
+# catch, so those files are scanned like any other source file.
+#
+# Every entry below is one of:
+#   * a generated/untracked path that .gitignore already excludes from the
+#     repository (so it can only ever affect a local `gitleaks dir` run), or
+#   * the exact literal of a known fake test fixture.
 
 title = "MIFP"
 
@@ -13,10 +20,11 @@ title = "MIFP"
 useDefault = true
 
 [allowlist]
-description = "Known fake test fixtures and generated runtime state (never committed)."
+description = "Generated/untracked runtime paths and exact fake test fixtures."
 
-# Generated at test/runtime; excluded from Git, from the Docker build context and
-# from the packaged source tree.
+# Generated at test/runtime. All of these are excluded from Git by .gitignore,
+# so they cannot be committed; listing them only keeps a local working-tree scan
+# from reporting a developer's own scratch state.
 paths = [
   '''\.mifp-test-runtime\..*''',
   '''\.pytest_cache/''',
@@ -25,18 +33,15 @@ paths = [
   '''MIFPAPP/DATABASE/logs/''',
   '''MIFPAPP/DATABASE/backups/''',
   '''MIFPAPP/DATABASE/exports/''',
-  '''MIFPAPP/CORE/\.env\.example''',
-  '''deploy/\.env\.production\.example''',
 ]
 
 # Matched against the whole line so the surrounding key name is part of the
-# signature. Every entry is an exact, obviously-fake literal used by a test, or
-# a UI settings key that merely contains the word "key".
+# signature. Each value is an exact, obviously-fake literal that appears in a
+# test fixture; a real credential cannot equal one of these strings.
 regexTarget = "line"
 regexes = [
   '''0123456789abcdef0123456789abcdef''',
   '''a-preserved-secret-that-is-long-enough-1234567890''',
   '''must-not-be-stored''',
-  '''mifp-test-suite-secret''',
   '''config__privacy__notice_storage_key''',
 ]

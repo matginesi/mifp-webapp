@@ -150,6 +150,30 @@ function clearFormLoading(form) {
   }
 }
 
+/* ── Operation progress primitives ─────────────────────────────
+   Shared by every long-running dashboard operation (archive import, data
+   transfer). Both callers used to carry their own copy, which is how the
+   transfer bar lost its aria-valuenow update; one implementation keeps the
+   accessibility contract identical everywhere.
+   ──────────────────────────────────────────────────────────── */
+function elapsedLabel(milliseconds) {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+  return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
+}
+
+// `track` is the element carrying role="progressbar", `fill` is the bar inside
+// it. Returns the clamped value so callers can reuse it for their own labels.
+function setProgressBar(track, fill, percentEl, value) {
+  const safe = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+  if (track) {
+    track.classList.remove('is-loading');
+    track.setAttribute('aria-valuenow', String(safe));
+  }
+  if (fill) fill.style.width = safe + '%';
+  if (percentEl) percentEl.textContent = safe + '%';
+  return safe;
+}
+
 /* ── Asset Picker ──────────────────────────────────────────── */
 let assetPickerResolve = null;
 let pickerFocusIndex = -1;
@@ -684,5 +708,7 @@ window.MIFPUI = Object.freeze({
   setFormLoading: setFormLoading,
   clearFormLoading: clearFormLoading,
   openAssetPicker: openAssetPicker,
+  elapsedLabel: elapsedLabel,
+  setProgressBar: setProgressBar,
 });
 })();

@@ -7,107 +7,144 @@
 
 ## 1. Data Controller
 
-The Mediterranean Institute of Fundamental Physics (MIFP), with registered office at **Via Appia Nuova 31, 00047 Marino (Roma), Italy**, is the data controller for the personal data collected through this website. MIFP is committed to protecting your privacy and handling your personal data in accordance with the General Data Protection Regulation (GDPR) and applicable Italian data protection laws (Legislative Decree 196/2003 as amended by Legislative Decree 101/2018). The controller determines the purposes and means of processing personal data and is responsible for ensuring compliance with applicable data protection legislation.
+The Mediterranean Institute of Fundamental Physics (MIFP), with registered office at **Via Appia Nuova 31, 00047 Marino (Roma), Italy**, is the data controller for the personal data processed through this website. MIFP handles personal data in accordance with the General Data Protection Regulation (GDPR) and applicable Italian data protection law (Legislative Decree 196/2003 as amended by Legislative Decree 101/2018).
 
-For any inquiries regarding the processing of personal data, you may contact us at:
+For any question about this policy or about the processing of your personal data:
 
 - **General inquiries:** [info@mifp.eu](mailto:info@mifp.eu)
-- **Privacy-specific inquiries:** [privacy@mifp.eu](mailto:privacy@mifp.eu)
+- **Privacy inquiries:** [privacy@mifp.eu](mailto:privacy@mifp.eu)
 
-## 2. Data We Collect
+## 2. Where the Data Comes From
 
-**Personal Data You Provide** — We collect personal data that you voluntarily provide to us, including your name, email address, institutional affiliation, country, field of study, position, ORCID, website URL, motivation, and research interests when you register as a member, submit a contact form, or apply to participate in our events. This data is essential for processing your requests and providing the services you have requested. Administrator accounts store only a username and password hash for authentication purposes.
+This website holds personal data from three different sources, and they are not interchangeable.
 
-**Technical Data and Aggregate Statistics** — The platform does not use analytics cookies, profiling tools, persistent visitor identifiers, localStorage analytics, browser fingerprinting, tracking pixels, or third-party tracking services. Public website statistics are produced only as server-side aggregate daily counters, without IP addresses, IP hashes, User-Agent hashes, full referrers, query strings, or reconstruction of individual navigation paths. Separate technical security and access logs may exist to protect and operate the service, with limited retention of 30 days, and are not used for analytics or profiling.
+**Data you provide directly.** The only form on this website that collects personal data is the membership application form at `/join`. It records your first and last name, e-mail address, affiliation, country, field of study, position and the free-text motivation you write. The platform also stores the username and a password hash of the MIFP administrator account.
 
-We do not collect or process any sensitive data (health, biometric, political opinions, etc.).
+**Historical and imported institutional data.** MIFP's catalogue of past events, conferences and schools is built from MIFP's own historical archives and from previous MIFP websites. Imported records may therefore contain the names, affiliations and roles of people who took part in past MIFP activities, together with related programme and publication metadata. This data was not collected through this website and was not supplied by the individuals concerned through it.
 
-## 3. Purpose of Processing
+**Publicly available professional and scientific information.** Some records are assembled from publicly available professional and scientific sources, such as published conference programmes, proceedings and institutional pages.
 
-Your personal data is processed exclusively for the following purposes:
+Imports also keep a provenance record of what was read and when, including the raw payload received from the source. That record is what makes the archive verifiable and reproducible, and it can contain the same personal data as the canonical record. It is retained for archive integrity and is covered by the retention discussion in §7.
 
-- Managing membership applications and records
-- Organizing events, conferences, and schools
-- Responding to contact form inquiries
-- Maintaining website security and performance (administrator authentication)
-- Complying with legal obligations
+Apart from the membership application, this website has no general enquiry form and no sign-up for events.
 
-## 4. Legal Basis for Processing
+## 3. Technical Data and Aggregate Statistics
 
-We process your personal data based on the following legal grounds as defined by Articles 6(1) and 9(2) of the GDPR:
+The platform does not use analytics or profiling cookies, persistent visitor identifiers, localStorage analytics, browser fingerprinting, tracking pixels or third-party tracking services. Public website statistics are produced only as server-side aggregate daily counters, without IP addresses, IP hashes, User-Agent hashes, full referrers, query strings or reconstruction of individual navigation paths.
 
-- **Consent** — For membership join requests and contact form submissions, processing is based on the consent of the data subject.
-- **Contractual Necessity** — For membership management and event participation, processing is necessary to perform our contractual obligations.
-- **Legal Obligation** — To comply with applicable Italian and EU laws, including tax and accounting requirements.
-- **Legitimate Interest** — To maintain and improve our services, always balanced against your rights and freedoms, including website security and internal administration (Article 6(1)(f) of the GDPR).
+Separate technical security and access logs exist to protect and operate the service. They may contain:
 
-## 5. Data Retention
+- the request path, method, status code, response size and duration;
+- a **pseudonymous** client fingerprint derived from the IP address with a server-side salt, used for rate limiting and abuse detection;
+- for authenticated actions, the administrator username and the action performed.
 
-We retain your personal data only for as long as necessary to fulfill the purposes for which it was collected:
+A pseudonymous identifier is not an anonymous one: it still relates to a single client and can be linked across requests. The logs are used for security and operations only, never for profiling or analytics.
 
-| Data Type | Retention Period |
-|-----------|-----------------|
-| Membership | Duration of membership plus 2 years |
-| Join requests (rejected or archived) | Up to 2 years for administrative purposes |
-| Contact Forms | Up to 24 months from submission |
-| Event Registration | Duration of event plus 12 months |
-| Technical Logs | 30 days (default, enforced by the deployment operator) |
+Two further points of detail:
 
-You may request deletion of your data at any time by contacting us at the address provided below.
+- Storing the **raw** IP address of a membership application is **disabled by default** (`JOIN_STORE_RAW_IP`). IP addresses are still processed transiently for rate limiting and abuse prevention.
+- Logging the raw client IP into the log streams is also off by default (`LOG_INCLUDE_CLIENT_IP`); the salted fingerprint is used instead.
 
-## 6. Your Rights Under GDPR
+## 4. Special-Category Data
 
-Under the GDPR, you have the following rights regarding your personal data:
+MIFP does not ask for special-category personal data (health, biometric data, political opinions, religious beliefs, trade-union membership, sexual orientation, genetic data) and does not need it in order to consider a membership application.
 
-- **Right of Access** — Obtain a copy of your personal data held by us
-- **Right to Rectification** — Correct inaccurate or incomplete data
-- **Right to Erasure** — Request deletion of your data ("right to be forgotten")
-- **Right to Restrict Processing** — Limit how we use your data
-- **Right to Data Portability** — Receive your data in a structured, machine-readable format
-- **Right to Object** — Object to processing based on legitimate interest
-- **Right to Withdraw Consent** — Withdraw consent at any time, without affecting the lawfulness of processing based on consent before its withdrawal
-- **Right to Complain** — Lodge a complaint with the Italian Data Protection Authority (Garante per la protezione dei dati personali)
+Because the motivation field of the application form is free text, please **do not include** special-category information there unless it is genuinely necessary for your request. If you do include it, it will be processed as part of your application only.
 
-To exercise any of these rights, please contact us at [privacy@mifp.eu](mailto:privacy@mifp.eu).
+## 5. Purposes of Processing
 
-## 7. Data Sharing and Recipients
+Personal data is processed for these purposes only:
 
-We do not sell, rent, or share your personal data with third parties for marketing or advertising purposes. We may share your data with:
+- reviewing and administering membership applications and the member register;
+- maintaining MIFP's institutional record of past events, conferences, schools and publications;
+- operating and securing the website, including administrator authentication, rate limiting and abuse prevention;
+- complying with legal, tax and accounting obligations.
 
-- **Partners** — Event co-organizers and partner institutions, limited to data relevant to event participation
-- **Service Providers** — Third-party providers who assist us in operating the website, under strict data processing agreements
-- **Legal Authorities** — When required by law or to protect our legitimate interests
+## 6. Legal Basis
 
-Data transfers outside the EEA are subject to appropriate safeguards under Chapter V of the GDPR.
+| Processing | Basis |
+|------------|-------|
+| Membership application and membership administration | Consent of the data subject at the point of application (Article 6(1)(a) GDPR), combined with the steps needed to enter into membership |
+| Historical and imported institutional records of past MIFP activities | Legitimate interest in maintaining MIFP's institutional and scientific memory (Article 6(1)(f) GDPR) |
+| Website security, rate limiting and technical logs | Legitimate interest in operating a secure service (Article 6(1)(f) GDPR) |
+| Legal, tax and accounting obligations | Legal obligation (Article 6(1)(c) GDPR) |
 
-## 8. Data Security
+The platform does not rely on Article 9 GDPR: it neither requests nor requires special-category data.
 
-We implement appropriate technical and organizational measures to protect personal data against unauthorized access, alteration, disclosure, or destruction. These include:
+The precise legal basis for membership processing, and the corresponding notice and consent wording, is a controller decision rather than something that can be derived from the source code. It is recorded for follow-up in the internal document `docs/PRIVACY_DECISIONS_REQUIRED.md` and is not silently changed here.
 
-- HTTPS encryption for all communications
-- Server-side password hashing with bcrypt
-- CSRF protection for all form submissions
-- Rate limiting on login and join requests
-- Strict access controls
-- Data minimization principles
-- No third-party scripts, analytics, or tracking services
-- All assets (stylesheets, JavaScript libraries, fonts, icons) self-hosted
+## 7. Data Retention
 
-## 9. Automated Decision-Making
+| Data | Retention |
+|------|-----------|
+| Membership register | Duration of membership plus 2 years |
+| Membership applications that were rejected or archived | Up to 2 years from the decision, then eligible for deletion by the maintenance cleanup |
+| Membership applications pending or under review | Kept until a decision is recorded |
+| Technical access/security logs | 30 days by default; rotated files are removed by the maintenance cleanup |
+| Aggregate public statistics | Daily counters retained for 730 days; they contain no personal data |
+| Database backups | Retained for the configured backup cycle, then aged out; see §10 |
 
-We do not use automated decision-making or profiling based on personal data.
+Retention is enforced by the **protected maintenance cleanup**, which an operator runs deliberately from the dashboard and which always creates a verified snapshot first. It is not a continuously running scheduled job, and the application never deletes membership applications on its own.
 
-## 10. Cookies
+You may request deletion of your personal data at any time using the contact address in §12.
 
-This website sets a session cookie only for logged-in administrators. Anonymous visitors browsing public pages receive no cookies. We do not use third-party analytics cookies, advertising cookies, or tracking cookies. CSRF protection uses stateless HMAC tokens that do not require cookies. For more detailed information, please see our [Cookie Policy](/cookie-policy). If this policy changes, we will update both this section and the Cookie Policy accordingly.
+## 8. Your Rights Under the GDPR
 
-## 11. Changes to This Policy
+- **Access** — obtain a copy of the personal data we hold about you
+- **Rectification** — have inaccurate or incomplete data corrected
+- **Erasure** — request deletion of your data
+- **Restriction** — limit how your data is used
+- **Portability** — receive your data in a structured, machine-readable format
+- **Objection** — object to processing based on legitimate interest
+- **Withdrawal of consent** — withdraw consent at any time, without affecting the lawfulness of processing carried out before the withdrawal
+- **Complaint** — lodge a complaint with the Italian Data Protection Authority (Garante per la protezione dei dati personali)
 
-Any changes to this Privacy Policy will be posted on this page. The date of the latest revision is indicated at the top of this document.
+To exercise any of these rights, contact [privacy@mifp.eu](mailto:privacy@mifp.eu).
 
-## 12. Contact and Complaints
+Some of the historical and imported records described in §2 may relate to people we have no direct contact details for. Because the archive is the institutional record of past MIFP activities, such records may be restricted rather than deleted where erasure would destroy the scientific record; requests will be assessed individually.
 
-For any questions regarding this privacy policy or to exercise your data protection rights, please contact us at:
+## 9. Recipients and Service Providers
+
+We do not sell, rent or share personal data for marketing or advertising purposes. Personal data may be processed by:
+
+- **Hosting provider** — the infrastructure on which this website runs;
+- **E-mail/SMTP provider** — used to deliver the notification that a membership application has been received;
+- **Backup/storage provider** — where an off-site backup destination is configured;
+- **Public authorities** — where we are legally required to disclose information.
+
+The current providers, the existence of data processing agreements and any transfer assessment are organisational decisions that cannot be established from this repository. They are tracked in `docs/PRIVACY_DECISIONS_REQUIRED.md`. Where personal data is transferred outside the EEA, an appropriate Chapter V safeguard will be put in place before the processing starts.
+
+## 10. Backups
+
+Operational deletion removes data from the live database, but a copy may remain in an integrity-protected backup until that backup ages out of the normal retention cycle. Backups are kept for disaster recovery, are not used for any other purpose, and are not browsable as a data source. Deleting a record therefore takes effect immediately in normal use and finally once the relevant backups have expired.
+
+## 11. Data Security
+
+Technical and organisational measures include:
+
+- HTTPS for all communications, with HSTS on the production deployment;
+- server-side password hashing using **PBKDF2-HMAC-SHA256 with 600,000 iterations** (Werkzeug-compatible `pbkdf2:sha256` format), stored as a hash only, never as a password;
+- CSRF protection on every state-changing form, using signed, expiring tokens bound to the requesting client;
+- rate limiting and lockouts on administrator login and on the membership application form;
+- strict access controls on the administrative area;
+- data minimisation: the application stores only the fields the workflow actually uses;
+- no third-party scripts, analytics or tracking services, and no external asset domains: stylesheets, JavaScript, fonts and icons are all served from this site.
+
+## 12. Automated Decision-Making
+
+We do not use automated decision-making or profiling based on personal data. Membership applications are reviewed by a person.
+
+## 13. Cookies
+
+This website sets **only strictly necessary cookies**: `mifp_admin_session`, created after a successful dashboard login, and `mifp_csrf`, a short-lived cookie created only on pages that render a form needing cross-site request forgery protection (currently `/join`, `/login` and the maintenance page). Ordinary public browsing sets no cookie at all.
+
+There are no analytics, advertising, marketing, profiling or third-party cookies, which is why this website shows no consent banner: there is nothing optional to consent to. Full details, including cookie names and lifetimes, are in the [Cookie Policy](/cookie-policy).
+
+## 14. Changes to This Policy
+
+Any change to this Privacy Policy will be posted on this page, and the revision date at the top will be updated.
+
+## 15. Contact and Complaints
 
 - **Mediterranean Institute of Fundamental Physics (MIFP)**
 - **Address:** Via Appia Nuova 31, 00047 Marino (Roma), Italy

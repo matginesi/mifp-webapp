@@ -195,6 +195,7 @@ Expected public surface: **SSH, TCP 80, TCP 443 — nothing else.**
 
 ```bash
 docker info --format '{{.SecurityOptions}}'
+docker info --format 'live-restore={{.LiveRestoreEnabled}} logging={{.LoggingDriver}}'
 docker compose version
 sudo systemctl is-active docker
 cat /etc/docker/daemon.json
@@ -204,6 +205,32 @@ groups | grep -w docker || echo "correctly NOT in the docker group"
 The Docker daemon must not be reachable over TCP, the `docker` group must stay
 empty (membership is equivalent to root), and `/var/run/docker.sock` must keep
 its package-default mode.
+
+`sudo mifpctl security-check` inspects these too, and distinguishes severity:
+
+* **error** — the daemon is configured with a `tcp://` socket (in
+  `/etc/docker/daemon.json`, on the `dockerd` command line, or listening on
+  2375/2376). A TCP Docker API is remote root on the host.
+* **WARN** — `live-restore` is disabled, or there is no daemon-level log
+  rotation. Neither is an exposure: the compose services already cap their own
+  logs at 10 MB × 3. To add the daemon defaults without overwriting an existing
+  configuration:
+
+  ```bash
+  sudo python3 - <<'PY'
+  import json, pathlib
+  p = pathlib.Path("/etc/docker/daemon.json")
+  data = json.loads(p.read_text()) if p.exists() else {}
+  data.setdefault("live-restore", True)
+  data.setdefault("log-driver", "json-file")
+  data.setdefault("log-opts", {"max-size": "10m", "max-file": "3"})
+  p.write_text(json.dumps(data, indent=2) + "\n")
+  PY
+  sudo systemctl restart docker
+  ```
+
+  The bootstrap intentionally writes that file only when it does not already
+  exist, so an operator's own daemon configuration is never overwritten.
 
 ---
 

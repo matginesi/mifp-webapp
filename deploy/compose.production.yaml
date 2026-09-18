@@ -40,10 +40,15 @@ services:
       TMPDIR: /app/data/tmp
       LOG_DIR: /app/data/logs
       CONFERENCES_DIR: /app/data/conferences
-      BANNER_SETTINGS_PATH: /app/data/config/banner_settings.json
+      RUNTIME_CONFIG_DIR: /app/data/config
       STORAGE_MIN_FREE_MB: "${STORAGE_MIN_FREE_MB:-1024}"
       LOG_OUTPUT: stdout
+      # Files are the durable diagnostic record (JSONL); the console is what a
+      # human reads in `docker logs` (compact text). Both fall back to
+      # LOG_FORMAT, so a deployment that sets only that one is unchanged.
       LOG_FORMAT: "${LOG_FORMAT:-json}"
+      LOG_FILE_FORMAT: "${LOG_FILE_FORMAT:-json}"
+      LOG_CONSOLE_FORMAT: "${LOG_CONSOLE_FORMAT:-text}"
       # Listen on the container interface; exposure is restricted by the host
       # publish rule below to 127.0.0.1 only.
       GUNICORN_BIND: 0.0.0.0:8000

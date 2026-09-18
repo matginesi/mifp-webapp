@@ -124,9 +124,6 @@ def test_conference_wizard_people_exports_assets_and_deploy_zip(app, client):
         "config__runtime__console_log_level": "warn",
         "config__appearance__default_mode": "light",
         "config__appearance__default_palette": "2",
-        "config__appearance__remember_theme": "1",
-        "config__privacy__show_notice": "1",
-        "config__privacy__notice_storage_key": "qm27-privacy",
         "config__registration__enabled": "1",
         "config__registration__section_anchor": "registration",
         "config__registration__nav_label": "Register",
@@ -462,27 +459,6 @@ def test_mixed_zip_and_jsonl_queue_is_processed_in_one_request(app, client):
     assert _scalar(app, "SELECT COUNT(*) FROM import_runs WHERE name IN ('portable.zip', 'additional.jsonl')") == 2
 
 
-def test_force_cookie_banner_publishes_new_global_revision(app, client, monkeypatch, tmp_path):
-    config_path = tmp_path / "banner_settings.json"
-    config_path.write_text(
-        json.dumps({"cookie_banner_enabled": "0", "banner_force_show": "old-revision"}),
-        encoding="utf-8",
-    )
-    app.config["BANNER_SETTINGS_PATH"] = config_path
-
-    response = client.post(
-        "/dashboard/institutional/privacy/banner/force",
-        follow_redirects=True,
-    )
-
-    assert response.status_code == 200
-    assert b"Cookie banner forced" in response.data
-    saved = json.loads(config_path.read_text(encoding="utf-8"))
-    assert saved["cookie_banner_enabled"] == "1"
-    assert saved["banner_force_show"] != "old-revision"
-    assert saved["banner_force_show"].isdigit()
-
-
 def test_institutional_editor_persists_pages_in_database_and_public_routes_use_them(app, client):
     manifesto = "Database-managed manifesto from the dashboard."
     privacy = "Database-managed privacy policy."
@@ -521,15 +497,16 @@ def test_institutional_editor_persists_pages_in_database_and_public_routes_use_t
     assert privacy.encode() in client.get("/privacy").data
 
 
-def test_privacy_workspace_has_force_banner_action(client):
+def test_privacy_workspace_edits_both_policies_without_a_consent_gate(client):
     response = client.get("/dashboard/institutional/privacy")
 
     assert response.status_code == 200
-    assert b"Force show to everyone" in response.data
-    assert b"/dashboard/institutional/privacy/banner/force" in response.data
-    assert b"banner-preview-icon" in response.data
-    assert b"data-banner-dismiss" in response.data
-    assert b"Appearance and behaviour" in response.data
+    body = response.data
+    assert b"save_privacy" in body and b"save_cookie" in body
+    # No banner administration and no consent gate: only necessary cookies exist.
+    assert b"Force show" not in body
+    for retired in (b"accept all", b"reject all", b"manage cookies", b"cookie banner"):
+        assert retired not in body.lower(), retired
 
 
 def test_cookie_workspace_endpoint_redirects_to_consolidated_editor(client):
@@ -579,7 +556,8 @@ def test_settings_save_uses_allowlist_and_commits_site_copy_atomically(client, a
     [
         ("members", "members", {"display_name": "Test Member", "slug": "test-member"}, "Updated Member"),
         ("news", "news", {"title": "Test News", "slug": "test-news"}, "Updated News"),
-        ("events", "events", {"title": "Test Event", "slug": "test-event"}, "Updated Event"),
+        # "events" is intentionally absent: canonical events are ingestion-only,
+        # and the generic content workspace redirects them to /dashboard/events.
         ("publications", "publications", {"title": "Test Publication", "slug": "test-publication"}, "Updated Publication"),
         ("research", "research_areas", {"title": "Test Research", "slug": "test-research"}, "Updated Research"),
         ("sponsors", "sponsors", {"name": "Test Sponsor", "slug": "test-sponsor"}, "Updated Sponsor"),
@@ -629,80 +607,6 @@ def test_content_save_waits_for_a_transient_database_writer(app, monkeypatch):
 
     assert not release.is_alive()
     assert _scalar(app, "SELECT COUNT(*) FROM events WHERE id=?", (record_id,)) == 1
-
-
-def test_event_wizard_advertises_pdf_doc_and_docx_uploads(client):
-    response = client.get("/dashboard/events")
-
-    assert response.status_code == 200
-    body = response.get_data(as_text=True)
-    assert "Upload a PDF, DOC or DOCX file." in body
-    javascript = (
-        Path(__file__).resolve().parents[2]
-        / "MIFPAPP/CORE/mifp_app/static/js/dashboard/events.js"
-    ).read_text(encoding="utf-8")
-    assert 'accept=".pdf,.doc,.docx,' in javascript
-    assert "['pdf', 'doc', 'docx'].includes(extension)" in javascript
-    assert "event.asset.upload_started" in javascript
-    assert "event.create.submit" in javascript
-
-
-def test_event_wizard_saves_uploaded_document_with_database_safe_role(app, client):
-    with _db(app) as conn:
-        document_id = conn.execute(
-            """
-            INSERT INTO assets(filename,original_filename,path,kind,mime_type)
-            VALUES('program.docx','program.docx','document/program.docx','document',
-                   'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
-            """
-        ).lastrowid
-        conn.commit()
-
-    response = client.post(
-        "/dashboard/events",
-        data={
-            "title": "Document wizard event",
-            "slug": "document-wizard-event",
-            "review_status": "draft",
-            "manage_event_assets": "1",
-            "doc_asset_id": str(document_id),
-            "doc_type": "Program",
-            "doc_label": "Event programme",
-        },
-    )
-
-    assert response.status_code == 302
-    with _db(app) as conn:
-        event_id = conn.execute(
-            "SELECT id FROM events WHERE slug='document-wizard-event'"
-        ).fetchone()["id"]
-        link = conn.execute(
-            """
-            SELECT role,is_primary FROM asset_links
-            WHERE asset_id=? AND entity_type='event' AND entity_id=?
-            """,
-            (document_id, event_id),
-        ).fetchone()
-    assert dict(link) == {"role": "document", "is_primary": 0}
-
-
-def test_event_wizard_invalid_document_rolls_back_new_event(app, client):
-    response = client.post(
-        "/dashboard/events",
-        data={
-            "title": "Invalid document event",
-            "slug": "invalid-document-event",
-            "manage_event_assets": "1",
-            "doc_asset_id": "999999",
-            "doc_type": "Program",
-        },
-    )
-
-    assert response.status_code == 302
-    assert _scalar(
-        app,
-        "SELECT COUNT(*) FROM events WHERE slug='invalid-document-event'",
-    ) == 0
 
 
 @pytest.mark.parametrize(
@@ -902,12 +806,12 @@ def test_settings_vacuum_integrity_and_database_dump_actions(app, client):
         "/dashboard/settings",
         data={
             "privacy_contact_email": "privacy@example.org",
-            "cookie_banner_text": "obsolete and ignored",
+            "retired_unknown_setting": "obsolete and ignored",
         },
     )
     assert saved.status_code == 302
     assert _scalar(app, "SELECT value FROM settings WHERE key='privacy_contact_email'") == "privacy@example.org"
-    assert _scalar(app, "SELECT value FROM settings WHERE key='cookie_banner_text'") is None
+    assert _scalar(app, "SELECT value FROM settings WHERE key='retired_unknown_setting'") is None
 
     integrity = client.post("/dashboard/server/integrity-check", follow_redirects=True)
     assert integrity.status_code == 200
@@ -1595,7 +1499,6 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.institutional",
     "dashboard.institutional_cookie",
     "dashboard.institutional_privacy",
-    "dashboard.institutional_privacy_force_banner",
     "dashboard.control_site_maintenance",
     "dashboard.control_site_force_clear_maintenance",
     "dashboard.control_backups_cleanup",

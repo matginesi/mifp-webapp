@@ -79,12 +79,7 @@
       <fieldset><legend>Appearance</legend>
         <label class="field"><span>Default mode</span><select class="form-select form-select-sm" name="config__appearance__default_mode"><option value="dark" {{ 'selected' if cfg.appearance.default_mode == 'dark' }}>Dark</option><option value="light" {{ 'selected' if cfg.appearance.default_mode == 'light' }}>Light</option></select></label>
         <label class="field"><span>Default palette</span><input class="form-control form-control-sm" type="number" min="0" name="config__appearance__default_palette" value="{{ cfg.appearance.default_palette }}"></label>
-        <label class="toggle-row"><input type="checkbox" name="config__appearance__remember_theme" value="1" {{ 'checked' if cfg.appearance.remember_theme }}><span><b>Remember theme</b><small>Keep the visitor's appearance preference.</small></span></label>
-      </fieldset>
-      <fieldset><legend>Privacy notice</legend>
-        <label class="toggle-row"><input type="checkbox" name="config__privacy__show_notice" value="1" {{ 'checked' if cfg.privacy.show_notice }}><span><b>Show notice</b><small>Display the conference privacy notice.</small></span></label>
-        <label class="field"><span>Storage key</span><input class="form-control form-control-sm" name="config__privacy__notice_storage_key" value="{{ cfg.privacy.notice_storage_key }}"></label>
-      </fieldset>
+              </fieldset>
       <fieldset class="conference-config-wide"><legend>Registration</legend>
         <div class="inline-form-grid">
           <label class="toggle-row"><input type="checkbox" name="config__registration__enabled" value="1" {{ 'checked' if cfg.registration.enabled }}><span><b>Registration enabled</b><small>Show registration actions in the generated site.</small></span></label>

@@ -92,6 +92,8 @@
         <li><span>Generated exports outside retention</span><b>{{ preview.storage.exports_prunable }} · {{ (preview.storage.exports_prunable_bytes / 1024 / 1024)|round(2) }} MB</b></li>
         <li><span>Automatic backups above limit</span><b>{{ preview.backup.prunable }} · {{ (preview.backup.prunable_bytes / 1024 / 1024)|round(2) }} MB</b></li>
         <li><span>Expired aggregate metric rows</span><b>{{ preview.database.expired_metrics }}</b></li>
+        <li><span>Closed join requests older than {{ preview.join_requests.retention_days }} days (rejected/archived only)</span><b>{{ preview.join_requests.eligible }}</b></li>
+        <li><span>Rotated application/access logs older than {{ preview.logs.retention_days }} days</span><b>{{ preview.logs.prunable }} · {{ (preview.logs.prunable_bytes / 1024 / 1024)|round(2) }} MB</b></li>
         <li><span>Estimated reclaimable space</span><b>{{ (preview.storage.reclaimable_bytes / 1024 / 1024)|round(2) }} MB</b></li>
         <li><span>Editorial assets and unknown files</span><b>Never touched</b></li>
       </ul>

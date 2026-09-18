@@ -396,22 +396,38 @@ def setup_logging(
     log_format: str | None = None, output: str = "files", max_bytes: int = 0,
     backup_count: int = 0, access_enabled: bool = True, audit_enabled: bool = True,
     security_enabled: bool = True, colors: str | bool = "auto",
+    file_format: str | None = None, console_format: str | None = None,
 ) -> logging.Logger:
     """Configure isolated, queue-backed MIFP streams. File rotation is active when
     ``max_bytes`` is positive; otherwise falls back to WatchedFileHandler for external
     logrotate/Docker.
+
+    ``log_format`` stays the single fallback for both destinations, so existing
+    configuration is unchanged. ``file_format`` and ``console_format`` optionally
+    override one destination each: the files are the durable diagnostic record
+    (JSONL by convention) while the console is read by a human in ``docker logs``
+    (compact text by convention).
     """
     global _listener, _queue_handler, _logging_signature, _logging_pid
     mifp_logger = logging.getLogger("mifp")
     log_dir = Path(log_dir)
     numeric_level = _level(level)
     selected_format = (log_format or ("json" if json_logs else "text")).lower()
+    if selected_format not in {"json", "text"}:
+        raise ValueError("LOG_FORMAT must be json or text")
+    resolved_file_format = (file_format or selected_format).strip().lower()
+    if resolved_file_format not in {"json", "text"}:
+        raise ValueError("LOG_FILE_FORMAT must be json or text")
+    resolved_console_format = (console_format or selected_format).strip().lower()
+    if resolved_console_format not in {"json", "text"}:
+        raise ValueError("LOG_CONSOLE_FORMAT must be json or text")
     requested_output = output.lower()
     if requested_output not in {"stdout", "files", "both"}:
         raise ValueError("LOG_OUTPUT must be stdout, files, or both")
     selected_output = requested_output
     signature = (
         str(log_dir.resolve()), numeric_level, selected_format, selected_output,
+        resolved_file_format, resolved_console_format,
         bool(access_enabled), bool(audit_enabled), bool(security_enabled),
         int(max_bytes), int(backup_count), str(colors),
     )
@@ -420,9 +436,7 @@ def setup_logging(
         return mifp_logger
     if _listener is not None:
         shutdown_logging()
-    formatter: logging.Formatter = JsonFormatter() if selected_format == "json" else TextFormatter()
-    if selected_format not in {"json", "text"}:
-        raise ValueError("LOG_FORMAT must be json or text")
+    formatter: logging.Formatter = JsonFormatter() if resolved_file_format == "json" else TextFormatter()
 
     q: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=10_000)
     queue_handler = _PreserveQueueHandler(q)
@@ -437,7 +451,7 @@ def setup_logging(
     _queue_handler = queue_handler
 
     handlers: list[logging.Handler] = []
-    ext = "jsonl" if selected_format == "json" else "log"
+    ext = "jsonl" if resolved_file_format == "json" else "log"
     if selected_output in {"files", "both"}:
         log_dir.mkdir(parents=True, exist_ok=True)
         handlers.append(_file_handler(log_dir / f"mifp_app.{ext}", formatter, _FlowFilter("application", maximum_level=logging.WARNING), max_bytes, backup_count))
@@ -459,7 +473,10 @@ def setup_logging(
             use_colors = color_mode == "on" or (
                 color_mode == "auto" and sys.stdout.isatty() and "NO_COLOR" not in os.environ
             )
-        console.setFormatter(formatter if selected_format == "json" else ConsoleFormatter(colors=use_colors))
+        console.setFormatter(
+            JsonFormatter() if resolved_console_format == "json"
+            else ConsoleFormatter(colors=use_colors)
+        )
         handlers.append(console)
     _listener = logging.handlers.QueueListener(q, *handlers, respect_handler_level=True)
     _listener.start()

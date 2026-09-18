@@ -806,3 +806,33 @@ def test_php_execution_requires_explicit_event_prefix(tmp_path: Path) -> None:
             assert "Application health: OK" in post_init.stdout
         finally:
             sock.close()
+
+
+def test_security_check_fails_when_docker_tcp_api_is_exposed(tmp_path: Path) -> None:
+    """A Docker daemon reachable over a TCP API is a real exposure, so it must
+    be an error rather than a warning."""
+    env, home = _env(tmp_path)
+    (home / "events").mkdir()
+    (home / "events-private").mkdir()
+    config_dir = Path(env["MIFP_CONFIG_DIR"])
+    (config_dir / "config.env").chmod(0o640)
+    (config_dir / "secrets.env").chmod(0o600)
+    Path(env["MIFP_DOCKER_CONFIG_FILE"]).chmod(0o600)
+    bin_dir = Path(env["PATH"].split(":", 1)[0])
+    _write_executable(
+        bin_dir / "ss",
+        "#!/bin/sh\nprintf 'LISTEN 0 128 0.0.0.0:2375 0.0.0.0:*\\n'\n",
+    )
+    _write_executable(
+        bin_dir / "sshd",
+        "#!/bin/sh\n[ \"$1\" = -T ] || exit 0\nprintf 'port 22\\npasswordauthentication no\\npermitrootlogin prohibit-password\\n'\n",
+    )
+    _write_executable(
+        bin_dir / "ufw",
+        "#!/bin/sh\ncase \"$1\" in status) printf 'Status: active\\n22/tcp LIMIT Anywhere (v6)\\n80/tcp ALLOW Anywhere (v6)\\n443/tcp ALLOW Anywhere (v6)\\n' ;; *) exit 0 ;; esac\n",
+    )
+
+    result = _run(env, "security-check", check=False)
+
+    assert result.returncode != 0
+    assert "Docker API TCP port" in result.stdout

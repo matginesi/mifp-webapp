@@ -87,22 +87,12 @@ def test_x_request_id_header(client):
     assert resp.headers.get("X-Request-ID") == "my-test-id"
 
 
-def test_public_cookie_banner_reads_configured_runtime_file(app, client, tmp_path):
-    banner_path = tmp_path / "banner.json"
-    banner_path.write_text(
-        json.dumps({
-            "cookie_banner_enabled": "1",
-            "cookie_banner_text": "Runtime cookie notice",
-        }),
-        encoding="utf-8",
-    )
-    app.config["BANNER_SETTINGS_PATH"] = banner_path
-
+def test_public_site_sets_no_cookie_notice_banner(client):
+    """Only strictly necessary cookies exist, so there is no notice to dismiss."""
     response = client.get("/")
 
     assert response.status_code == 200
-    assert b'id="cookie-banner"' in response.data
-    assert b"Runtime cookie notice" in response.data
-    assert b"cookie-banner-icon" in response.data
-    assert b"cookie-banner-actions" in response.data
-    assert b'<span class="visually-hidden">Dismiss</span>' in response.data
+    body = response.data
+    assert b"cookie-banner" not in body
+    assert b"cookie_banner" not in body
+    assert b'id="cookie-banner"' not in body

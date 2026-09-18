@@ -31,25 +31,59 @@ jobs:
       - name: Check the production Compose exposure contract
         run: |
           # Docker publishes ports through its own iptables rules, so a UFW rule
-          # would not help: every published port must be loopback-bound.
-          python - <<'PY'
+          # would not contain a bad mapping: every published port must be
+          # loopback-bound. The scan is scoped to the `ports:` key by
+          # indentation, so `volumes:`, `tmpfs:` and other list keys can never be
+          # mistaken for port mappings. Standard library only, because this job
+          # does not install project dependencies.
+          python3 - <<'PY'
           import re
           import sys
           from pathlib import Path
 
-          text = Path("deploy/compose.production.yaml").read_text(encoding="utf-8")
-          published = re.findall(r"^\s*-\s*\"([^\"]+)\"\s*$", text, re.M)
-          offenders = [
-              entry for entry in published
-              if not re.fullmatch(r"127\.0\.0\.1:\d+:\d+", entry)
-          ]
+          LOOPBACK = re.compile(r"^(?:127\.0\.0\.1|\[::1\]):\d+:\d+$")
+          target = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path("deploy/compose.production.yaml")
+
+
+          def block_items(lines, start):
+              """List items belonging to the mapping key on line `start`."""
+              entries = []
+              key_indent = len(lines[start]) - len(lines[start].lstrip())
+              for line in lines[start + 1:]:
+                  if not line.strip() or line.lstrip().startswith("#"):
+                      continue
+                  if len(line) - len(line.lstrip()) <= key_indent:
+                      break
+                  item = line.strip()
+                  if item.startswith("- "):
+                      entries.append(item[2:].strip())
+              return entries
+
+
+          lines = target.read_text(encoding="utf-8").splitlines()
+          published = []
+          for index, line in enumerate(lines):
+              stripped = line.strip()
+              if stripped == "ports:":
+                  published.extend(block_items(lines, index))
+              elif stripped.startswith("ports:") and "[" in stripped:
+                  inline = stripped[len("ports:"):].strip()
+                  if inline.startswith("[") and inline.endswith("]"):
+                      published.extend(part.strip() for part in inline[1:-1].split(",") if part.strip())
+
+          entries = [entry.strip().strip('"').strip("'") for entry in published]
+          if not entries:
+              print(
+                  "No published port found in the production Compose file; Caddy could not reach "
+                  "the webapp and this check refuses to pass silently.",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          offenders = [entry for entry in entries if not LOOPBACK.fullmatch(entry)]
           if offenders:
               print("Non-loopback published port(s): " + ", ".join(offenders), file=sys.stderr)
               raise SystemExit(1)
-          if not any(entry.startswith("127.0.0.1:") for entry in published):
-              print("No loopback published port found; refusing to pass silently", file=sys.stderr)
-              raise SystemExit(1)
-          print(f"Compose exposure contract OK ({len(published)} loopback port mapping).")
+          print(f"Compose exposure contract OK ({len(entries)} loopback port mapping(s)).")
           PY
 
   secrets:
@@ -205,7 +239,7 @@ jobs:
             --env EXPORT_DIR=/app/data/exports \
             --env LOG_DIR=/app/data/logs \
             --env CONFERENCES_DIR=/app/data/conferences \
-            --env BANNER_SETTINGS_PATH=/app/data/config/banner_settings.json \
+            --env RUNTIME_CONFIG_DIR=/app/data/config \
             --env TMPDIR=/app/data/tmp \
             --env STORAGE_MIN_FREE_MB=0 \
             --env LOG_OUTPUT=stdout \

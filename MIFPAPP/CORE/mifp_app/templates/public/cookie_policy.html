@@ -15,7 +15,7 @@
       <span class="eyebrow eyebrow-blue">Institutional document</span>
     </div>
     <h1>Cookie Policy</h1>
-    <p>Information about the cookies used on this website. MIFP does not use cookies for advertising, analytics, tracking, or profiling.</p>
+    <p>Information about the cookies used on this website. MIFP uses only strictly necessary cookies and does not use cookies for advertising, analytics, tracking or profiling.</p>
     <div class="accent-bar"></div>
   </div>
 </section>
@@ -39,30 +39,32 @@
       {% else %}
         <div class="doc-block md-body">
           <h2>1. What are cookies?</h2>
-          <p>Cookies are small text files stored on your device by your web browser. They can be used to remember preferences or enable login sessions. This website does not use cookies for advertising, analytics, tracking, or profiling purposes.</p>
+          <p>Cookies are small text files that a website asks your browser to store. They are sent back to the site on subsequent requests and can be used to keep you signed in or to protect forms against cross-site request forgery. This website does not use cookies for advertising, analytics, tracking, profiling or marketing purposes, and it does not use third-party cookies of any kind.</p>
 
           <h2>2. Cookies used on this site</h2>
+          <p>This website sets two strictly necessary cookies. Nothing else is stored on your device by the site itself.</p>
           <table>
-            <thead><tr><th>Cookie</th><th>Purpose</th><th>Duration</th><th>Type</th></tr></thead>
+            <thead><tr><th>Cookie</th><th>Set when</th><th>Purpose</th><th>Duration</th><th>Type</th></tr></thead>
             <tbody>
-              <tr><td>session</td><td>Admin authentication and login session</td><td>Session (deleted on browser close) or up to 8 hours</td><td>Strictly necessary</td></tr>
+              <tr><td><code>mifp_admin_session</code></td><td>Only after a successful administrator login</td><td>Keeps the authenticated dashboard session valid; no personal data is stored in the cookie itself</td><td>Browser session cookie, with a server-side limit of 8 hours by default</td><td>Strictly necessary</td></tr>
+              <tr><td><code>mifp_csrf</code></td><td>Only on a page that renders a form protected against cross-site request forgery (currently <code>/join</code>, <code>/login</code> and the maintenance page)</td><td>Carries the random value that the submitted form's signed CSRF token is bound to, so the token cannot be replayed from another site</td><td>Up to 2 hours</td><td>Strictly necessary</td></tr>
             </tbody>
           </table>
-          <p>No other cookies are set by this website. Specifically, we do not use analytics, marketing, advertising, social media, or third-party tracking cookies of any kind.</p>
-          <p>Public statistics are generated only as aggregate server-side counters, without visitor IDs, IP hashes, User-Agent hashes, full referrers, browser fingerprinting, tracking pixels, localStorage analytics, or third-party analytics services.</p>
+          <p>Both cookies are <code>HttpOnly</code>, use <code>SameSite=Lax</code>, are scoped to the whole site, and are marked <code>Secure</code> on the production HTTPS deployment.</p>
+          <p>Reading the public website — home page, news, events, archive, member directory, research and publication pages, and the Privacy and Cookie policies — sets no cookie at all. <code>mifp_csrf</code> is created only when a page actually renders a form that needs CSRF protection.</p>
+          <p>Public statistics are generated only as aggregate server-side daily counters: no cookies, no visitor IDs, no IP addresses or IP hashes, no User-Agent hashes, no full referrers, no query strings, no browser fingerprinting, no tracking pixels, and no third-party analytics service.</p>
 
-          <h2>3. Session cookie (admin only)</h2>
-          <p>A session cookie named <code>session</code> is set only when an administrator logs into the dashboard area. This cookie is strictly necessary for the functioning of the administrative interface. It stores a cryptographically signed session identifier that expires when the browser is closed or after 8 hours of inactivity, whichever comes first. It is never used for any other purpose.</p>
-          <p>Anonymous visitors to the public website do not receive any cookies.</p>
+          <h2>3. Administrator session cookie</h2>
+          <p><code>mifp_admin_session</code> is set only after a successful login to the administrative dashboard. It is never sent to a visitor who has not logged in and it grants no access to the public site. Blocking it prevents dashboard access, which is the expected behaviour of a strictly necessary authentication cookie.</p>
 
-          <h2>4. Local storage (UI preference)</h2>
-          <p>The public website does not use <code>localStorage</code>, session storage, tracking pixels, browser fingerprinting, or third-party analytics.</p>
+          <h2>4. Local storage</h2>
+          <p>The public website does not use <code>localStorage</code> or session storage at all, and neither does the membership application form. The administrator dashboard uses a single entry, <code>mifp-dashboard-sidebar-collapsed</code>, to remember whether the navigation sidebar was left collapsed: a purely client-side interface preference that never leaves the browser and is not used to identify anyone.</p>
 
           <h2>5. Third-party services</h2>
-          <p>This website does not embed external scripts, widgets, or resources from third-party services. All assets (stylesheets, JavaScript libraries, fonts, icons) are hosted on the same server. No external domain is contacted when you browse this website.</p>
+          <p>This website does not embed external scripts, widgets, fonts or stylesheets. All assets are served from the same server as the site, and no external domain is contacted while you browse it.</p>
 
           <h2>6. Managing cookies</h2>
-          <p>You can control and delete cookies through your browser settings. Most browsers allow you to block all cookies, delete existing cookies, or receive a notification before a cookie is stored. Note that blocking the session cookie will make the admin dashboard inaccessible.</p>
+          <p>You can view, block and delete cookies through your browser settings. Blocking these cookies does not affect your ability to read the public website, but it will prevent the administrator dashboard from working and will make the membership application form fail its security check.</p>
 
           <h2>7. Changes to this policy</h2>
           <p>Any changes to this Cookie Policy will be posted on this page. The date of the latest revision is indicated at the bottom of this document.</p>
