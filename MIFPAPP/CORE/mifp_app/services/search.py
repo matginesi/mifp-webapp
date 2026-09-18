@@ -16,22 +16,10 @@ MIN_QUERY_LENGTH = 2
 MAX_QUERY_LENGTH = 120
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 50
-_CANDIDATE_LIMIT = 1000
+# Upper bound on rows scanned per target. MIFP's largest searchable table is
+# well under this, and the cap keeps an unauthenticated search request bounded.
+_SCAN_LIMIT = 5000
 
-_ACCENT_MAP = {
-    "à": "a", "á": "a", "â": "a", "ã": "a", "ä": "a", "å": "a",
-    "À": "A", "Á": "A", "Â": "A", "Ã": "A", "Ä": "A", "Å": "A",
-    "è": "e", "é": "e", "ê": "e", "ë": "e",
-    "È": "E", "É": "E", "Ê": "E", "Ë": "E",
-    "ì": "i", "í": "i", "î": "i", "ï": "i",
-    "Ì": "I", "Í": "I", "Î": "I", "Ï": "I",
-    "ò": "o", "ó": "o", "ô": "o", "õ": "o", "ö": "o",
-    "Ò": "O", "Ó": "O", "Ô": "O", "Õ": "O", "Ö": "O",
-    "ù": "u", "ú": "u", "û": "u", "ü": "u",
-    "Ù": "U", "Ú": "U", "Û": "U", "Ü": "U",
-    "ç": "c", "Ç": "C", "ñ": "n", "Ñ": "N", "ý": "y", "Ý": "Y",
-}
-_FOLD_CACHE: dict[str, str] = {}
 _TAG_RE = re.compile(r"<[^>]+>")
 
 TYPE_LABELS = {
@@ -49,16 +37,6 @@ TYPE_LABELS = {
 }
 
 
-def sql_fold(column: str) -> str:
-    expr = _FOLD_CACHE.get(column)
-    if expr is None:
-        expr = f"lower({column})"
-        for src, dst in _ACCENT_MAP.items():
-            expr = f"replace({expr},'{src}','{dst}')"
-        _FOLD_CACHE[column] = expr
-    return expr
-
-
 def fold(value: Any) -> str:
     text = str(value or "")
     text = unicodedata.normalize("NFKD", text)
@@ -71,11 +49,6 @@ def normalize_query(raw: Any) -> str | None:
     if len(text) < MIN_QUERY_LENGTH:
         return None
     return text[:MAX_QUERY_LENGTH]
-
-
-def _like_term(folded: str) -> str:
-    escaped = folded.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
 
 
 @dataclass(frozen=True)
@@ -370,14 +343,6 @@ def _snippet(text: str, folded_query: str, width: int = 160) -> str:
     return snippet
 
 
-def _excerpt(data: dict[str, Any], folded_query: str, column_count: int) -> str:
-    for index in range(column_count):
-        text = _plain(data.get(f"_c{index}"))
-        if text and folded_query in fold(text):
-            return _snippet(text, folded_query)
-    return ""
-
-
 def _score(title_folded: str, folded_query: str) -> int:
     if title_folded == folded_query:
         return 0
@@ -416,9 +381,21 @@ def _build_result(
     folded_query: str,
     url_builder: Callable[[dict[str, Any]], str],
     column_count: int,
-) -> dict[str, Any]:
-    url = url_builder(data)
+) -> dict[str, Any] | None:
     title = _plain(data.get("_title"))
+    score = _score(fold(title), folded_query)
+    excerpt = ""
+    if score == 3:
+        matched = False
+        for index in range(column_count):
+            text = _plain(data.get(f"_c{index}"))
+            if text and folded_query in fold(text):
+                excerpt = _snippet(text, folded_query)
+                matched = True
+                break
+        if not matched:
+            return None
+    url = url_builder(data)
     result_type = target.result_type(data) if target.result_type else target.type
     return {
         "type": result_type,
@@ -426,10 +403,10 @@ def _build_result(
         "id": int(data["_id"]),
         "title": title or f"Record {data['_id']}",
         "subtitle": _plain(data.get("_subtitle")),
-        "excerpt": _excerpt(data, folded_query, column_count),
+        "excerpt": excerpt,
         "date": _plain(data.get("_date")),
         "url": url,
-        "score": _score(fold(title), folded_query),
+        "score": score,
     }
 
 
@@ -459,10 +436,8 @@ def run_search(
     if normalized is None:
         return _empty_page("", limit, offset)
     folded_query = fold(normalized)
-    term = _like_term(folded_query)
     results: list[dict[str, Any]] = []
     failed = False
-    total = 0
     for target in SEARCH_TARGETS:
         if scope == "public":
             where = target.public_where
@@ -477,9 +452,6 @@ def run_search(
         if not where or url_builder is None:
             continue
         columns = (target.title_expr, *text_columns)
-        match_sql = " OR ".join(
-            f"{sql_fold(column)} LIKE ? ESCAPE '\\'" for column in columns
-        )
         select_parts = [
             f"{target.id_expr} AS _id",
             f"{target.title_expr} AS _title",
@@ -490,23 +462,12 @@ def run_search(
         for alias, expr in target.extra_exprs:
             select_parts.append(f"{expr} AS {alias}")
         select_parts.extend(f"{column} AS _c{index}" for index, column in enumerate(columns))
-        base_where = f"({where}) AND ({match_sql})"
-        params: list[Any] = [term] * len(columns)
-        try:
-            target_total = conn.execute(
-                f"SELECT COUNT(*) FROM {target.from_sql} WHERE {base_where}", params
-            ).fetchone()[0]
-        except sqlite3.Error:
-            _LOGGER.exception("search target count failed type=%s", target.type)
-            failed = True
-            continue
-        total += int(target_total)
         sql = (
             f"SELECT {', '.join(select_parts)} FROM {target.from_sql} "
-            f"WHERE {base_where} ORDER BY {target.id_expr} ASC LIMIT ?"
+            f"WHERE ({where}) ORDER BY {target.id_expr} ASC LIMIT ?"
         )
         try:
-            rows = conn.execute(sql, [*params, _CANDIDATE_LIMIT]).fetchall()
+            rows = conn.execute(sql, (_SCAN_LIMIT,)).fetchall()
         except sqlite3.Error:
             _LOGGER.exception("search target failed type=%s", target.type)
             failed = True
@@ -518,9 +479,11 @@ def run_search(
                 _LOGGER.exception("search destination failed type=%s", target.type)
                 failed = True
                 continue
-            results.append(item)
+            if item is not None:
+                results.append(item)
     results = _dedupe(results)
     results.sort(key=lambda item: (item["score"], -_date_rank(item["date"]), -item["id"]))
+    total = len(results)
     page = results[offset:offset + limit]
     return {
         "query": normalized,

@@ -1,8 +1,29 @@
 # MIFP Web Platform
 
-Sito pubblico + dashboard amministrativa MIFP, con pipeline locale per scraping
-e gestione dati. La produzione resta volutamente semplice: Flask, SQLite,
-Docker Compose e Caddy.
+[![CI/CD](https://github.com/matginesi/mifp-webapp/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/matginesi/mifp-webapp/actions/workflows/ci-cd.yml)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue)
+
+Sito pubblico e dashboard amministrativa del **Mediterranean Institute of
+Fundamental Physics (MIFP)**, con pipeline locale per scraping e gestione dati.
+Lo stack resta volutamente semplice: **Flask, SQLite, Docker Compose e Caddy**.
+La produzione si rilascia esclusivamente via CI/CD.
+
+## Funzionalità
+
+- **Sito pubblico** — home, eventi, archivio storico, news, membri,
+  pubblicazioni, aree di ricerca, sponsor e pagine istituzionali.
+- **Ricerca globale (Find)** — un'unica pipeline per il sito pubblico
+  (`/search`) e per la dashboard (`/dashboard/search`), su eventi e archivio,
+  news, membri, pubblicazioni, aree di ricerca, pagine e sponsor; la dashboard
+  cerca anche asset e record delle conferenze.
+- **Dashboard amministrativa** — gestione contenuti e asset, conferenze,
+  import/export portabile, data quality, safety operations, log e incidenti.
+- **Archivio storico eventi** — import una tantum di package versionati con
+  metadata ricchi, persone e documenti, serviti internamente sotto `/archive/`.
+- **Scraper** — pipeline locale/remota che produce artefatti JSONL + un unico
+  ZIP importabile.
+- **CI/CD** — suite di test non-browser, immagine immutabile su GHCR e deploy
+  manuale sulla VPS.
 
 ## Modello mentale
 
@@ -16,23 +37,47 @@ BACKUP:      SQLite + file persistenti + eventi -> /var/backups/mifp
 Questi flussi non si mescolano. Un normale deploy non modifica i dati e un
 normale import non sostituisce fisicamente il DB.
 
-## Locale
+## Avvio rapido (locale)
 
-Un solo virtualenv alla root:
+Serve **Python 3.12+**. Un solo virtualenv alla root:
 
 ```bash
-./mifp setup
-./mifp init          # .env + admin + DB schema-only se manca
-./mifp local
-# oppure
+./mifp setup        # crea/aggiorna l'unico .venv locale
+./mifp init         # .env + storage + admin guidato + schema DB se manca
+./mifp local        # webapp locale con Flask
+# oppure, dentro Docker:
 ./mifp docker-local
 ```
 
-Pipeline dati:
+La webapp locale risponde su `http://127.0.0.1:8000` (porta configurabile con
+`--port`). La dashboard è raggiungibile da `/dashboard`.
+
+## Ricerca globale (Find)
+
+Una sola implementazione (`mifp_app/services/search.py`) serve entrambe le
+superfici; cambiano solo le regole di visibilità e le destinazioni.
+
+| Ambito | Percorso | Cosa cerca |
+| --- | --- | --- |
+| Pubblico | `GET /search?q=…` | Eventi + archivio storico, news, membri, pubblicazioni, aree di ricerca, pagine, sponsor |
+| Dashboard | `GET /dashboard/search?q=…` | Tutto quanto sopra (anche in bozza) + asset + conferenze e persone |
+
+Note di comportamento:
+
+- la ricerca pubblica mostra **solo** record pubblicati/attivi e non espone
+  dati amministrativi (email, bio, note, percorsi);
+- un evento con metadata di archivio compare **una sola volta** e rimanda alla
+  pagina `/archive/…` corretta;
+- i risultati sono deduplicati, ordinati per pertinenza e limitati; query vuote
+  o troppo corte non restituiscono nulla;
+- è basata su SQLite (nessun servizio esterno, nessun indice FTS da mantenere):
+  è quindi corretta subito dopo import, modifiche, cancellazioni e restore.
+
+## Pipeline dati
 
 ```bash
 ./mifp scrape all --fresh
-# importa SCRAPERS/OUTPUTS/MIFP_IMPORT.zip dalla dashboard
+# poi importa SCRAPERS/OUTPUTS/MIFP_IMPORT.zip dalla dashboard
 ```
 
 Il builder DB resta disponibile per ricostruzioni/analisi locali esplicite:
@@ -55,10 +100,11 @@ definisce gli invarianti che un DB deve rispettare per essere avviato.
 ./mifp db-upgrade-copy OLD NEW
 ```
 
-Non esistono migration implicite all'avvio. Gli upgrade supportati sono espliciti e
-si eseguono sempre su una copia (`db-upgrade-copy`); in questa versione sono supportati
-gli upgrade adiacenti v9 -> v10 -> v11 -> v12. DB legacy/non versionati continuano a passare dai package
-versionati `mifp-content` v1 o `mifp-jsonl-v2` v2; i vecchi ZIP non versionati sono rifiutati.
+Non esistono migration implicite all'avvio. Gli upgrade supportati sono
+espliciti e si eseguono sempre su una copia (`db-upgrade-copy`); in questa
+versione sono supportati gli upgrade adiacenti v9 -> v10 -> v11 -> v12. DB
+legacy/non versionati passano dai package versionati `mifp-content` v1 o
+`mifp-jsonl-v2` v2; i vecchi ZIP non versionati sono rifiutati.
 
 JSONL è record-only. ZIP è il formato portabile per record/asset e, negli
 export completi della dashboard, stato durevole.
@@ -69,7 +115,23 @@ un'estensione 1:1 e file nella libreria asset. Le pagine pubbliche sono servite
 internamente sotto `/archive/`; i normali export portabili Events/All
 conservano metadata e file senza dipendere dallo ZIP storico originale.
 
-Vedi [schema e lifecycle](docs/database-schema.md) e [gestione Conference](docs/conference-sites.md).
+Vedi [schema e lifecycle](docs/database-schema.md) e
+[gestione Conference](docs/conference-sites.md).
+
+## Test
+
+```bash
+./test_all.sh --suite quick
+./test_all.sh --suite all
+./test_all.sh --suite scraper
+./test_all.sh --suite database
+```
+
+I test sono autosufficienti: **non richiedono il database di produzione**. Ogni
+suite crea il proprio DB temporaneo/in-memory dallo schema versionato, quindi in
+CI girano con database assente (il DB dell'istanza non è mai versionato). La CI
+usa lo stesso `requirements.lock` dell'immagine, esegue le suite non-browser e
+costruisce l'immagine Docker sulle pull request senza pubblicarla.
 
 ## Produzione
 
@@ -124,31 +186,19 @@ Dettagli: [panoramica deploy](DEPLOYMENT.md) e
 
 ## Repository hygiene
 
-Il repository contiene **codice e configurazione pubblica**, non i dati dell'istanza.
-Database SQLite, `SCRAPERS/OUTPUTS`, export, backup, upload, log e le directory
-runtime sotto `MIFPAPP/DATABASE/` restano fuori da Git. La CI esegue:
+Il repository contiene **codice e configurazione pubblica**, non i dati
+dell'istanza. Database SQLite, `SCRAPERS/OUTPUTS`, export, backup, upload, log e
+le directory runtime sotto `MIFPAPP/DATABASE/` restano fuori da Git. La CI
+esegue:
 
 ```bash
 python3 tools/check_repo_hygiene.py
 ```
 
 e fallisce se trova file runtime/generati tracciati, dump JSONL/NDJSON, archivi,
-secret-like files o singoli file sorgente oltre 5 MiB. `.gitignore` impedisce nuovi
-inserimenti; se dati di questo tipo sono già presenti nella **storia** Git, vanno
-rimossi separatamente con una riscrittura controllata della history.
-
-## Test
-
-```bash
-./test_all.sh --suite quick
-./test_all.sh --suite all
-./test_all.sh --suite scraper
-./test_all.sh --suite database
-```
-
-I test non richiedono la password admin personale. La CI usa lo stesso
-`requirements.lock` dell'immagine, esegue le suite non-browser e costruisce
-anche l'immagine Docker sulle pull request senza pubblicarla.
+secret-like files o singoli file sorgente oltre 5 MiB. `.gitignore` impedisce
+nuovi inserimenti; se dati di questo tipo sono già presenti nella **storia**
+Git, vanno rimossi separatamente con una riscrittura controllata della history.
 
 ## Struttura
 
@@ -157,9 +207,20 @@ SCRAPERS/            acquisizione + package importabili
 MIFPAPP/CORE/        runtime Flask / contesto Docker
 MIFPAPP/DATABASE/    storage e builder locali
 TESTS/               test
- deploy/             bootstrap e operatore VPS
- docs/               documentazione corrente
+deploy/              bootstrap e operatore VPS
+docs/                documentazione corrente
 ```
+
+## Documentazione
+
+- [Schema database e lifecycle](docs/database-schema.md)
+- [Gestione Conference](docs/conference-sites.md)
+- [Formato di import](docs/import-format.md)
+- [Riferimento CLI](docs/cli-reference.md)
+- [Panoramica deploy](DEPLOYMENT.md)
+- [Installazione VPS](docs/deployment/vps-installation.md)
+- [Backup](docs/deployment/backups.md)
+- [Hardening](docs/deployment/hardening.md)
 
 Questo è l'unico README del repository; documenti storici/temporanei non fanno
 parte del codebase operativo.

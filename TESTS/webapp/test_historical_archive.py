@@ -210,7 +210,7 @@ def test_v10_archive_migration_converges_to_fresh_fingerprint(tmp_path: Path):
     conn.execute("DELETE FROM schema_migrations")
     conn.execute("INSERT INTO schema_migrations(version,name) VALUES(10,'schema v10')")
     result = migrate_content_schema(conn)
-    assert result["migrations_applied"] == [11]
+    assert result["migrations_applied"] == [11, 12]
     assert schema_fingerprint(conn) == canonical_schema_fingerprint()
 
 

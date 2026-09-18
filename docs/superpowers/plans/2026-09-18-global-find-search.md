@@ -8,13 +8,16 @@
 
 **Tech Stack:** Python 3, Flask, SQLite (no FTS, no new dependencies), Jinja templates, pytest.
 
-> **Post-implementation amendments (final review):** the delivered code additionally
+> **Post-implementation amendments (final review + CI fix):** the delivered code additionally
 > (a) moves `members.bio` to a new `SearchTarget.dashboard_text_columns` field so it
 > is dashboard-only, (b) sets `failed=True` when a destination URL builder raises
 > (instead of silently dropping the row) and falls back to listing URLs for empty
-> slugs, and (c) computes `total` exactly with a per-target `COUNT(*)` and fetches
-> candidates with `ORDER BY id ASC LIMIT _CANDIDATE_LIMIT (1000)`. See
-> `services/search.py` for the final implementation.
+> slugs, and (c) performs accent/case folding in Python rather than SQL. The original
+> SQL-side folding built ~52 nested `replace()` calls per column and overflowed
+> SQLite's parser stack on CI (`sqlite3.OperationalError: parser stack overflow`).
+> SQL now only applies visibility and bounds the scan
+> (`ORDER BY id ASC LIMIT _SCAN_LIMIT = 5000`); `total` is the number of matched
+> records found. See `services/search.py` for the final implementation.
 
 ## Global Constraints
 

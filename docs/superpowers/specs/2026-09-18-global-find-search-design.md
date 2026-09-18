@@ -12,8 +12,13 @@ and the authenticated dashboard, followed by a focused, evidence-based cleanup.
 > - `SearchTarget` carries `dashboard_text_columns` for scope-specific fields.
 > - A URL-builder exception now sets `failed=True` instead of silently dropping
 >   the row; empty/NULL slugs fall back to the relevant listing page.
-> - `total` is computed exactly per target via `COUNT(*)`; candidates are fetched
->   with a deterministic `ORDER BY id ASC LIMIT _CANDIDATE_LIMIT (1000)`.
+> - **Matching is performed in Python, not SQL.** The original SQL-side accent
+>   folding built ~52 nested `replace()` calls per column, which overflows
+>   SQLite's parser stack on some builds (`sqlite3.OperationalError: parser stack
+>   overflow`). SQL now only filters by visibility and bounds the scan
+>   (`ORDER BY id ASC LIMIT _SCAN_LIMIT = 5000`); `fold()` is applied to both the
+>   query and each candidate column in Python. `total` is the number of matched
+>   records found during the bounded scan.
 
 ## 1. Problem statement
 
@@ -211,20 +216,21 @@ Dashboard destinations:
 
 ### 6.1 Accent and case handling
 
-SQLite `LIKE` is ASCII-case-insensitive and accent-sensitive. To match Italian
-and international names/titles without changing stored data or adding indexes:
+SQLite `LIKE` is ASCII-case-insensitive and accent-sensitive, and SQLite has no
+`unaccent()`/`translate()` function. Building an accent fold from nested
+`replace()` calls produces an expression deep enough to overflow SQLite's parser
+stack on some builds (`sqlite3.OperationalError: parser stack overflow`), so
+matching is done in Python instead:
 
-- Define a controlled `FOLD(col)` SQL expression once:
-  `replace(...(lower(col))...)` over a fixed constant list of accented
-  characters (`à á â ä è é ê ë ì í î ï ò ó ô ö ù ú û ü ç ñ`, etc.).
-- Fold the query in Python: `NFKD` normalize, strip combining marks, casefold,
-  collapse whitespace.
-- Compare with `FOLD(col) LIKE ? ESCAPE '\'` using `%folded_term%`.
-- Also run the raw query as an additional bound variant to catch edge cases.
+- `fold(value)`: `NFKD` normalize, strip combining marks, casefold, collapse
+  whitespace. Applied to the query and to every candidate column.
+- SQL is used only to apply visibility rules and to bound the scan
+  (`ORDER BY id ASC LIMIT _SCAN_LIMIT`), then each candidate is folded and
+  compared in Python.
 
 This makes matching case-insensitive and accent-insensitive in both directions,
-is deterministic, and requires no schema or index maintenance. It does not
-modify stored data.
+is deterministic, avoids SQL parser limits, and requires no schema or index
+maintenance. It does not modify stored data.
 
 ### 6.2 Why not FTS5
 
@@ -232,8 +238,9 @@ The entire database is small (currently ~0.5 MB; largest searchable table is
 `assets` at ~1.5k rows). FTS5 would add triggers or rebuild steps that must stay
 consistent across inserts, updates, deletes, imports, archive imports, restores,
 and migrations. That is disproportionate complexity for this dataset.
-Folded `LIKE` over bounded per-target scans is simpler, correct by construction,
-and fast enough. Performance is re-evaluated only if real data size demands it.
+Folded Python matching over bounded per-target scans is simpler, correct by
+construction, and fast enough. Performance is re-evaluated only if real data
+size demands it.
 
 ### 6.3 SQL safety
 

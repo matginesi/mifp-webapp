@@ -1,0 +1,32 @@
+name: Prune GHCR image versions
+
+# Keeps the registry small: every CI run publishes a new sha-<sha> image
+# version, so old versions are pruned here. The promoted "latest" tag is never
+# deleted. Run manually after a cleanup, or let the weekly schedule keep it tidy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_versions_to_keep:
+        description: "Most-recent image versions to keep in addition to 'latest'"
+        required: false
+        default: "0"
+  schedule:
+    - cron: "23 3 * * 0"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old container image versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: mifp-webapp
+          package-type: container
+          min-versions-to-keep: ${{ github.event.inputs.min_versions_to_keep || '0' }}
+          ignore-versions: '^latest$'
+          delete-only-untagged-versions: 'false'

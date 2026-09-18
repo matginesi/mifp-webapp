@@ -122,10 +122,13 @@ def _migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
     These columns deliberately store compact JSON arrays. They are exposed by
     the portable contract as ``speakers``, ``chairs`` and ``committee`` so old
     packages remain valid while newer packages can preserve richer event data.
+    The migration is idempotent so it can converge a partially upgraded or
+    already-current events table without failing.
     """
-    conn.execute("ALTER TABLE events ADD COLUMN speakers_json TEXT NOT NULL DEFAULT '[]'")
-    conn.execute("ALTER TABLE events ADD COLUMN chairs_json TEXT NOT NULL DEFAULT '[]'")
-    conn.execute("ALTER TABLE events ADD COLUMN committee_json TEXT NOT NULL DEFAULT '[]'")
+    existing = {str(row[1]) for row in conn.execute("PRAGMA table_info(events)")}
+    for column in ("speakers_json", "chairs_json", "committee_json"):
+        if column not in existing:
+            conn.execute(f"ALTER TABLE events ADD COLUMN {column} TEXT NOT NULL DEFAULT '[]'")
 
 
 # Target-version -> migration from the immediately preceding supported version.

@@ -4633,7 +4633,7 @@ textarea:focus-visible { outline: 0; }
   padding: .72rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: linear-gradient(145deg, var(--surface-2), var(--surface));
+  background: var(--surface-2);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
 }
 .transfer-totem-icon {
