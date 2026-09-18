@@ -22,7 +22,7 @@ credentials.*.json
 
 # Generated scraper/import data. SCRAPERS/ itself is source code.
 SCRAPERS/OUTPUTS/
-SCRAPER/
+SCRAPERS/
 scrapers_/
 IMPORT_DATA/
 NEW_IMPORT_DATA/
@@ -115,3 +115,6 @@ MIFPAPP/DATABASE/exports/
 MIFPAPP/DATABASE/logs/
 MIFPAPP/DATABASE/tmp/
 MIFPAPP/DATABASE/uploads/
+
+
+.superpowers/
