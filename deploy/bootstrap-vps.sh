@@ -217,9 +217,9 @@ php_admin_value[log_errors] = On
 php_admin_value[error_log] = /var/log/php-mifp-events.log
 php_admin_value[expose_php] = Off
 php_admin_value[cgi.fix_pathinfo] = 0
-# An imported conference tree must not ship a .user.ini that re-enables
-# auto_prepend_file or loosens any of the values above.
-php_admin_value[user_ini.filename] =
+; An imported conference tree must not ship a .user.ini that re-enables
+; auto_prepend_file or loosens any of the values above.
+php_admin_value[user_ini.filename] = ""
 php_admin_flag[allow_url_include] = Off
 php_admin_value[session.cookie_secure] = 1
 php_admin_value[session.cookie_httponly] = 1

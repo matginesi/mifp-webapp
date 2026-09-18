@@ -274,6 +274,11 @@ def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     assert "php-fpm php-cli php-mbstring php-curl" in script
     assert "mifp-events.conf" in script
     assert "/run/php/mifp-events.sock" in script
+    # PHP-FPM pool files use INI syntax: comments are semicolon-prefixed and
+    # user_ini.filename must be an explicit empty string to disable .user.ini.
+    assert "; An imported conference tree must not ship a .user.ini" in script
+    assert "# An imported conference tree must not ship a .user.ini" not in script
+    assert 'php_admin_value[user_ini.filename] = ""' in script
     assert 'EVENTS_PHP_USER="mifp-events"' in script
     assert "/etc/systemd/system/caddy.service" not in script
     assert 'install -o root -g root -m 0750 "$SCRIPT_DIR/configure.py"' in script

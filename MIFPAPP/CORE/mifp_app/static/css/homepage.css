@@ -2804,6 +2804,105 @@
 .institutional-page .research-chart-card { font-family: var(--f-body); }
 .institutional-page .research-summary { font-size: .82rem; line-height: 1.65; }
 
+/* Privacy policy — calm editorial hierarchy for a long legal document. */
+@media screen {
+  .privacy-document .md-body > h1:first-child { display: none; }
+}
+.privacy-document .doc-block {
+  padding: clamp(1.5rem, 3vw, 2.35rem);
+}
+.privacy-document .md-body {
+  color: #d2d6dd;
+  font-size: 1.04rem;
+  line-height: 1.82;
+  hanging-punctuation: first last;
+}
+.privacy-document .md-body > h1:first-child + p {
+  display: grid;
+  gap: .18rem;
+  margin: 0 0 1.65rem;
+  color: var(--paper-mute);
+  line-height: 1.45;
+}
+.privacy-document .md-body > h1:first-child + p strong {
+  color: var(--paper);
+  font-size: 1.08rem;
+  font-weight: 600;
+}
+.privacy-document .md-body > h1:first-child + p em {
+  color: var(--paper-dim);
+  font-size: .9rem;
+}
+.privacy-document .md-body > h1:first-child + p br { display: none; }
+.privacy-document .md-body > hr {
+  margin: 1.7rem 0 2rem;
+  border: 0;
+  border-top: 1px solid var(--line);
+  opacity: 1;
+}
+.privacy-document .md-body h2 {
+  margin: 2.75rem 0 .9rem;
+  padding-top: 1.5rem;
+  color: var(--paper);
+  border-top: 1px solid var(--line-soft);
+  font-size: clamp(1.32rem, 2vw, 1.52rem);
+  font-weight: 550;
+  letter-spacing: -.012em;
+  line-height: 1.22;
+  scroll-margin-top: calc(var(--nav-h) + 1rem);
+}
+.privacy-document .md-body > hr + h2 {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.privacy-document .md-body h3 {
+  margin: 2rem 0 .7rem;
+  font-size: 1.16rem;
+  line-height: 1.3;
+}
+.privacy-document .md-body p,
+.privacy-document .md-body li {
+  max-width: 72ch;
+}
+.privacy-document .md-body p { margin-bottom: 1.05rem; }
+.privacy-document .md-body ul,
+.privacy-document .md-body ol {
+  margin: .25rem 0 1.35rem;
+  padding-left: 1.3rem;
+}
+.privacy-document .md-body li {
+  margin-bottom: .5rem;
+  padding-left: .18rem;
+}
+.privacy-document .md-body li::marker { color: var(--mifp-blue-soft); }
+.privacy-document .md-body table {
+  margin: 1.35rem 0 1.65rem;
+  font-family: var(--f-body);
+  font-size: .82rem;
+  line-height: 1.5;
+}
+.privacy-document .md-body th {
+  color: var(--paper);
+  font-weight: 650;
+}
+.privacy-document .md-body td { color: var(--paper-mute); }
+
+@media (max-width: 640px) {
+  .privacy-document .doc-block { padding: 1.35rem 1rem; }
+  .privacy-document .md-body {
+    font-size: 1rem;
+    line-height: 1.74;
+  }
+  .privacy-document .md-body h2 {
+    margin-top: 2.25rem;
+    padding-top: 1.2rem;
+    font-size: 1.28rem;
+  }
+  .privacy-document .md-body h3 { font-size: 1.1rem; }
+  .privacy-document .md-body table { font-size: .8rem; }
+}
+
 /* Back button */
 .back-button {
   display: inline-flex; align-items: center; gap: 8px;
