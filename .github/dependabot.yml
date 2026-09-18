@@ -1,34 +1,58 @@
 version: 2
-# Keeps pinned dependencies and GitHub Actions current with reviewable PRs.
-# Security-relevant ecosystems only; nothing here auto-merges.
+
+# Keep dependency maintenance reviewable instead of opening one PR/branch per
+# package. Routine updates are grouped by ecosystem; security updates are also
+# grouped so a vulnerability wave does not create branch spam.
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      github-actions-version-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      github-actions-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
 
-  # Base image digest and apt package drift in the production image.
+  # Base-image digest/package drift for the production image.
   - package-ecosystem: docker
     directory: /MIFPAPP/CORE
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 3
+      interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      production-image-version-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      production-image-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
 
+  # One Python Dependabot entry for the monorepo instead of one entry (and one
+  # queue of PRs) per directory. `patterns: "*"` combines routine updates into
+  # a single Python PR. Security updates are kept separate from routine updates
+  # but grouped with each other.
   - package-ecosystem: pip
-    directory: /MIFPAPP/CORE
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-
-  - package-ecosystem: pip
-    directory: /SCRAPERS
+    directories:
+      - /MIFPAPP/CORE
+      - /MIFPAPP/DATABASE
+      - /SCRAPERS
     schedule:
       interval: monthly
-    open-pull-requests-limit: 3
-
-  - package-ecosystem: pip
-    directory: /MIFPAPP/DATABASE
-    schedule:
-      interval: monthly
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
+    groups:
+      python-version-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      python-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
