@@ -4,6 +4,6 @@ lxml>=6.1.1,<7
 tqdm>=4.67.3,<5
 pandas>=3.0.3,<4
 openpyxl>=3.1.5,<4
-python-dateutil>=2.9.0,<3
+python-dateutil>=2.9.0.post0,<3
 playwright>=1.60.0,<2
 pypdf>=6.12.2,<7
