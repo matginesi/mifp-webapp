@@ -12,12 +12,12 @@ on:
         description: "Most-recent image versions to keep (minimum 5)"
         required: false
         default: "30"
-  schedule:
-    - cron: "23 3 * * 0"
 
+# Maintenance is deliberately manual: this workflow never runs on a schedule,
+# never creates a branch/PR and receives package-write permission only while the
+# prune job is executing.
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: ghcr-cleanup-${{ github.repository }}
@@ -27,6 +27,9 @@ jobs:
   prune:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

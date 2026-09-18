@@ -93,8 +93,8 @@ def test_ci_cd_workflow_tests_builds_only() -> None:
     assert "test" in text.lower()
     assert "ghcr.io" in text
     assert "docker/build-push-action" in text
-    assert "build-pr:" in text
-    assert "push: false" in text
+    assert "pull_request:" not in text
+    assert "build-pr:" not in text
     assert "verify-image:" in text
     assert "needs: build" in text
     assert "needs.build.outputs.digest" in text
@@ -121,6 +121,37 @@ def test_ci_workflow_runs_the_non_browser_repository_suite() -> None:
     assert "requirements.lock" in text
     assert "pip-audit" in text
 
+
+
+def test_github_automation_is_main_only_and_has_no_branch_bots() -> None:
+    root = _repo_root()
+    github = root / ".github"
+    ci_text = (github / "workflows" / "ci-cd.yml").read_text(encoding="utf-8")
+    cleanup_text = (github / "workflows" / "ghcr-cleanup.yml").read_text(encoding="utf-8")
+
+    # No repository-managed dependency bot may create PRs/branches. Security
+    # alerts remain a GitHub repository setting, outside the source tree.
+    assert not (github / "dependabot.yml").exists()
+
+    # CI is intentionally main-only (plus explicit manual dispatch). It does
+    # not react to PRs and therefore does not require development branches.
+    assert "branches: [main]" in ci_text
+    assert "pull_request:" not in ci_text
+    assert "pull_request_target:" not in ci_text
+    assert "workflow_dispatch:" in ci_text
+
+    # Registry pruning is operator-triggered maintenance, never a cron bot.
+    assert "workflow_dispatch:" in cleanup_text
+    assert "schedule:" not in cleanup_text
+
+    # No workflow may mutate repository contents, issues or pull requests.
+    all_workflows = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((github / "workflows").glob("*.yml"))
+    )
+    assert "contents: write" not in all_workflows
+    assert "pull-requests: write" not in all_workflows
+    assert "issues: write" not in all_workflows
 
 
 def test_github_actions_are_bounded_and_cancel_stale_runs() -> None:
@@ -297,9 +328,10 @@ def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
 
     assert "hygiene:" in workflow
     assert "python tools/check_repo_hygiene.py" in workflow
-    # The publish path is gated on the secret scan as well as the test/audit
-    # jobs, and `latest` is promoted only after the image scan passes.
-    assert workflow.count("needs: [hygiene, test, audit, secrets]") == 2
+    # The single main-branch publish path is gated on the secret scan as
+    # well as the test/audit jobs, and `latest` is promoted only after the
+    # image scan passes.
+    assert workflow.count("needs: [hygiene, test, audit, secrets]") == 1
     assert "needs: [build, verify-image, image-scan]" in workflow
     assert "secrets:" in workflow
     assert "gitleaks git ." in workflow

@@ -104,10 +104,14 @@ command line: usa `configure --section mail|backup`. Il PAT GHCR rimane soltanto
 nel credential store Docker di root.
 
 La CI esegue in parallelo hygiene, secret scan, test e audit delle dipendenze; la
-build/publish GHCR parte solo se tutti i gate sono verdi. Ogni job ha un
-`timeout-minutes` esplicito, i comandi di rete più delicati hanno retry + timeout
-e la concurrency cancella i run obsoleti sullo stesso ref: un runner bloccato non
-può restare appeso indefinitamente. Dopo che GitHub Actions ha pubblicato una release:
+build/publish GHCR parte solo se tutti i gate sono verdi. Il workflow automatico
+reagisce **solo ai push su `main`**; `workflow_dispatch` resta disponibile per un
+controllo manuale. Il repository non contiene Dependabot e nessun workflow crea
+branch, PR, issue o commit. Il cleanup GHCR è manuale, non schedulato. Ogni job
+ha un `timeout-minutes` esplicito, i comandi di rete più delicati hanno retry +
+timeout e la concurrency cancella i run obsoleti sullo stesso ref: un runner
+bloccato non può restare appeso indefinitamente. Dopo che GitHub Actions ha
+pubblicato una release:
 
 ```bash
 sudo mifpctl registry-login

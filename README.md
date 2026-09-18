@@ -130,8 +130,10 @@ Vedi [schema e lifecycle](docs/database-schema.md) e
 I test sono autosufficienti: **non richiedono il database di produzione**. Ogni
 suite crea il proprio DB temporaneo/in-memory dallo schema versionato, quindi in
 CI girano con database assente (il DB dell'istanza non è mai versionato). La CI
-usa lo stesso `requirements.lock` dell'immagine, esegue le suite non-browser e
-costruisce l'immagine Docker sulle pull request senza pubblicarla.
+usa lo stesso `requirements.lock` dell'immagine ed esegue le suite non-browser
+sui push a `main` (o su avvio manuale). Il repository non usa Dependabot per
+aprire PR/branch automatici: gli aggiornamenti delle dipendenze sono espliciti e
+passano dalla stessa CI.
 
 ## Produzione
 

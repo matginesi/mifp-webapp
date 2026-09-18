@@ -295,8 +295,9 @@ These were confirmed by reading the code and, where possible, by executing it.
 * `bootstrap-vps.sh` configures pinned apt signing keys, security-only
   unattended upgrades (auto-reboot disabled), a fail2ban SSH jail, Docker daemon
   defaults, and validates the rendered Caddyfile **before** publishing it.
-* PRs get no secrets (`pull_request`, not `pull_request_target`); workflow
-  default token is `contents: read`; `packages: write` only on publish/promote;
+* CI is main-only (`push` to `main`, plus manual dispatch); there is no
+  `pull_request`/`pull_request_target` trigger. Workflow default token is
+  `contents: read`; `packages: write` only on publish/promote;
   third-party actions are pinned to commit SHAs; a secret-scan job and an
   image-CVE scan gate the publish and promotion path.
 * Caddy: ACME for public domains, `tls internal` only for `.home.arpa`,
@@ -411,7 +412,7 @@ Status: `OPEN` / `FIXED` / `MITIGATED` / `ACCEPTED` / `NOT REPRODUCIBLE` / `INFO
   `metadata.container.tags`. `actions/delete-package-versions` matches
   `ignore-versions` against `version.name`, so `^latest$` matches nothing and a
   retention of `0` deletes every version.
-* **Failure scenario:** the weekly `23 3 * * 0` cron empties the package. Any
+* **Failure scenario (historical):** the weekly `23 3 * * 0` cron emptied the package. Any
   version tagged `latest` or `sha-<commit>` is a version like any other.
 * **Impact:** `mifpctl init` (pulls `:latest`), `mifpctl deploy sha-<commit>`,
   and registry-based rollback/DR all break. Running containers are unaffected,
@@ -420,10 +421,10 @@ Status: `OPEN` / `FIXED` / `MITIGATED` / `ACCEPTED` / `NOT REPRODUCIBLE` / `INFO
 * **Existing mitigating controls:** `packages: write` scoped to the job;
   `latest` is promoted by a separate job; the VPS keeps current + previous
   images locally.
-* **Implemented solution:** the workflow now keeps the **30** most recent
-  versions by default, drops the ineffective `ignore-versions` (with an explicit
-  comment explaining why digest-based matching makes it useless), and adds a
-  validation step that refuses to run with a window below 5 versions. See
+* **Implemented solution:** cleanup now uses the repository-owned Python client,
+  explicitly protects versions carrying `latest`, keeps the **30** most recent
+  versions by default, refuses a retention window below 5, caps deletions, and is
+  **manual-only** (`workflow_dispatch`) rather than scheduled. See
   `.github/workflows/ghcr-cleanup.yml`.
 * **Regression test:** not automatable without registry credentials; the
   validation step is itself a fail-closed guard. Manual verification: run the
@@ -1288,9 +1289,9 @@ Trivy 0.74.0, `--severity HIGH,CRITICAL`:
   attacker-controlled input to a Perl, libxml2, PCRE2 or GLib parser, its SQL is
   fully parameterised (so the SQLite CVE is not reachable), and the zlib finding
   is the `minizip` component, not the `inflate` path `zipfile` uses. Mitigating
-  controls are the Dependabot `docker` entry (base-digest updates), the new CI
-  scan, and the `--ignore-unfixed` policy that keeps the gate actionable instead
-  of permanently red.
+  controls are explicit dependency/base-image review, the CI image scan, and the
+  `--ignore-unfixed` policy that keeps the gate actionable instead of permanently
+  red.
 
 ### CI/CD changes
 
@@ -1304,8 +1305,9 @@ docker/build-push-action@c3c9e263…        # v7
 ```
 
 * Every third-party action is pinned to a full 40-character commit SHA
-  (resolved from the GitHub API at audit time) with the tag kept as a comment;
-  `.github/dependabot.yml` keeps them current.
+  (resolved from the GitHub API at audit time) with the tag kept as a comment.
+  Updates are reviewed explicitly; no dependency bot is allowed to open branches
+  or pull requests automatically.
 * New `secrets` job: pinned gitleaks binary with checksum verification, scanning
   both the full history and the checked-out tree.
 * New `image-scan` job: pinned Trivy with checksum verification, scanning the

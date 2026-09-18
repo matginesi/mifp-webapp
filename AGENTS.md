@@ -61,10 +61,15 @@ bash MIFPAPP/DATABASE/build.sh --fresh
 - Historical/public conference sites live on the host under `/opt/mifp/events`;
   Caddy serves them directly at `events.mifp.eu`. PHP-FPM is host-side,
   dedicated and deny-by-default; writable PHP state is `/opt/mifp/events-private`.
-- `.github/workflows/ci-cd.yml` publishes the GHCR image only: it runs the
-  versioned webapp + scraper + database quick suite and builds/pushes the image
-  from `MIFPAPP/CORE`.
-  Releasing to the VPS is a manual `deploy/deploy.sh` step, never a CI job.
+- `.github/workflows/ci-cd.yml` runs only for pushes to `main` (or explicit
+  manual dispatch): it runs the versioned webapp + scraper + database quick
+  suite and builds/pushes the image from `MIFPAPP/CORE`.
+- The repository deliberately has no Dependabot configuration and no workflow
+  that creates branches, pull requests, issues or commits. Dependency/security
+  alerts may remain enabled as GitHub-side read-only signals.
+- `.github/workflows/ghcr-cleanup.yml` is manual-only maintenance; it is never
+  scheduled. Releasing to the VPS is a manual `deploy/deploy.sh` step, never a
+  CI job.
 
 Rules:
 - never add a `build:` section back to the production compose;

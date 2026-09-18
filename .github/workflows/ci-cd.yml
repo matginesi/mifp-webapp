@@ -3,7 +3,6 @@ name: CI/CD
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -24,7 +23,8 @@ env:
 
 # Third-party actions are pinned to full commit SHAs (tag in the comment) so a
 # moved tag or an upstream account takeover cannot run different code in a job
-# that holds packages:write. .github/dependabot.yml keeps the pins current.
+# that holds packages:write. Updates are reviewed explicitly instead of being
+# opened automatically by a dependency bot.
 jobs:
   hygiene:
     name: Reject runtime/generated repository data
@@ -157,25 +157,6 @@ jobs:
         run: timeout --foreground 5m python -m pip_audit -r SCRAPERS/requirements.txt
       - name: Audit database pipeline dependencies
         run: timeout --foreground 5m python -m pip_audit -r MIFPAPP/DATABASE/requirements.txt
-
-  build-pr:
-    name: Build Docker image (pull requests only)
-    needs: [hygiene, test, audit, secrets]
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      - name: Build without publishing
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: MIFPAPP/CORE
-          push: false
-          cache-from: type=gha,scope=mifp
-          cache-to: type=gha,mode=max,scope=mifp
 
   build:
     name: Build and publish GHCR image
