@@ -367,4 +367,24 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 })();
 
+/* Cookie notice dismiss — page-local by design (no tracking storage). */
+(function() {
+  var banner = document.getElementById('cookie-banner');
+  if (!banner) return;
+  if (banner.getAttribute('data-force-show') !== '0') {
+    banner.style.removeProperty('display');
+    banner.hidden = false;
+  }
+  var btn = document.getElementById('cookie-banner-close');
+  if (!btn) return;
+  btn.addEventListener('click', function() {
+    if (banner.classList.contains('is-dismissing')) return;
+    banner.classList.add('is-dismissing');
+    window.setTimeout(function() {
+      banner.hidden = true;
+      banner.style.display = 'none';
+    }, 230);
+  });
+})();
+
 })();

@@ -33,6 +33,7 @@ DASHBOARD_GET = [
     "/dashboard/site-texts",
     "/dashboard/institutional",
     "/dashboard/institutional/privacy",
+    "/dashboard/institutional/cookie",
 ]
 
 DASHBOARD_CONTENT = [
@@ -80,6 +81,7 @@ class TestDashboardRoutes:
             ("statistics", "/dashboard/stats", None),
             ("logs", "/dashboard/logs", None),
             ("server", "/dashboard/server", None),
+            ("cookie-banner", "/dashboard/institutional/cookie", None),
         ]
         for name, route, trigger in captures:
             response = page.goto(f"{live_server}{route}")

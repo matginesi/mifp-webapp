@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import mimetypes
 import secrets
 import time
@@ -291,7 +292,10 @@ def create_app():
         from .services.site_copy import copy_values
         # Lazy on purpose: minting here would set `mifp_csrf` on every public page.
         token = _LazyCsrfToken()
-        site_settings = dict(Config.SITE_DEFAULTS)
+        # Banner defaults first so the notice is always renderable, even on a
+        # deployment that never saved banner settings; database site copy and then
+        # the banner settings file override them.
+        site_settings = {**Config.DEFAULT_BANNER_SETTINGS, **Config.SITE_DEFAULTS}
         if not getattr(g, "maintenance_active", False):
             try:
                 with connect_readonly(Config.DATABASE_PATH) as conn:
@@ -305,6 +309,22 @@ def create_app():
                     interval_seconds=60,
                     error_type=type(exc).__name__,
                 )
+        try:
+            _banner_path = Path(app.config["BANNER_SETTINGS_PATH"])
+            if _banner_path.exists():
+                site_settings.update(
+                    Config.normalize_banner_settings(
+                        json.loads(_banner_path.read_text(encoding="utf-8"))
+                    )
+                )
+        except Exception as exc:
+            log_event_throttled(
+                get_logger("runtime"),
+                "runtime.banner_settings_read_failed",
+                "Banner settings could not be read; database/default values are in use",
+                interval_seconds=60,
+                error_type=type(exc).__name__,
+            )
         return {
             "csrf_token": token, "csp_nonce": getattr(g, "csp_nonce", ""),
             "now": datetime.now(), "site_settings": site_settings,

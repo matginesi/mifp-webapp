@@ -87,12 +87,86 @@ def test_x_request_id_header(client):
     assert resp.headers.get("X-Request-ID") == "my-test-id"
 
 
-def test_public_site_sets_no_cookie_notice_banner(client):
-    """Only strictly necessary cookies exist, so there is no notice to dismiss."""
+def test_public_cookie_notice_banner_renders_the_configured_text(app, client, tmp_path):
+    """The notice is informational and its wording is operator-editable."""
+    banner_path = tmp_path / "banner.json"
+    banner_path.write_text(
+        json.dumps({
+            "cookie_banner_enabled": "1",
+            "cookie_banner_text": "Runtime cookie notice",
+        }),
+        encoding="utf-8",
+    )
+    app.config["BANNER_SETTINGS_PATH"] = banner_path
+
     response = client.get("/")
 
     assert response.status_code == 200
-    body = response.data
-    assert b"cookie-banner" not in body
-    assert b"cookie_banner" not in body
-    assert b'id="cookie-banner"' not in body
+    assert b'id="cookie-banner"' in response.data
+    assert b"Runtime cookie notice" in response.data
+    assert b"cookie-banner-icon" in response.data
+    assert b"cookie-banner-actions" in response.data
+    assert b'<span class="visually-hidden">Dismiss</span>' in response.data
+
+
+def test_public_cookie_notice_banner_is_informational_only(app, client):
+    """It must not become a fake consent gate: no accept/reject, no cookie set."""
+    response = client.get("/")
+    body = response.data.lower()
+
+    assert b'id="cookie-banner"' in body
+    for fake in (b"accept all", b"reject all", b"manage cookies", b"i consent"):
+        assert fake not in body, fake
+    # Rendering the notice must not bind an anonymous CSRF client.
+    assert not any(
+        header.startswith("mifp_csrf=") for header in response.headers.getlist("Set-Cookie")
+    )
+
+
+def test_shipped_banner_default_text_matches_the_real_cookie_model():
+    """The default wording must not claim admin-session-only cookies."""
+    from mifp_app.config import Config
+
+    text = Config.DEFAULT_BANNER_SETTINGS["cookie_banner_text"].lower()
+    assert "strictly necessary" in text
+    assert "no analytics" in text
+    # The stale claim: only an admin session cookie exists.
+    assert "session cookie for admin authentication" not in text
+
+
+def test_shipped_banner_defaults_are_complete():
+    """A clean checkout must work without committing mutable runtime settings."""
+    from mifp_app.config import Config
+
+    assert set(Config.DEFAULT_BANNER_SETTINGS) == {
+        "cookie_banner_enabled",
+        "cookie_banner_text",
+        "banner_force_show",
+        "cookie_banner_link_enabled",
+        "cookie_banner_dismiss_label",
+        "cookie_banner_theme",
+    }
+
+
+def test_empty_banner_text_falls_back_to_the_shipped_wording(app, client, tmp_path):
+    """Clearing the textarea must not produce an empty notice."""
+    from mifp_app.config import Config
+
+    banner_path = tmp_path / "banner.json"
+    banner_path.write_text(
+        json.dumps({"cookie_banner_enabled": "1", "cookie_banner_text": ""}),
+        encoding="utf-8",
+    )
+    app.config["BANNER_SETTINGS_PATH"] = banner_path
+
+    body = client.get("/").data.decode("utf-8")
+    assert 'id="cookie-banner-message">' in body
+    assert Config.DEFAULT_BANNER_SETTINGS["cookie_banner_text"] in body
+
+
+def test_banner_settings_path_defaults_inside_the_runtime_config_dir():
+    from pathlib import Path
+
+    from mifp_app.config import Config
+
+    assert Config.BANNER_SETTINGS_PATH == Path(Config.RUNTIME_CONFIG_DIR) / "banner_settings.json"

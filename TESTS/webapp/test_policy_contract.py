@@ -25,6 +25,11 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _flat(path: Path) -> str:
+    """Policy text with whitespace collapsed, for multi-word phrase checks."""
+    return re.sub(r"\s+", " ", _read(path)).strip()
+
+
 # ---------------------------------------------------------------------------
 # Technical claims
 # ---------------------------------------------------------------------------
@@ -56,6 +61,13 @@ def test_cookie_policy_describes_the_csrf_cookie_and_its_lifetime():
     assert "2 hours" in text
 
 
+@pytest.mark.parametrize("path", (COOKIE_POLICY, COOKIE_FALLBACK))
+def test_policies_describe_the_notice_as_informational(path):
+    text = re.sub(r"\s+", " ", _read(path)).lower()
+    assert "informational only" in text, path
+    assert "does not ask for consent" in text, path
+
+
 @pytest.mark.parametrize("path", POLICY_FILES)
 def test_policies_do_not_claim_anonymous_visitors_never_get_cookies(path):
     """`/join` and `/login` legitimately need the anonymous CSRF binding."""
@@ -68,10 +80,18 @@ def test_policies_do_not_claim_anonymous_visitors_never_get_cookies(path):
         assert absolute not in text, (path, absolute)
 
 
-def test_cookie_policy_does_not_claim_a_banner_dismissal_is_remembered():
+def test_cookie_policy_does_not_claim_a_banner_dismissal_is_persisted():
+    """The notice is informational; dismissing it must not be described as stored."""
     text = _read(COOKIE_POLICY).lower()
-    assert "dismissed the cookie information notice" not in text
-    assert "cookie notice" not in text
+    for claim in (
+        "dismissed the cookie information notice",
+        "remember whether you have dismissed",
+        "remember that you dismissed",
+    ):
+        assert claim not in text, claim
+    # It must describe the notice honestly instead.
+    assert "informational only" in text
+    assert "no server-side record" in text
 
 
 @pytest.mark.parametrize("path", POLICY_FILES)
@@ -122,9 +142,11 @@ def test_cookie_policy_does_not_offer_a_consent_gate():
     lowered = _read(COOKIE_POLICY).lower()
     for fake in ("accept all", "reject all", "manage cookies"):
         assert fake not in lowered, fake
-    # The policy explains *why* there is no banner, rather than offering one.
-    assert "show a consent banner" in lowered
-    assert "nothing optional to consent to" in lowered
+    # The notice is documented as informational, and no consent is collected.
+    flat = _flat(COOKIE_POLICY).lower()
+    assert "does not collect consent" in flat
+    assert "not a consent mechanism" in flat
+    assert "nothing optional to consent to" in flat
 
 
 # ---------------------------------------------------------------------------

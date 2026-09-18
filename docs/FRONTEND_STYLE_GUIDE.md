@@ -83,8 +83,10 @@ One tone vocabulary, used by badges, totems, alerts and result strips:
 | working / active | `--accent`, `--accent-subtle` |
 | neutral / queued | `--text-3`, `--surface-3` |
 
-Do not introduce a fifteenth red. The Data Quality module still carries a private
-Tailwind-derived palette that shadows these tokens; new work must use the tokens
+Do not introduce a fifteenth red. Two places still carry a private palette that
+shadows these tokens — the Data Quality module and the dashboard banner preview
+(`.banner-preview-notice`) — because they render a *mock browser* and a dark
+institutional field rather than the workspace itself. New work must use the tokens
 above rather than copying those literals.
 
 ---

@@ -1,7 +1,7 @@
 # Privacy Policy — MIFP
 
 **Mediterranean Institute of Fundamental Physics**
-*Last updated: June 2026*
+*Last updated: September 2026*
 
 ---
 
@@ -18,7 +18,7 @@ For any question about this policy or about the processing of your personal data
 
 This website holds personal data from three different sources, and they are not interchangeable.
 
-**Data you provide directly.** The only form on this website that collects personal data is the membership application form at `/join`. It records your first and last name, e-mail address, affiliation, country, field of study, position and the free-text motivation you write. The platform also stores the username and a password hash of the MIFP administrator account.
+**Data you provide directly.** The only public form on this website that collects personal data is the membership application form at `/join`. It records your first and last name and e-mail address, plus any affiliation, country, field of study, position and free-text motivation you choose to provide. If e-mail delivery is enabled, the same application details are sent to MIFP's configured administrative mailbox so that the request can be reviewed. The platform also stores the username and password hash of the MIFP administrator account.
 
 **Historical and imported institutional data.** MIFP's catalogue of past events, conferences and schools is built from MIFP's own historical archives and from previous MIFP websites. Imported records may therefore contain the names, affiliations and roles of people who took part in past MIFP activities, together with related programme and publication metadata. This data was not collected through this website and was not supplied by the individuals concerned through it.
 
@@ -64,14 +64,12 @@ Personal data is processed for these purposes only:
 
 | Processing | Basis |
 |------------|-------|
-| Membership application and membership administration | Consent of the data subject at the point of application (Article 6(1)(a) GDPR), combined with the steps needed to enter into membership |
+| Reviewing a membership application and administering the resulting membership relationship | Steps taken at the applicant's request before entering into a membership relationship, and performance of that relationship (Article 6(1)(b) GDPR) |
 | Historical and imported institutional records of past MIFP activities | Legitimate interest in maintaining MIFP's institutional and scientific memory (Article 6(1)(f) GDPR) |
 | Website security, rate limiting and technical logs | Legitimate interest in operating a secure service (Article 6(1)(f) GDPR) |
 | Legal, tax and accounting obligations | Legal obligation (Article 6(1)(c) GDPR) |
 
-The platform does not rely on Article 9 GDPR: it neither requests nor requires special-category data.
-
-The precise legal basis for membership processing, and the corresponding notice and consent wording, is a controller decision rather than something that can be derived from the source code. It is recorded for follow-up in the internal document `docs/PRIVACY_DECISIONS_REQUIRED.md` and is not silently changed here.
+The membership form does not request consent for an unrelated or optional purpose: submitting it asks MIFP to take the steps needed to assess the application. The platform does not rely on Article 9 GDPR and neither requests nor requires special-category data.
 
 ## 7. Data Retention
 
@@ -96,10 +94,9 @@ You may request deletion of your personal data at any time using the contact add
 - **Restriction** — limit how your data is used
 - **Portability** — receive your data in a structured, machine-readable format
 - **Objection** — object to processing based on legitimate interest
-- **Withdrawal of consent** — withdraw consent at any time, without affecting the lawfulness of processing carried out before the withdrawal
 - **Complaint** — lodge a complaint with the Italian Data Protection Authority (Garante per la protezione dei dati personali)
 
-To exercise any of these rights, contact [privacy@mifp.eu](mailto:privacy@mifp.eu).
+These rights apply subject to the conditions and exceptions in the GDPR. To exercise them, contact [privacy@mifp.eu](mailto:privacy@mifp.eu). MIFP may need to verify your identity before acting on a request and will respond within the time limits established by applicable law.
 
 Some of the historical and imported records described in §2 may relate to people we have no direct contact details for. Because the archive is the institutional record of past MIFP activities, such records may be restricted rather than deleted where erasure would destroy the scientific record; requests will be assessed individually.
 
@@ -138,7 +135,7 @@ We do not use automated decision-making or profiling based on personal data. Mem
 
 This website sets **only strictly necessary cookies**: `mifp_admin_session`, created after a successful dashboard login, and `mifp_csrf`, a short-lived cookie created only on pages that render a form needing cross-site request forgery protection (currently `/join`, `/login` and the maintenance page). Ordinary public browsing sets no cookie at all.
 
-There are no analytics, advertising, marketing, profiling or third-party cookies, which is why this website shows no consent banner: there is nothing optional to consent to. Full details, including cookie names and lifetimes, are in the [Cookie Policy](/cookie-policy).
+There are no analytics, advertising, marketing, profiling or third-party cookies. The website shows a short informational notice about these strictly necessary cookies. It is not a consent request: dismissing it stores nothing, and no consent is collected because there is no optional storage or tracking to authorise. Full details, including cookie names and lifetimes, are in the [Cookie Policy](/cookie-policy).
 
 ## 14. Changes to This Policy
 

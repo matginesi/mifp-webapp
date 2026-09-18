@@ -1,7 +1,7 @@
 # Cookie Policy — MIFP
 
 **Mediterranean Institute of Fundamental Physics**
-*Last updated: June 2026*
+*Last updated: September 2026*
 
 ---
 
@@ -52,6 +52,17 @@ dashboard. It is never sent to a visitor who has not logged in, and it grants no
 access to the public site. Blocking it prevents dashboard access, which is expected
 behaviour for a strictly necessary authentication cookie.
 
+### The cookie notice
+
+The website shows a short informational notice on public pages. It summarises the
+two strictly necessary cookies described above and links to this policy.
+
+The notice is **informational only**. It does not ask for consent, it has no
+"accept" or "reject" choices, and closing it is not recorded anywhere: dismissing it
+only hides it for the current page view, and doing so creates no cookie, no
+`localStorage` entry and no server-side record. Because there is nothing optional to
+consent to, no consent is collected. Its link points to this policy.
+
 ### Aggregate statistics
 
 Public website statistics are produced exclusively as aggregate server-side daily
@@ -77,18 +88,28 @@ assets — stylesheets, JavaScript libraries, fonts and icons — are served fro
 same server as the site. No external domain is contacted while you browse it. If
 this ever changes, this policy will be updated before the new resource is deployed.
 
-## 3. Legal Basis
+## 3. Why Prior Consent Is Not Requested
 
-Under the GDPR and the ePrivacy Directive, cookies that are strictly necessary to
-provide a service explicitly requested by the user do not require prior consent.
-Both cookies described above fall into that category: one authenticates the
-administrator, the other protects forms against cross-site request forgery. Their
-legal basis is MIFP's legitimate interest in operating the website securely
-(Article 6(1)(f) GDPR), together with the necessity of the processing for the
-requested service.
+Article 122(1) of the Italian Privacy Code, which implements Article 5(3) of the
+ePrivacy Directive, exempts storage or access that is strictly necessary to provide
+a service explicitly requested by the user from the prior-consent requirement. The
+[Italian Data Protection Authority's cookie guidelines](https://www.garanteprivacy.it/home/docweb/-/docweb-display/print/9677876)
+also state that technical cookies require information but are exempt from consent.
+
+Both cookies described above are first-party technical cookies limited to that
+strictly necessary role: one maintains an authenticated administrator session and
+the other protects a form the user has chosen to open and submit. They are not
+repurposed for analytics, advertising or profiling.
+
+The consent exemption for storing these cookies is separate from the GDPR legal
+basis for any related processing of personal data. To the extent such processing
+involves personal data, MIFP relies on the steps or service requested by the user
+(Article 6(1)(b) GDPR, where applicable) and its legitimate interest in securing
+the website and preventing abuse (Article 6(1)(f) GDPR).
 
 Because no optional, analytics or marketing cookies are used, this website does not
-show a consent banner and does not need to: there is nothing optional to consent to.
+collect consent: the informational notice described above is not a consent
+mechanism, and there is nothing optional to consent to.
 If optional cookies are introduced in the future, a real consent mechanism will be
 implemented first and this policy will be updated.
 
@@ -125,4 +146,5 @@ If you have any questions about this cookie policy, please contact us at:
 
 - **Organization:** Mediterranean Institute of Fundamental Physics (MIFP)
 - **Address:** Via Appia Nuova 31, 00047 Marino (Roma), Italy
-- **Email:** [info@mifp.eu](mailto:info@mifp.eu)
+- **Privacy:** [privacy@mifp.eu](mailto:privacy@mifp.eu)
+- **General inquiries:** [info@mifp.eu](mailto:info@mifp.eu)

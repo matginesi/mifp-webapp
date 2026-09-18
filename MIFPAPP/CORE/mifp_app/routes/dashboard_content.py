@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -8,6 +11,7 @@ from typing import Any
 from flask import current_app, flash, jsonify, redirect, render_template, request, url_for
 from werkzeug.wrappers.response import Response
 
+from ..config import Config
 from ..db.connection import connect
 from ..services.admin_safety import backup_sqlite_database
 from ..services.assets import store_asset
@@ -190,6 +194,66 @@ def _write_institutional_body(slug: str, content: str) -> None:
             (slug, title, page_type, content),
         )
         conn.commit()
+
+
+_BANNER_THEMES = ("brand", "neutral")
+_BANNER_TEXT_LIMIT = 500
+
+
+def _banner_settings_from_form(form) -> dict[str, str]:
+    """Validate the banner settings form. Same contract and limits as before."""
+    theme = form.get("cookie_banner_theme", "brand")
+    if theme not in _BANNER_THEMES:
+        theme = "brand"
+    return {
+        "cookie_banner_enabled": "1" if form.get("cookie_banner_enabled") == "1" else "0",
+        "cookie_banner_text": form.get("cookie_banner_text", "").strip()[:_BANNER_TEXT_LIMIT],
+        "cookie_banner_link_enabled": "1" if form.get("cookie_banner_link_enabled") == "1" else "0",
+        "cookie_banner_dismiss_label": (
+            form.get("cookie_banner_dismiss_label", "").strip()[:40] or "Dismiss"
+        ),
+        "cookie_banner_theme": theme,
+    }
+
+
+def _read_banner_config() -> dict[str, str]:
+    """Current banner settings: shipped defaults overridden by the runtime file.
+
+    Returning the defaults here (rather than an empty mapping) keeps the editor and
+    the public notice in agreement on a deployment that has never saved settings.
+    """
+    settings = {str(key): str(value) for key, value in Config.DEFAULT_BANNER_SETTINGS.items()}
+    path = Path(current_app.config["BANNER_SETTINGS_PATH"])
+    if path.is_symlink():
+        raise RuntimeError("Banner settings path cannot be a symbolic link")
+    if not path.exists():
+        return settings
+    if not path.is_file():
+        raise RuntimeError("Banner settings path is not a regular file")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("Banner settings must contain a JSON object")
+    settings.update(Config.normalize_banner_settings(payload))
+    return settings
+
+
+def _write_banner_config(data: dict[str, str]) -> None:
+    path = Path(current_app.config["BANNER_SETTINGS_PATH"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise RuntimeError("Banner settings path cannot be a symbolic link")
+    current = _read_banner_config()
+    current.update(data)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary.chmod(0o640)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def asset_capabilities(table: str) -> dict[str, Any]:
@@ -642,24 +706,31 @@ def institutional():
 @bp.route("/institutional/cookie", methods=["GET", "POST"])
 @login_required
 def institutional_cookie():
-    """Route older bookmarks into the consolidated Privacy & Cookies workspace."""
-    if request.method == "POST" and request.form.get("_action") == "save_page":
-        body = request.form.get("body", "").strip()
-        _write_institutional_body("cookie-policy", body)
-        audit_log("cookie.update", "cookie policy saved")
-        flash("Cookie policy saved.", "success")
-    return redirect(url_for("dashboard.institutional_privacy", tab="cookie"))
+    """Edit the informational cookie notice from its dedicated workspace."""
+    if request.method == "POST":
+        action = request.form.get("_action", "")
+        if action == "save_page":
+            body = request.form.get("body", "").strip()
+            _write_institutional_body("cookie-policy", body)
+            audit_log("cookie.update", "cookie policy saved")
+            flash("Cookie policy saved.", "success")
+            return redirect(url_for("dashboard.institutional_privacy", tab="cookie"))
+        if action in {"save_settings", "save_banner"}:
+            _write_banner_config(_banner_settings_from_form(request.form))
+            audit_log("cookie.settings", "cookie settings saved")
+            flash("Cookie banner settings saved.", "success")
+            return redirect(url_for("dashboard.institutional_cookie"))
+    return render_template(
+        "dashboard/institutional_cookie.html",
+        settings=_read_banner_config(),
+        default_banner_text=Config.DEFAULT_BANNER_SETTINGS["cookie_banner_text"],
+    )
 
 
 @bp.route("/institutional/privacy", methods=["GET", "POST"])
 @login_required
 def institutional_privacy():
-    """Edit the two public policy documents.
-
-    There is no cookie-banner administration here: the public site sets only
-    strictly necessary cookies, so there is nothing optional to configure and no
-    consent gate to manage.
-    """
+    """Edit the two public policy documents."""
     if request.method == "POST":
         action = request.form.get("_action", "")
         if action == "save_privacy":
@@ -671,6 +742,11 @@ def institutional_privacy():
             audit_log("cookie.update", "cookie policy saved from privacy page")
             flash("Cookie policy saved.", "success")
             return redirect(url_for("dashboard.institutional_privacy", tab="cookie"))
+        elif action == "save_banner":
+            _write_banner_config(_banner_settings_from_form(request.form))
+            audit_log("banner.settings", "banner settings saved")
+            flash("Banner settings saved.", "success")
+            return redirect(url_for("dashboard.institutional_cookie"))
         return redirect(url_for("dashboard.institutional_privacy"))
 
     return render_template(
@@ -678,3 +754,14 @@ def institutional_privacy():
         privacy_body=_read_institutional_body("privacy"),
         cookie_body=_read_institutional_body("cookie-policy"),
     )
+
+
+@bp.post("/institutional/privacy/banner/force")
+@login_required
+def institutional_privacy_force_banner():
+    """Re-enable the notice and publish a new revision so it is shown again."""
+    revision = str(time.time_ns())
+    _write_banner_config({"cookie_banner_enabled": "1", "banner_force_show": revision})
+    audit_log("banner.force_show", "cookie banner forced for all visitors", revision=revision)
+    flash("Cookie banner forced. It will be shown to every visitor on their next page view.", "success")
+    return redirect(url_for("dashboard.institutional_cookie"))

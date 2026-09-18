@@ -304,7 +304,7 @@ local_command() {
     LOG_DIR="$DATABASE_DIR/logs" \
     TMPDIR="$DATABASE_DIR/tmp" \
     CONFERENCES_DIR="$DATABASE_DIR/conferences" \
-    BANNER_SETTINGS_PATH="$DATABASE_DIR/config/banner_settings.json" \
+    RUNTIME_CONFIG_DIR="$DATABASE_DIR/config" \
     MAINTENANCE_CRASH_TIMEOUT_SECONDS=60 \
     STORAGE_MIN_FREE_MB=0 \
     SESSION_COOKIE_SECURE=0 \

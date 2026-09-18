@@ -722,9 +722,9 @@ Status: `OPEN` / `FIXED` / `MITIGATED` / `ACCEPTED` / `NOT REPRODUCIBLE` / `INFO
   (`config/*.json`, `mifp_app/config/*.json`) is deliberately **not** excluded —
   an over-broad `*.json` rule was tried and rejected during this task because it
   would have removed the runtime JSON configuration then present in the image.
-  *(Later note: `banner_settings.json` was removed together with the obsolete
-  public cookie notice; the runtime configuration directory is now
-  `RUNTIME_CONFIG_DIR`.)*
+  *(Later note: the runtime configuration directory is now `RUNTIME_CONFIG_DIR`,
+  and `banner_settings.json` lives inside it — `BANNER_SETTINGS_PATH` defaults to
+  `RUNTIME_CONFIG_DIR/banner_settings.json`.)*
 * **Regression test:** the image build plus the runtime smoke test confirm both
   JSON files are present at `/app/config/`.
 

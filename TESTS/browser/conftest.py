@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import socket
@@ -124,6 +125,18 @@ def live_server(tmp_path_factory):
     (server_dir / "exports").mkdir()
     (server_dir / "logs").mkdir()
     (server_dir / "config").mkdir()
+    # Deterministic notice wording for the browser suite.
+    (server_dir / "config" / "banner_settings.json").write_text(
+        json.dumps({
+            "cookie_banner_enabled": "1",
+            "cookie_banner_text": "Browser test cookie notice.",
+            "cookie_banner_link_enabled": "1",
+            "cookie_banner_dismiss_label": "Dismiss",
+            "cookie_banner_theme": "brand",
+            "banner_force_show": "browser-test",
+        }),
+        encoding="utf-8",
+    )
     user, password = _admin_credentials()
     env["SECRET_KEY"] = "browser-test-secret-key"
     env["ADMIN_USERNAME"] = user

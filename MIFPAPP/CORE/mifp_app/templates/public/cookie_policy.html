@@ -54,22 +54,30 @@
           <p>Reading the public website — home page, news, events, archive, member directory, research and publication pages, and the Privacy and Cookie policies — sets no cookie at all. <code>mifp_csrf</code> is created only when a page actually renders a form that needs CSRF protection.</p>
           <p>Public statistics are generated only as aggregate server-side daily counters: no cookies, no visitor IDs, no IP addresses or IP hashes, no User-Agent hashes, no full referrers, no query strings, no browser fingerprinting, no tracking pixels, and no third-party analytics service.</p>
 
-          <h2>3. Administrator session cookie</h2>
+          <h2>3. The cookie notice</h2>
+          <p>The website shows a short informational notice on public pages. It summarises the two strictly necessary cookies described above and links to this policy.</p>
+          <p>The notice is <b>informational only</b>. It does not ask for consent and it has no "accept" or "reject" choices. Closing it only hides it for the current page view: no cookie, no <code>localStorage</code> entry and no server-side record is created or updated by dismissing it. Because there is nothing optional to consent to, no consent is collected.</p>
+
+          <h2>4. Administrator session cookie</h2>
           <p><code>mifp_admin_session</code> is set only after a successful login to the administrative dashboard. It is never sent to a visitor who has not logged in and it grants no access to the public site. Blocking it prevents dashboard access, which is the expected behaviour of a strictly necessary authentication cookie.</p>
 
-          <h2>4. Local storage</h2>
+          <h2>5. Local storage</h2>
           <p>The public website does not use <code>localStorage</code> or session storage at all, and neither does the membership application form. The administrator dashboard uses a single entry, <code>mifp-dashboard-sidebar-collapsed</code>, to remember whether the navigation sidebar was left collapsed: a purely client-side interface preference that never leaves the browser and is not used to identify anyone.</p>
 
-          <h2>5. Third-party services</h2>
+          <h2>6. Third-party services</h2>
           <p>This website does not embed external scripts, widgets, fonts or stylesheets. All assets are served from the same server as the site, and no external domain is contacted while you browse it.</p>
 
-          <h2>6. Managing cookies</h2>
+          <h2>7. Why prior consent is not requested</h2>
+          <p>Article 122(1) of the Italian Privacy Code, implementing Article 5(3) of the ePrivacy Directive, exempts storage or access that is strictly necessary to provide a service requested by the user from prior consent. The two first-party cookies described here are limited to authentication and form security and are not used for analytics, advertising or profiling.</p>
+          <p>The informational notice is not a consent mechanism. This website does not collect cookie consent because there is nothing optional to consent to. If optional cookies or other non-technical tracking tools are introduced, they will remain disabled until a valid consent mechanism and updated information are provided.</p>
+
+          <h2>8. Managing cookies</h2>
           <p>You can view, block and delete cookies through your browser settings. Blocking these cookies does not affect your ability to read the public website, but it will prevent the administrator dashboard from working and will make the membership application form fail its security check.</p>
 
-          <h2>7. Changes to this policy</h2>
+          <h2>9. Changes to this policy</h2>
           <p>Any changes to this Cookie Policy will be posted on this page. The date of the latest revision is indicated at the bottom of this document.</p>
 
-          <p class="policy-updated"><em>Last updated: June 2026</em></p>
+          <p class="policy-updated"><em>Last updated: September 2026</em></p>
         </div>
       {% endif %}
     </article>

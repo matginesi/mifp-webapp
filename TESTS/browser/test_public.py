@@ -109,6 +109,38 @@ class TestPublicRoutes:
         assert items_after <= items_before
 
     @screenshot_on_failure
+    def test_cookie_banner(self, live_server, page):
+        from .conftest import _admin_credentials
+        from .helpers import csrf_token, login
+
+        user, password = _admin_credentials()
+        login(page, live_server, user, password)
+        token = csrf_token(page)
+        assert token
+        response = page.request.post(
+            f"{live_server}/dashboard/institutional/privacy",
+            form={
+                "_csrf_token": token,
+                "_action": "save_banner",
+                "cookie_banner_enabled": "1",
+                "cookie_banner_text": "Browser test cookie notice.",
+                "cookie_banner_link_enabled": "1",
+                "cookie_banner_dismiss_label": "Dismiss",
+                "cookie_banner_theme": "brand",
+            },
+        )
+        assert response.ok
+        page.goto(f"{live_server}/")
+        page.wait_for_load_state("networkidle")
+        banner = page.locator("#cookie-banner")
+        assert banner.count() > 0, "Cookie banner is missing"
+        expect(banner.first).to_be_visible()
+        dismiss = page.locator("#cookie-banner-close")
+        expect(dismiss).to_be_visible()
+        dismiss.click()
+        expect(banner.first).not_to_be_visible(timeout=3000)
+
+    @screenshot_on_failure
     def test_navbar_responsive(self, live_server, page):
         page.set_viewport_size({"width": 480, "height": 800})
         page.goto(f"{live_server}/")

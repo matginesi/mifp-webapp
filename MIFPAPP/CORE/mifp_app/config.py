@@ -136,15 +136,22 @@ class Config:
     EXPORT_MAX_FILES = max(1, int(os.getenv('EXPORT_MAX_FILES', '30')))
     EXPORT_MAX_BYTES = max(1, int(os.getenv('EXPORT_MAX_MB', '2048'))) * 1024 * 1024
     # Runtime configuration directory: the storage anchor for small, mutable
-    # runtime files (and the capacity probe for that filesystem). It used to be
-    # derived from the retired cookie-banner settings file; the legacy
-    # BANNER_SETTINGS_PATH variable is still honoured so existing deployments keep
-    # pointing at the same directory.
-    _legacy_banner_path = os.getenv("BANNER_SETTINGS_PATH", "").strip()
+    # runtime files and the capacity probe for that filesystem. Deployments that
+    # predate RUNTIME_CONFIG_DIR only ever set BANNER_SETTINGS_PATH, so its parent
+    # is accepted as the directory.
+    _legacy_banner_settings = os.getenv("BANNER_SETTINGS_PATH", "").strip()
     RUNTIME_CONFIG_DIR = _path_from_config(
         "runtime_config_dir",
         "RUNTIME_CONFIG_DIR",
-        str(Path(_legacy_banner_path).parent) if _legacy_banner_path else "config",
+        str(Path(_legacy_banner_settings).parent) if _legacy_banner_settings else "config",
+    )
+    # Public cookie-notice banner. It keeps its own small settings file inside the
+    # runtime configuration directory so it shares the writable volume and the
+    # existing capacity probe; an explicit BANNER_SETTINGS_PATH still overrides it.
+    BANNER_SETTINGS_PATH = _path_from_config(
+        "banner_settings_path",
+        "BANNER_SETTINGS_PATH",
+        str(RUNTIME_CONFIG_DIR / "banner_settings.json"),
     )
     CONFERENCES_DIR = _path_from_config(
         "conferences_dir", "CONFERENCES_DIR", "../DATABASE/conferences"
@@ -179,6 +186,36 @@ class Config:
     FLASK_HOST = os.getenv('FLASK_HOST', '127.0.0.1')
     FLASK_PORT = int(os.getenv('FLASK_PORT', '8000'))
     SITE_DEFAULTS = dict(_cfg("site_defaults", {}))
+    # Single source of truth for the public cookie notice. The template, the
+    # dashboard preview and the editor all read these values, so the shipped
+    # wording cannot drift between them; the operator override lives in
+    # BANNER_SETTINGS_PATH and wins over these defaults. The text is deliberately
+    # factual: this site sets only strictly necessary cookies, and the notice is
+    # informational rather than a consent gate.
+    DEFAULT_BANNER_SETTINGS = {
+        "cookie_banner_enabled": "1",
+        "cookie_banner_text": (
+            "This website uses cookies only when they are strictly necessary: to "
+            "secure forms and authenticated administrator sessions. No analytics, "
+            "advertising or tracking cookies are used."
+        ),
+        "banner_force_show": "0",
+        "cookie_banner_link_enabled": "1",
+        "cookie_banner_dismiss_label": "Dismiss",
+        "cookie_banner_theme": "brand",
+    }
+
+    @staticmethod
+    def normalize_banner_settings(values: dict | None) -> dict[str, str]:
+        """Coerce stored banner settings to plain strings.
+
+        An empty ``cookie_banner_text`` means "use the shipped wording", not "show
+        an empty notice", so the key is dropped and the default survives the merge.
+        """
+        cleaned = {str(key): str(value) for key, value in (values or {}).items()}
+        if not cleaned.get("cookie_banner_text", "").strip():
+            cleaned.pop("cookie_banner_text", None)
+        return cleaned
     HTTP_USER_AGENT = os.getenv('HTTP_USER_AGENT', 'MIFP-Webapp/1.0')
     CONTENT_SECURITY_POLICY = os.getenv('CONTENT_SECURITY_POLICY') or _cfg('content_security_policy', None)
     HSTS_VALUE = os.getenv('HSTS_VALUE') or _cfg('hsts_value', 'max-age=31536000; includeSubDomains')

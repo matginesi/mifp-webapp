@@ -497,23 +497,88 @@ def test_institutional_editor_persists_pages_in_database_and_public_routes_use_t
     assert privacy.encode() in client.get("/privacy").data
 
 
-def test_privacy_workspace_edits_both_policies_without_a_consent_gate(client):
+def test_privacy_workspace_edits_both_policies(client):
     response = client.get("/dashboard/institutional/privacy")
 
     assert response.status_code == 200
     body = response.data
     assert b"save_privacy" in body and b"save_cookie" in body
-    # No banner administration and no consent gate: only necessary cookies exist.
-    assert b"Force show" not in body
-    for retired in (b"accept all", b"reject all", b"manage cookies", b"cookie banner"):
-        assert retired not in body.lower(), retired
+    assert b"Cookie banner" in body  # Dedicated sidebar destination remains visible.
 
 
-def test_cookie_workspace_endpoint_redirects_to_consolidated_editor(client):
+def test_force_cookie_banner_publishes_new_global_revision(app, client, tmp_path):
+    config_path = tmp_path / "banner_settings.json"
+    config_path.write_text(
+        json.dumps({"cookie_banner_enabled": "0", "banner_force_show": "old-revision"}),
+        encoding="utf-8",
+    )
+    app.config["BANNER_SETTINGS_PATH"] = config_path
+
+    response = client.post(
+        "/dashboard/institutional/privacy/banner/force",
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert b"Cookie banner forced" in response.data
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["cookie_banner_enabled"] == "1"
+    assert saved["banner_force_show"] != "old-revision"
+    assert saved["banner_force_show"].isdigit()
+
+
+def test_banner_can_be_hidden_and_re_shown(app, client, tmp_path):
+    banner_path = tmp_path / "banner.json"
+    app.config["BANNER_SETTINGS_PATH"] = banner_path
+
+    hidden = client.post("/dashboard/institutional/privacy", data={
+        "_action": "save_banner",
+        "cookie_banner_enabled": "0",
+        "cookie_banner_text": "Hidden notice",
+        "cookie_banner_dismiss_label": "Close",
+        "cookie_banner_theme": "neutral",
+    })
+    assert hidden.status_code == 302
+    assert b'id="cookie-banner"' not in client.get("/").data
+
+    forced = client.post("/dashboard/institutional/privacy/banner/force")
+    assert forced.status_code == 302
+    assert b'id="cookie-banner"' in client.get("/").data
+
+
+def test_banner_settings_form_keeps_its_validation_contract(app, client, tmp_path):
+    """Same limits as before: 500-char text, 40-char label, brand/neutral theme."""
+    config_path = tmp_path / "banner_settings.json"
+    app.config["BANNER_SETTINGS_PATH"] = config_path
+
+    client.post("/dashboard/institutional/cookie", data={
+        "_action": "save_settings",
+        "cookie_banner_enabled": "1",
+        "cookie_banner_text": "x" * 900,
+        "cookie_banner_dismiss_label": "y" * 90,
+        "cookie_banner_theme": "not-a-theme",
+        "cookie_banner_link_enabled": "1",
+    })
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert len(saved["cookie_banner_text"]) == 500
+    assert saved["cookie_banner_dismiss_label"] == "y" * 40
+    assert saved["cookie_banner_theme"] == "brand"
+    assert saved["cookie_banner_link_enabled"] == "1"
+
+
+def test_cookie_workspace_has_dedicated_banner_management(client):
     response = client.get("/dashboard/institutional/cookie")
 
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/dashboard/institutional/privacy?tab=cookie")
+    assert response.status_code == 200
+    body = response.data
+    assert b"Banner settings" in body
+    assert b"banner-preview-icon" in body
+    assert b"data-banner-dismiss" in body
+    assert b"Appearance and behaviour" in body
+    assert b"/dashboard/institutional/privacy/banner/force" in body
+    for fake in (b"accept all", b"reject all", b"manage cookies"):
+        assert fake not in body.lower(), fake
 
 
 def test_homepage_tolerates_active_sponsor_without_slug(app, client):
@@ -1499,6 +1564,7 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.institutional",
     "dashboard.institutional_cookie",
     "dashboard.institutional_privacy",
+    "dashboard.institutional_privacy_force_banner",
     "dashboard.control_site_maintenance",
     "dashboard.control_site_force_clear_maintenance",
     "dashboard.control_backups_cleanup",

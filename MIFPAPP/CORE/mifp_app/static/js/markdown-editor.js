@@ -106,4 +106,43 @@
   initTabs();
   document.querySelectorAll('.markdown-editor-shell').forEach(initEditor);
 
+  var bannerCard = document.querySelector('.banner-settings-card');
+  if (bannerCard) {
+    var bannerText = bannerCard.querySelector('[data-banner-text]');
+    var previewText = bannerCard.querySelector('[data-banner-preview-text]');
+    var count = bannerCard.querySelector('[data-banner-count]');
+    var enabled = bannerCard.querySelector('[data-banner-enabled]');
+    var status = bannerCard.querySelector('[data-banner-status]');
+    var theme = bannerCard.querySelector('[data-banner-theme]');
+    var notice = bannerCard.querySelector('.banner-preview-notice');
+    var linkToggle = bannerCard.querySelector('[data-banner-link]');
+    var previewLink = bannerCard.querySelector('[data-banner-preview-link]');
+    var dismiss = bannerCard.querySelector('[data-banner-dismiss]');
+    var previewDismiss = bannerCard.querySelector('[data-banner-preview-dismiss]');
+    var controls = [bannerText, dismiss, enabled, theme, linkToggle];
+    if (controls.every(Boolean) && previewText && count && status && notice && previewLink && previewDismiss) {
+      // The default wording comes from the server (Config.DEFAULT_BANNER_SETTINGS)
+      // so the shipped text lives in exactly one place.
+      var fallback = bannerText.dataset.bannerDefaultText || '';
+      var updateBannerPreview = function () {
+        previewText.textContent = bannerText.value.trim() || fallback;
+        count.textContent = bannerText.value.length;
+        notice.classList.toggle('is-hidden', enabled.value !== '1');
+        notice.classList.toggle('theme-brand', theme.value === 'brand');
+        notice.classList.toggle('theme-neutral', theme.value === 'neutral');
+        previewLink.hidden = !linkToggle.checked;
+        previewDismiss.textContent = dismiss.value.trim() || 'Dismiss';
+        status.textContent = enabled.value === '1' ? 'Visible' : 'Hidden';
+        status.className = 'status-badge ' + (enabled.value === '1' ? 'status-success' : 'status-neutral');
+        status.setAttribute('data-banner-status', '');
+      };
+      controls.forEach(function (control) {
+        control.addEventListener(control === bannerText || control === dismiss ? 'input' : 'change', updateBannerPreview);
+      });
+      updateBannerPreview();
+    } else {
+      window.MIFPLog?.warn('privacy.preview_incomplete', { reason: 'missing_control' });
+    }
+  }
+
 })();
