@@ -156,6 +156,26 @@ class Config:
     CONFERENCES_DIR = _path_from_config(
         "conferences_dir", "CONFERENCES_DIR", "../DATABASE/conferences"
     )
+    # Caddy serves this tree directly. In production it is a narrowly-scoped
+    # bind mount of /opt/mifp/events; the application never receives access to
+    # Caddy configuration, the Docker socket, or host-private PHP state.
+    EVENTS_ROOT = _path_from_config(
+        "events_root", "EVENTS_ROOT", "../DATABASE/events"
+    )
+    EVENTS_DOMAIN = os.getenv("EVENTS_DOMAIN", "events.localhost").strip().lower()
+    EVENTS_PHP_STATE_PATH = _path_from_config(
+        "events_php_state_path", "EVENTS_PHP_STATE_PATH", "../DATABASE/events-php-enabled.txt"
+    )
+    EVENT_IMPORT_MAX_FILES = max(1, int(os.getenv("EVENT_IMPORT_MAX_FILES", "5000")))
+    EVENT_IMPORT_MAX_UNPACKED_BYTES = max(
+        1, int(os.getenv("EVENT_IMPORT_MAX_UNPACKED_BYTES", str(1024 * 1024 * 1024)))
+    )
+    EVENT_IMPORT_MAX_COMPRESSION_RATIO = max(
+        1, int(os.getenv("EVENT_IMPORT_MAX_COMPRESSION_RATIO", "1000"))
+    )
+    EVENT_IMPORT_STAGING_TTL_SECONDS = max(
+        300, int(os.getenv("EVENT_IMPORT_STAGING_TTL_SECONDS", "7200"))
+    )
     LOG_DIR = _path_from_config('log_dir', 'LOG_DIR', '../DATABASE/logs')
     TMP_DIR = _path_from_config('tmp_dir', 'TMPDIR', '../DATABASE/tmp')
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')

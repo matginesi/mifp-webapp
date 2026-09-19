@@ -25,6 +25,9 @@ services:
       TMPDIR: /app/data/tmp
       LOG_DIR: /app/data/logs
       CONFERENCES_DIR: /app/data/conferences
+      EVENTS_ROOT: /app/data/events
+      EVENTS_DOMAIN: "${EVENTS_DOMAIN:-events.localhost}"
+      EVENTS_PHP_STATE_PATH: /app/data/events-php-enabled.txt
       RUNTIME_CONFIG_DIR: /app/data/config
       LOG_OUTPUT: stdout
       LOG_FORMAT: text

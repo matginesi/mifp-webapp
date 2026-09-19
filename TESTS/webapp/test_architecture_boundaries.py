@@ -47,7 +47,9 @@ def test_deploy_compose_binds_only_loopback_and_host_data() -> None:
     ports = [str(port) for port in web["ports"]]
     assert "127.0.0.1:8000:8000" in ports
     assert not any(not port.startswith("127.0.0.1:") for port in ports)
-    assert all("MIFP_DATA_DIR" in volume and volume.endswith(":/app/data") for volume in web["volumes"])
+    assert "${MIFP_DATA_DIR:-/opt/mifp/data}:/app/data" in web["volumes"]
+    assert "${MIFP_EVENTS_DIR:-/opt/mifp/events}:/app/events" in web["volumes"]
+    assert all("docker.sock" not in volume and "/etc/caddy" not in volume for volume in web["volumes"])
     assert "image" in web
     assert "build" not in web
 

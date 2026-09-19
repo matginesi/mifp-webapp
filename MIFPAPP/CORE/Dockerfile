@@ -43,7 +43,8 @@ COPY --chown=10001:10001 app.py wsgi.py gunicorn_conf.py docker-entrypoint.sh ./
 COPY --chown=10001:10001 config ./config
 COPY --chown=10001:10001 mifp_app ./mifp_app
 COPY --chown=10001:10001 \
-    About.md CodeOfConduct.md HowToBecomeASponsor.md Manifesto.md Privacy.md cookie-policy.md ./
+    About.md CodeOfConduct.md HowToBecomeASponsor.md Manifesto.md Privacy.md cookie-policy.md \
+    MIFP_EVENT_IMPORT_PACKAGE_SPEC.md ./
 RUN mkdir -p /app/data \
     && chown -R 10001:10001 /app/data
 

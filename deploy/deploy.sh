@@ -250,6 +250,12 @@ prepare_runtime_storage() {
   for name in "${dirs[@]}"; do install -d -o "$RUNTIME_UID" -g "$RUNTIME_GID" -m 0750 "$DATA_DIR/$name"; done
   bad="$(find "$DATA_DIR" -xdev \( ! -uid "$RUNTIME_UID" -o ! -gid "$RUNTIME_GID" \) -print -quit)"
   [[ -z "$bad" ]] || die "Ownership dati non valida: $bad. Correggi esplicitamente con: sudo mifpctl fix-permissions"
+  if [[ ! -e "$EVENTS_PHP_STATE" ]]; then
+    install -o root -g root -m 0644 /dev/null "$EVENTS_PHP_STATE"
+  fi
+  [[ -f "$EVENTS_PHP_STATE" && ! -L "$EVENTS_PHP_STATE" ]] \
+    || die "Stato PHP eventi non valido: $EVENTS_PHP_STATE"
+  chown root:root "$EVENTS_PHP_STATE"; chmod 0644 "$EVENTS_PHP_STATE"
 }
 
 do_fix_permissions() {
@@ -860,8 +866,8 @@ restore_snapshot_files() {
   if (( version >= 2 )); then
     [[ -d "$snapshot/events" && ! -L "$snapshot/events" ]] || die "Snapshot incompleta o non sicura: events/"
     [[ -d "$snapshot/events-private" && ! -L "$snapshot/events-private" ]] || die "Snapshot incompleta o non sicura: events-private/"
-    install -d -o root -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$EVENTS_DIR"
-    rsync -a --delete --chmod=D750,F640 --chown="root:$EVENTS_PUBLIC_GROUP" "$snapshot/events/" "$EVENTS_DIR/"
+    install -d -o "$RUNTIME_UID" -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$EVENTS_DIR"
+    rsync -a --delete --chmod=D750,F640 --chown="$RUNTIME_UID:$EVENTS_PUBLIC_GROUP" "$snapshot/events/" "$EVENTS_DIR/"
     install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$EVENTS_PRIVATE_DIR"
     rsync -a --delete --chmod=D700,F600 --chown="$EVENTS_PHP_USER:$EVENTS_PHP_USER" "$snapshot/events-private/" "$EVENTS_PRIVATE_DIR/"
     install -o root -g root -m 0644 "$snapshot/events-php-enabled.txt" "$EVENTS_PHP_STATE"
@@ -1077,9 +1083,9 @@ do_events_import() {
 
   stage="$MIFP_HOME/.events-stage-$$"
   rm -rf -- "$stage"
-  install -d -o root -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$stage"
+  install -d -o "$RUNTIME_UID" -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$stage"
   rsync -a -x --delete "$source/" "$stage/"
-  chown -R --no-dereference root:"$EVENTS_PUBLIC_GROUP" "$stage"
+  chown -R --no-dereference "$RUNTIME_UID":"$EVENTS_PUBLIC_GROUP" "$stage"
   find "$stage" -type d -exec chmod 0750 {} +
   find "$stage" -type f -exec chmod 0640 {} +
 

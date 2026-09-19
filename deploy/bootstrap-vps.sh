@@ -178,8 +178,14 @@ for dir in assets backups conferences exports logs config tmp; do
   install -d -o "$MIFP_UID" -g "$MIFP_GID" -m 0750 "$MIFP_HOME/data/$dir"
 done
 
-# Public archive: root-owned and not writable by either Caddy or PHP.
-install -d -o root -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$MIFP_HOME/events"
+# Public archive: writable only by the unprivileged MIFP application UID;
+# Caddy/PHP receive group read/traverse access and cannot modify it.
+install -d -o "$MIFP_UID" -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$MIFP_HOME/events"
+if [[ ! -e "$MIFP_HOME/events-php-enabled.txt" ]]; then
+  install -o root -g root -m 0644 /dev/null "$MIFP_HOME/events-php-enabled.txt"
+fi
+[[ -f "$MIFP_HOME/events-php-enabled.txt" && ! -L "$MIFP_HOME/events-php-enabled.txt" ]] \
+  || die "Stato PHP eventi non valido: $MIFP_HOME/events-php-enabled.txt"
 # Private PHP runtime state never lives below the public document root.
 install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$MIFP_HOME/events-private"
 for dir in registrations sessions tmp; do

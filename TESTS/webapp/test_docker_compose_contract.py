@@ -36,6 +36,8 @@ def test_production_compose_has_no_build_and_uses_registry_image() -> None:
     assert "build" not in web
     assert web["image"] == "${MIFP_IMAGE:?MIFP_IMAGE must be supplied by deploy.sh}"
     assert "${MIFP_DATA_DIR:-/opt/mifp/data}:/app/data" in web["volumes"]
+    assert "${MIFP_EVENTS_DIR:-/opt/mifp/events}:/app/events" in web["volumes"]
+    assert web["environment"]["EVENTS_ROOT"] == "/app/events"
     assert web["read_only"] is True
     assert web["environment"]["FLASK_ENV"] == "production"
     assert "AUTO_MIGRATE_ON_STARTUP" not in web["environment"]

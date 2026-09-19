@@ -1,0 +1,135 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Import event{% endblock %}
+{% block extra_js %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/dashboard/event-import.js') }}" defer></script>
+{% endblock %}
+{% block content %}
+{% call page_header('Events', 'Import event', 'Validate a public website and its canonical MIFP metadata before publishing either one.') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.event_import_package_spec') }}"><i class="bi bi-filetype-md"></i> Package specification</a>
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.events') }}"><i class="bi bi-arrow-left"></i> Events</a>
+{% endcall %}
+
+<div class="modern-card event-import-shell" data-event-import-wizard data-start-step="{{ 2 if inspection else 1 }}">
+  <div class="wizard-steps" aria-label="Import progress">
+    {% for label in ['Packages', 'Validation', 'Destination', 'Settings', 'Review', 'Import'] %}
+    <div class="wizard-step {{ 'is-active' if loop.index == (2 if inspection else 1) }}" data-wizard-marker="{{ loop.index }}">
+      <span class="wizard-step-num">{{ loop.index }}</span><span>{{ label }}</span>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if not inspection %}
+  <form method="post" action="{{ url_for('dashboard.event_import_validate') }}" enctype="multipart/form-data" class="event-import-form" data-upload-form>
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <section class="wizard-panel is-active event-import-panel" data-wizard-panel="1">
+      <div class="event-import-intro">
+        <h2>Choose event packages</h2>
+        <p>WEBSITE + INFO is recommended. Package roles are detected from their contents, so swapped upload fields are handled safely.</p>
+      </div>
+      <div class="event-package-grid">
+        <label class="event-dropzone">
+          <i class="bi bi-window-stack" aria-hidden="true"></i>
+          <strong>Website package</strong>
+          <span><code>&lt;EVENT&gt;_WEBSITE.zip</code> with one conference root and <code>conference.yaml</code>.</span>
+          <input type="file" name="website_package" accept=".zip,application/zip" data-package-input>
+          <small data-file-label>No file selected</small>
+        </label>
+        <label class="event-dropzone">
+          <i class="bi bi-database-down" aria-hidden="true"></i>
+          <strong>Event information package</strong>
+          <span><code>mifp-content</code> v1 with one event record and verified assets.</span>
+          <input type="file" name="info_package" accept=".zip,application/zip" data-package-input>
+          <small data-file-label>No file selected</small>
+        </label>
+      </div>
+      <div class="event-import-note"><i class="bi bi-shield-check"></i><span>No file is published during validation. Uploads stay in private staging until the final import.</span></div>
+      <div class="wizard-footer"><span></span><button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle"></i> Validate packages</button></div>
+    </section>
+  </form>
+  {% else %}
+  <form method="post" action="{{ url_for('dashboard.event_import_apply') }}" class="event-import-form" data-import-form>
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="token" value="{{ token }}">
+
+    <section class="wizard-panel is-active event-import-panel" data-wizard-panel="2">
+      <div class="event-import-intro"><h2>Validation report</h2><p>Errors block import. Warnings are safe to accept only after review.</p></div>
+      <div class="package-summary-grid">
+      {% for package in [inspection.website, inspection.info] if package %}
+        <article class="package-summary">
+          <div><span class="status-badge status-success">{{ package.kind|upper }}</span><strong>{{ package.filename }}</strong></div>
+          <dl>
+            <dt>ZIP size</dt><dd>{{ (package.zip_bytes / 1048576)|round(2) }} MB</dd>
+            <dt>Event</dt><dd>{{ package.event or package.title or '—' }}</dd>
+            <dt>Version</dt><dd>{{ package.version or '—' }}</dd>
+            {% if package.kind == 'website' %}<dt>Root</dt><dd><code>{{ package.root }}/</code></dd>{% endif %}
+            {% if package.uid %}<dt>UID</dt><dd><code>{{ package.uid }}</code></dd>{% endif %}
+            {% if package.slug %}<dt>Slug</dt><dd><code>{{ package.slug }}</code></dd>{% endif %}
+            <dt>Dates</dt><dd>{{ package.start_date or '—' }}{% if package.end_date %} – {{ package.end_date }}{% endif %}</dd>
+            <dt>Files</dt><dd>{{ package.files }}</dd>
+            {% if package.kind == 'website' %}<dt>Extracted size</dt><dd>{{ (package.unpacked_bytes / 1048576)|round(2) }} MB</dd><dt>PHP</dt><dd>{{ package.php_files }} file(s)</dd>{% endif %}
+            {% if package.kind == 'info' %}<dt>Assets</dt><dd>{{ package.assets }}</dd><dt>Integrity</dt><dd>{{ package.manifest_status }}</dd>{% endif %}
+          </dl>
+        </article>
+      {% endfor %}
+      </div>
+      <div class="validation-list">
+      {% for check in inspection.checks %}
+        <div class="validation-row validation-{{ check.level|lower }}"><span>{{ check.level }}</span><p>{{ check.message }}</p></div>
+      {% endfor %}
+      </div>
+      <div class="wizard-footer"><a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.event_import_wizard') }}">Choose different files</a><button class="btn btn-primary btn-sm" type="button" data-wizard-next {{ 'disabled' if inspection.errors }}>Destination <i class="bi bi-arrow-right"></i></button></div>
+    </section>
+
+    <section class="wizard-panel event-import-panel" data-wizard-panel="3">
+      <div class="event-import-intro"><h2>Destination URL</h2><p>The host comes from <code>EVENTS_DOMAIN</code>. Only a validated relative path can be changed.</p></div>
+      <div class="wizard-field-grid">
+        <label class="field"><span>Events host</span><input class="form-control" value="{{ inspection.events_host }}" readonly></label>
+        <label class="field"><span>Destination path</span><input class="form-control" name="destination" value="{{ inspection.destination }}" required pattern="[A-Za-z0-9][A-Za-z0-9._~-]*(/[A-Za-z0-9][A-Za-z0-9._~-]*){0,3}" data-destination></label>
+        {% if existing_destinations %}
+        <label class="field wide"><span>Existing event path</span><select class="form-select" data-existing-path><option value="">Keep detected/custom path</option>{% for path in existing_destinations %}<option value="{{ path }}">/{{ path }}/</option>{% endfor %}</select></label>
+        {% endif %}
+        <div class="field wide event-url-preview"><span>Final URL preview</span><strong data-url-preview data-host="{{ inspection.events_host }}">{{ inspection.events_host }}/{{ inspection.destination }}/</strong></div>
+      </div>
+      <div class="wizard-footer"><button class="btn btn-outline btn-sm" type="button" data-wizard-back>Back</button><button class="btn btn-primary btn-sm" type="button" data-wizard-next>Settings <i class="bi bi-arrow-right"></i></button></div>
+    </section>
+
+    <section class="wizard-panel event-import-panel" data-wizard-panel="4">
+      <div class="event-import-intro"><h2>Import settings</h2><p>The safe defaults reject existing content, retain rollback data, and keep PHP disabled.</p></div>
+      <div class="import-settings-grid">
+        <fieldset><legend>Website</legend>
+          <label class="check-row"><input type="checkbox" name="publish_website" value="1" {{ 'checked' if inspection.website else 'disabled' }}><span><strong>Publish website</strong><small>{{ 'Install the validated WEBSITE package.' if inspection.website else 'No WEBSITE package was supplied.' }}</small></span></label>
+          <label class="field"><span>Existing destination</span><select class="form-select" name="existing_mode"><option value="reject">Reject if exists — default</option><option value="replace">Replace/update atomically</option></select></label>
+          <label class="check-row"><input type="checkbox" name="keep_rollback" value="1" checked><span><strong>Keep rollback copy</strong><small>Retains the previous version beside this event only.</small></span></label>
+        </fieldset>
+        <fieldset><legend>MIFP event record</legend>
+          <label class="check-row"><input type="checkbox" name="import_metadata" value="1" {{ 'checked' if inspection.info else 'disabled' }}><span><strong>Create/update metadata from INFO</strong><small>{{ inspection.db_action }} without duplicate UID or slug.</small></span></label>
+          <p class="setting-fact"><span>Metadata action</span><strong>{{ inspection.db_action }}</strong></p>
+        </fieldset>
+      </div>
+      <div class="php-policy"><i class="bi bi-filetype-php"></i><div><strong>PHP files detected: {{ inspection.website.php_files if inspection.website else 0 }}</strong><span>PHP execution after import: <b>DISABLED</b>. Operator action, if required: <code>sudo mifpctl events-php-enable {{ inspection.destination }}/regform</code></span></div></div>
+      <div class="wizard-footer"><button class="btn btn-outline btn-sm" type="button" data-wizard-back>Back</button><button class="btn btn-primary btn-sm" type="button" data-wizard-next>Review <i class="bi bi-arrow-right"></i></button></div>
+    </section>
+
+    <section class="wizard-panel event-import-panel" data-wizard-panel="5">
+      <div class="event-import-intro"><h2>Review import</h2><p>One final server-side validation runs immediately before the atomic import.</p></div>
+      <dl class="import-review">
+        <dt>Event</dt><dd>{{ inspection.website.event if inspection.website else inspection.info.title }}</dd>
+        <dt>Website</dt><dd>{{ inspection.website.files ~ ' files / ' ~ ((inspection.website.unpacked_bytes / 1048576)|round(2)) ~ ' MB' if inspection.website else 'Not supplied' }}</dd>
+        <dt>Destination</dt><dd data-review-url>{{ inspection.events_host }}/{{ inspection.destination }}/</dd>
+        <dt>Database</dt><dd>{{ inspection.db_action }} {{ inspection.info.uid if inspection.info else '—' }}</dd>
+        <dt>PHP</dt><dd>{{ (inspection.website.php_files|string) ~ ' detected / disabled' if inspection.website else 'not detected / disabled' }}</dd>
+        <dt>Warnings</dt><dd>{{ inspection.warnings|length }}</dd>
+      </dl>
+      {% if inspection.warnings %}<label class="check-row warning-accept"><input type="checkbox" name="accept_warnings" value="1" required><span><strong>I reviewed and accept {{ inspection.warnings|length }} warning(s)</strong><small>Blocking errors can never be overridden.</small></span></label>{% endif %}
+      <div class="wizard-footer"><button class="btn btn-outline btn-sm" type="button" data-wizard-back>Back</button><button class="btn btn-primary" type="submit" {{ 'disabled' if inspection.errors }}><i class="bi bi-box-arrow-in-down"></i> Validate &amp; Import</button></div>
+    </section>
+
+    <section class="wizard-panel event-import-panel" data-wizard-panel="6" aria-live="polite">
+      <div class="event-import-progress"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><div><h2>Importing event</h2><p>Validating again, updating metadata, and swapping only the selected event directory.</p></div></div>
+    </section>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

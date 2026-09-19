@@ -20,13 +20,16 @@ _TEST_CACHE = Path(ROOT) / ".pytest_cache"
 _TEST_CACHE.mkdir(exist_ok=True)
 _TEST_RUNTIME = Path(tempfile.mkdtemp(prefix="mifp-runtime-", dir=_TEST_CACHE))
 atexit.register(shutil.rmtree, _TEST_RUNTIME, ignore_errors=True)
-for _name in ("assets", "exports", "logs", "conferences", "config", "tmp"):
+for _name in ("assets", "exports", "logs", "conferences", "events", "config", "tmp"):
     (_TEST_RUNTIME / _name).mkdir()
 os.environ["DATABASE_PATH"] = str(_TEST_RUNTIME / "mifp.db")
 os.environ["ASSETS_DIR"] = str(_TEST_RUNTIME / "assets")
 os.environ["EXPORT_DIR"] = str(_TEST_RUNTIME / "exports")
 os.environ["LOG_DIR"] = str(_TEST_RUNTIME / "logs")
 os.environ["CONFERENCES_DIR"] = str(_TEST_RUNTIME / "conferences")
+os.environ["EVENTS_ROOT"] = str(_TEST_RUNTIME / "events")
+os.environ["EVENTS_DOMAIN"] = "events.test"
+os.environ["EVENTS_PHP_STATE_PATH"] = str(_TEST_RUNTIME / "events-php-enabled.txt")
 os.environ["RUNTIME_CONFIG_DIR"] = str(_TEST_RUNTIME / "config")
 os.environ["TMPDIR"] = str(_TEST_RUNTIME / "tmp")
 

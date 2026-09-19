@@ -1537,6 +1537,8 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.conference_asset_delete",
     "dashboard.data_portability_export_post",
     "dashboard.events",
+    "dashboard.event_import_apply",
+    "dashboard.event_import_validate",
     "dashboard.data_quality_analyze",
     "dashboard.data_quality_bulk_decision",
     "dashboard.data_quality_decision",
