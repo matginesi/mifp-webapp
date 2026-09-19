@@ -4603,3 +4603,47 @@ textarea:focus-visible { outline: 0; }.dash-empty-state,.empty-state{
 
 /* The data-transfer totem moved to the shared `.operation-totem--transfer`
    contract in the Operation totem section above; it is no longer defined here. */
+
+/* Conference sites hub: package publication and canonical-event linkage live here. */
+.conference-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .6rem;
+  margin-bottom: .75rem;
+}
+.conference-overview-grid article {
+  min-width: 0;
+  padding: .75rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.conference-overview-grid span,
+.conference-overview-grid small { display: block; color: var(--text-3); }
+.conference-overview-grid span { font-size: .62rem; font-weight: 750; text-transform: uppercase; letter-spacing: .03em; }
+.conference-overview-grid strong { display: block; margin: .15rem 0; color: var(--text-bright); font-size: 1.35rem; line-height: 1.1; }
+.conference-overview-grid small { font-size: .62rem; line-height: 1.35; }
+.conference-boundary-note {
+  display: flex;
+  align-items: flex-start;
+  gap: .6rem;
+  margin-bottom: .75rem;
+  padding: .65rem .75rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: .72rem;
+}
+.conference-boundary-note > i { color: var(--accent); font-size: 1rem; }
+.conference-boundary-note > div { display: grid; gap: .12rem; }
+.conference-site-state { display: flex; flex-wrap: wrap; gap: .25rem; margin-bottom: .25rem; }
+.conference-public-url { display: block; max-width: 32rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conference-sites-table .dash-row-actions { flex-wrap: wrap; }
+
+@media (max-width: 992px) {
+  .conference-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 576px) {
+  .conference-overview-grid { grid-template-columns: 1fr; }
+}

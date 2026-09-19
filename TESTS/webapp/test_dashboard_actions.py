@@ -86,7 +86,7 @@ def test_conference_wizard_people_exports_assets_and_deploy_zip(app, client):
     listing_body = listing.get_data(as_text=True)
     assert listing.status_code == 200
     assert 'class="toolbar"' in listing_body
-    assert 'class="table-card compact-table-card"' in listing_body
+    assert 'table-card compact-table-card' in listing_body
     assert 'class="data-table"' in listing_body
     assert 'name="q"' in listing_body
     assert f'id="editConference{site_id}"' in listing_body
@@ -270,8 +270,7 @@ def test_conference_delete_removes_database_relations_and_storage(app, client):
     assert not asset_dir.parent.exists()
     empty_page = client.get("/dashboard/conferences").get_data(as_text=True)
     assert 'class="data-table"' in empty_page
-    assert 'class="empty">No records. Use "New" above.' in empty_page
-    assert "No conference sites" not in empty_page
+    assert 'No conference sites yet. Import WEBSITE + INFO or create a manual workspace.' in empty_page
 
 
 def test_conference_yaml_and_zip_import_are_safe_and_complete(app, client):

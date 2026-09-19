@@ -28,6 +28,7 @@ from ..config import Config
 from .assets import AssetWriteSession
 from .data_portability import import_zip_payload, parse_zip_payload
 from .portability_contract import CONTENT_FORMAT, CONTENT_FORMAT_VERSION
+from .registration_safety import is_registration_path, is_safe_public_registration_scaffold
 
 WEBSITE_REQUIRED = {"conference.yaml"}
 WEBSITE_INDEXES = {"index.html", "index.htm", "index.php"}
@@ -75,6 +76,7 @@ class PackageInfo:
     php_files: int = 0
     assets: int = 0
     manifest_status: str = "not applicable"
+    scope: str = ""
     record: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def public_dict(self) -> dict[str, Any]:
@@ -265,8 +267,17 @@ def inspect_website(path: Path, filename: str) -> PackageInfo:
             raise ValueError("WEBSITE is missing conference.yaml.")
         if not WEBSITE_INDEXES & {name.casefold() for name in relative_names}:
             raise ValueError("WEBSITE root is missing index.html, index.htm, or index.php.")
+        entry_by_name = {name: info for info, name in entries}
         for name in files:
             relative = PurePosixPath(name[len(prefix):])
+            if is_registration_path(relative):
+                info = entry_by_name[name]
+                payload = zf.read(info)
+                if is_safe_public_registration_scaffold(relative, payload):
+                    continue
+                raise ValueError(
+                    f"WEBSITE contains prohibited private registration data: {relative.as_posix()}"
+                )
             reason = _sensitive_reason(relative)
             if reason:
                 raise ValueError(f"WEBSITE contains prohibited {reason}: {relative.as_posix()}")
@@ -313,8 +324,9 @@ def inspect_info(path: Path, filename: str) -> PackageInfo:
     manifest = package["manifest"]
     if manifest.get("format") != CONTENT_FORMAT or manifest.get("format_version") != CONTENT_FORMAT_VERSION:
         raise ValueError(f"INFO must use {CONTENT_FORMAT} version {CONTENT_FORMAT_VERSION}.")
-    if manifest.get("scope") != "events":
-        raise ValueError("INFO manifest scope must be events.")
+    manifest_scope = str(manifest.get("scope") or "").strip()
+    if manifest_scope not in {"events", "all"}:
+        raise ValueError("INFO manifest scope must be events or all.")
     if package.get("missing_assets"):
         raise ValueError("INFO is missing declared asset files.")
     records = [json.loads(line) for line in package["records_jsonl"].splitlines() if line.strip()]
@@ -340,7 +352,7 @@ def inspect_info(path: Path, filename: str) -> PackageInfo:
         end_date=str(data.get("end_date") or "").strip(),
         url=str(data.get("remote_url") or "").strip(), primary_link=primary,
         assets=len(package["asset_files"]), manifest_status="SHA-256 verified",
-        record=record,
+        scope=manifest_scope, record=record,
     )
 
 
@@ -364,7 +376,7 @@ def inspect_packages(conn, website_path: Path | None, info_path: Path | None,
     if info:
         # Exercise the canonical record validator without writing to the DB.
         summary = import_zip_payload(
-            conn, info_path, "events", assets_dir or Config.ASSETS_DIR,
+            conn, info_path, info.scope or "events", assets_dir or Config.ASSETS_DIR,
             dry_run=True, commit=False,
         )
         if summary.get("errors") or summary.get("asset_errors"):
@@ -377,9 +389,15 @@ def inspect_packages(conn, website_path: Path | None, info_path: Path | None,
         else:
             checks.append(Check("PASS", "WEBSITE root and INFO slug match case-insensitively."))
         web_acronym = re.sub(r"\d+$", "", _identity(website.event))
-        info_acronym = re.sub(r"\d+$", "", _identity(info.event))
-        if web_acronym and info_acronym and web_acronym != info_acronym:
+        info_identities = tuple(
+            value for value in (_identity(info.slug), _identity(info.title), _identity(info.event)) if value
+        )
+        if web_acronym and info_identities and not any(
+            value.startswith(web_acronym) for value in info_identities
+        ):
             checks.append(Check("ERROR", "WEBSITE and INFO event identities do not match."))
+        elif web_acronym:
+            checks.append(Check("PASS", "WEBSITE acronym is consistent with INFO identity."))
         for label, left, right in (("start date", website.start_date, info.start_date), ("end date", website.end_date, info.end_date)):
             if left and right and left != right:
                 checks.append(Check("ERROR", f"WEBSITE and INFO {label} differ ({left} vs {right})."))
@@ -540,7 +558,7 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
         metadata_summary = None
         if import_metadata:
             metadata_summary = import_zip_payload(
-                conn, info_path, "events", Path(assets_dir), dry_run=False,
+                conn, info_path, inspection.info.scope or "events", Path(assets_dir), dry_run=False,
                 commit=False, file_session=asset_session,
                 source_name=inspection.info.filename,
             )
@@ -574,7 +592,7 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
             ).fetchone()
             event_id = event_id or (int(existing_event["id"]) if existing_event else None)
         domain = events_domain or Config.EVENTS_DOMAIN
-        if event_id and (publish_website or inspection.website):
+        if publish_website or inspection.website:
             manifest = {
                 "event_import": 1,
                 "website_sha256": inspection.website.sha256 if inspection.website else None,

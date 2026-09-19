@@ -110,11 +110,23 @@ def test_editor_package_rejects_unsafe_or_executable_content() -> None:
     with pytest.raises(ValueError, match="PHP files are only permitted"):
         inspect_editor_package(_editor_zip(extra={"shell.php": "<?php"}))
 
-    with pytest.raises(ValueError, match="must not contain regform/registrations"):
+    with pytest.raises(ValueError, match="private regform/registrations"):
         inspect_editor_package(
             _editor_zip(extra={"regform/registrations/private.csv": "name,email\nA,a@example.test\n"})
         )
 
+
+
+def test_editor_package_allows_public_registration_guard_scaffold() -> None:
+    package = inspect_editor_package(_editor_zip(extra={
+        "regform/registrations/.gitignore": "registrations.csv\n.secret.php\n",
+        "regform/registrations/.htaccess": (
+            "# deny direct access\n<IfModule mod_rewrite.c>\nRewriteEngine On\n"
+            "RewriteRule ^ - [F,L]\n</IfModule>\n"
+        ),
+        "regform/registrations/index.php": "<?php\nhttp_response_code(404);\nexit;\n",
+    }))
+    assert package.has_registration is True
 
 def test_public_path_preserves_historic_case_and_rejects_traversal() -> None:
     assert normalize_public_path("/PLMCN-2025/") == "PLMCN-2025"

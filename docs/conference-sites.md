@@ -48,8 +48,9 @@ Durante l'import vengono verificati:
 - schema/versione dei metadata;
 - intestazioni CSV richieste;
 - PHP consentito soltanto sotto `regform/`;
-- assenza di `regform/registrations/`, che è runtime data privata e non deve entrare in un
-  source package.
+- assenza di dati runtime privati sotto `regform/registrations/`; sono ammessi soltanto i
+  piccoli guard file pubblici del Conference Editor (`.gitignore`, `.htaccess` deny-only,
+  `index.php` 404-only e placeholder `.gitkeep`/`.keep`).
 
 Il SHA-256 dell'intero ZIP viene registrato nel database.
 
@@ -78,9 +79,10 @@ unpublished -> staged -> published
                     \-> failed
 ```
 
-In questa fase l'import di un package editor valido arriva a `staged`. La pubblicazione vera e
-propria su `events.mifp.eu` verrà aggiunta separatamente, così un upload non può diventare
-eseguibile o pubblico per il solo fatto di essere stato importato.
+La dashboard **Conference sites** è il punto operativo unico per i micrositi. Il wizard
+`WEBSITE + INFO` valida entrambi i pacchetti in staging privato e pubblica soltanto dopo la
+review finale, con swap atomico della singola directory evento. PHP resta comunque
+disabilitato finché un operatore host non lo abilita esplicitamente.
 
 ## Hosting VPS
 

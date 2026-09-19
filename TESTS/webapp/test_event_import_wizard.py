@@ -52,7 +52,10 @@ def _info(*, slug: str = "plmcn-2027", uid: str = "event_plmcn_2027",
           start: str = "2027-09-20", asset: bool = True,
           bad_hash: bool = False, omit_asset: bool = False) -> bytes:
     asset_bytes = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0 0h1v1z"/></svg>'
-    assets = [{"path": "logo.svg", "role": "logo", "kind": "image"}] if asset else []
+    assets = [{
+        "path": "logo.svg", "role": "logo", "kind": "image",
+        "storage_status": "packaged",
+    }] if asset else []
     record = {
         "type": "event",
         "data": {
@@ -72,7 +75,7 @@ def _info(*, slug: str = "plmcn-2027", uid: str = "event_plmcn_2027",
             "sha256": "0" * 64 if bad_hash else hashlib.sha256(asset_bytes).hexdigest(),
         })
     manifest = {
-        "format": "mifp-content", "format_version": 1, "scope": "events",
+        "format": "mifp-content", "format_version": 1, "scope": "all",
         "records": 1, "counts": {"event": 1},
         "records_sha256": hashlib.sha256(records).hexdigest(), "files": files,
     }
@@ -131,7 +134,7 @@ def _conn(app):
 
 def test_plmcn_reference_packages_validate_and_combined_import(app, client):
     response = client.post(
-        "/dashboard/events/import/validate",
+        "/dashboard/conferences/import/validate",
         data={
             # Intentionally swapped: role detection must use content.
             "website_package": (io.BytesIO(_info()), "PLMCN-2027_INFO.zip"),
@@ -147,7 +150,7 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
     token = body.split('name="token" value="', 1)[1].split('"', 1)[0]
 
     imported = client.post(
-        "/dashboard/events/import/apply",
+        "/dashboard/conferences/import/apply",
         data={
             "token": token, "destination": "PLMCN-2027", "publish_website": "1",
             "import_metadata": "1", "existing_mode": "reject", "keep_rollback": "1",
@@ -162,19 +165,20 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
         site = conn.execute("SELECT * FROM conference_sites").fetchone()
         assert site["public_path"] == "PLMCN-2027"
         assert json.loads(site["package_manifest_json"])["php_execution"] == "disabled"
-    events_page = client.get("/dashboard/events").get_data(as_text=True)
-    assert "Website installed" in events_page
-    assert "Open website" in events_page
-    assert "PHP 1 / disabled" in events_page
+    conference_page = client.get("/dashboard/conferences").get_data(as_text=True)
+    assert "Website installed" in conference_page
+    assert "Open" in conference_page
+    assert "PHP 1 / disabled" in conference_page
+    assert "Import website + metadata" in conference_page
 
     # Same UID/slug updates instead of duplicating; existing path needs replace.
     response = client.post(
-        "/dashboard/events/import/validate",
+        "/dashboard/conferences/import/validate",
         data={"website_package": (io.BytesIO(_website()), "web.zip"), "info_package": (io.BytesIO(_info()), "info.zip")},
         content_type="multipart/form-data",
     )
     token = response.get_data(as_text=True).split('name="token" value="', 1)[1].split('"', 1)[0]
-    client.post("/dashboard/events/import/apply", data={
+    client.post("/dashboard/conferences/import/apply", data={
         "token": token, "destination": "PLMCN-2027", "publish_website": "1",
         "import_metadata": "1", "existing_mode": "replace", "keep_rollback": "1",
         "accept_warnings": "1",
@@ -303,3 +307,53 @@ def test_atomic_replace_rolls_back_and_preserves_siblings(app, tmp_path):
     assert (root / "OTHER/index.html").read_text() == "other"
     with _conn(app) as conn:
         assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
+
+
+def test_website_allows_registration_guard_scaffold_but_not_runtime_data(tmp_path):
+    safe = {
+        "PLMCN-2027/regform/registrations/.gitignore": b"registrations.csv\n.secret.php\n",
+        "PLMCN-2027/regform/registrations/.htaccess": (
+            b"# deny direct access\n<IfModule mod_rewrite.c>\n"
+            b"RewriteEngine On\nRewriteRule ^ - [F,L]\n</IfModule>\n"
+        ),
+        "PLMCN-2027/regform/registrations/index.php": (
+            b"<?php\nhttp_response_code(404);\nexit;\n"
+        ),
+    }
+    path = tmp_path / "safe-scaffold.zip"
+    path.write_bytes(_website(extra=safe))
+    package = inspect_website(path, path.name)
+    assert package.root == "PLMCN-2027"
+
+    bad = tmp_path / "runtime-data.zip"
+    bad.write_bytes(_website(extra={
+        "PLMCN-2027/regform/registrations/registrations.csv": b"name,email\nA,a@example.test\n"
+    }))
+    with pytest.raises(ValueError, match="private registration data"):
+        inspect_website(bad, bad.name)
+
+
+def test_website_only_import_is_visible_in_conference_sites(app, client):
+    response = client.post(
+        "/dashboard/conferences/import/validate",
+        data={"website_package": (io.BytesIO(_website()), "PLMCN-2027_WEBSITE.zip")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    token = body.split('name="token" value="', 1)[1].split('"', 1)[0]
+    imported = client.post(
+        "/dashboard/conferences/import/apply",
+        data={
+            "token": token, "destination": "PLMCN-2027", "publish_website": "1",
+            "existing_mode": "reject", "keep_rollback": "1", "accept_warnings": "1",
+        },
+    )
+    assert imported.status_code == 302
+    with _conn(app) as conn:
+        site = conn.execute("SELECT * FROM conference_sites WHERE public_path='PLMCN-2027'").fetchone()
+        assert site is not None
+        assert site["event_id"] is None
+    page = client.get("/dashboard/conferences").get_data(as_text=True)
+    assert "Website installed" in page
+    assert "Not linked" in page

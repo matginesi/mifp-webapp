@@ -373,3 +373,26 @@ def test_log_format_fallback_preserves_legacy_single_format(tmp_path, monkeypatc
     line = captured.getvalue().strip()
     assert line.startswith("{"), "legacy json_logs=True keeps a JSON console"
     assert json.loads(line)["message"] == "legacy probe"
+
+
+def test_event_import_destination_pattern_is_html_v_regex_compatible():
+    """The HTML pattern is compiled with the browser's UnicodeSets (`v`) flag.
+
+    In `v` mode a literal hyphen inside a character class must be escaped.
+    Keeping the destination constraint valid matters because `:invalid` selector
+    evaluation in event-import.js compiles the pattern before advancing a step.
+    """
+    source = _read(TEMPLATES / "dashboard" / "event_import.html")
+    assert r'pattern="[A-Za-z0-9][A-Za-z0-9._~\x2D]*(/[A-Za-z0-9][A-Za-z0-9._~\x2D]*){0,3}"' in source
+    assert "[A-Za-z0-9._~-]" not in source
+    conferences = _read(TEMPLATES / "dashboard" / "conferences.html")
+    assert r'pattern="[a-z0-9\x2D]+"' in conferences
+    assert 'pattern="[a-z0-9-]+"' not in conferences
+
+
+def test_cookie_banner_sidebar_uses_a_vendored_bootstrap_icon():
+    layout = _read(TEMPLATES / "dashboard" / "layout.html")
+    icons = _read(CSS / "vendor" / "bootstrap-icons.css")
+    assert '<i class="bi bi-cookie" aria-hidden="true"></i><span>Cookie banner</span>' in layout
+    assert ".bi-cookie::before" in icons
+    assert "bi-window-bottom" not in layout

@@ -1,0 +1,9 @@
+# MIFP regform - Aruba Linux/shared-hosting compatible protection.
+# Aruba documents mod_rewrite support in .htaccess; avoid Options/Authz
+# directives here because they can produce HTTP 500 on shared hosting.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^settings\.yaml$ - [F,L,NC]
+  RewriteRule ^registrations(?:/|$) - [F,L,NC]
+  RewriteRule ^src(?:/|$) - [F,L,NC]
+</IfModule>

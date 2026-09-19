@@ -16,7 +16,6 @@ from ..db.connection import connect
 from ..services.admin_safety import backup_sqlite_database
 from ..services.assets import store_asset
 from ..services.entity_references import delete_entity_references
-from ..services.event_import import destination_url, php_execution_status
 from ..services.dashboard_repository import (
     PUBLIC_TABLES,
     display_columns,
@@ -538,46 +537,6 @@ def _event_has_publishable_cover(conn, record_id: int) -> bool:
     ).fetchone() is not None
 
 
-def _event_site_map(conn) -> dict[int, dict[str, Any]]:
-    result: dict[int, dict[str, Any]] = {}
-    for row in conn.execute(
-        "SELECT * FROM conference_sites WHERE event_id IS NOT NULL"
-    ).fetchall():
-        site = dict(row)
-        try:
-            manifest = json.loads(site.get("package_manifest_json") or "{}")
-        except (TypeError, ValueError):
-            manifest = {}
-        public_path = str(site.get("public_path") or "").strip("/")
-        events_root = Path(current_app.config["EVENTS_ROOT"]).resolve()
-        candidate = (events_root / public_path).resolve()
-        try:
-            candidate.relative_to(events_root)
-            safe_path = bool(public_path)
-        except ValueError:
-            safe_path = False
-        site["website_installed"] = bool(
-            safe_path and candidate.is_dir() and not (events_root / public_path).is_symlink()
-        )
-        try:
-            site["destination_url"] = (
-                destination_url(current_app.config["EVENTS_DOMAIN"], public_path)
-                if safe_path else ""
-            )
-        except ValueError:
-            site["destination_url"] = ""
-        site["php_files"] = int(manifest.get("php_files") or 0)
-        try:
-            site["php_execution"] = php_execution_status(
-                public_path, Path(current_app.config["EVENTS_PHP_STATE_PATH"])
-            )
-        except ValueError:
-            site["php_execution"] = "unknown"
-        site["validation_status"] = str(manifest.get("validation") or "unknown")
-        result[int(site["event_id"])] = site
-    return result
-
-
 @bp.route("/events", methods=["GET", "POST"])
 @login_required
 def events():
@@ -674,7 +633,6 @@ def events():
         record_ids = [r["id"] for r in all_records]
         linked_assets = _linked_assets_map(conn, entity_type, record_ids)
         linked_links = _linked_links_map(conn, entity_type, record_ids)
-        event_sites = _event_site_map(conn)
 
     def _event_date(r):
         d = r.get("start_date") or r.get("end_date")
@@ -711,7 +669,6 @@ def events():
         past=past,
         linked_assets=linked_assets,
         linked_links=linked_links,
-        event_sites=event_sites,
         q=request.args.get("q"),
     )
 

@@ -580,6 +580,12 @@ def _validate_assets(raw: Any, line_no: int) -> list[dict[str, Any]]:
         if kind and kind not in ASSET_KINDS:
             raise ImportValidationError(f"Line {line_no}: assets[{idx}] invalid kind: {kind}")
         storage_status = str(item.get("storage_status") or "").strip().lower()
+        # Conference Editor uses ``packaged`` to describe an asset that is
+        # embedded in the ZIP.  Once imported into MIFP that asset is local,
+        # so normalize the transport-state instead of rejecting an otherwise
+        # canonical package.
+        if storage_status == "packaged":
+            storage_status = "local"
         if storage_status and storage_status not in ASSET_STORAGE_STATUSES:
             raise ImportValidationError(
                 f"Line {line_no}: assets[{idx}] invalid storage_status: {storage_status}"

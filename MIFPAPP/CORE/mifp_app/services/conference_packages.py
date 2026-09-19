@@ -31,6 +31,7 @@ from uuid import uuid4
 import yaml
 
 from ..utils.file_safety import open_write_no_follow
+from .registration_safety import is_registration_path, is_safe_public_registration_scaffold
 
 MAX_EDITOR_PACKAGE_BYTES = 512 * 1024 * 1024
 MAX_EDITOR_EXPANDED_BYTES = 512 * 1024 * 1024
@@ -253,11 +254,13 @@ def _validate_zip_entries(archive: zipfile.ZipFile) -> tuple[list[_ArchiveEntry]
             raise ValueError(f"PHP files are only permitted below regform/: {normalized}")
         if path.name == ".htaccess" and (not path.parts or path.parts[0] != "regform"):
             raise ValueError(f".htaccess is only permitted below regform/: {normalized}")
-        if len(path.parts) >= 2 and path.parts[0] == "regform" and path.parts[1] == "registrations":
-            raise ValueError(
-                "Conference packages must not contain regform/registrations data; "
-                "registration records are private runtime data."
-            )
+        if is_registration_path(path):
+            payload = archive.read(info)
+            if not is_safe_public_registration_scaffold(path, payload):
+                raise ValueError(
+                    "Conference packages must not contain private regform/registrations data; "
+                    "only the documented public guard scaffolding is permitted."
+                )
         normalized_names.add(normalized)
         entries.append(_ArchiveEntry(info=info, normalized_name=normalized))
     return entries, prefix, expanded_bytes

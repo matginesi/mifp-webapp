@@ -40,7 +40,9 @@ assets/…                           # when declared
 ```
 
 `manifest.json` must declare `format: "mifp-content"`, `format_version: 1`,
-and `scope: "events"`. `records.jsonl` must contain exactly one `event` record.
+and either `scope: "events"` or `scope: "all"`. The latter is accepted for
+Conference Editor/MIFP exports only because this importer still requires
+`records.jsonl` to contain exactly one `event` record.
 
 ## 4. Required and optional metadata
 
@@ -66,6 +68,9 @@ authoritative field contract.
 
 Every packaged asset must appear below `assets/`, be declared in the manifest,
 exist at the declared path, have the declared byte size, and match its SHA-256.
+Conference Editor may mark an embedded record asset with `storage_status: "packaged"`;
+the importer treats that as a transport state and normalizes it to local storage
+after the asset is installed.
 Missing, unexpected, or mismatched assets are errors.
 
 ## 8. `conference.yaml`
@@ -100,7 +105,11 @@ sudo mifpctl events-php-enable PLMCN-2027/regform
 ```
 
 Private submissions must live in `/opt/mifp/events-private`, never in WEBSITE.
-`regform/registrations` is rejected.
+Runtime registration records under `regform/registrations/` are rejected. The
+validator permits only a tiny public guard scaffold used by Conference Editor
+(`.gitignore`, deny-only `.htaccess`, a 404-only `index.php`, and empty
+`.gitkeep`/`.keep` placeholders). CSV/DB/proof/submission files and arbitrary
+PHP below that directory remain hard errors.
 
 The container receives the allow-list state as one read-only file. Publication
 fails closed in production if that state is missing or if the selected event

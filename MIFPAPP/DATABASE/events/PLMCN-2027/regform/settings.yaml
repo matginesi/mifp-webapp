@@ -1,0 +1,134 @@
+regform:
+  enabled: true
+  label: Online registration
+  title: Registration Form
+  intro: Complete the form after arranging payment. Final fees and the opening date of online registration remain TBC.
+  mode: php
+  action: regform/
+  method: post
+  enctype: multipart/form-data
+  submit_enabled: true
+  submit_label: Registration
+  unavailable_label: Registration opens · TBC
+  back_url: ../registration.html
+  privacy_url: ../privacy.html
+  privacy_notice:
+    title: 'Privacy & data protection'
+    text: |
+      By clicking on Registration button I read and accept all the conditions. According to our privacy policy and the law N° 163/03 of the Italian Republic, your personal data will be used by the Organisers and by ER GLOBAL COMMUNICATION SRL exclusively for matters concerning the event.
+      Personal data submitted through this form is processed by MIFP and, where necessary for registration or payment administration, ER GLOBAL COMMUNICATION SRL solely to manage PLMCN-2027, related communications, event logistics and applicable administrative or legal obligations. The form uses a strictly necessary session cookie for security and CSRF protection; no analytics or marketing cookies are used.
+    checkbox_label: 'I have read the Privacy & Cookies Policy and accept the registration conditions.'
+  closed_message: Online registration is currently closed.
+  mail:
+    from_email: secretary@mifp.eu
+    from_name: MIFP Registration
+    reply_to_email: secretary@mifp.eu
+    admin_emails:
+      - secretary@mifp.eu
+      - mat.ginesi@gmail.com
+    subject_prefix: '[MIFP] [PLMCN-2027]'
+    send_user_confirmation: true
+  backend:
+    max_upload_mb: 16
+    tshirt_enabled: true
+    storage_path: registrations
+    persist_submissions: true
+    rate_limit_requests: 5
+    rate_limit_window_seconds: 900
+    minimum_fill_seconds: 2
+    trust_proxy: true
+    trusted_proxies:
+      - 127.0.0.1
+      - '::1'
+  required_note: 'Fields marked with * are required.'
+  sections:
+    - id: personal
+      title: Personal data
+      fields:
+        - name: first_name
+          label: First name
+          type: text
+          required: true
+          autocomplete: given-name
+        - name: last_name
+          label: Last name
+          type: text
+          required: true
+          autocomplete: family-name
+        - name: email
+          label: Email
+          type: email
+          required: true
+          autocomplete: email
+        - name: affiliation
+          label: Affiliation / Institution / Company
+          type: text
+          required: true
+          autocomplete: organization
+        - name: country
+          label: Country
+          type: text
+          required: true
+          autocomplete: country-name
+        - name: address
+          label: Full address
+          type: textarea
+          required: true
+          autocomplete: street-address
+          full_width: true
+        - name: arrival_date
+          label: Arrival date
+          type: date
+          required: true
+        - name: departure_date
+          label: Departure date
+          type: date
+          required: true
+    - id: tshirt
+      title: Event T-shirt
+      fields:
+        - name: tshirt_size
+          label: Size for event T-shirt
+          type: select
+          required: true
+          options:
+            - S
+            - M
+            - L
+            - XL
+            - XXL
+    - id: payment
+      title: Payment data
+      fields:
+        - name: registration_type
+          label: Registration type
+          type: select
+          required: true
+          options:
+            - Participant
+            - Student
+            - Accompanying
+        - name: payment_method
+          label: Payment method
+          type: select
+          required: true
+          options:
+            - Credit Card
+            - Bank Transfer
+        - name: proof_of_payment
+          label: Proof of payment
+          help: Upload an image or PDF showing proof of payment.
+          type: file
+          accept: 'image/*,.pdf,application/pdf'
+          required: true
+          full_width: true
+    - id: privacy
+      title: Privacy
+      fields:
+        - name: privacy_acceptance
+          label: 'I have read the Privacy & Cookies Policy and accept the registration conditions.'
+          type: checkbox
+          required: true
+          link_label: 'Read Privacy & Cookies'
+          link_href: privacy.html
+          full_width: true

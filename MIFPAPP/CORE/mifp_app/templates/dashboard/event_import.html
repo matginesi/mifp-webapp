@@ -1,14 +1,14 @@
 {% extends "dashboard/layout.html" %}
 {% from "dashboard/_components.html" import page_header %}
-{% block page_title %}Import event{% endblock %}
+{% block page_title %}Import conference site{% endblock %}
 {% block extra_js %}
 {{ super() }}
 <script src="{{ url_for('static', filename='js/dashboard/event-import.js') }}" defer></script>
 {% endblock %}
 {% block content %}
-{% call page_header('Events', 'Import event', 'Validate a public website and its canonical MIFP metadata before publishing either one.') %}
+{% call page_header('Conference sites', 'Import conference site', 'Validate the public conference website and optional canonical MIFP event metadata before publishing anything.') %}
   <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.event_import_package_spec') }}"><i class="bi bi-filetype-md"></i> Package specification</a>
-  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.events') }}"><i class="bi bi-arrow-left"></i> Events</a>
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.conference_sites') }}"><i class="bi bi-arrow-left"></i> Conference sites</a>
 {% endcall %}
 
 <div class="modern-card event-import-shell" data-event-import-wizard data-start-step="{{ 2 if inspection else 1 }}">
@@ -25,8 +25,8 @@
     <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
     <section class="wizard-panel is-active event-import-panel" data-wizard-panel="1">
       <div class="event-import-intro">
-        <h2>Choose event packages</h2>
-        <p>WEBSITE + INFO is recommended. Package roles are detected from their contents, so swapped upload fields are handled safely.</p>
+        <h2>Choose conference packages</h2>
+        <p>WEBSITE + INFO is recommended. WEBSITE publishes the microsite; INFO creates or updates the canonical event record. Package roles are detected from contents, so swapped upload fields are handled safely.</p>
       </div>
       <div class="event-package-grid">
         <label class="event-dropzone">
@@ -38,7 +38,7 @@
         </label>
         <label class="event-dropzone">
           <i class="bi bi-database-down" aria-hidden="true"></i>
-          <strong>Event information package</strong>
+          <strong>MIFP event metadata</strong>
           <span><code>mifp-content</code> v1 with one event record and verified assets.</span>
           <input type="file" name="info_package" accept=".zip,application/zip" data-package-input>
           <small data-file-label>No file selected</small>
@@ -69,7 +69,7 @@
             <dt>Dates</dt><dd>{{ package.start_date or '—' }}{% if package.end_date %} – {{ package.end_date }}{% endif %}</dd>
             <dt>Files</dt><dd>{{ package.files }}</dd>
             {% if package.kind == 'website' %}<dt>Extracted size</dt><dd>{{ (package.unpacked_bytes / 1048576)|round(2) }} MB</dd><dt>PHP</dt><dd>{{ package.php_files }} file(s)</dd>{% endif %}
-            {% if package.kind == 'info' %}<dt>Assets</dt><dd>{{ package.assets }}</dd><dt>Integrity</dt><dd>{{ package.manifest_status }}</dd>{% endif %}
+            {% if package.kind == 'info' %}<dt>Scope</dt><dd>{{ package.scope }}</dd><dt>Assets</dt><dd>{{ package.assets }}</dd><dt>Integrity</dt><dd>{{ package.manifest_status }}</dd>{% endif %}
           </dl>
         </article>
       {% endfor %}
@@ -86,7 +86,7 @@
       <div class="event-import-intro"><h2>Destination URL</h2><p>The host comes from <code>EVENTS_DOMAIN</code>. Only a validated relative path can be changed.</p></div>
       <div class="wizard-field-grid">
         <label class="field"><span>Events host</span><input class="form-control" value="{{ inspection.events_host }}" readonly></label>
-        <label class="field"><span>Destination path</span><input class="form-control" name="destination" value="{{ inspection.destination }}" required pattern="[A-Za-z0-9][A-Za-z0-9._~-]*(/[A-Za-z0-9][A-Za-z0-9._~-]*){0,3}" data-destination></label>
+        <label class="field"><span>Destination path</span><input class="form-control" name="destination" value="{{ inspection.destination }}" required pattern="[A-Za-z0-9][A-Za-z0-9._~\x2D]*(/[A-Za-z0-9][A-Za-z0-9._~\x2D]*){0,3}" data-destination></label>
         {% if existing_destinations %}
         <label class="field wide"><span>Existing event path</span><select class="form-select" data-existing-path><option value="">Keep detected/custom path</option>{% for path in existing_destinations %}<option value="{{ path }}">/{{ path }}/</option>{% endfor %}</select></label>
         {% endif %}
@@ -127,7 +127,7 @@
     </section>
 
     <section class="wizard-panel event-import-panel" data-wizard-panel="6" aria-live="polite">
-      <div class="event-import-progress"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><div><h2>Importing event</h2><p>Validating again, updating metadata, and swapping only the selected event directory.</p></div></div>
+      <div class="event-import-progress"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><div><h2>Importing conference site</h2><p>Validating again, updating metadata, and swapping only the selected event directory.</p></div></div>
     </section>
   </form>
   {% endif %}

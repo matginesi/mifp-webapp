@@ -14,26 +14,10 @@
 {% set labels = {'is_featured': 'show in homepage forthcoming block', 'event_type': 'event type', 'date_text': 'date shown publicly'} %}
 {% set hints = {'is_featured': 'If Yes, shown in the homepage forthcoming block when the event dates are forthcoming'} %}
 {% set empty_value %}<span class="cell-text">&mdash;</span>{% endset %}
-{% macro site_status(record) %}
-  {% set site = event_sites.get(record.id) %}
-  <div class="event-install-meta">
-    <span class="status-badge status-success">INFO metadata</span>
-    {% if site %}
-      <span class="status-badge status-{{ 'success' if site.website_installed else 'warning' }}">Website {{ 'installed' if site.website_installed else 'missing' }}</span>
-      <span>{{ site.source_version or 'unversioned' }}</span>
-      <span>PHP {{ site.php_files }} / {{ site.php_execution }}</span>
-      <span>{{ site.validation_status }}</span>
-      <span>{{ site.imported_at or 'not imported' }}</span>
-      {% if site.destination_url %}<a href="{{ site.destination_url }}" target="_blank" rel="noopener">Open website</a>{% endif %}
-      <a href="{{ url_for('dashboard.event_import_wizard') }}">Update/replace</a>
-    {% else %}
-      <span class="status-badge status-neutral">Website not installed</span>
-    {% endif %}
-  </div>
-{% endmacro %}
 
-{% call page_header('Content', 'Events', 'Review and edit canonical event records. Events are created by the import pipeline, not by hand.') %}
-    <a href="{{ url_for('dashboard.event_import_wizard') }}" class="btn btn-primary btn-sm"><i class="bi bi-box-arrow-in-down"></i> Import Event</a>
+
+{% call page_header('Content', 'Events', 'Review and edit canonical event records. Conference websites are managed separately in Conference sites.') %}
+    <a href="{{ url_for('dashboard.conference_sites') }}" class="btn btn-outline btn-sm"><i class="bi bi-globe2"></i> Conference sites</a>
     <a href="{{ url_for('dashboard.data_portability') }}" class="btn btn-outline btn-sm"><i class="bi bi-box-arrow-in-down"></i> Import bundle</a>
 {% endcall %}
 
@@ -72,7 +56,7 @@
                   {% elif c == 'role_id' and role_names %}<span class="pill">{{ role_names.get(v, v) }}</span>
                   {% elif c in date_fields %}{% if v %}<span class="cell-date">{{ v }}</span>{% else %}{{ empty_value }}{% endif %}
                   {% elif c.endswith('_asset_id') %}{% if v %}<span class="cell-asset-link" data-asset-id="{{ v }}"><i class="bi bi-paperclip"></i> #{{ v }}</span>{% else %}<span class="cell-text">&#8212;</span>{% endif %}
-                  {% else %}{{ v if v not in [None,''] else empty_value }}{% if c == 'title' %}{{ site_status(r) }}{% endif %}{% endif %}
+                  {% else %}{{ v if v not in [None,''] else empty_value }}{% endif %}
                 </td>
               {% endfor %}
               <td class="col-actions"><div class="dash-row-actions"><button class="btn btn-mini btn-outline" type="button" data-row-toggle="record-{{ r.id }}">Edit</button><form method="post" action="{{ url_for('dashboard.content_delete', section='events', record_id=r.id) }}" data-confirm="Delete this event?" class="d-inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button class="btn btn-mini btn-outline-danger">Delete</button></form></div></td>
@@ -167,7 +151,7 @@
                   {% elif c == 'role_id' and role_names %}<span class="pill">{{ role_names.get(v, v) }}</span>
                   {% elif c in date_fields %}{% if v %}<span class="cell-date">{{ v }}</span>{% else %}{{ empty_value }}{% endif %}
                   {% elif c.endswith('_asset_id') %}{% if v %}<span class="cell-asset-link" data-asset-id="{{ v }}"><i class="bi bi-paperclip"></i> #{{ v }}</span>{% else %}<span class="cell-text">&#8212;</span>{% endif %}
-                  {% else %}{{ v if v not in [None,''] else empty_value }}{% if c == 'title' %}{{ site_status(r) }}{% endif %}{% endif %}
+                  {% else %}{{ v if v not in [None,''] else empty_value }}{% endif %}
                 </td>
               {% endfor %}
               <td class="col-actions"><div class="dash-row-actions"><button class="btn btn-mini btn-outline" type="button" data-row-toggle="record-past-{{ r.id }}">Edit</button><form method="post" action="{{ url_for('dashboard.content_delete', section='events', record_id=r.id) }}" data-confirm="Delete this event?" class="d-inline"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button class="btn btn-mini btn-outline-danger">Delete</button></form></div></td>

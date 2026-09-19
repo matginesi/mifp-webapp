@@ -43,7 +43,7 @@ def _existing_destinations() -> list[str]:
     )
 
 
-@bp.get("/events/import")
+@bp.get("/conferences/import")
 @login_required
 def event_import_wizard():
     cleanup_staging(
@@ -58,7 +58,7 @@ def event_import_wizard():
     )
 
 
-@bp.post("/events/import/validate")
+@bp.post("/conferences/import/validate")
 @login_required
 def event_import_validate():
     token, stage = create_staging(Path(current_app.config["TMP_DIR"]))
@@ -109,7 +109,7 @@ def event_import_validate():
         return redirect(url_for("dashboard.event_import_wizard"))
 
 
-@bp.post("/events/import/apply")
+@bp.post("/conferences/import/apply")
 @login_required
 def event_import_apply():
     stage = None
@@ -143,20 +143,34 @@ def event_import_apply():
                 require_php_state=current_app.config.get("ENV") == "production",
             )
         audit_log(
-            "event.import", "event package imported",
+            "event.import", "conference site package imported",
             destination=result["destination"], website=result["website"], metadata=result["metadata"],
         )
         shutil.rmtree(stage, ignore_errors=True)
-        flash(f"Event imported. PHP execution is disabled. Destination: {result.get('url', result['destination'])}", "success")
-        return redirect(url_for("dashboard.events"))
+        flash(f"Conference site imported. PHP execution is disabled. Destination: {result.get('url', result['destination'])}", "success")
+        return redirect(url_for("dashboard.conference_sites"))
     except Exception as exc:
         current_app.logger.exception("event package import failed")
         flash(admin_error_text(str(exc)), "error")
         return redirect(url_for("dashboard.event_import_wizard"))
 
 
-@bp.get("/events/import/package-spec")
+@bp.get("/conferences/import/package-spec")
 @login_required
 def event_import_package_spec():
     path = Path(current_app.root_path).parent / "MIFP_EVENT_IMPORT_PACKAGE_SPEC.md"
     return send_file(path, mimetype="text/markdown", as_attachment=True, download_name=path.name)
+
+
+# Backward-compatible aliases for bookmarks/open tabs from the first wizard
+# iteration.  Canonical navigation lives under Conference sites.
+@bp.get("/events/import")
+@login_required
+def event_import_legacy():
+    return redirect(url_for("dashboard.event_import_wizard"), code=308)
+
+
+@bp.get("/events/import/package-spec")
+@login_required
+def event_import_package_spec_legacy():
+    return redirect(url_for("dashboard.event_import_package_spec"), code=308)

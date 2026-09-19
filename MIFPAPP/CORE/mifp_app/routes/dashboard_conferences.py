@@ -43,6 +43,7 @@ from ..services.conference_sites import (
     validate_slug,
 )
 from ..services.exporters import export_response_payload
+from ..services.event_import import destination_url, php_execution_status
 from ..utils.logger import audit_log
 from .auth import login_required
 from .dashboard import bp
@@ -118,6 +119,43 @@ def _event_options(conn) -> list[dict]:
 def _site(conn, site_id: int) -> dict | None:
     row = conn.execute("SELECT * FROM conference_sites WHERE id=?", (site_id,)).fetchone()
     return dict(row) if row else None
+
+
+def _conference_runtime_status(site: dict) -> dict:
+    """Decorate a conference-site DB row with public filesystem/runtime state."""
+    enriched = dict(site)
+    try:
+        manifest = json.loads(enriched.get("package_manifest_json") or "{}")
+    except (TypeError, ValueError):
+        manifest = {}
+    public_path = str(enriched.get("public_path") or enriched.get("slug") or "").strip("/")
+    root = Path(current_app.config["EVENTS_ROOT"]).resolve()
+    candidate = (root / public_path).resolve() if public_path else root
+    try:
+        candidate.relative_to(root)
+        safe_path = bool(public_path)
+    except ValueError:
+        safe_path = False
+    enriched["website_installed"] = bool(
+        safe_path and candidate.is_dir() and not (root / public_path).is_symlink()
+    )
+    try:
+        enriched["destination_url"] = (
+            destination_url(current_app.config["EVENTS_DOMAIN"], public_path)
+            if safe_path else ""
+        )
+    except ValueError:
+        enriched["destination_url"] = ""
+    enriched["php_files"] = int(manifest.get("php_files") or 0)
+    try:
+        enriched["php_execution"] = php_execution_status(
+            public_path, Path(current_app.config["EVENTS_PHP_STATE_PATH"])
+        ) if safe_path else "disabled"
+    except ValueError:
+        enriched["php_execution"] = "unknown"
+    enriched["validation_status"] = str(manifest.get("validation") or "unknown")
+    enriched["metadata_linked"] = enriched.get("event_id") is not None
+    return enriched
 
 
 def _people(conn, site_id: int) -> list[dict]:
@@ -282,13 +320,20 @@ def conference_sites():
             term = f"%{q}%"
             params = (term,) * 8
         sql += " ORDER BY COALESCE(c.start_date,'9999'),c.title"
-        sites = [dict(row) for row in conn.execute(sql, params).fetchall()]
+        sites = [_conference_runtime_status(dict(row)) for row in conn.execute(sql, params).fetchall()]
         event_options = _event_options(conn)
+    overview = {
+        "total": len(sites),
+        "installed": sum(1 for site in sites if site["website_installed"]),
+        "linked": sum(1 for site in sites if site["metadata_linked"]),
+        "php_enabled": sum(1 for site in sites if site["php_execution"] == "enabled"),
+    }
     return render_template(
         "dashboard/conferences.html",
         sites=sites,
         q=q,
         event_options=event_options,
+        overview=overview,
     )
 
 
