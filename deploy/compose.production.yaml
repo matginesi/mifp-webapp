@@ -17,6 +17,10 @@ services:
         required: false
     environment:
       MIFP_LOAD_DOTENV: "0"
+      # Read-only release identity for the dashboard. The host remains the only
+      # component allowed to deploy/update/rollback images.
+      MIFP_RELEASE_REF: "${MIFP_IMAGE}"
+      MIFP_RELEASE_CHANNEL: "${MIFP_IMAGE_REPOSITORY:-ghcr.io/matginesi/mifp-webapp}:latest"
       FLASK_ENV: production
       FLASK_DEBUG: "0"
       SESSION_COOKIE_SECURE: "1"

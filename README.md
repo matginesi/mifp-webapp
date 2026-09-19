@@ -243,3 +243,12 @@ docs/                documentazione corrente
 
 Questo è l'unico README del repository; documenti storici/temporanei non fanno
 parte del codebase operativo.
+
+### Versioning
+
+The web application version is source-controlled in `MIFPAPP/CORE/VERSION`.
+Dashboard administrators can inspect the running application version, immutable
+OCI release digest, database schema and supported package formats under **System
+→ Version & Release**. Conference WEBSITE imports also expose current/previous
+package versions; a retained rollback copy can be restored from **Conference
+sites** without giving the application Docker or host privileges.

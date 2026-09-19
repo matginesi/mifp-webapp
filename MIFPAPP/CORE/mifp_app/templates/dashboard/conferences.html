@@ -58,12 +58,14 @@
             {% endif %}
           </td>
           <td class="d-none d-xl-table-cell">
-            <span class="cell-text"><b>{{ site.source_format|replace('-',' ') }}</b>{% if site.source_version %} · v{{ site.source_version }}{% endif %}</span>
+            <span class="cell-text"><b>{{ site.source_format|replace('-',' ') }}</b> · current <strong>{{ site.current_version }}</strong></span>
+            {% if site.previous_version %}<span class="cell-text">Previous: {{ site.previous_version }}{% if site.rollback_available %} · restorable{% endif %}</span>{% endif %}
             <span class="cell-text">Validation: {{ site.validation_status }}{% if site.imported_at %} · {{ site.imported_at }}{% endif %}</span>
           </td>
           <td class="col-actions"><div class="dash-row-actions">
             {% if site.website_installed and site.destination_url %}<a class="btn btn-mini btn-outline" href="{{ site.destination_url }}" target="_blank" rel="noopener">Open</a>{% endif %}
             <a class="btn btn-mini btn-outline" href="{{ url_for('dashboard.conference_edit', site_id=site.id) }}">Configure</a>
+            {% if site.rollback_available %}<button class="btn btn-mini btn-outline" type="button" data-bs-toggle="modal" data-bs-target="#restoreConference{{ site.id }}">Restore {{ site.previous_version }}</button>{% endif %}
             <button class="btn btn-mini btn-outline" type="button" data-bs-toggle="modal" data-bs-target="#editConference{{ site.id }}">Edit</button>
             <button class="btn btn-mini btn-outline-danger" type="button" data-bs-toggle="modal" data-bs-target="#deleteConference{{ site.id }}">Delete</button>
           </div></td>
@@ -140,6 +142,19 @@
         <label class="field wide"><span>Description</span><textarea class="form-control" name="description" rows="4">{{ site.description or '' }}</textarea></label>
       </div></div>
       <div class="modal-footer"><a class="btn btn-outline btn-sm me-auto" href="{{ url_for('dashboard.conference_edit', site_id=site.id) }}"><i class="bi bi-sliders"></i> Full configuration</a><button class="btn btn-outline btn-sm" type="button" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary btn-sm"><i class="bi bi-check2"></i> Save changes</button></div>
+    </form>
+  </div></div>
+</div>
+{% endfor %}
+
+{% for site in sites if site.rollback_available %}
+<div class="modal fade" id="restoreConference{{ site.id }}" tabindex="-1" aria-labelledby="restoreConferenceTitle{{ site.id }}" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered"><div class="modal-content smart-modal">
+    <form method="post" action="{{ url_for('dashboard.conference_restore_previous', site_id=site.id) }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <div class="modal-header"><div><h2 class="modal-title" id="restoreConferenceTitle{{ site.id }}"><i class="bi bi-arrow-counterclockwise"></i> Restore previous website</h2><p class="modal-subtitle">Swap the current WEBSITE files with the retained previous import. The current version becomes the next rollback copy.</p></div><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button></div>
+      <div class="modal-body"><div class="alert alert-warning mb-0"><b>{{ site.acronym or site.title }}</b>: {{ site.current_version }} → {{ site.previous_version }}. Event metadata in Events is not changed.</div></div>
+      <div class="modal-footer"><button class="btn btn-outline btn-sm" type="button" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-arrow-counterclockwise"></i> Restore {{ site.previous_version }}</button></div>
     </form>
   </div></div>
 </div>

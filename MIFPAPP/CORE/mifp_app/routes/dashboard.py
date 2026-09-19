@@ -44,6 +44,7 @@ from ..services.metrics_service import (
     get_import_export_summary,
 )
 from ..services.operation_maintenance import force_clear_maintenance, operation_maintenance
+from ..services.versioning import contract_versions, release_info
 from ..utils.http import is_safe_relative_url
 from ..utils.logger import audit_log
 from ..utils.security import admin_password_matches, get_client_ip
@@ -147,6 +148,29 @@ def _sql(conn, sql: str, default=0):
     except Exception:
         current_app.logger.exception("SQL query failed in _sql")
         return default
+
+
+@bp.get("/version")
+@login_required
+def version_release():
+    with connect(current_app.config["DATABASE_PATH"]) as conn:
+        row = conn.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()
+        database_schema = int(row["version"] or 0) if row else 0
+        conference_rows = [dict(item) for item in conn.execute(
+            """SELECT id,title,acronym,source_version,package_sha256,package_schema_version,
+                      source_format,imported_at,public_path
+               FROM conference_sites
+               ORDER BY COALESCE(imported_at,updated_at) DESC,id DESC
+               LIMIT 12"""
+        ).fetchall()]
+    release = release_info()
+    return render_template(
+        "dashboard/version.html",
+        release=release,
+        database_schema=database_schema,
+        contracts=contract_versions(),
+        conference_rows=conference_rows,
+    )
 
 
 @bp.get("/stats")

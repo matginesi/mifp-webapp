@@ -865,6 +865,17 @@ def test_site_pages_dashboard_section_is_removed(client):
     assert b'href="/dashboard/pages"' not in dashboard.data
 
 
+def test_version_release_page_exposes_source_and_runtime_versions(client):
+    response = client.get("/dashboard/version")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Version &amp; release" in body or "Version & release" in body
+    assert "v1.0.0" in body
+    assert "Database schema" in body
+    assert "MIFP content package" in body
+    assert "Release changes stay outside the container" in body
+
+
 def test_settings_vacuum_integrity_and_database_dump_actions(app, client):
     saved = client.post(
         "/dashboard/settings",
@@ -1525,6 +1536,7 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.content_external_link_delete",
     "dashboard.conference_create",
     "dashboard.conference_delete",
+    "dashboard.conference_restore_previous",
     "dashboard.conference_import",
     "dashboard.conference_edit",
     "dashboard.conference_config_save",

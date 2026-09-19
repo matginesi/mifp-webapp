@@ -23,10 +23,10 @@ from mifp_app.config import Config
 
 
 def _website(*, root: str = "PLMCN-2027", yaml_text: str | None = None,
-             extra: dict[str, bytes] | None = None) -> bytes:
+             extra: dict[str, bytes] | None = None, version: str = "0.4.2") -> bytes:
     yaml_text = yaml_text or """\
 template:
-  version: 0.4.2
+  version: {version}
 site:
   title: PLMCN 2027
   short_name: PLMCN-2027
@@ -37,11 +37,12 @@ conference:
   start_date: '2027-09-20'
   end_date: '2027-09-24'
 """
+    yaml_text = yaml_text.format(version=version)
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(f"{root}/index.html", "<!doctype html><title>PLMCN</title>")
         archive.writestr(f"{root}/conference.yaml", yaml_text)
-        archive.writestr(f"{root}/conference.version.json", json.dumps({"version": "0.4.2"}))
+        archive.writestr(f"{root}/conference.version.json", json.dumps({"version": version}))
         archive.writestr(f"{root}/regform/index.php", "<?php echo 'ok';")
         for name, payload in (extra or {}).items():
             archive.writestr(name, payload)
@@ -177,7 +178,7 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
     # Same UID/slug updates instead of duplicating; existing path needs replace.
     response = client.post(
         "/dashboard/conferences/import/validate",
-        data={"website_package": (io.BytesIO(_website()), "web.zip"), "info_package": (io.BytesIO(_info()), "info.zip")},
+        data={"website_package": (io.BytesIO(_website(version="0.5.0")), "web.zip"), "info_package": (io.BytesIO(_info()), "info.zip")},
         content_type="multipart/form-data",
     )
     token = response.get_data(as_text=True).split('name="token" value="', 1)[1].split('"', 1)[0]
@@ -190,6 +191,24 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
         row = conn.execute("SELECT * FROM events WHERE uid='event_plmcn_2027'").fetchone()
         assert row is not None
         assert row["is_featured"] == 0
+        site = conn.execute("SELECT * FROM conference_sites WHERE public_path='PLMCN-2027'").fetchone()
+        assert site["source_version"] == "0.5.0"
+        assert site["package_schema_version"] == 1
+        versioning = json.loads(site["package_manifest_json"])["versioning"]
+        assert versioning["current"]["label"] == "0.5.0"
+        assert versioning["previous"]["label"] == "0.4.2"
+
+    conference_page = client.get("/dashboard/conferences").get_data(as_text=True)
+    assert "current <strong>0.5.0</strong>" in conference_page
+    assert "Restore 0.4.2" in conference_page
+
+    restored = client.post("/dashboard/conferences/1/restore-previous")
+    assert restored.status_code == 302
+    with _conn(app) as conn:
+        site = conn.execute("SELECT * FROM conference_sites WHERE public_path='PLMCN-2027'").fetchone()
+        assert site["source_version"] == "0.4.2"
+        versioning = json.loads(site["package_manifest_json"])["versioning"]
+        assert versioning["previous"]["label"] == "0.5.0"
 
 
 @pytest.mark.parametrize("payload,message", [

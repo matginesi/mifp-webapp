@@ -143,6 +143,8 @@ When INFO is imported, the wizard explicitly asks whether the Event should be fe
 
 The server uploads to private staging and validates first. WEBSITE publication safely extracts on the same filesystem as `EVENTS_ROOT` and atomically swaps only the selected conference directory. INFO import runs inside the database transaction and installs only its declared assets. With both packages, the two operations commit as one import. On failure the database/assets roll back and any replaced website directory is restored. A retained rollback copy is scoped to that conference.
 
+The dashboard records the current WEBSITE package version/hash and one bounded previous package snapshot. When the rollback directory is still available, **Conference sites → Restore previous** atomically swaps the current and previous WEBSITE versions; Event/INFO metadata is not rolled back.
+
 ## 15. PLMCN-2027 example
 
 `PLMCN-2027_WEBSITE.zip` has root `PLMCN-2027/` and may be imported by itself to publish the conference site. `PLMCN-2027_INFO.zip` may be imported by itself to create/update the Event and choose whether it appears in Forthcoming. When both are supplied, its INFO record uses slug `plmcn-2027`; this case-only difference is valid. With
@@ -152,7 +154,7 @@ The server uploads to private staging and validates first. WEBSITE publication s
 
 ## 16. Compatibility and versioning
 
-WEBSITE layout is versioned by optional `conference.version.json`. INFO version
+WEBSITE layout is versioned by optional `conference.version.json`; when absent, the dashboard falls back to a short immutable package SHA-256 label. INFO version
 support is defined by the shared portability constants (`mifp-content` v1).
 Unsupported versions fail closed. Add a new supported version to the shared
 parser before producing it; do not silently reinterpret an existing version.

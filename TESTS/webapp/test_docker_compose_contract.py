@@ -40,6 +40,8 @@ def test_production_compose_has_no_build_and_uses_registry_image() -> None:
     assert web["environment"]["EVENTS_ROOT"] == "/app/events"
     assert web["read_only"] is True
     assert web["environment"]["FLASK_ENV"] == "production"
+    assert web["environment"]["MIFP_RELEASE_REF"] == "${MIFP_IMAGE}"
+    assert web["environment"]["MIFP_RELEASE_CHANNEL"].endswith(":latest")
     assert "AUTO_MIGRATE_ON_STARTUP" not in web["environment"]
     assert web["environment"]["TMPDIR"] == "/app/data/tmp"
     assert web["environment"]["SESSION_COOKIE_SECURE"] == "1"
@@ -107,6 +109,7 @@ def test_container_entrypoint_verifies_production_database_without_migrating() -
     assert "AUTO_MIGRATE_ON_STARTUP" not in entrypoint
     assert 'COPY --chown=10001:10001 mifp_archive ./mifp_archive' not in dockerfile
     assert 'ENTRYPOINT ["/app/docker-entrypoint.sh"]' in dockerfile
+    assert 'docker-entrypoint.sh VERSION ./' in dockerfile
 
 
 def test_launcher_has_only_local_start_commands() -> None:

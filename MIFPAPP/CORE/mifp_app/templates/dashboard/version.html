@@ -1,0 +1,82 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header, empty_state %}
+{% block page_title %}Version &amp; release{% endblock %}
+{% block content %}
+{% call page_header('System', 'Version & release', 'Source-controlled application version, immutable deployment identity, data contracts and conference package versions.') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.server') }}"><i class="bi bi-hdd-network"></i> Server</a>
+{% endcall %}
+
+<section class="status-strip" aria-label="Version summary">
+  <article>
+    <i class="bi bi-tags" aria-hidden="true"></i>
+    <span><small>Application</small><b>v{{ release.app_version }}</b><em>Source-controlled VERSION file</em></span>
+  </article>
+  <article>
+    <i class="bi bi-box-seam" aria-hidden="true"></i>
+    <span><small>Release</small><b>{{ release.release_digest[:12] if release.release_digest else 'Local / unknown' }}</b><em>{{ release.release_ref or 'No immutable OCI reference injected' }}</em></span>
+  </article>
+  <article>
+    <i class="bi bi-database-check" aria-hidden="true"></i>
+    <span><small>Database schema</small><b>v{{ database_schema }}</b><em>Expected by app: v{{ contracts[0].version }}</em></span>
+  </article>
+  <article>
+    <i class="bi bi-shield-check" aria-hidden="true"></i>
+    <span><small>Deployment control</small><b>Host managed</b><em>Dashboard is read-only for releases</em></span>
+  </article>
+</section>
+
+<div class="system-primary-grid">
+  <section class="system-panel ops-panel">
+    <header class="panel-head">
+      <div><span>Application</span><h2>Current release</h2><p>The dashboard observes release identity but cannot deploy or rollback the host.</p></div>
+      <span class="status-badge status-success">Immutable</span>
+    </header>
+    <dl class="system-facts">
+      <div><dt>Application version</dt><dd><b>v{{ release.app_version }}</b></dd></div>
+      <div><dt>OCI release</dt><dd><code>{{ release.release_ref or 'Not injected (local/development)' }}</code></dd></div>
+      <div><dt>Digest</dt><dd><code>{{ ('sha256:' ~ release.release_digest) if release.release_digest else 'Not available' }}</code></dd></div>
+      <div><dt>Update channel</dt><dd><code>{{ release.release_channel or 'Not configured' }}</code></dd></div>
+      <div><dt>Build commit</dt><dd><code>{{ release.build_commit or 'Not embedded by build pipeline' }}</code></dd></div>
+      <div><dt>Build date</dt><dd>{{ release.build_date or 'Not embedded by build pipeline' }}</dd></div>
+    </dl>
+    <div class="control-note"><i class="bi bi-lock"></i><div><b>Release changes stay outside the container</b><span>Use <code>sudo mifpctl update-check</code>, <code>sudo mifpctl update</code>, explicit <code>deploy</code> or <code>rollback</code> on the VPS. The web process never receives Docker or host-control privileges.</span></div></div>
+  </section>
+
+  <section class="system-panel ops-panel">
+    <header class="panel-head">
+      <div><span>Contracts</span><h2>Stable format versions</h2><p>Versions accepted or produced by this application build.</p></div>
+    </header>
+    <div class="system-storage-list">
+      {% for item in contracts %}
+      <div><span><i class="bi bi-file-earmark-code"></i>{{ item.name }} <small>{{ item.format }}</small></span><b>v{{ item.version }}</b></div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+
+<section class="system-panel ops-panel">
+  <header class="panel-head">
+    <div><span>Conference sites</span><h2>Installed package versions</h2><p>Current WEBSITE package identity for recently imported conference microsites. Previous-version restore is managed from Conference sites when a rollback copy exists.</p></div>
+    <a href="{{ url_for('dashboard.conference_sites') }}">Conference sites</a>
+  </header>
+  {% if conference_rows %}
+  <div class="data-scroll">
+    <table class="data-table">
+      <thead><tr><th>Conference</th><th>Version</th><th class="d-none d-md-table-cell">Package</th><th class="d-none d-lg-table-cell">Imported</th></tr></thead>
+      <tbody>
+        {% for site in conference_rows %}
+        <tr>
+          <td><a href="{{ url_for('dashboard.conference_edit', site_id=site.id) }}">{{ site.acronym or site.title }}</a><span class="cell-text">/{{ site.public_path or '' }}/</span></td>
+          <td><b>{{ site.source_version or ('sha-' ~ site.package_sha256[:12] if site.package_sha256 else 'unversioned') }}</b><span class="cell-text">{{ site.source_format|replace('-', ' ') }}</span></td>
+          <td class="d-none d-md-table-cell"><code>{{ site.package_sha256[:16] ~ '…' if site.package_sha256 else '—' }}</code><span class="cell-text">schema {{ site.package_schema_version or '—' }}</span></td>
+          <td class="d-none d-lg-table-cell">{{ site.imported_at or 'Not imported' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    {{ empty_state('No conference package versions yet', 'Import a WEBSITE package to record its version and immutable package hash.', 'bi-globe2') }}
+  {% endif %}
+</section>
+{% endblock %}

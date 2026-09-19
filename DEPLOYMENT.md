@@ -448,3 +448,15 @@ eseguire e non registra alcuna release parziale.
 Ulteriori dettagli: [installazione VPS/VM](docs/deployment/vps-installation.md),
 [backup](docs/deployment/backups.md),
 [hardening](docs/deployment/hardening.md), [schema DB](docs/database-schema.md).
+
+## Version and release visibility
+
+`MIFPAPP/CORE/VERSION` is the source-controlled application version. Production
+Compose injects the immutable `MIFP_IMAGE` reference into the container as
+`MIFP_RELEASE_REF` and the configured `:latest` discovery channel as
+`MIFP_RELEASE_CHANNEL`. The dashboard exposes these values under **System →
+Version & Release** without receiving Docker or host-control privileges.
+
+Changing the application version means changing `VERSION` in source control and
+shipping a new image. Runtime deployment remains an explicit host operation via
+`mifpctl update`, `deploy`, or `rollback`.

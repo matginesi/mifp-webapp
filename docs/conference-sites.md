@@ -108,3 +108,17 @@ soltanto con `mifpctl events-php-enable <public-prefix>`. Un import completo o
 `events-rollback` svuota sempre la allow-list, così il nuovo tree non eredita
 codice eseguibile dal precedente. Le registrazioni non devono mai vivere sotto
 `/opt/mifp/events`.
+
+## Versioning and rollback
+
+Conference WEBSITE imports record the current package version (from
+`conference.version.json` when present), the package SHA-256 and package schema
+version in `conference_sites`.  The package manifest also retains one bounded
+snapshot of the immediately previous imported WEBSITE version.
+
+When the import wizard keeps its rollback copy, **Dashboard → Conference sites**
+shows both current and previous versions and exposes **Restore previous**.  The
+restore swaps only the public WEBSITE directory and package metadata; it does
+not modify the canonical Event record created from `_INFO.zip`. PHP remains
+host-controlled and restore fails closed while PHP execution is enabled for the
+conference path.

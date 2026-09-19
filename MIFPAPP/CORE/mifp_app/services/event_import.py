@@ -29,6 +29,11 @@ from .assets import AssetWriteSession
 from .data_portability import import_zip_payload, parse_zip_payload
 from .portability_contract import CONTENT_FORMAT, CONTENT_FORMAT_VERSION
 from .registration_safety import is_registration_path, is_safe_public_registration_scaffold
+from .versioning import (
+    EVENT_WEBSITE_FORMAT_VERSION,
+    conference_snapshot,
+    versioned_manifest,
+)
 
 WEBSITE_REQUIRED = {"conference.yaml"}
 WEBSITE_INDEXES = {"index.html", "index.htm", "index.php"}
@@ -602,8 +607,8 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
             event_id = event_id or (int(existing_event["id"]) if existing_event else None)
         domain = events_domain or Config.EVENTS_DOMAIN
         if publish_website or inspection.website:
-            manifest = {
-                "event_import": 1,
+            base_manifest = {
+                "event_import": EVENT_WEBSITE_FORMAT_VERSION,
                 "website_sha256": inspection.website.sha256 if inspection.website else None,
                 "website_files": inspection.website.files if inspection.website else 0,
                 "website_bytes": inspection.website.unpacked_bytes if inspection.website else 0,
@@ -614,38 +619,47 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
             slug = inspection.info.slug if inspection.info else destination.casefold()
             title = inspection.info.title if inspection.info else inspection.website.title or inspection.website.event
             existing_site = conn.execute(
-                "SELECT id FROM conference_sites WHERE event_id=? OR slug=? ORDER BY event_id IS NULL, id LIMIT 1",
+                "SELECT * FROM conference_sites WHERE event_id=? OR slug=? ORDER BY event_id IS NULL, id LIMIT 1",
                 (event_id, slug),
             ).fetchone()
-            values = (
+            source_version = inspection.website.version if inspection.website else inspection.info.version
+            package_sha256 = inspection.website.sha256 if inspection.website else inspection.info.sha256
+            previous_snapshot = conference_snapshot(existing_site) if existing_site else None
+            manifest = versioned_manifest(
+                base_manifest,
+                source_version=source_version,
+                package_sha256=package_sha256,
+                previous=previous_snapshot,
+            )
+            deploy_status = "published" if publish_website else "staged"
+            common_values = (
                 title, inspection.website.event if inspection.website else inspection.info.event,
                 inspection.info.start_date if inspection.info else inspection.website.start_date,
                 inspection.info.end_date if inspection.info else inspection.website.end_date,
                 destination_url(domain, destination), f"/{destination}/", event_id, destination,
-                inspection.website.version if inspection.website else inspection.info.version,
-                inspection.website.sha256 if inspection.website else inspection.info.sha256,
-                json.dumps(manifest, ensure_ascii=False, sort_keys=True),
-                "published" if publish_website else "staged",
+                source_version, EVENT_WEBSITE_FORMAT_VERSION, package_sha256,
+                json.dumps(manifest, ensure_ascii=False, sort_keys=True), deploy_status,
             )
             if existing_site:
                 conn.execute(
                     """UPDATE conference_sites SET title=?,acronym=?,start_date=?,end_date=?,
                            canonical_url=?,deploy_base_path=?,event_id=?,public_path=?,
-                           source_format='legacy-static',source_version=?,package_sha256=?,
-                           package_manifest_json=?,deploy_status=?,imported_at=CURRENT_TIMESTAMP,
+                           source_format='legacy-static',source_version=?,package_schema_version=?,
+                           package_sha256=?,package_manifest_json=?,deploy_status=?,
+                           imported_at=CURRENT_TIMESTAMP,
                            published_at=CASE WHEN ?='published' THEN CURRENT_TIMESTAMP ELSE published_at END,
                            updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-                    (*values, values[-1], int(existing_site["id"])),
+                    (*common_values, deploy_status, int(existing_site["id"])),
                 )
             else:
                 conn.execute(
                     """INSERT INTO conference_sites(
                        slug,title,acronym,start_date,end_date,canonical_url,deploy_base_path,
-                       event_id,public_path,source_format,source_version,package_sha256,
-                       package_manifest_json,deploy_status,imported_at,published_at)
-                       VALUES(?,?,?,?,?,?,?,?,?,'legacy-static',?,?,?,?,CURRENT_TIMESTAMP,
+                       event_id,public_path,source_format,source_version,package_schema_version,
+                       package_sha256,package_manifest_json,deploy_status,imported_at,published_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,'legacy-static',?,?,?,?,?,CURRENT_TIMESTAMP,
                               CASE WHEN ?='published' THEN CURRENT_TIMESTAMP ELSE NULL END)""",
-                    (slug, *values, values[-1]),
+                    (slug, *common_values, deploy_status),
                 )
         conn.commit()
         summary["metadata"] = inspection.db_action if import_metadata else "skipped"

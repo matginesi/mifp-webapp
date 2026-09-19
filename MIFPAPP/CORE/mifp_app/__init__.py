@@ -290,6 +290,7 @@ def create_app():
         from datetime import datetime
 
         from .services.site_copy import copy_values
+        from .services.versioning import application_version
         # Lazy on purpose: minting here would set `mifp_csrf` on every public page.
         token = _LazyCsrfToken()
         # Banner defaults first so the notice is always renderable, even on a
@@ -330,6 +331,7 @@ def create_app():
             "now": datetime.now(), "site_settings": site_settings,
             "site_copy": copy_values(site_settings),
             "static_version": _static_ver,
+            "app_version": application_version(),
         }
 
     @app.before_request

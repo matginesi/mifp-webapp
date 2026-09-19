@@ -44,6 +44,8 @@ from ..services.conference_sites import (
 )
 from ..services.exporters import export_response_payload
 from ..services.event_import import destination_url, php_execution_status
+from ..services.conference_version_restore import restore_previous_website
+from ..services.versioning import conference_version_state
 from ..utils.logger import audit_log
 from .auth import login_required
 from .dashboard import bp
@@ -155,6 +157,15 @@ def _conference_runtime_status(site: dict) -> dict:
         enriched["php_execution"] = "unknown"
     enriched["validation_status"] = str(manifest.get("validation") or "unknown")
     enriched["metadata_linked"] = enriched.get("event_id") is not None
+    version_state = conference_version_state(enriched)
+    enriched["current_version"] = version_state["current_label"]
+    enriched["previous_version"] = version_state["previous_label"]
+    rollback = final.parent / f".{final.name}.rollback" if safe_path else None
+    enriched["rollback_available"] = bool(
+        enriched["website_installed"]
+        and rollback and rollback.is_dir() and not rollback.is_symlink()
+        and version_state["previous"]
+    )
     return enriched
 
 
@@ -495,6 +506,40 @@ def conference_edit(site_id: int):
         package_manifest=package_manifest,
         event_options=event_options,
     )
+
+
+@bp.post("/conferences/<int:site_id>/restore-previous")
+@login_required
+def conference_restore_previous(site_id: int):
+    with connect(current_app.config["DATABASE_PATH"]) as conn:
+        site = _site(conn, site_id)
+        if not site:
+            return Response("Conference not found", status=404)
+        try:
+            restored_label = restore_previous_website(
+                conn,
+                site,
+                events_root=Path(current_app.config["EVENTS_ROOT"]),
+                php_state_path=Path(current_app.config["EVENTS_PHP_STATE_PATH"]),
+            )
+        except (ValueError, OSError) as exc:
+            current_app.logger.warning(
+                "conference previous-version restore rejected site_id=%s error=%s",
+                site_id,
+                exc,
+            )
+            flash(str(exc), "error")
+            return redirect(url_for("dashboard.conference_sites"))
+
+    audit_log(
+        "conference.restore_previous",
+        "previous conference website version restored",
+        site_id=site_id,
+        public_path=site.get("public_path") or site.get("slug"),
+        restored_version=restored_label,
+    )
+    flash(f"Restored previous website version {restored_label}.", "success")
+    return redirect(url_for("dashboard.conference_sites"))
 
 
 @bp.post("/conferences/<int:site_id>/delete")

@@ -396,3 +396,11 @@ def test_cookie_banner_sidebar_uses_a_vendored_bootstrap_icon():
     assert '<i class="bi bi-cookie" aria-hidden="true"></i><span>Cookie banner</span>' in layout
     assert ".bi-cookie::before" in icons
     assert "bi-window-bottom" not in layout
+
+
+def test_version_release_sidebar_entry_uses_vendored_icon():
+    layout = _read(TEMPLATES / "dashboard/layout.html")
+    icons = _read(CSS / "vendor" / "bootstrap-icons.css")
+    assert '<i class="bi bi-tags" aria-hidden="true"></i><span>Version &amp; Release</span>' in layout
+    assert ".bi-tags::before" in icons
+    assert "Secure session · v{{ app_version }}" in layout

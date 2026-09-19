@@ -39,7 +39,7 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 
 # Runtime contract: Flask application code and public content only.
-COPY --chown=10001:10001 app.py wsgi.py gunicorn_conf.py docker-entrypoint.sh ./
+COPY --chown=10001:10001 app.py wsgi.py gunicorn_conf.py docker-entrypoint.sh VERSION ./
 COPY --chown=10001:10001 config ./config
 COPY --chown=10001:10001 mifp_app ./mifp_app
 COPY --chown=10001:10001 \
