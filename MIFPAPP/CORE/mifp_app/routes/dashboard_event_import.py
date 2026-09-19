@@ -127,8 +127,17 @@ def event_import_apply():
                 raise ValueError("Validation contains blocking errors; validate corrected packages.")
             if inspection.warnings and request.form.get("accept_warnings") != "1":
                 raise ValueError("Review and accept the validation warnings before importing.")
-            publish = request.form.get("publish_website") == "1"
-            import_metadata = request.form.get("import_metadata") == "1"
+            # Package presence defines the operation: WEBSITE publishes files, INFO
+            # creates/updates the canonical Event.  The wizard intentionally has
+            # no second set of toggles that can contradict the uploaded packages.
+            publish = inspection.website is not None
+            import_metadata = inspection.info is not None
+            forthcoming = None
+            if import_metadata:
+                raw_forthcoming = request.form.get("forthcoming")
+                if raw_forthcoming not in {"0", "1"}:
+                    raise ValueError("Choose whether the imported Event should appear in Forthcoming.")
+                forthcoming = raw_forthcoming == "1"
             result = apply_import(
                 conn, inspection, website, info,
                 events_root=Path(current_app.config["EVENTS_ROOT"]),
@@ -136,6 +145,7 @@ def event_import_apply():
                 destination=request.form.get("destination", inspection.destination),
                 publish_website=publish,
                 import_metadata=import_metadata,
+                forthcoming=forthcoming,
                 replace=request.form.get("existing_mode") == "replace",
                 keep_rollback=request.form.get("keep_rollback") == "1",
                 events_domain=current_app.config["EVENTS_DOMAIN"],
@@ -143,12 +153,20 @@ def event_import_apply():
                 require_php_state=current_app.config.get("ENV") == "production",
             )
         audit_log(
-            "event.import", "conference site package imported",
+            "event.import", "conference import completed",
             destination=result["destination"], website=result["website"], metadata=result["metadata"],
+            forthcoming=result.get("forthcoming"),
         )
         shutil.rmtree(stage, ignore_errors=True)
-        flash(f"Conference site imported. PHP execution is disabled. Destination: {result.get('url', result['destination'])}", "success")
-        return redirect(url_for("dashboard.conference_sites"))
+        event_action = {"CREATE": "created", "UPDATE": "updated"}.get(result["metadata"], "imported")
+        if result["website"] == "published" and result["metadata"] != "skipped":
+            flash(f"Conference website published and Event {event_action}. PHP execution is disabled.", "success")
+            return redirect(url_for("dashboard.conference_sites"))
+        if result["website"] == "published":
+            flash(f"Conference website published. PHP execution is disabled. Destination: {result.get('url', result['destination'])}", "success")
+            return redirect(url_for("dashboard.conference_sites"))
+        flash(f"Event {event_action} from INFO package.", "success")
+        return redirect(url_for("dashboard.events"))
     except Exception as exc:
         current_app.logger.exception("event package import failed")
         flash(admin_error_text(str(exc)), "error")

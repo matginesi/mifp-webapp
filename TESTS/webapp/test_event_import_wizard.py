@@ -152,16 +152,19 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
     imported = client.post(
         "/dashboard/conferences/import/apply",
         data={
-            "token": token, "destination": "PLMCN-2027", "publish_website": "1",
-            "import_metadata": "1", "existing_mode": "reject", "keep_rollback": "1",
-            "accept_warnings": "1",
+            "token": token, "destination": "PLMCN-2027",
+            "existing_mode": "reject", "keep_rollback": "1",
+            "forthcoming": "1", "accept_warnings": "1",
         },
     )
     assert imported.status_code == 302
     assert (Path(app.config["EVENTS_ROOT"]) / "PLMCN-2027/index.html").is_file()
     assert not (Path(app.config["EVENTS_ROOT"]) / "OTHER/index.html").exists()
     with _conn(app) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM events WHERE uid='event_plmcn_2027'").fetchone()[0] == 1
+        event = conn.execute("SELECT * FROM events WHERE uid='event_plmcn_2027'").fetchone()
+        assert event is not None
+        assert event["is_featured"] == 1
+        assert event["review_status"] == "review"
         site = conn.execute("SELECT * FROM conference_sites").fetchone()
         assert site["public_path"] == "PLMCN-2027"
         assert json.loads(site["package_manifest_json"])["php_execution"] == "disabled"
@@ -169,7 +172,7 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
     assert "Website installed" in conference_page
     assert "Open" in conference_page
     assert "PHP 1 / disabled" in conference_page
-    assert "Import website + metadata" in conference_page
+    assert "Import WEBSITE / INFO" in conference_page
 
     # Same UID/slug updates instead of duplicating; existing path needs replace.
     response = client.post(
@@ -179,12 +182,14 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
     )
     token = response.get_data(as_text=True).split('name="token" value="', 1)[1].split('"', 1)[0]
     client.post("/dashboard/conferences/import/apply", data={
-        "token": token, "destination": "PLMCN-2027", "publish_website": "1",
-        "import_metadata": "1", "existing_mode": "replace", "keep_rollback": "1",
-        "accept_warnings": "1",
+        "token": token, "destination": "PLMCN-2027",
+        "existing_mode": "replace", "keep_rollback": "1",
+        "forthcoming": "0", "accept_warnings": "1",
     })
     with _conn(app) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM events WHERE uid='event_plmcn_2027'").fetchone()[0] == 1
+        row = conn.execute("SELECT * FROM events WHERE uid='event_plmcn_2027'").fetchone()
+        assert row is not None
+        assert row["is_featured"] == 0
 
 
 @pytest.mark.parametrize("payload,message", [
@@ -333,6 +338,51 @@ def test_website_allows_registration_guard_scaffold_but_not_runtime_data(tmp_pat
         inspect_website(bad, bad.name)
 
 
+def test_info_only_creates_event_without_publishing_files_and_asks_forthcoming(app, client):
+    response = client.post(
+        "/dashboard/conferences/import/validate",
+        data={"info_package": (io.BytesIO(_info()), "PLMCN-2027_INFO.zip")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "No website files in this import" in body
+    assert "Add this Event to the homepage Forthcoming section?" in body
+    assert 'name="publish_website"' not in body
+    assert 'name="import_metadata"' not in body
+    token = body.split('name="token" value="', 1)[1].split('"', 1)[0]
+
+    imported = client.post(
+        "/dashboard/conferences/import/apply",
+        data={"token": token, "destination": "plmcn-2027", "forthcoming": "1"},
+    )
+    assert imported.status_code == 302
+    assert imported.headers["Location"].endswith("/dashboard/events")
+    assert not (Path(app.config["EVENTS_ROOT"]) / "plmcn-2027").exists()
+    with _conn(app) as conn:
+        event = conn.execute("SELECT * FROM events WHERE uid='event_plmcn_2027'").fetchone()
+        assert event is not None
+        assert event["is_featured"] == 1
+        assert event["review_status"] == "review"
+        assert conn.execute("SELECT COUNT(*) FROM conference_sites").fetchone()[0] == 0
+
+
+def test_info_import_requires_explicit_forthcoming_choice(app, client):
+    response = client.post(
+        "/dashboard/conferences/import/validate",
+        data={"info_package": (io.BytesIO(_info()), "PLMCN-2027_INFO.zip")},
+        content_type="multipart/form-data",
+    )
+    token = response.get_data(as_text=True).split('name="token" value="', 1)[1].split('"', 1)[0]
+    imported = client.post(
+        "/dashboard/conferences/import/apply",
+        data={"token": token, "destination": "plmcn-2027"},
+    )
+    assert imported.status_code == 302
+    with _conn(app) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
+
+
 def test_website_only_import_is_visible_in_conference_sites(app, client):
     response = client.post(
         "/dashboard/conferences/import/validate",
@@ -345,7 +395,7 @@ def test_website_only_import_is_visible_in_conference_sites(app, client):
     imported = client.post(
         "/dashboard/conferences/import/apply",
         data={
-            "token": token, "destination": "PLMCN-2027", "publish_website": "1",
+            "token": token, "destination": "PLMCN-2027",
             "existing_mode": "reject", "keep_rollback": "1", "accept_warnings": "1",
         },
     )
@@ -354,6 +404,7 @@ def test_website_only_import_is_visible_in_conference_sites(app, client):
         site = conn.execute("SELECT * FROM conference_sites WHERE public_path='PLMCN-2027'").fetchone()
         assert site is not None
         assert site["event_id"] is None
+        assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
     page = client.get("/dashboard/conferences").get_data(as_text=True)
     assert "Website installed" in page
     assert "Not linked" in page

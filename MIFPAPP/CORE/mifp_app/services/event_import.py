@@ -511,6 +511,7 @@ def extract_website(path: Path, target: Path, expected_root: str) -> None:
 def apply_import(conn, inspection: Inspection, website_path: Path | None, info_path: Path | None,
                  *, events_root: Path, assets_dir: Path, destination: str,
                  publish_website: bool, import_metadata: bool,
+                 forthcoming: bool | None = None,
                  replace: bool, keep_rollback: bool, events_domain: str | None = None,
                  php_state_path: Path | None = None, require_php_state: bool = False) -> dict[str, Any]:
     destination = normalize_destination(destination)
@@ -571,6 +572,14 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
             if not row:
                 raise ValueError("Imported event record could not be resolved.")
             event_id = int(row["id"])
+            if forthcoming is not None:
+                # Forthcoming visibility is an editorial operator choice, not a
+                # transport property of the INFO package. Public visibility also
+                # depends on the Event review status (normally ``published``).
+                conn.execute(
+                    "UPDATE events SET is_featured=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (1 if forthcoming else 0, event_id),
+                )
 
         if publish_website:
             backup = final.parent / f".{final.name}.rollback"
@@ -641,7 +650,9 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
         conn.commit()
         summary["metadata"] = inspection.db_action if import_metadata else "skipped"
         summary["website"] = "published" if publish_website else "skipped"
-        summary["url"] = destination_url(domain, destination)
+        summary["forthcoming"] = forthcoming if import_metadata else None
+        if publish_website:
+            summary["url"] = destination_url(domain, destination)
         if backup and backup.exists() and not keep_rollback:
             shutil.rmtree(backup)
         if prior_backup and prior_backup.exists():

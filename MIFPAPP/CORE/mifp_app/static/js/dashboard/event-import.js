@@ -50,6 +50,15 @@
     if (event.target.value && destination) destination.value = event.target.value;
     updatePreview();
   });
+
+  const forthcomingReview = wizard.querySelector('[data-review-forthcoming]');
+  wizard.querySelectorAll('[data-forthcoming]').forEach((input) => {
+    input.addEventListener('change', () => {
+      if (!forthcomingReview || !input.checked) return;
+      forthcomingReview.textContent = input.value === '1' ? 'Yes — homepage Forthcoming' : 'No';
+    });
+  });
+
   wizard.querySelector('[data-import-form]')?.addEventListener('submit', (event) => {
     if (!event.currentTarget.reportValidity()) return;
     show(6);

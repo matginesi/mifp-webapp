@@ -30,6 +30,8 @@ FORBIDDEN_PREFIXES = (
     "MIFPAPP/DATABASE/config/",
     "MIFPAPP/DATABASE/conferences/",
     "MIFPAPP/DATABASE/exports/",
+    "MIFPAPP/DATABASE/events/",
+    "MIFPAPP/DATABASE/events-php-enabled.txt",
     "MIFPAPP/DATABASE/logs/",
     "MIFPAPP/DATABASE/tmp/",
     "MIFPAPP/DATABASE/uploads/",

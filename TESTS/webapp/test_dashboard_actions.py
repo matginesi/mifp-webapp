@@ -270,7 +270,7 @@ def test_conference_delete_removes_database_relations_and_storage(app, client):
     assert not asset_dir.parent.exists()
     empty_page = client.get("/dashboard/conferences").get_data(as_text=True)
     assert 'class="data-table"' in empty_page
-    assert 'No conference sites yet. Import WEBSITE + INFO or create a manual workspace.' in empty_page
+    assert 'No conference sites yet. Import a WEBSITE package, an INFO package, or both; or create a manual workspace.' in empty_page
 
 
 def test_conference_yaml_and_zip_import_are_safe_and_complete(app, client):

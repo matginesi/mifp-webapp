@@ -1,14 +1,16 @@
 # MIFP event import package specification
 
-This is the operator and producer contract for **Dashboard → Events → Import
-Event**. The dashboard validates every package again immediately before import.
-An error blocks the operation; a warning requires explicit acknowledgement.
+This is the operator and producer contract for **Dashboard → Conference sites → Import conference site**. The dashboard validates every package again immediately before import. An error blocks the operation; a warning requires explicit acknowledgement.
+
+WEBSITE and INFO are independent operations:
+
+- `*_WEBSITE.zip` publishes the validated conference files under `EVENTS_DOMAIN`; it does **not** create an Event record.
+- `*_INFO.zip` creates or updates the canonical MIFP Event; it does **not** publish conference files.
+- Either package may be imported alone, or both may be supplied in one wizard run.
 
 ## 1. Package names
 
-Use `<EVENT>_WEBSITE.zip` and `<EVENT>_INFO.zip`, for example
-`PLMCN-2027_WEBSITE.zip` and `PLMCN-2027_INFO.zip`. Names help operators, but
-the importer detects package roles from their contents.
+Use `<EVENT>_WEBSITE.zip` and `<EVENT>_INFO.zip`, for example `PLMCN-2027_WEBSITE.zip` and `PLMCN-2027_INFO.zip`. Names help operators, but the importer detects package roles from their contents. WEBSITE-only and INFO-only imports are both valid.
 
 ## 2. WEBSITE structure
 
@@ -25,8 +27,7 @@ PLMCN-2027/
 ```
 
 `conference.yaml` and one root `index.html`, `index.htm`, or `index.php` are
-required. Other public static files are optional. The root is the default public
-path and is compared case-insensitively with the INFO slug.
+required. Other public static files are optional. The root is the default public path. When INFO is supplied in the same run, the importer cross-checks the root and event identity, but WEBSITE remains the sole source of filesystem publication.
 
 ## 3. INFO structure (`mifp-content` v1)
 
@@ -134,21 +135,17 @@ server configuration. CRC/integrity is checked before extraction.
 
 “Reject if exists” is the default. “Replace/update atomically” affects only the
 selected event directory; it never deletes sibling conference directories.
-Metadata is upserted by UID, then slug, so a repeated INFO import updates rather
-than duplicates the event.
+Metadata is upserted by UID, then slug, so a repeated INFO import updates rather than duplicates the event. WEBSITE-only imports never create an Event record. INFO-only imports never create or replace a conference directory.
+
+When INFO is imported, the wizard explicitly asks whether the Event should be featured in the homepage **Forthcoming** section. That operator choice sets `events.is_featured`; the INFO package still owns the Event review status, and only `published` Events are publicly visible.
 
 ## 14. Atomic import and rollback
 
-The server uploads to private staging, validates, safely extracts on the same
-filesystem as `EVENTS_ROOT`, starts the database transaction, prepares metadata,
-renames only the selected event directory, and commits. On failure it rolls back
-the database and newly-created assets, removes the failed directory, and restores
-the prior directory. A retained rollback copy is scoped to that event.
+The server uploads to private staging and validates first. WEBSITE publication safely extracts on the same filesystem as `EVENTS_ROOT` and atomically swaps only the selected conference directory. INFO import runs inside the database transaction and installs only its declared assets. With both packages, the two operations commit as one import. On failure the database/assets roll back and any replaced website directory is restored. A retained rollback copy is scoped to that conference.
 
 ## 15. PLMCN-2027 example
 
-`PLMCN-2027_WEBSITE.zip` has root `PLMCN-2027/` and its INFO record uses slug
-`plmcn-2027`; this case-only difference is valid. With
+`PLMCN-2027_WEBSITE.zip` has root `PLMCN-2027/` and may be imported by itself to publish the conference site. `PLMCN-2027_INFO.zip` may be imported by itself to create/update the Event and choose whether it appears in Forthcoming. When both are supplied, its INFO record uses slug `plmcn-2027`; this case-only difference is valid. With
 `EVENTS_DOMAIN=events.vpsbox.home.arpa`, its preview is
 `https://events.vpsbox.home.arpa/PLMCN-2027/`, regardless of an older
 `events.mifp.eu` URL stored in INFO.

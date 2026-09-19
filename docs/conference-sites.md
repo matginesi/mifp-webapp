@@ -79,9 +79,7 @@ unpublished -> staged -> published
                     \-> failed
 ```
 
-La dashboard **Conference sites** è il punto operativo unico per i micrositi. Il wizard
-`WEBSITE + INFO` valida entrambi i pacchetti in staging privato e pubblica soltanto dopo la
-review finale, con swap atomico della singola directory evento. PHP resta comunque
+La dashboard **Conference sites** è il punto operativo unico per i micrositi. Nel wizard di import, `WEBSITE` e `INFO` sono indipendenti: WEBSITE pubblica i file del microsito, INFO crea/aggiorna il record Event. Se forniti insieme, il wizard valida entrambi in staging privato e applica le due operazioni soltanto dopo la review finale, con swap atomico della singola directory evento. PHP resta comunque
 disabilitato finché un operatore host non lo abilita esplicitamente.
 
 ## Hosting VPS

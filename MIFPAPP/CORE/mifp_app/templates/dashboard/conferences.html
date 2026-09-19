@@ -4,8 +4,8 @@
 {% block extra_js %}{{ super() }}<script src="{{ url_for('static', filename='js/dashboard/conferences.js') }}" defer></script>{% endblock %}
 {% block content %}
 <div data-entity="conferences">
-{% call page_header('Content', 'Conference sites', 'Publish and manage conference microsites. Canonical event records stay in Events; WEBSITE/INFO packages and events.* publication live here.') %}
-  <a class="btn btn-primary btn-sm" href="{{ url_for('dashboard.event_import_wizard') }}"><i class="bi bi-box-arrow-in-down"></i> Import website + metadata</a>
+{% call page_header('Content', 'Conference sites', 'Publish and manage conference microsites. Canonical event records stay in Events; this hub imports WEBSITE files and can create/update an Event from an INFO package.') %}
+  <a class="btn btn-primary btn-sm" href="{{ url_for('dashboard.event_import_wizard') }}"><i class="bi bi-box-arrow-in-down"></i> Import WEBSITE / INFO</a>
   <button class="btn btn-outline btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#newConference"><i class="bi bi-plus-lg"></i> New manual workspace</button>
   <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.event_import_package_spec') }}"><i class="bi bi-filetype-md"></i> ZIP specification</a>
 {% endcall %}
@@ -69,7 +69,7 @@
           </div></td>
         </tr>
       {% else %}
-        <tr><td colspan="5" class="empty">No conference sites yet. Import WEBSITE + INFO or create a manual workspace.</td></tr>
+        <tr><td colspan="5" class="empty">No conference sites yet. Import a WEBSITE package, an INFO package, or both; or create a manual workspace.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -78,7 +78,7 @@
 
 <div class="modal fade" id="newConference" tabindex="-1" aria-labelledby="newConferenceTitle" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable"><div class="modal-content smart-modal">
-    <div class="modal-header"><div><h5 class="modal-title" id="newConferenceTitle"><i class="bi bi-globe2"></i> New manual conference workspace</h5><p class="modal-subtitle">Use this only for a site managed manually inside MIFP. For Conference Editor exports use “Import website + metadata”.</p></div><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button></div>
+    <div class="modal-header"><div><h5 class="modal-title" id="newConferenceTitle"><i class="bi bi-globe2"></i> New manual conference workspace</h5><p class="modal-subtitle">Use this only for a site managed manually inside MIFP. For Conference Editor exports use “Import WEBSITE / INFO”.</p></div><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button></div>
     <form class="modal-form-shell" method="post" action="{{ url_for('dashboard.conference_create') }}" data-conference-create-wizard>
       <input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="draft"><input type="hidden" name="deploy_base_path" value="/">
       <div class="wizard-steps" aria-label="Wizard progress">

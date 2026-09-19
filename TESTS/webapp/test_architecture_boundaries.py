@@ -332,6 +332,7 @@ def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
         "config",
         "conferences",
         "exports",
+        "events",
         "logs",
         "tmp",
         "uploads",
@@ -350,6 +351,11 @@ def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
 
     assert '"SCRAPERS/OUTPUTS"' in packager
     assert '"MIFPAPP/DATABASE/uploads"' in packager
+    assert '"MIFPAPP/DATABASE/events"' in packager
+    assert '"MIFPAPP/DATABASE/events-php-enabled.txt"' in packager
+    checker_text = checker.read_text(encoding="utf-8")
+    assert '"MIFPAPP/DATABASE/events/"' in checker_text
+    assert '"MIFPAPP/DATABASE/events-php-enabled.txt"' in checker_text
 
 
 def test_deploy_security_hardening_contract() -> None:

@@ -6,7 +6,7 @@
 <script src="{{ url_for('static', filename='js/dashboard/event-import.js') }}" defer></script>
 {% endblock %}
 {% block content %}
-{% call page_header('Conference sites', 'Import conference site', 'Validate the public conference website and optional canonical MIFP event metadata before publishing anything.') %}
+{% call page_header('Conference sites', 'Import conference site', 'Import a conference website, create/update its MIFP Event, or do either operation independently.') %}
   <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.event_import_package_spec') }}"><i class="bi bi-filetype-md"></i> Package specification</a>
   <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.conference_sites') }}"><i class="bi bi-arrow-left"></i> Conference sites</a>
 {% endcall %}
@@ -26,7 +26,7 @@
     <section class="wizard-panel is-active event-import-panel" data-wizard-panel="1">
       <div class="event-import-intro">
         <h2>Choose conference packages</h2>
-        <p>WEBSITE + INFO is recommended. WEBSITE publishes the microsite; INFO creates or updates the canonical event record. Package roles are detected from contents, so swapped upload fields are handled safely.</p>
+        <p>WEBSITE and INFO are independent: WEBSITE publishes files under the configured events host; INFO creates or updates the Event shown by MIFP. Upload either package alone or both together. Package roles are detected from contents, so swapped upload fields are handled safely.</p>
       </div>
       <div class="event-package-grid">
         <label class="event-dropzone">
@@ -83,7 +83,8 @@
     </section>
 
     <section class="wizard-panel event-import-panel" data-wizard-panel="3">
-      <div class="event-import-intro"><h2>Destination URL</h2><p>The host comes from <code>EVENTS_DOMAIN</code>. Only a validated relative path can be changed.</p></div>
+      {% if inspection.website %}
+      <div class="event-import-intro"><h2>Website destination</h2><p>The host comes from <code>EVENTS_DOMAIN</code>. Only the WEBSITE package writes to this path.</p></div>
       <div class="wizard-field-grid">
         <label class="field"><span>Events host</span><input class="form-control" value="{{ inspection.events_host }}" readonly></label>
         <label class="field"><span>Destination path</span><input class="form-control" name="destination" value="{{ inspection.destination }}" required pattern="[A-Za-z0-9][A-Za-z0-9._~\x2D]*(/[A-Za-z0-9][A-Za-z0-9._~\x2D]*){0,3}" data-destination></label>
@@ -92,34 +93,52 @@
         {% endif %}
         <div class="field wide event-url-preview"><span>Final URL preview</span><strong data-url-preview data-host="{{ inspection.events_host }}">{{ inspection.events_host }}/{{ inspection.destination }}/</strong></div>
       </div>
+      {% else %}
+      <input type="hidden" name="destination" value="{{ inspection.destination }}">
+      <div class="event-import-intro"><h2>No website files in this import</h2><p>Only the INFO package was supplied. No directory under <code>EVENTS_ROOT</code> will be created or replaced; you can add the website files later.</p></div>
+      <div class="event-import-note"><i class="bi bi-info-circle"></i><span>The Event record will still be created or updated from INFO.</span></div>
+      {% endif %}
       <div class="wizard-footer"><button class="btn btn-outline btn-sm" type="button" data-wizard-back>Back</button><button class="btn btn-primary btn-sm" type="button" data-wizard-next>Settings <i class="bi bi-arrow-right"></i></button></div>
     </section>
 
     <section class="wizard-panel event-import-panel" data-wizard-panel="4">
-      <div class="event-import-intro"><h2>Import settings</h2><p>The safe defaults reject existing content, retain rollback data, and keep PHP disabled.</p></div>
+      <div class="event-import-intro"><h2>Import settings</h2><p>Each uploaded package has one job: WEBSITE publishes files; INFO creates or updates the Event.</p></div>
       <div class="import-settings-grid">
-        <fieldset><legend>Website</legend>
-          <label class="check-row"><input type="checkbox" name="publish_website" value="1" {{ 'checked' if inspection.website else 'disabled' }}><span><strong>Publish website</strong><small>{{ 'Install the validated WEBSITE package.' if inspection.website else 'No WEBSITE package was supplied.' }}</small></span></label>
+        <fieldset><legend>Website package</legend>
+          {% if inspection.website %}
+          <p class="setting-fact"><span>Action</span><strong>Publish {{ inspection.website.files }} validated file(s)</strong></p>
           <label class="field"><span>Existing destination</span><select class="form-select" name="existing_mode"><option value="reject">Reject if exists — default</option><option value="replace">Replace/update atomically</option></select></label>
-          <label class="check-row"><input type="checkbox" name="keep_rollback" value="1" checked><span><strong>Keep rollback copy</strong><small>Retains the previous version beside this event only.</small></span></label>
+          <label class="check-row"><input type="checkbox" name="keep_rollback" value="1" checked><span><strong>Keep rollback copy</strong><small>Retains the previous version beside this conference only.</small></span></label>
+          {% else %}
+          <p class="setting-fact"><span>Action</span><strong>None — no WEBSITE package supplied</strong></p>
+          {% endif %}
         </fieldset>
-        <fieldset><legend>MIFP event record</legend>
-          <label class="check-row"><input type="checkbox" name="import_metadata" value="1" {{ 'checked' if inspection.info else 'disabled' }}><span><strong>Create/update metadata from INFO</strong><small>{{ inspection.db_action }} without duplicate UID or slug.</small></span></label>
-          <p class="setting-fact"><span>Metadata action</span><strong>{{ inspection.db_action }}</strong></p>
+        <fieldset><legend>MIFP Event from INFO</legend>
+          {% if inspection.info %}
+          <p class="setting-fact"><span>Metadata action</span><strong>{{ inspection.db_action }} {{ inspection.info.uid }}</strong></p>
+          <div class="field">
+            <span>Add this Event to the homepage Forthcoming section?</span>
+            <label class="check-row"><input type="radio" name="forthcoming" value="1" required data-forthcoming><span><strong>Yes</strong><small>Set the homepage Forthcoming flag. The Event must also have Published review status to be visible publicly.</small></span></label>
+            <label class="check-row"><input type="radio" name="forthcoming" value="0" required data-forthcoming><span><strong>No</strong><small>Create/update the Event without featuring it in Forthcoming.</small></span></label>
+          </div>
+          {% else %}
+          <p class="setting-fact"><span>Action</span><strong>None — no INFO package supplied</strong></p>
+          {% endif %}
         </fieldset>
       </div>
-      <div class="php-policy"><i class="bi bi-filetype-php"></i><div><strong>PHP files detected: {{ inspection.website.php_files if inspection.website else 0 }}</strong><span>PHP execution after import: <b>DISABLED</b>. Operator action, if required: <code>sudo mifpctl events-php-enable {{ inspection.destination }}/regform</code></span></div></div>
+      {% if inspection.website %}<div class="php-policy"><i class="bi bi-filetype-php"></i><div><strong>PHP files detected: {{ inspection.website.php_files }}</strong><span>PHP execution after import: <b>DISABLED</b>. Operator action, if required: <code>sudo mifpctl events-php-enable {{ inspection.destination }}/regform</code></span></div></div>{% endif %}
       <div class="wizard-footer"><button class="btn btn-outline btn-sm" type="button" data-wizard-back>Back</button><button class="btn btn-primary btn-sm" type="button" data-wizard-next>Review <i class="bi bi-arrow-right"></i></button></div>
     </section>
 
     <section class="wizard-panel event-import-panel" data-wizard-panel="5">
       <div class="event-import-intro"><h2>Review import</h2><p>One final server-side validation runs immediately before the atomic import.</p></div>
       <dl class="import-review">
-        <dt>Event</dt><dd>{{ inspection.website.event if inspection.website else inspection.info.title }}</dd>
-        <dt>Website</dt><dd>{{ inspection.website.files ~ ' files / ' ~ ((inspection.website.unpacked_bytes / 1048576)|round(2)) ~ ' MB' if inspection.website else 'Not supplied' }}</dd>
-        <dt>Destination</dt><dd data-review-url>{{ inspection.events_host }}/{{ inspection.destination }}/</dd>
-        <dt>Database</dt><dd>{{ inspection.db_action }} {{ inspection.info.uid if inspection.info else '—' }}</dd>
-        <dt>PHP</dt><dd>{{ (inspection.website.php_files|string) ~ ' detected / disabled' if inspection.website else 'not detected / disabled' }}</dd>
+        <dt>Conference</dt><dd>{{ inspection.website.event if inspection.website else inspection.info.title }}</dd>
+        <dt>WEBSITE</dt><dd>{{ inspection.website.files ~ ' files / ' ~ ((inspection.website.unpacked_bytes / 1048576)|round(2)) ~ ' MB → publish' if inspection.website else 'Not supplied — no filesystem changes' }}</dd>
+        {% if inspection.website %}<dt>Destination</dt><dd data-review-url>{{ inspection.events_host }}/{{ inspection.destination }}/</dd>{% endif %}
+        <dt>INFO / Event</dt><dd>{{ inspection.db_action ~ ' ' ~ inspection.info.uid if inspection.info else 'Not supplied — no Event changes' }}</dd>
+        {% if inspection.info %}<dt>Forthcoming</dt><dd data-review-forthcoming>Choose Yes or No in Settings</dd>{% endif %}
+        <dt>PHP</dt><dd>{{ (inspection.website.php_files|string) ~ ' detected / disabled' if inspection.website else 'No WEBSITE package' }}</dd>
         <dt>Warnings</dt><dd>{{ inspection.warnings|length }}</dd>
       </dl>
       {% if inspection.warnings %}<label class="check-row warning-accept"><input type="checkbox" name="accept_warnings" value="1" required><span><strong>I reviewed and accept {{ inspection.warnings|length }} warning(s)</strong><small>Blocking errors can never be overridden.</small></span></label>{% endif %}
@@ -127,7 +146,7 @@
     </section>
 
     <section class="wizard-panel event-import-panel" data-wizard-panel="6" aria-live="polite">
-      <div class="event-import-progress"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><div><h2>Importing conference site</h2><p>Validating again, updating metadata, and swapping only the selected event directory.</p></div></div>
+      <div class="event-import-progress"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><div><h2>Importing packages</h2><p>Validating again, publishing WEBSITE files when present, and creating/updating the Event from INFO when present.</p></div></div>
     </section>
   </form>
   {% endif %}
