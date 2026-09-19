@@ -54,7 +54,7 @@ def _info(*, slug: str = "plmcn-2027", uid: str = "event_plmcn_2027",
           bad_hash: bool = False, omit_asset: bool = False) -> bytes:
     asset_bytes = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0 0h1v1z"/></svg>'
     assets = [{
-        "path": "logo.svg", "role": "logo", "kind": "image",
+        "path": "image/logo.svg", "role": "logo", "kind": "image",
         "storage_status": "packaged",
     }] if asset else []
     record = {
@@ -72,7 +72,7 @@ def _info(*, slug: str = "plmcn-2027", uid: str = "event_plmcn_2027",
     files = []
     if asset:
         files.append({
-            "archive_path": "assets/logo.svg", "size": len(asset_bytes),
+            "archive_path": "assets/image/logo.svg", "size": len(asset_bytes),
             "sha256": "0" * 64 if bad_hash else hashlib.sha256(asset_bytes).hexdigest(),
         })
     manifest = {
@@ -85,7 +85,7 @@ def _info(*, slug: str = "plmcn-2027", uid: str = "event_plmcn_2027",
         archive.writestr("manifest.json", json.dumps(manifest))
         archive.writestr("records.jsonl", records)
         if asset and not omit_asset:
-            archive.writestr("assets/logo.svg", asset_bytes)
+            archive.writestr("assets/image/logo.svg", asset_bytes)
     return output.getvalue()
 
 
@@ -148,6 +148,7 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
     assert "SHA-256 verified" in body
     assert "PHP files detected: 1" in body
     assert "events.vpsbox.home.arpa/PLMCN-2027/" in body
+    assert "Add this Event to the homepage Forthcoming section?" in body
     token = body.split('name="token" value="', 1)[1].split('"', 1)[0]
 
     imported = client.post(
@@ -165,10 +166,27 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
         event = conn.execute("SELECT * FROM events WHERE uid='event_plmcn_2027'").fetchone()
         assert event is not None
         assert event["is_featured"] == 1
-        assert event["review_status"] == "review"
+        assert event["review_status"] == "published"
         site = conn.execute("SELECT * FROM conference_sites").fetchone()
         assert site["public_path"] == "PLMCN-2027"
         assert json.loads(site["package_manifest_json"])["php_execution"] == "disabled"
+        assert event["remote_url"] == "https://events.vpsbox.home.arpa/PLMCN-2027/"
+    events_page = client.get("/dashboard/events")
+    assert events_page.status_code == 200
+    assert "PLMCN 2027" in events_page.get_data(as_text=True)
+    public_events = client.get("/events")
+    assert public_events.status_code == 200
+    assert "PLMCN 2027" in public_events.get_data(as_text=True)
+    home = client.get("/")
+    assert home.status_code == 200
+    assert "PLMCN 2027" in home.get_data(as_text=True)
+    # Portable INFO packages may use legacy DB paths such as image/logo.svg.
+    # Dashboard previews must preserve that subdirectory instead of stripping it.
+    assert (Path(app.config["ASSETS_DIR"]) / "image/logo.svg").is_file()
+    dashboard_events_body = events_page.get_data(as_text=True)
+    assert "/dashboard/assets/image/logo.svg" in dashboard_events_body
+    assert client.get("/dashboard/assets/image/logo.svg").status_code == 200
+
     conference_page = client.get("/dashboard/conferences").get_data(as_text=True)
     assert "Website installed" in conference_page
     assert "Open" in conference_page
@@ -382,8 +400,13 @@ def test_info_only_creates_event_without_publishing_files_and_asks_forthcoming(a
         event = conn.execute("SELECT * FROM events WHERE uid='event_plmcn_2027'").fetchone()
         assert event is not None
         assert event["is_featured"] == 1
-        assert event["review_status"] == "review"
+        assert event["review_status"] == "published"
         assert conn.execute("SELECT COUNT(*) FROM conference_sites").fetchone()[0] == 0
+    dashboard_events = client.get("/dashboard/events")
+    assert dashboard_events.status_code == 200
+    assert "PLMCN 2027" in dashboard_events.get_data(as_text=True)
+    assert "PLMCN 2027" in client.get("/events").get_data(as_text=True)
+    assert "PLMCN 2027" in client.get("/").get_data(as_text=True)
 
 
 def test_info_import_requires_explicit_forthcoming_choice(app, client):

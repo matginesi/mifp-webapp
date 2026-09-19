@@ -160,7 +160,7 @@ def _conference_runtime_status(site: dict) -> dict:
     version_state = conference_version_state(enriched)
     enriched["current_version"] = version_state["current_label"]
     enriched["previous_version"] = version_state["previous_label"]
-    rollback = final.parent / f".{final.name}.rollback" if safe_path else None
+    rollback = candidate.parent / f".{candidate.name}.rollback" if safe_path else None
     enriched["rollback_available"] = bool(
         enriched["website_installed"]
         and rollback and rollback.is_dir() and not rollback.is_symlink()

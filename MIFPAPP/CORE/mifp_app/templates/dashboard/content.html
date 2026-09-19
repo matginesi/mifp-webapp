@@ -182,7 +182,7 @@
                 <div class="linked-assets-strip">
                   {% for a in linked_assets.get(r.id, []) %}
                   <span class="linked-asset-card">
-                    {% if a.kind == 'image' and a.path and a.preview_available %}<img src="{{ url_for('dashboard.asset_file', filename=a.path.split('/', 1)[1] if '/' in a.path else a.path) }}" alt="" width="22" height="22" class="linked-asset-thumb" loading="lazy">{% else %}<i class="bi {{ 'bi-image-fill text-warning' if a.kind == 'image' and not a.preview_available else ('bi-file-earmark-pdf' if a.kind == 'pdf' else 'bi-file-earmark-text') }}" title="{{ 'Local file missing' if a.kind == 'image' and not a.preview_available else '' }}"></i>{% endif %}
+                    {% if a.kind == 'image' and a.path and a.preview_available %}<img src="{{ url_for('dashboard.asset_file', filename=a.preview_path) }}" alt="" width="22" height="22" class="linked-asset-thumb" loading="lazy">{% else %}<i class="bi {{ 'bi-image-fill text-warning' if a.kind == 'image' and not a.preview_available else ('bi-file-earmark-pdf' if a.kind == 'pdf' else 'bi-file-earmark-text') }}" title="{{ 'Local file missing' if a.kind == 'image' and not a.preview_available else '' }}"></i>{% endif %}
                     <span class="linked-asset-name">{{ a.original_filename or a.filename }}</span>
                     <small class="linked-asset-role">{{ a.role }}</small>
                     <button class="btn btn-mini btn-outline-danger asset-unlink-btn" data-asset-id="{{ a.id }}" data-section="{{ section }}" data-record-id="{{ r.id }}" title="Unlink asset">&times;</button>

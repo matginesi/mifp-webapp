@@ -118,8 +118,8 @@
           <p class="setting-fact"><span>Metadata action</span><strong>{{ inspection.db_action }} {{ inspection.info.uid }}</strong></p>
           <div class="field">
             <span>Add this Event to the homepage Forthcoming section?</span>
-            <label class="check-row"><input type="radio" name="forthcoming" value="1" required data-forthcoming><span><strong>Yes</strong><small>Set the homepage Forthcoming flag. The Event must also have Published review status to be visible publicly.</small></span></label>
-            <label class="check-row"><input type="radio" name="forthcoming" value="0" required data-forthcoming><span><strong>No</strong><small>Create/update the Event without featuring it in Forthcoming.</small></span></label>
+            <label class="check-row"><input type="radio" name="forthcoming" value="1" required data-forthcoming><span><strong>Yes</strong><small>Publish the Event and feature it in the homepage Forthcoming section.</small></span></label>
+            <label class="check-row"><input type="radio" name="forthcoming" value="0" required data-forthcoming><span><strong>No</strong><small>Publish the Event without featuring it in the homepage Forthcoming section.</small></span></label>
           </div>
           {% else %}
           <p class="setting-fact"><span>Action</span><strong>None — no INFO package supplied</strong></p>

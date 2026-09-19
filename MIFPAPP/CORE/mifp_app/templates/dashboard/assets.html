@@ -171,7 +171,7 @@
       <tbody>
       {% for a in assets %}
         {% set u = usage.get(a.id, 0) %}
-        {% set asset_url = url_for('dashboard.asset_file', filename=a.path.split('/', 1)[1] if a.path and '/' in a.path else a.path) if a.path else (a.source_url or '') %}
+        {% set asset_url = url_for('dashboard.asset_file', filename=a.path) if a.path else (a.source_url or '') %}
         <tr class="record-row" data-row-toggle="asset-{{ a.id }}">
           <td class="asset-col-file">
             {% if a.kind == 'image' and a.path %}

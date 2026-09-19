@@ -19,8 +19,6 @@
   {% endblock %}
 
   {# Self-hosted Inter; headings use a system serif stack. #}
-  <link rel="preload" href="{{ url_for('static', filename='fonts/Inter.woff2', v=static_version) }}" as="font" type="font/woff2">
-
   <link href="{{ url_for('static', filename='css/homepage.css', v=static_version) }}" rel="stylesheet">
   {% block extra_css %}{% endblock %}
 

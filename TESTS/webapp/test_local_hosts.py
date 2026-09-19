@@ -34,6 +34,25 @@ def test_home_arpa_self_resolution_is_idempotent(tmp_path: Path) -> None:
     ) == 1
 
 
+
+def test_home_arpa_honors_explicit_www_and_events_domains(tmp_path: Path) -> None:
+    hosts = tmp_path / "hosts"
+    hosts.write_text("127.0.0.1 localhost\n", encoding="utf-8")
+
+    subprocess.run(
+        [
+            "bash", str(HELPER), "vpsbox.home.arpa", str(hosts),
+            "www-alt.vpsbox.home.arpa", "conference.vpsbox.home.arpa",
+        ],
+        text=True, capture_output=True, check=True,
+    )
+
+    text = hosts.read_text(encoding="utf-8")
+    assert (
+        "127.0.0.1 vpsbox.home.arpa www-alt.vpsbox.home.arpa "
+        "conference.vpsbox.home.arpa"
+    ) in text
+
 def test_public_domain_never_gets_local_hosts_mapping(tmp_path: Path) -> None:
     hosts = tmp_path / "hosts"
     hosts.write_text(

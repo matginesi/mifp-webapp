@@ -480,10 +480,10 @@ if [[ "$DOMAIN" == *.home.arpa ]]; then
   HOST_SHORT="$(hostname -s 2>/dev/null || printf 'vpsbox')"
   if [[ "$(printf '%s\n' "$LAN_IPS" | awk 'NF {count++} END {print count+0}')" == 1 ]]; then
     LAN_IP="$LAN_IPS"
-    printf '\nAdd to your workstation /etc/hosts:\n\n%s %s %s www.%s events.%s\n' \
-      "$LAN_IP" "$HOST_SHORT" "$DOMAIN" "$DOMAIN" "$DOMAIN"
+    printf '\nAdd to your workstation /etc/hosts:\n\n%s %s %s %s %s\n' \
+      "$LAN_IP" "$HOST_SHORT" "$DOMAIN" "$WWW_DOMAIN" "$EVENTS_DOMAIN"
   else
-    printf '\nWorkstation /etc/hosts: LAN IP ambiguous or unavailable. On the VPS run:\n\n  hostname -I\n\nThen map: %s %s www.%s events.%s\n' \
-      "$HOST_SHORT" "$DOMAIN" "$DOMAIN" "$DOMAIN"
+    printf '\nWorkstation /etc/hosts: LAN IP ambiguous or unavailable. On the VPS run:\n\n  hostname -I\n\nThen map: %s %s %s %s\n' \
+      "$HOST_SHORT" "$DOMAIN" "$WWW_DOMAIN" "$EVENTS_DOMAIN"
   fi
 fi

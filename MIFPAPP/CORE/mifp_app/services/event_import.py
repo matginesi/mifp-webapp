@@ -578,11 +578,16 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
                 raise ValueError("Imported event record could not be resolved.")
             event_id = int(row["id"])
             if forthcoming is not None:
-                # Forthcoming visibility is an editorial operator choice, not a
-                # transport property of the INFO package. Public visibility also
-                # depends on the Event review status (normally ``published``).
+                # INFO imported from this wizard is an editorial publication
+                # action: the Event must be visible on the public Events page.
+                # The separate Forthcoming choice only controls homepage
+                # featuring.  Do not inherit a transport-time review status that
+                # would make the newly-created Event disappear from the site.
                 conn.execute(
-                    "UPDATE events SET is_featured=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    """UPDATE events
+                       SET review_status='published', is_featured=?,
+                           updated_at=CURRENT_TIMESTAMP
+                       WHERE id=?""",
                     (1 if forthcoming else 0, event_id),
                 )
 
@@ -606,6 +611,14 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
             ).fetchone()
             event_id = event_id or (int(existing_event["id"]) if existing_event else None)
         domain = events_domain or Config.EVENTS_DOMAIN
+        if import_metadata and event_id:
+            # INFO creates/updates the canonical Event. Its website destination
+            # follows the configured events host even when WEBSITE files are
+            # uploaded later or managed manually.
+            conn.execute(
+                "UPDATE events SET remote_url=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (destination_url(domain, destination), event_id),
+            )
         if publish_website or inspection.website:
             base_manifest = {
                 "event_import": EVENT_WEBSITE_FORMAT_VERSION,

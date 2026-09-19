@@ -160,22 +160,23 @@ def asset_file(filename):
     safe_filename = _safe_asset_filename(filename)
     if not safe_filename:
         return Response("Invalid filename", status=400)
-    assets_dir = current_app.config["ASSETS_DIR"]
+    assets_dir = Path(current_app.config["ASSETS_DIR"])
     try:
         assets_root = assets_dir.resolve()
-        file_path = (assets_root / safe_filename).resolve()
-        file_path.relative_to(assets_root)
+        file_path = resolve_db_asset_path(assets_root, safe_filename)
+        relative_path = str(file_path.relative_to(assets_root))
     except (OSError, ValueError):
         return Response("Invalid filename", status=400)
     if file_path.exists():
-        resp = send_from_directory(str(assets_dir), safe_filename)
+        resp = send_from_directory(str(assets_dir), relative_path)
         if safe_filename.lower().endswith((".pdf", ".svg")):
             resp.headers["Content-Disposition"] = "attachment"
         return resp
     with connect(current_app.config["DATABASE_PATH"]) as conn:
+        normalized = relative_path.replace("\\", "/")
         row = conn.execute(
             "SELECT source_url FROM assets WHERE path IN (?, ?) ORDER BY id DESC LIMIT 1",
-            (safe_filename, f"assets/{safe_filename}"),
+            (normalized, f"assets/{normalized}"),
         ).fetchone()
     if row and row["source_url"]:
         return redirect(row["source_url"])

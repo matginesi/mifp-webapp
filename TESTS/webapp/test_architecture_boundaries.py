@@ -67,6 +67,10 @@ def test_deploy_caddyfile_proxies_to_localhost() -> None:
     assert "respond @events_php_source 404" in caddyfile
     assert "web:8000" not in caddyfile
 
+    bootstrap = _read("deploy", "bootstrap-vps.sh")
+    assert 's/__MIFP_EVENTS_DOMAIN__/$EVENTS_DOMAIN/g' in bootstrap
+    assert '"$DOMAIN" "$WWW_DOMAIN" "$EVENTS_DOMAIN"' in bootstrap
+
 
 def test_production_env_template_is_committed_and_secret_safe() -> None:
     template = _read("deploy", ".env.production.example")

@@ -14,7 +14,7 @@ from werkzeug.wrappers.response import Response
 from ..config import Config
 from ..db.connection import connect
 from ..services.admin_safety import backup_sqlite_database
-from ..services.assets import store_asset
+from ..services.assets import resolve_db_asset_path, store_asset
 from ..services.entity_references import delete_entity_references
 from ..services.dashboard_repository import (
     PUBLIC_TABLES,
@@ -265,9 +265,17 @@ def asset_capabilities(table: str) -> dict[str, Any]:
 
 
 def _with_asset_availability(asset: dict[str, Any]) -> dict[str, Any]:
-    stored_path = str(asset.get("path") or "")
-    filename = stored_path.split("/", 1)[1] if "/" in stored_path else stored_path
-    local_file = Path(current_app.config["ASSETS_DIR"]) / filename if filename else None
+    stored_path = str(asset.get("path") or "").strip()
+    local_file = None
+    preview_path = ""
+    if stored_path:
+        try:
+            assets_root = Path(current_app.config["ASSETS_DIR"]).resolve()
+            local_file = resolve_db_asset_path(assets_root, stored_path)
+            preview_path = str(local_file.relative_to(assets_root))
+        except (OSError, ValueError):
+            local_file = None
+    asset["preview_path"] = preview_path
     asset["preview_available"] = bool(
         asset.get("source_url") or (local_file and local_file.is_file())
     )
