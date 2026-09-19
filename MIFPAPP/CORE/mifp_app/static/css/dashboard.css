@@ -795,18 +795,58 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .transfer-remove-file:hover { color: var(--red); background: var(--red-bg); }
 .transfer-modal .modal-body { padding: 1.25rem; }
 #transferWorking,
-#transferResult { text-align: center; }
+#transferResult { text-align: left; }
+/* Still used by the historical archive import modal. */
 .transfer-status-icon { margin-bottom: .75rem; color: var(--accent); }
-#transferWorking strong { display: block; color: var(--text-bright); }
-#transferWorking p,
-#transferResult p { margin: .25rem 0 .9rem; color: var(--text-2); }
+/* Compact "where are we" sequence, built from the phase keys the server streams. */
+.transfer-phases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem .55rem;
+  margin: 0 0 .65rem;
+  padding: 0;
+  list-style: none;
+}
+.transfer-phases:empty { display: none; }
+.transfer-phases li {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  color: var(--text-3);
+  font-size: .62rem;
+  font-weight: 800;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+.transfer-phase-dot {
+  display: inline-grid;
+  width: .62rem;
+  height: .62rem;
+  place-items: center;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  font-size: .48rem;
+}
+.transfer-phases li[data-state="done"] { color: var(--green); }
+.transfer-phases li[data-state="done"] .transfer-phase-dot::before { content: "\2713"; }
+.transfer-phases li[data-state="active"] { color: var(--accent); }
+.transfer-phases li[data-state="active"] .transfer-phase-dot { background: currentColor; box-shadow: 0 0 0 3px var(--accent-subtle); }
+.transfer-primary { display: grid; gap: .12rem; margin-bottom: .55rem; }
+.transfer-primary strong { color: var(--text-bright); font-size: .84rem; }
+.transfer-primary p { min-height: 1rem; margin: 0; color: var(--text-2); font-size: .7rem; overflow-wrap: anywhere; }
 .transfer-progress-meta {
   display: flex;
   justify-content: space-between;
+  gap: .5rem;
   margin-top: .35rem;
   color: var(--text-3);
   font: 750 .68rem/1.2 var(--font-family-mono);
 }
+.transfer-result-head { display: flex; align-items: center; gap: .7rem; }
+.transfer-result-copy { min-width: 0; }
+.transfer-result-copy h4 { margin: 0; color: var(--text-bright); }
+.transfer-result-copy p { margin: .2rem 0 0; color: var(--text-2); font-size: .74rem; }
+.transfer-result-meta { margin: .6rem 0 0; color: var(--text-3); font-size: .68rem; }
 .transfer-result-mark {
   display: inline-grid;
   place-items: center;
@@ -816,11 +856,18 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   border-radius: 50%;
   font-size: 1.25rem;
 }
+/* The import result places the mark beside its title instead of above it. */
+#transferResult .transfer-result-mark {
+  flex-shrink: 0;
+  width: 2.4rem;
+  height: 2.4rem;
+  margin-bottom: 0;
+  font-size: 1.15rem;
+}
 .transfer-result-mark.is-success { color: var(--green); background: var(--green-bg); }
 .transfer-result-mark.is-warning { color: var(--amber); background: var(--amber-bg); }
 .transfer-result-mark.is-error { color: var(--red); background: var(--red-bg); }
-#transferResult h4 { margin: 0; color: var(--text-bright); }
-#transferErrors { margin-top: .8rem; text-align: left; }
+#transferErrors { margin-top: .8rem; }
 #transferErrors p { margin: .35rem 0 0; font-size: .76rem; }
 @media (prefers-reduced-motion: reduce) {
   .transfer-drop { transition: none; }
@@ -1106,7 +1153,8 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   margin-top: .65rem;
   overflow: auto;
 }
-/* --- Import progress two-panel layout --- */
+.import-progress-files:empty { display: none; }
+/* Still used by the historical archive import modal. */
 .transfer-working-grid {
   display: grid;
   grid-template-columns: .42fr .58fr;
@@ -1198,7 +1246,7 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   height: .32rem;
 }
 
-/* Metrics panel */
+/* Metrics panel (still the vertical stack used by the archive import modal). */
 .transfer-metrics {
   display: flex;
   flex-direction: column;
@@ -1225,21 +1273,63 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   color: var(--text-3);
   font-size: .65rem;
 }
+/* The import modal renders the same cells as one compact horizontal row. */
+#transferMetrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: .35rem;
+  margin-top: .7rem;
+}
+#transferMetrics > div {
+  display: block;
+  min-width: 0;
+  padding: .4rem .5rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+#transferMetrics > div > span,
+#transferMetrics > div > b,
+#transferMetrics > div > small { display: block; }
+#transferMetrics > div > span {
+  overflow: hidden;
+  font-size: .58rem;
+  font-weight: 850;
+  letter-spacing: .04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#transferMetrics > div > b {
+  margin-top: .1rem;
+  font-size: .95rem;
+  font-variant-numeric: tabular-nums;
+}
+#transferMetrics > div > small { font-size: .6rem; }
 
-/* Activity log panel */
+/* Activity (base still used by the archive import modal). */
 .transfer-activity {
   display: flex;
   flex-direction: column;
   gap: .35rem;
   margin-top: auto;
 }
+.transfer-activity-head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
 .transfer-activity-label {
   color: var(--text-3);
   font-size: .62rem;
   font-weight: 850;
-  text-transform: uppercase;
   letter-spacing: .06em;
+  text-transform: uppercase;
 }
+.transfer-activity-toggle {
+  padding: 0;
+  color: var(--accent);
+  border: 0;
+  background: transparent;
+  font-size: .64rem;
+  font-weight: 800;
+}
+.transfer-activity-toggle:hover { text-decoration: underline; }
 .transfer-activity-log {
   display: flex;
   flex-direction: column;
@@ -1250,6 +1340,11 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   border-radius: var(--radius-sm);
   background: var(--surface-2);
 }
+/* The import modal keeps the newest two entries visible and discloses the rest.
+   `flex-end` keeps the newest lines anchored when the collapsed box overflows. */
+#transferActivity { display: grid; gap: .3rem; margin-top: .7rem; }
+#transferActivity .transfer-activity-log { max-height: 3.3rem; min-height: 0; overflow: hidden; justify-content: flex-end; }
+#transferActivity.is-open .transfer-activity-log { max-height: 12rem; overflow: auto; }
 .transfer-activity-entry {
   display: grid;
   grid-template-columns: .85rem minmax(0, 1fr);
@@ -1263,6 +1358,14 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .transfer-activity-entry.is-progress i { color: var(--accent); }
 .transfer-activity-entry.is-done i { color: var(--green); }
 .transfer-activity-entry.is-error, .transfer-activity-entry.is-error i { color: var(--red); }
+@media (max-width: 720px) {
+  .transfer-modal .modal-body { padding: .85rem; }
+  #transferMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .transfer-result-head { align-items: flex-start; }
+}
+@media (max-width: 420px) {
+  #transferMetrics { grid-template-columns: 1fr; }
+}
 
 
 /* ════════════════════════════════════════════════════════════════════════

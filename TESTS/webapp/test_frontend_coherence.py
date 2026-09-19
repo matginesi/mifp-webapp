@@ -267,6 +267,57 @@ def test_shared_progress_primitive_is_the_only_implementation():
         assert "window.MIFPUI.elapsedLabel(" in source
 
 
+def test_transfer_modal_has_one_primary_status_and_a_phase_model():
+    """The working area names exactly one current phase.
+
+    The primary label and the totem badge are written by a single helper, so
+    "Uploading package…" can no longer survive into server processing. The
+    phase sequence is derived from the phase keys the server already streams.
+    """
+    template = _read(TEMPLATES / "dashboard" / "data_portability.html")
+    script = _read(JS / "dashboard" / "data-portability.js")
+
+    for element_id in (
+        "transferPhases",
+        "transferStatus",
+        "transferActivityToggle",
+        "transferResultMeta",
+    ):
+        assert f'id="{element_id}"' in template, element_id
+    assert "spinner-border" not in template, "the dominant spinner was removed"
+    assert "transfer-status-icon" not in template
+    assert "transfer-working-grid" not in template
+
+    assert script.count("status.textContent") == 1, "status writes must go through one helper"
+    assert script.count("transferTotemState.textContent") == 1
+    assert "function setPrimaryStatus(" in script
+    assert "function buildPhases(" in script
+    assert "function markPhase(" in script
+    assert "PHASE_SETS" in script
+
+
+def test_transfer_activity_is_collapsible_and_the_result_is_summarised():
+    template = _read(TEMPLATES / "dashboard" / "data_portability.html")
+    script = _read(JS / "dashboard" / "data-portability.js")
+    css = _read(CSS / "dashboard.css")
+
+    assert 'class="transfer-activity-log"' in template
+    assert 'class="transfer-activity-toggle"' in template
+    assert "#transferActivity.is-open" in css
+    # The old unbounded 4-entry activity cap and the vertical metric stack are gone.
+    assert "while (entries.length > 4)" not in script
+    assert "transfer-result-meta" in css
+    assert ".transfer-metrics" in css
+    assert "Stopped during:" in script
+
+
+def test_transfer_cancel_labels_describe_the_real_action():
+    """Cancel aborts the upload; after the job is queued it stops the import."""
+    script = _read(JS / "dashboard" / "data-portability.js")
+    assert "Cancel upload" in script
+    assert "Stop import" in script
+
+
 def test_css_section_markers_are_honest_reading_aids():
     """The two bundles are canonical.
 

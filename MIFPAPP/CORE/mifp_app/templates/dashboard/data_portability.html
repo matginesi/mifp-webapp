@@ -213,40 +213,44 @@
                ('Assets', '—', 'transferTotemAssets'),
              ]) }}
         <div id="transferWorking">
-          <div class="transfer-working-grid">
-            <div class="transfer-left">
-              <div class="transfer-status-icon"><span class="spinner-border" role="status"></span></div>
-              <strong id="transferStatus">Preparing…</strong>
-              <p id="transferDetail"></p>
-              <div class="import-progress-bar is-loading" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="transferProgress"></span></div>
-              <div class="transfer-progress-meta" aria-live="polite">
-                <span id="transferPercent">Waiting…</span>
-                <span id="transferElapsed">00:00</span>
-              </div>
-              <div class="transfer-metrics" id="transferMetrics">
-                <div><span>Records</span><b id="metricsRecords">0</b><small id="metricsRecordsTotal"></small></div>
-                <div><span>Inserted</span><b id="metricsInserted">0</b></div>
-                <div><span>Updated</span><b id="metricsUpdated">0</b></div>
-                <div><span>Assets</span><b id="metricsAssets">0</b></div>
-                <div><span>Errors</span><b id="metricsErrors">0</b></div>
-                <div id="metricsRecordErrorsRow" hidden><span>Record err</span><b id="metricsRecordErrors">0</b></div>
-                <div id="metricsAssetErrorsRow" hidden><span>Asset err</span><b id="metricsAssetErrors">0</b></div>
-                <div id="metricsSkippedRow" hidden><span>Skipped</span><b id="metricsSkipped">0</b></div>
-              </div>
+          <ol class="transfer-phases" id="transferPhases" aria-label="Operation phases"></ol>
+          <div class="transfer-primary">
+            <strong id="transferStatus">Preparing…</strong>
+            <p id="transferDetail"></p>
+          </div>
+          <div class="import-progress-bar is-loading" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="transferProgress"></span></div>
+          <div class="transfer-progress-meta" aria-live="polite">
+            <span id="transferPercent">Waiting…</span>
+            <span id="transferElapsed">00:00 elapsed</span>
+          </div>
+          <div class="transfer-metrics" id="transferMetrics">
+            <div><span>Records</span><b id="metricsRecords">0</b><small id="metricsRecordsTotal"></small></div>
+            <div><span>Inserted</span><b id="metricsInserted">0</b></div>
+            <div><span>Updated</span><b id="metricsUpdated">0</b></div>
+            <div><span>Assets</span><b id="metricsAssets">0</b></div>
+            <div><span>Errors</span><b id="metricsErrors">0</b></div>
+            <div id="metricsRecordErrorsRow" hidden><span>Record err</span><b id="metricsRecordErrors">0</b></div>
+            <div id="metricsAssetErrorsRow" hidden><span>Asset err</span><b id="metricsAssetErrors">0</b></div>
+            <div id="metricsSkippedRow" hidden><span>Skipped</span><b id="metricsSkipped">0</b></div>
+          </div>
+          <div class="import-progress-files" id="transferFilesProgress"></div>
+          <div class="transfer-activity" id="transferActivity">
+            <div class="transfer-activity-head">
+              <span class="transfer-activity-label">Activity</span>
+              <button type="button" class="transfer-activity-toggle" id="transferActivityToggle" aria-expanded="false" hidden>Show activity log</button>
             </div>
-            <div class="transfer-right">
-              <div class="import-progress-files" id="transferFilesProgress"></div>
-              <div class="transfer-activity" id="transferActivity">
-                <span class="transfer-activity-label">Activity</span>
-                <div class="transfer-activity-log" id="transferActivityLog"></div>
-              </div>
-            </div>
+            <div class="transfer-activity-log" id="transferActivityLog"></div>
           </div>
         </div>
         <div id="transferResult" hidden>
-          <div class="transfer-result-mark" id="transferResultMark"></div>
-          <h4 id="transferResultTitle"></h4>
-          <p id="transferResultMessage"></p>
+          <div class="transfer-result-head">
+            <div class="transfer-result-mark" id="transferResultMark"></div>
+            <div class="transfer-result-copy">
+              <h4 id="transferResultTitle"></h4>
+              <p id="transferResultMessage"></p>
+            </div>
+          </div>
+          <p class="transfer-result-meta" id="transferResultMeta" hidden></p>
           <div class="import-result-grid" id="transferResultGrid"></div>
           <div class="import-result-bytype" id="transferResultByType" hidden>
             <span class="import-result-bytype-label">By type</span>

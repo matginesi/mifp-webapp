@@ -92,6 +92,10 @@
   var transferTotemMode = document.getElementById('transferTotemMode');
   var transferTotemFormat = document.getElementById('transferTotemFormat');
   var transferTotemAssets = document.getElementById('transferTotemAssets');
+  var phases = document.getElementById('transferPhases');
+  var activity = document.getElementById('transferActivity');
+  var activityToggle = document.getElementById('transferActivityToggle');
+  var resultMeta = document.getElementById('transferResultMeta');
   var startedAt = 0;
   var clockTimer = null;
   var streamBuffer = '';
@@ -109,6 +113,11 @@
   var pendingExportFormat = null;
   var pendingImportRequest = null;
   var importBatchContext = null;
+  var operationKind = 'import';
+  var operationDryRun = false;
+  var activityCount = 0;
+  var phaseEls = {};
+  var lastPhaseLabel = '';
 
   if (importAuthElement) {
     importAuthElement.addEventListener('shown.bs.modal', function () {
@@ -138,10 +147,89 @@
     if (transferTotemEyebrow) transferTotemEyebrow.textContent = options.eyebrow || 'Data transfer';
     if (transferTotemTitle) transferTotemTitle.textContent = options.title || 'Preparing operation';
     if (transferTotemMeta) transferTotemMeta.textContent = options.meta || 'Waiting for transfer metadata';
-    if (transferTotemState) transferTotemState.textContent = options.status || 'Preparing';
     if (transferTotemMode) transferTotemMode.textContent = options.mode || '—';
     if (transferTotemFormat) transferTotemFormat.textContent = options.format || '—';
     if (transferTotemAssets) transferTotemAssets.textContent = options.assets || '—';
+  }
+
+  /* The single writer for the operation's current state: the primary label and
+     the totem badge can never disagree, so "Uploading package…" cannot survive
+     into server processing. */
+  function setPrimaryStatus(label, badge) {
+    if (status) status.textContent = label;
+    if (transferTotemState) transferTotemState.textContent = badge || label;
+  }
+
+  function setCancelLabel(label) {
+    if (!cancelButton || cancelButton.hidden) return;
+    cancelButton.innerHTML = '<i class="bi bi-x-circle"></i> ' + label;
+  }
+
+  var PHASE_SETS = {
+    import: [['upload', 'Upload'], ['backup', 'Backup'], ['importing', 'Import'], ['assets', 'Assets'], ['result', 'Finalize']],
+    validate: [['upload', 'Upload'], ['importing', 'Validate'], ['result', 'Finalize']],
+    export: [['bundle', 'Build']],
+  };
+
+  var PHASE_LABELS = {
+    backup: 'Creating database backup…',
+    assets: 'Importing assets…',
+    result: 'Finalizing…',
+    bundle: 'Building package…',
+  };
+
+  function phaseLabel(phaseKey, fallback) {
+    if (phaseKey === 'importing') return operationDryRun ? 'Validating package…' : 'Processing records…';
+    return PHASE_LABELS[phaseKey] || fallback || 'Processing…';
+  }
+
+  function phaseBadge(phaseKey) {
+    return ({ upload: 'Uploading', backup: 'Backup', importing: 'Processing', assets: 'Assets', result: 'Finalizing', bundle: 'Building' })[phaseKey] || 'Processing';
+  }
+
+  function buildPhases() {
+    if (!phases) return;
+    var set = operationKind === 'export'
+      ? PHASE_SETS.export
+      : (operationDryRun ? PHASE_SETS.validate : PHASE_SETS.import);
+    phases.replaceChildren();
+    phaseEls = {};
+    set.forEach(function (step) {
+      var item = document.createElement('li');
+      item.dataset.phase = step[0];
+      item.dataset.state = 'pending';
+      var dot = document.createElement('span');
+      dot.className = 'transfer-phase-dot';
+      var label = document.createElement('span');
+      label.textContent = step[1];
+      item.append(dot, label);
+      phases.appendChild(item);
+      phaseEls[step[0]] = item;
+    });
+  }
+
+  function markPhase(phaseKey, state) {
+    var keys = Object.keys(phaseEls);
+    var index = keys.indexOf(phaseKey);
+    if (index === -1) return;
+    keys.forEach(function (key, position) {
+      phaseEls[key].dataset.state = position < index ? 'done' : position === index ? state : 'pending';
+    });
+  }
+
+  function setActivityOpen(open) {
+    if (!activity) return;
+    activity.classList.toggle('is-open', open);
+    if (activityToggle) {
+      activityToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      activityToggle.textContent = open ? 'Hide activity log' : 'Show activity log';
+    }
+  }
+
+  function formatDuration(seconds) {
+    var total = Math.max(0, Math.round(Number(seconds) || 0));
+    var minutes = Math.floor(total / 60);
+    return minutes ? minutes + 'm ' + (total % 60) + 's' : total + 's';
   }
 
   function selectedFormatLabel(files) {
@@ -245,23 +333,39 @@
     copy.textContent = message;
     row.append(itemIcon, copy);
     activityLog.appendChild(row);
-    var entries = activityLog.children;
-    while (entries.length > 4) entries[0].remove();
+    activityCount += 1;
+    while (activityLog.children.length > 200) activityLog.firstElementChild.remove();
+    if (activityToggle) activityToggle.hidden = activityCount <= 2;
   }
 
-  function setPhase(message, description, value) {
-    status.textContent = message;
+  if (activityToggle) {
+    activityToggle.addEventListener('click', function () {
+      setActivityOpen(!activity.classList.contains('is-open'));
+    });
+  }
+
+  function setPhase(message, description, value, phaseKey) {
+    lastPhaseLabel = message;
+    setPrimaryStatus(message, phaseBadge(phaseKey));
+    if (phaseKey) markPhase(phaseKey, 'active');
     detail.textContent = description || '';
     if (value != null) setProgress(value);
     logEvent(message, value === 100 ? 'done' : 'active');
   }
 
-  function resetModal(modalTitle, message) {
+  function resetModal(modalTitle, message, kind, dryRun) {
+    operationKind = kind || 'import';
+    operationDryRun = Boolean(dryRun);
     title.textContent = modalTitle;
-    status.textContent = message;
-    setTransferTotem({ title: modalTitle, meta: message, status: 'Preparing', mode: '—', format: '—', assets: '—', icon: 'bi-arrow-left-right' });
+    setTransferTotem({ title: modalTitle, meta: message, mode: '—', format: '—', assets: '—', icon: 'bi-arrow-left-right' });
+    setPrimaryStatus(message, 'Preparing');
+    buildPhases();
     detail.textContent = '';
     activityLog.replaceChildren();
+    activityCount = 0;
+    lastPhaseLabel = '';
+    setActivityOpen(false);
+    if (activityToggle) activityToggle.hidden = true;
     filesContainer.replaceChildren();
     fileProgressEls = {};
     metricsRecords.textContent = '0';
@@ -282,9 +386,9 @@
     progress.style.removeProperty('width');
     percent.textContent = 'Working…';
     startedAt = Date.now();
-    elapsed.textContent = '00:00';
+    elapsed.textContent = '00:00 elapsed';
     clearInterval(clockTimer);
-    clockTimer = window.setInterval(function () { elapsed.textContent = window.MIFPUI.elapsedLabel(Date.now() - startedAt); }, 500);
+    clockTimer = window.setInterval(function () { elapsed.textContent = window.MIFPUI.elapsedLabel(Date.now() - startedAt) + ' elapsed'; }, 500);
     working.hidden = false;
     result.hidden = true;
     footer.hidden = false;
@@ -292,7 +396,12 @@
     lastStreamError = null;
     activeImportJobId = null;
     activeImportCancelUrl = null;
-    if (cancelButton) { cancelButton.hidden = false; cancelButton.disabled = false; cancelButton.innerHTML = '<i class="bi bi-x-circle"></i> Cancel'; }
+    if (resultMeta) { resultMeta.hidden = true; resultMeta.textContent = ''; }
+    if (cancelButton) {
+      cancelButton.hidden = operationKind === 'export';
+      cancelButton.disabled = false;
+      setCancelLabel(operationKind === 'export' ? 'Cancel' : 'Cancel upload');
+    }
     if (downloadButton) {
       downloadButton.hidden = true;
       downloadButton.removeAttribute('href');
@@ -338,7 +447,10 @@
     resultMark.replaceChildren(icon(resultIcon));
     if (transferTotem) {
       transferTotem.dataset.state = modifier === 'is-error' ? 'error' : modifier === 'is-warning' ? 'warning' : 'success';
-      if (transferTotemState) transferTotemState.textContent = payload.download_token ? 'Ready to download' : (payload.ok ? 'Completed' : 'Failed');
+      setPrimaryStatus(
+        payload.download_token ? 'Ready to download' : (payload.ok ? 'Completed' : 'Failed'),
+        payload.download_token ? 'Ready' : (payload.ok ? 'Completed' : 'Failed')
+      );
       if (payload.filename && transferTotemTitle) transferTotemTitle.textContent = payload.filename;
       if (payload.filename && transferTotemMeta) {
         transferTotemMeta.textContent = (payload.bytes ? window.MIFP.formatBytes(Number(payload.bytes)) + ' · ' : '') + 'Generated successfully';
@@ -346,6 +458,14 @@
     }
     resultTitle.textContent = payload.title_text || 'Import complete';
     resultMessage.textContent = payload.message || '';
+    if (resultMeta) {
+      var metaParts = [];
+      if (payload.duration_s != null) metaParts.push('Completed in ' + formatDuration(payload.duration_s));
+      if (payload.backup_created) metaParts.push('Database backup created before import.');
+      if (payload.ok === false && lastPhaseLabel) metaParts.push('Stopped during: ' + lastPhaseLabel.replace(/…$/, ''));
+      resultMeta.textContent = metaParts.join(' · ');
+      resultMeta.hidden = metaParts.length === 0;
+    }
     var smartMerge = document.getElementById('transferSmartMerge');
     if (smartMerge) {
       var changed = Number(payload.inserted || 0) + Number(payload.updated || 0);
@@ -455,9 +575,12 @@
       transferLog.info('import.queued', { job_id: activeImportJobId });
       logEvent('Server job queued', 'done');
     } else if (msg.event === 'phase') {
-      setPhase(msg.label, '', msg.percent == null ? null : batchProgress(msg.percent));
-      if (transferTotemState) transferTotemState.textContent = msg.label || 'Processing';
-      logEvent(msg.label, 'active');
+      setPhase(
+        phaseLabel(msg.phase, msg.label),
+        '',
+        msg.percent == null ? null : batchProgress(msg.percent),
+        msg.phase
+      );
     } else if (msg.event === 'progress') {
       var fileEl = fileProgressEls[msg.file];
       if (fileEl && msg.percent != null) {
@@ -689,16 +812,20 @@
     });
     xhr.upload.addEventListener('progress', function (upload) {
       if (!upload.lengthComputable) return;
-      status.textContent = 'Uploading package ' + (batchIndex + 1) + ' of ' + batchTotal + '…';
+      markPhase('upload', 'active');
+      setPrimaryStatus('Uploading package ' + (batchIndex + 1) + ' of ' + batchTotal + '…', 'Uploading');
       detail.textContent = window.MIFP.formatBytes(upload.loaded) + ' of ' + window.MIFP.formatBytes(upload.total) + ' uploaded in this package';
-      if (transferTotemState) transferTotemState.textContent = 'Uploading ' + Math.round((upload.loaded / upload.total) * 100) + '%';
+      if (percent) percent.textContent = Math.round((upload.loaded / upload.total) * 100) + '%';
     });
     xhr.upload.addEventListener('load', function () {
+      markPhase('upload', 'done');
+      setPrimaryStatus(operationDryRun ? 'Validating package…' : 'Processing records…', 'Processing');
+      setCancelLabel(operationDryRun ? 'Stop validation' : 'Stop import');
+      detail.textContent = '';
       logEvent('Upload ' + (batchIndex + 1) + '/' + batchTotal + ' complete · server processing started', 'done');
       progress.parentElement.classList.add('is-loading');
       progress.style.removeProperty('width');
       percent.textContent = 'Processing…';
-      if (transferTotemState) transferTotemState.textContent = 'Server processing';
     });
     xhr.addEventListener('loadend', function () {
       streamBuffer += xhr.responseText.substring(lastStreamPos);
@@ -755,7 +882,9 @@
     var completed = 0;
     try {
       for (var index = 0; index < batches.length; index += 1) {
-        status.textContent = 'Package ' + (index + 1) + ' of ' + batches.length;
+        buildPhases();
+        setPrimaryStatus('Uploading package ' + (index + 1) + ' of ' + batches.length + '…', 'Uploading');
+        setCancelLabel('Cancel upload');
         logEvent('Starting upload ' + (index + 1) + '/' + batches.length + ': ' + batches[index].map(function (file) { return file.name; }).join(', '), 'active');
         var batchResult = await sendImportBatch(batches[index], index, batches.length, password);
         mergeImportResult(summary, batchResult);
@@ -802,16 +931,17 @@
       bytes: totalBytes, dry_run: dryRun,
       skip_assets: Boolean(form.querySelector('[name="skip_assets"]')?.checked),
     });
-    resetModal(dryRun ? 'Check import' : 'Import data', 'Preparing upload queue…');
+    resetModal(dryRun ? 'Check import' : 'Import data', 'Preparing upload queue…', 'import', dryRun);
     setTransferTotem({
       eyebrow: 'Inbound package',
       title: files.length === 1 ? files[0].name : files.length + ' selected files',
       meta: window.MIFP.formatBytes(totalBytes) + ' · ' + batches.length + (batches.length === 1 ? ' upload batch' : ' upload batches'),
-      status: 'Queued', state: 'working', icon: dryRun ? 'bi-shield-check' : 'bi-cloud-arrow-up',
+      state: 'working', icon: dryRun ? 'bi-shield-check' : 'bi-cloud-arrow-up',
       mode: dryRun ? 'Validate only' : 'Import',
       format: selectedFormatLabel(files),
       assets: form.querySelector('[name="skip_assets"]')?.checked ? 'Skip packaged assets' : 'Include packaged assets'
     });
+    setPrimaryStatus('Preparing upload queue…', 'Queued');
     logEvent('Selected ' + files.length + ' file(s) · ' + window.MIFP.formatBytes(totalBytes) + ' · ' + batches.length + ' upload(s)', 'done');
     logEvent(dryRun ? 'Validation mode: database will not be changed' : 'A database backup is created before each upload', 'active');
     modal.show();
@@ -887,7 +1017,7 @@
       }
       transferLog.warn('import.cancel_requested', { job_id: activeImportJobId });
       logEvent('Cancellation requested; rolling back safely…', 'active');
-      status.textContent = 'Cancelling import…';
+      setPrimaryStatus('Cancelling import…', 'Stopping');
       var response = await fetch(activeImportCancelUrl, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'X-CSRF-Token': config.csrfToken, 'X-Requested-With': 'XMLHttpRequest' }
@@ -896,7 +1026,7 @@
       cancelButton.textContent = 'Cancellation requested';
     } catch (error) {
       cancelButton.disabled = false;
-      cancelButton.innerHTML = '<i class="bi bi-x-circle"></i> Cancel';
+      setCancelLabel(activeImportJobId ? (operationDryRun ? 'Stop validation' : 'Stop import') : 'Cancel upload');
       transferLog.error('import.cancel_failed', { message: error && error.message });
       logEvent(error && error.message ? error.message : 'Unable to cancel import', 'error');
     }
@@ -906,14 +1036,15 @@
       setOperationActive(true);
       var fmtUpper = fmt.toUpperCase();
       transferLog.info('export.authorization_submitted', { format: fmt });
-      resetModal('Export data', 'Preparing ' + fmtUpper + '…');
+      resetModal('Export data', 'Preparing ' + fmtUpper + '…', 'export');
       setTransferTotem({
         eyebrow: 'Outbound package',
         title: fmt === 'zip' ? 'Portable MIFP ZIP' : 'Portable MIFP JSONL',
         meta: fmt === 'zip' ? 'Canonical records + durable state + managed local assets' : 'Canonical record stream without packaged files',
-        status: 'Building', state: 'working', icon: fmt === 'zip' ? 'bi-file-earmark-zip' : 'bi-braces',
+        state: 'working', icon: fmt === 'zip' ? 'bi-file-earmark-zip' : 'bi-braces',
         mode: 'Export', format: fmtUpper, assets: fmt === 'zip' ? 'Packaged' : 'Records only'
       });
+      setPrimaryStatus('Preparing ' + fmtUpper + '…', 'Building');
       if (cancelButton) cancelButton.hidden = true;
       logEvent(fmtUpper === 'ZIP' ? 'Collecting records and local assets' : 'Serializing records as JSONL', 'active');
       modal.show();
@@ -1012,7 +1143,7 @@
     downloadButton.addEventListener('click', function () {
       if (!exportDlFilename || !downloadButton.getAttribute('href')) return;
       logEvent('Downloading ' + exportDlFilename, 'done');
-      if (transferTotemState) transferTotemState.textContent = 'Download started';
+      setPrimaryStatus('Download started', 'Download');
       if (transferTotem) transferTotem.dataset.state = 'success';
       transferLog.info('export.download_started', { filename: exportDlFilename });
       window.setTimeout(function () {
@@ -1025,7 +1156,7 @@
   }
 
   if (config.importResult) {
-    resetModal('Import data', 'Import complete');
+    resetModal('Import data', 'Import complete', 'import', Boolean(config.importResult.dry_run));
     modal.show();
     showResult(config.importResult);
   }
