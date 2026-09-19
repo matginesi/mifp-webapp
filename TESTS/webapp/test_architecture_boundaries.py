@@ -378,6 +378,15 @@ def test_deploy_security_hardening_contract() -> None:
     assert "RESTIC_PASSWORD is exposed" in deploy
     assert 'RESTIC_PASSWORD: ""' in compose
     assert "*.sqlite3" in caddy and "*.db" in caddy and "*.sql" in caddy
+    # Conference Editor websites fetch their canonical public conference.yaml
+    # at runtime. It must be served before the generic YAML deny rule, while
+    # private registration settings remain blocked.
+    assert "@events_public_conference_yaml" in caddy
+    assert "file_server @events_public_conference_yaml" in caddy
+    assert "conference\\.yaml$" in caddy
+    assert caddy.index("file_server @events_public_conference_yaml") < caddy.index("respond @events_sensitive_ext 404")
+    assert "*/regform/settings.yaml" in caddy
+    assert "yml|yaml" in caddy
     assert "UnsetEnvironment=SECRET_KEY ADMIN_PASSWORD_HASH SMTP_PASSWORD" in backup_service
     assert "UMask=0077" in backup_service
 

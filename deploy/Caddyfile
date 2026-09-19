@@ -53,6 +53,13 @@ __MIFP_EVENTS_DOMAIN__ {
         # return verbatim, and the same sensitive names at any nesting depth.
         # ``.well-known`` is excluded so ACME/HTTP-01 files stay reachable.
         @events_sensitive_deep path_regexp events_deep ^/(?:.*/)?(?:\.env(?:\..*)?|\.git|\.svn|composer\.(?:json|lock)|regform/(?:settings\.ya?ml|settings\.json|registrations|src))(/|$)
+
+        # Conference Editor sites load this public configuration at runtime.
+        # Serve only the canonical conference.yaml before the generic YAML deny
+        # rule below; private YAML such as regform/settings.yaml stays blocked.
+        @events_public_conference_yaml path_regexp events_conference_yaml ^/(?:[^/]+/){1,4}conference\.yaml$
+        file_server @events_public_conference_yaml
+
         @events_sensitive_ext path_regexp events_ext \.(?i:inc|phps|php[0-9]|pht|module|install|engine|ini|log|htpasswd|htaccess|sh|yml|yaml|toml|dist|save|swp|pem|key|crt|cer|p12|pfx|sqlite[0-9]*(?:-wal|-shm)?|db(?:-wal|-shm)?|ds_store|gitignore|ftpconfig|netrc|npmrc)$
         # Secret *filenames* that carry no telling extension (SSH keys, cloud
         # CLI credentials, password files) and are common in old conference

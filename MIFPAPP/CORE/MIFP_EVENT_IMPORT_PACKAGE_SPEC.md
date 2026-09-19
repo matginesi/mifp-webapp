@@ -76,6 +76,12 @@ Missing, unexpected, or mismatched assets are errors.
 
 ## 8. `conference.yaml`
 
+`conference.yaml` is the intentionally public runtime configuration consumed by
+the Conference Editor website in the browser. The events virtual host serves
+this exact canonical filename while continuing to deny other YAML configuration
+files such as `regform/settings.yaml`.
+
+
 The file must be UTF-8 YAML containing a mapping and be at most 2 MiB. Producers
 should include `site.title`, `site.short_name`, `site.base_url`, and
 `conference.full_name`, `conference.acronym`, `conference.start_date`, and
