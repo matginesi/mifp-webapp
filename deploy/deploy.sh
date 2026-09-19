@@ -411,13 +411,17 @@ sqlite_snapshot_temp() {
   install -d -o "$RUNTIME_UID" -g "$RUNTIME_GID" -m 0750 "$DATA_DIR/tmp"
   snapshot="$(mktemp "$DATA_DIR/tmp/preflight-XXXXXXXX.db")"
   if ! sqlite3 -readonly "$source" ".backup '$snapshot'"; then
-    rm -f -- "$snapshot"
+    rm -f -- "$snapshot" "$snapshot-wal" "$snapshot-shm"
     die "Impossibile creare snapshot SQLite coerente da $source"
   fi
   [[ "$(sqlite3 -readonly "$snapshot" 'PRAGMA quick_check; PRAGMA foreign_key_check;')" == "ok" ]] || {
-    rm -f -- "$snapshot"
+    rm -f -- "$snapshot" "$snapshot-wal" "$snapshot-shm"
     die "Snapshot SQLite di preflight non valida: $source"
   }
+  # SQLite may create WAL shared-memory sidecars while checking a copied DB.
+  # They are transient preflight artifacts and must never survive under the
+  # runtime-owned data tree as root-owned files.
+  rm -f -- "$snapshot-wal" "$snapshot-shm"
   chown "$RUNTIME_UID:$RUNTIME_GID" "$snapshot"
   chmod 0440 "$snapshot"
   printf '%s\n' "$snapshot"
@@ -430,10 +434,10 @@ preflight_image_db() {
     -e DATABASE_PATH=/app/data/mifp.db \
     -v "$snapshot:/app/data/mifp.db:ro" \
     "$image" -m mifp_app.db.runtime_check >/dev/null; then
-    rm -f -- "$snapshot"
+    rm -f -- "$snapshot" "$snapshot-wal" "$snapshot-shm"
     return 0
   fi
-  rm -f -- "$snapshot"
+  rm -f -- "$snapshot" "$snapshot-wal" "$snapshot-shm"
   die "La release $image non è compatibile con il database. Nessuno switch eseguito."
 }
 

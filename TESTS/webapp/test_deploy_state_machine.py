@@ -128,6 +128,7 @@ cp -a "$src". "$dst"/
     _write_executable(
         bin_dir / "sqlite3",
         '''#!/usr/bin/env python3
+import os
 import shutil
 import sys
 
@@ -140,6 +141,8 @@ if backup is not None:
         raise SystemExit(2)
     shutil.copyfile(source, destination)
     raise SystemExit(0)
+if os.environ.get("EMIT_SQLITE_SHM") == "1" and source and "preflight-" in source:
+    open(source + "-shm", "wb").close()
 print("ok")
 ''',
     )
@@ -1051,3 +1054,24 @@ def test_security_check_fails_when_docker_tcp_api_is_exposed(tmp_path: Path) -> 
 
     assert result.returncode != 0
     assert "Docker API TCP port" in result.stdout
+
+
+def test_preflight_snapshot_cleanup_removes_sqlite_sidecars():
+    script = DEPLOY.read_text(encoding="utf-8")
+    block = script.split("sqlite_snapshot_temp() {", 1)[1].split("\n}", 1)[0]
+    assert '"$snapshot-wal"' in block
+    assert '"$snapshot-shm"' in block
+    assert 'rm -f -- "$snapshot-wal" "$snapshot-shm"' in block
+
+
+
+def test_update_cleans_sqlite_preflight_sidecars(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+
+    result = _run(dict(env, LATEST_DIGEST_NUM="2", EMIT_SQLITE_SHM="1"), "update")
+
+    assert result.returncode == 0
+    leftovers = list((home / "data" / "tmp").glob("preflight-*.db-shm"))
+    assert leftovers == []
+

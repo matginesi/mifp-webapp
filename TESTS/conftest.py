@@ -30,6 +30,7 @@ os.environ["CONFERENCES_DIR"] = str(_TEST_RUNTIME / "conferences")
 os.environ["EVENTS_ROOT"] = str(_TEST_RUNTIME / "events")
 os.environ["EVENTS_DOMAIN"] = "events.test"
 os.environ["EVENTS_PHP_STATE_PATH"] = str(_TEST_RUNTIME / "events-php-enabled.txt")
+(_TEST_RUNTIME / "events-php-enabled.txt").touch()
 os.environ["RUNTIME_CONFIG_DIR"] = str(_TEST_RUNTIME / "config")
 os.environ["TMPDIR"] = str(_TEST_RUNTIME / "tmp")
 
