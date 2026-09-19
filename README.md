@@ -166,18 +166,23 @@ migrato senza perdere i valori esistenti e resta un file runtime compatibile.
 Il package `ghcr.io/matginesi/mifp-webapp` è pubblico: `config-check` e `init`
 verificano e scaricano l'immagine anonimamente. `registry-login` resta opzionale
 per eventuali package privati; legge il PAT GitHub senza echo, lo passa a Docker
-via stdin e non lo salva nella configurazione MIFP. `init` usa `latest`
-soltanto per individuare la prima immagine e registra immediatamente il digest
-OCI immutabile. I deploy successivi continuano a usare `sha-<commit>`.
+via stdin e non lo salva nella configurazione MIFP. `init` usa `latest` soltanto per individuare la prima immagine e registra
+immediatamente il digest OCI immutabile. Per la manutenzione ordinaria
+`update-check` confronta il digest attivo con il digest remoto di `:latest`
+senza fare pull o restart; `update` risolve `:latest` e riusa la stessa pipeline
+sicura di `deploy`, persistendo sempre e solo `@sha256:...`.
 
-Uso normale:
+Uso normale dopo un push su `main` e CI verde:
 
 ```bash
-sudo mifpctl deploy sha-<commit>
+sudo mifpctl update-check
+sudo mifpctl update
 sudo mifpctl status
 sudo mifpctl logs
 sudo mifpctl rollback
 ```
+
+Per una release specifica resta disponibile `sudo mifpctl deploy sha-<commit>`.
 
 I micrositi storici di `events.mifp.eu` sono file host-side, non record Flask.
 Prima della pubblicazione il backup passa un preflight che blocca symlink, file

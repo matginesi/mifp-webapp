@@ -54,7 +54,9 @@ Uso normale:
   sudo mifpctl config-check               readiness read-only (exit 0/1)
   sudo mifpctl registry-check             verifica accesso al manifest GHCR
   sudo mifpctl init                       primo avvio da :latest, fissato subito a digest
-  sudo mifpctl deploy sha-<commit>        nuova versione applicazione; il DB non viene modificato
+  sudo mifpctl update-check               controlla se :latest punta a un digest nuovo
+  sudo mifpctl update                     aggiorna in sicurezza al digest corrente di :latest
+  sudo mifpctl deploy sha-<commit>        deploy esplicito; il DB non viene modificato
   sudo mifpctl status
   sudo mifpctl logs
   sudo mifpctl rollback                   torna alla release precedente (anche offline se locale)
@@ -86,8 +88,9 @@ Manutenzione rara:
   sudo mifpctl admin [--username NAME]
   sudo mifpctl admin-reset-password [--username NAME]
 
-Solo init può usare :latest, esclusivamente come selector iniziale. Lo stato
-persistente contiene sempre un digest OCI immutabile.
+`:latest` è solo un canale di discovery: init, update-check e update possono
+consultarlo, ma lo stato persistente contiene sempre un digest OCI immutabile.
+`deploy` continua ad accettare soltanto sha-<commit> o @sha256:... espliciti.
 EOF
 }
 
@@ -269,6 +272,79 @@ do_fix_permissions() {
 
 registry_auth_error() {
   die $'GHCR authentication required.\n\nRun:\n  sudo mifpctl registry-login\n\nThen retry the previous command.'
+}
+
+latest_available_image() {
+  local repo latest anonymous_config inspect_output digest
+  repo="$(image_repository)"
+  latest="$repo:latest"
+  docker buildx version >/dev/null 2>&1 || die "Docker Buildx non disponibile: impossibile risolvere il digest remoto di $latest"
+  anonymous_config="$(mktemp -d)"
+  printf '{"auths":{}}\n' >"$anonymous_config/config.json"
+
+  if inspect_output="$(DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$latest" --format '{{json .Manifest}}' 2>&1)"; then
+    rm -rf -- "$anonymous_config"
+  else
+    rm -rf -- "$anonymous_config"
+    if grep -Eqi 'denied|unauthorized|authentication required|status code: 40[13]|status: 40[13]' <<<"$inspect_output"; then
+      if ! inspect_output="$(docker buildx imagetools inspect "$latest" --format '{{json .Manifest}}' 2>&1)"; then
+        if grep -Eqi 'denied|unauthorized|authentication required|status code: 40[13]|status: 40[13]' <<<"$inspect_output"; then
+          registry_auth_error
+        fi
+        die "Impossibile ispezionare il canale di aggiornamento: $latest"
+      fi
+    else
+      [[ -z "$inspect_output" ]] || printf '%s\n' "$inspect_output" >&2
+      die "Impossibile ispezionare il canale di aggiornamento: $latest"
+    fi
+  fi
+
+  digest="$(python3 -c 'import json,sys; value=json.load(sys.stdin).get("digest", ""); print(value if isinstance(value, str) else "")' <<<"$inspect_output" 2>/dev/null || true)"
+  [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || die "Il registry non ha restituito un digest OCI valido per $latest"
+  printf '%s@%s\n' "$repo" "$digest"
+}
+
+show_update_state() {
+  local repo="$1" current="$2" candidate="$3" available="$4"
+  say "Repository:       $repo"
+  say "Current release:  $current"
+  say "Latest available: $candidate"
+  say "Update available: $available"
+}
+
+do_update_check() {
+  local repo current candidate
+  config_cli validate || die "Configurazione non valida. Esegui: sudo mifpctl configure"
+  ensure_tools
+  repo="$(image_repository)"
+  current="$(current_image || true)"
+  [[ -n "$current" ]] || die "Nessuna release corrente registrata. Usa prima: sudo mifpctl init"
+  validate_release_image "$current"
+  candidate="$(latest_available_image)"
+  if [[ "$candidate" == "$current" ]]; then
+    show_update_state "$repo" "$current" "$candidate" "NO"
+    say "System is already up to date."
+  else
+    show_update_state "$repo" "$current" "$candidate" "YES"
+  fi
+}
+
+do_update() {
+  local repo current candidate
+  validate_production_env; ensure_tools
+  repo="$(image_repository)"
+  current="$(current_image || true)"
+  [[ -n "$current" ]] || die "Nessuna release corrente registrata. Usa prima: sudo mifpctl init"
+  validate_release_image "$current"
+  candidate="$(latest_available_image)"
+  if [[ "$candidate" == "$current" ]]; then
+    show_update_state "$repo" "$current" "$candidate" "NO"
+    say "Already up to date."
+    return 0
+  fi
+  show_update_state "$repo" "$current" "$candidate" "YES"
+  do_deploy "$candidate"
 }
 
 pull_and_pin() {
@@ -1122,10 +1198,13 @@ do_events_rollback() {
 }
 
 do_status() {
-  local current previous php_service events_domain events_count=0
+  local current previous repo php_service events_domain events_count=0
   current="$(current_image || true)"; previous="$(previous_image || true)"
+  repo="$(env_value MIFP_IMAGE_REPOSITORY || true)"
   events_domain="$(config_cli get EVENTS_DOMAIN)"
-  say "Current image:  ${current:-none}"; say "Previous image: ${previous:-none}"
+  say "Current release:    ${current:-none}"
+  say "Previous release:   ${previous:-none}"
+  [[ -z "$repo" ]] || say "Configured channel: $repo:latest"
   [[ -n "$current" ]] && compose_with_image "$current" ps || docker ps --filter label=com.docker.compose.project=mifp || true
   systemctl is-active caddy >/dev/null 2>&1 && say "Caddy: attivo" || say "Caddy: NON attivo"
   if [[ -d "$EVENTS_DIR" ]]; then
@@ -1576,13 +1655,15 @@ do_config_unset() {
 
 command="${1:-status}"
 case "$command" in
-  init|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|rollback-upgrade|rollback|--rollback|restart|stop|admin|admin-reset-password|configure|config-set|config-unset|fix-permissions|security-check|ssh-harden|ssh-rollback|events-import|events-rollback|events-php-enable|events-php-disable)
+  init|update|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|rollback-upgrade|rollback|--rollback|restart|stop|admin|admin-reset-password|configure|config-set|config-unset|fix-permissions|security-check|ssh-harden|ssh-rollback|events-import|events-rollback|events-php-enable|events-php-disable)
     mkdir -p "$(dirname "$LOCK_FILE")"; exec 9>"$LOCK_FILE"; flock -n 9 || die "Un'altra operazione MIFP è già in corso." ;;
 esac
 case "$command" in
   registry-login) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl registry-login"; do_registry_login ;;
   registry-check) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl registry-check"; do_registry_check ;;
   init) shift; do_init "$@" ;;
+  update-check) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl update-check"; do_update_check ;;
+  update) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl update"; do_update ;;
   first-deploy) shift; do_first_deploy "$@" ;;
   deploy) shift; do_deploy "$@" ;;
   init-db) shift; do_init_db "$@" ;;

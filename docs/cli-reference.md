@@ -33,6 +33,8 @@ sudo mifpctl registry-check
 sudo mifpctl admin-reset-password [--username NAME]
 sudo mifpctl registry-login
 sudo mifpctl init
+sudo mifpctl update-check
+sudo mifpctl update
 sudo mifpctl deploy sha-<commit>
 sudo mifpctl status
 sudo mifpctl logs
@@ -60,9 +62,12 @@ prova prima l'accesso anonimo. `registry-login` è opzionale e serve soltanto se
 un registry o package privato risponde realmente `unauthorized`/`denied`; il PAT
 rimane nel credential store Docker, mai nella configurazione MIFP.
 
-`init` è l'unico comando autorizzato a usare `latest`, solo come selector:
-`release.env` conserva sempre il digest OCI risolto. `first-deploy sha-<commit>`
-resta disponibile soltanto per compatibilità operativa.
+`init`, `update-check` e `update` possono consultare `latest` come canale di
+discovery, ma `release.env` conserva sempre e soltanto il digest OCI risolto.
+`update-check` è read-only; `update` non riavvia nulla quando il digest è già
+attivo e, quando cambia, riusa il motore di `deploy`. Il comando esplicito
+`deploy` continua a rifiutare tag mutabili. `first-deploy sha-<commit>` resta
+disponibile soltanto per compatibilità operativa.
 
 Manutenzione rara:
 

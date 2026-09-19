@@ -408,12 +408,24 @@ un hostname errato.
 
 ## 4. Deploy delle versioni successive
 
-Recupera il commit completo pubblicato dalla CI. Il tag GHCR corrispondente è
-`sha-<commit>`:
+Dopo un push su `main`, attendi che GitHub Actions sia verde e usa il canale
+`latest` soltanto per scoprire la release verificata più recente:
+
+```bash
+sudo mifpctl update-check
+sudo mifpctl update
+sudo mifpctl status
+sudo mifpctl doctor
+```
+
+`update-check` non scarica immagini e non riavvia servizi. `update` risolve
+`:latest` nel digest OCI immutabile e riusa la normale pipeline di deploy. Se
+il digest è già attivo termina con `Already up to date` senza restart.
+
+Per installare esplicitamente un commit pubblicato dalla CI:
 
 ```bash
 sudo mifpctl deploy sha-COMMIT_GIT_COMPLETO
-sudo mifpctl doctor
 ```
 
 Il deploy non modifica il database. L'immagine viene fissata al digest, testata
@@ -471,7 +483,8 @@ sudo mifpctl events-php-disable PLMCN-2027/regform
 sudo mifpctl registry-login
 sudo mifpctl init                  # prima installazione
 # oppure
-sudo mifpctl deploy sha-COMMIT     # aggiornamento
+sudo mifpctl update                # aggiornamento normale da :latest verificato
+# oppure: sudo mifpctl deploy sha-COMMIT
 ```
 
 Controlla che il PAT sia classic, abbia `read:packages` e possa accedere al

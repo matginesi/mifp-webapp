@@ -361,18 +361,28 @@ sudo mifpctl init                  # pulls :latest once, pins the OCI digest
 sudo mifpctl doctor
 ```
 
-`init` is the **only** command that accepts `:latest`, and only as a transient
-selector: it immediately records the immutable `@sha256:…` digest. Every later
-release uses `sha-<commit>`:
+`init` uses `:latest` only as a transient selector and immediately records the
+immutable `@sha256:…` digest. For routine maintenance after a green CI run:
+
+```bash
+sudo mifpctl update-check
+sudo mifpctl update
+sudo mifpctl status
+```
+
+`update-check` reads the remote manifest without pulling or restarting anything.
+`update` resolves `:latest` to its immutable digest and feeds that digest into
+the same deployment engine. To select an exact CI release, use:
 
 ```bash
 sudo mifpctl deploy sha-<commit>
 ```
 
-The deploy validates configuration, disk and the current database, downloads the
-tag, resolves it to a digest, tests the new image against a readable copy of the
-database **before** switching, waits for `/ready`, and records
-`CURRENT_IMAGE`/`PREVIOUS_IMAGE` only after success.
+The deployment engine validates configuration, disk and the current database,
+downloads the image by immutable reference, tests the new image against a
+readable copy of the database **before** switching, waits for `/ready`, and
+records `CURRENT_IMAGE`/`PREVIOUS_IMAGE` only after success. `release.env` never
+persists `:latest`.
 
 ---
 

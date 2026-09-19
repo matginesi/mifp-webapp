@@ -14,15 +14,22 @@ Per l'installazione completa, inclusi DNS, VirtualBox, `.home.arpa`, trust della
 CA locale e troubleshooting, segui la
 [guida passo-passo VPS pubblica e VM](docs/deployment/vps-installation.md).
 
-## I 4 comandi da ricordare
+## I comandi da ricordare
 
-Dopo la prima installazione, normalmente bastano:
+Dopo la prima installazione, per la manutenzione ordinaria bastano:
 
 ```bash
-sudo mifpctl deploy sha-<commit>   # nuova versione; NON modifica il DB
+sudo mifpctl update-check          # read-only: confronta current con :latest
+sudo mifpctl update                # risolve :latest -> digest e deploya in sicurezza
 sudo mifpctl status
 sudo mifpctl logs
 sudo mifpctl rollback              # torna alla release precedente
+```
+
+Per una release specifica o per audit resta disponibile:
+
+```bash
+sudo mifpctl deploy sha-<commit>   # deploy esplicito; NON modifica il DB
 ```
 
 Se qualcosa non torna:
@@ -210,11 +217,23 @@ mail va scelta esplicitamente una configurazione SMTP/MTA o un provider.
 
 ### 1. Nuovo codice
 
+Flusso normale dopo `git push origin main` e GitHub Actions verde:
+
+```bash
+sudo mifpctl update-check
+sudo mifpctl update
+sudo mifpctl status
+```
+
+`update-check` non fa pull, restart o scritture di stato. `update` usa `:latest`
+solo per scoprire il digest candidato e poi passa quel digest immutabile alla
+stessa pipeline del deploy esplicito. Per scegliere una release precisa:
+
 ```bash
 sudo mifpctl deploy sha-<commit>
 ```
 
-Il deploy:
+Il motore di deploy:
 
 1. valida configurazione, spazio e DB corrente;
 2. scarica il tag `sha-*` e lo fissa al digest OCI reale `@sha256:...`;
@@ -224,9 +243,11 @@ Il deploy:
 6. registra `CURRENT_IMAGE`/`PREVIOUS_IMAGE` solo dopo il successo;
 7. conserva localmente corrente e precedente, pulendo vecchie immagini MIFP.
 
-`latest` è ammesso soltanto dal comando iniziale `init` come selector transitorio;
-`deploy` rifiuta `latest` e ogni altro tag mutabile. Il deploy è protetto da `flock`,
-quindi due operazioni di manutenzione non possono sovrapporsi.
+`latest` è unicamente un canale di discovery per `init`, `update-check` e
+`update`; `release.env` non lo persiste mai. `deploy` continua a rifiutare
+`latest` e ogni altro tag mutabile. Le operazioni che modificano la release
+(`update`, `deploy`, rollback) sono protette da `flock`, quindi non possono
+sovrapporsi.
 
 ## Test locale con `.home.arpa`
 

@@ -262,6 +262,11 @@ def test_release_script_tracks_current_and_previous_images() -> None:
     assert '@sha256:' in script
     assert "flock -n 9" in script
     assert "preflight_image_db" in script
+    assert "do_update_check" in script
+    assert "do_update" in script
+    assert "latest_available_image" in script
+    assert "docker buildx imagetools inspect" in script
+    assert "{{json .Manifest}}" in script
     assert 'MIFP_IMAGE="$image"' in script
     assert "sudo -u mifp" not in script
     assert "Esegui deploy.sh come root" in script

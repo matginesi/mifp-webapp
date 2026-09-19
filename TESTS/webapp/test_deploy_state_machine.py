@@ -153,6 +153,7 @@ digest_for() {
   case "$1" in
     *sha-a*) printf '%s@sha256:%064d\n' "$repo" 1 ;;
     *sha-b*) printf '%s@sha256:%064d\n' "$repo" 2 ;;
+    *:latest) printf '%s@sha256:%064d\n' "$repo" "${LATEST_DIGEST_NUM:-9}" ;;
     *@sha256:*) printf '%s\n' "$1" ;;
     *) printf '%s@sha256:%064d\n' "$repo" 9 ;;
   esac
@@ -164,7 +165,20 @@ if [ "${1:-}" = manifest ] && [ "${2:-}" = inspect ]; then
   if [ "${FAIL_MANIFEST_MISSING:-0}" = 1 ]; then echo 'manifest unknown' >&2; exit 1; fi
   exit 0
 fi
+if [ "${1:-}" = buildx ] && [ "${2:-}" = imagetools ] && [ "${3:-}" = inspect ]; then
+  printf '%s\n' "${DOCKER_CONFIG:-authenticated}" >> "$state/imagetools-configs"
+  if [ "${FAIL_IMAGETOOLS_ANON_AUTH:-0}" = 1 ] && [ "${DOCKER_CONFIG:-authenticated}" != authenticated ]; then
+    echo 'denied: requested access to the resource is denied (status: 403)' >&2; exit 1
+  fi
+  if [ "${FAIL_IMAGETOOLS_AUTH:-0}" = 1 ]; then echo 'unauthorized: authentication required' >&2; exit 1; fi
+  if [ "${FAIL_IMAGETOOLS_MISSING:-0}" = 1 ]; then echo 'manifest unknown' >&2; exit 1; fi
+  if [ "${FAIL_IMAGETOOLS_OTHER:-0}" = 1 ]; then echo 'registry transport failed' >&2; exit 1; fi
+  d="$(digest_for "$4")"
+  printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","digest":"%s","size":123,"manifests":[]}\n' "${d#*@}"
+  exit 0
+fi
 if [ "${1:-}" = pull ]; then
+  count="$(cat "$state/pull-count" 2>/dev/null || printf 0)"; printf '%s\n' "$((count + 1))" > "$state/pull-count"
   if [ "${FAIL_PULL:-0}" = 1 ]; then echo 'unauthorized: authentication required' >&2; exit 1; fi
   echo "Pulling from example/mifp"
   echo "Digest: sha256:verbose-progress-must-not-be-returned"
@@ -212,7 +226,7 @@ if [ "${1:-}" = compose ]; then
       exit 0 ;;
     *' down '*) [ "${FAIL_COMPOSE_DOWN:-0}" = 1 ] && exit 41 || exit 0 ;;
     *' ps '*'-q web'*) echo fake-container; exit 0 ;;
-    *' up '*) printf '%s\n' "${MIFP_IMAGE:?}" > "$state/active-image"; exit 0 ;;
+    *' up '*) count="$(cat "$state/compose-up-count" 2>/dev/null || printf 0)"; printf '%s\n' "$((count + 1))" > "$state/compose-up-count"; printf '%s\n' "${MIFP_IMAGE:?}" > "$state/active-image"; exit 0 ;;
     *) exit 0 ;;
   esac
 fi
@@ -414,6 +428,137 @@ def test_init_uses_latest_only_as_selector_and_persists_clean_digest(tmp_path: P
     assert "Pulling from example/mifp" not in release["CURRENT_IMAGE"]
     assert ":latest" not in (home / "release.env").read_text(encoding="utf-8")
     assert (home / "data" / "mifp.db").is_file()
+
+
+
+def test_update_check_is_read_only_and_uses_anonymous_latest_lookup(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+    runtime_env = home / ".env"
+    mode_before = runtime_env.stat().st_mode
+    mtime_before = runtime_env.stat().st_mtime_ns
+    state = Path(env["FAKE_DOCKER_STATE"])
+    pulls_before = (state / "pull-count").read_text(encoding="utf-8").strip()
+    starts_before = (state / "compose-up-count").read_text(encoding="utf-8").strip()
+
+    result = _run(env, "update-check")
+
+    assert "Update available: YES" in result.stdout
+    assert "Current release:" in result.stdout
+    assert "Latest available:" in result.stdout
+    assert _release(home) == before
+    assert runtime_env.stat().st_mode == mode_before
+    assert runtime_env.stat().st_mtime_ns == mtime_before
+    assert (state / "pull-count").read_text(encoding="utf-8").strip() == pulls_before
+    assert (state / "compose-up-count").read_text(encoding="utf-8").strip() == starts_before
+    latest = "ghcr.io/example/mifp@sha256:" + "0" * 63 + "9"
+    latest_key = latest.translate(str.maketrans("/:@", "___"))
+    assert not (state / latest_key).exists(), "update-check must not pull the candidate image"
+    configs = (state / "imagetools-configs").read_text(encoding="utf-8").splitlines()
+    assert len(configs) == 1
+    assert configs[0] != "authenticated"
+
+
+def test_update_check_reports_already_current_digest(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "init")
+    before = _release(home)
+
+    result = _run(env, "update-check")
+
+    assert result.returncode == 0
+    assert "Update available: NO" in result.stdout
+    assert "System is already up to date." in result.stdout
+    assert _release(home) == before
+
+
+def test_update_resolves_latest_then_reuses_immutable_deploy(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    first = _release(home)
+
+    result = _run(dict(env, LATEST_DIGEST_NUM="2"), "update")
+
+    second = _release(home)
+    expected = "ghcr.io/example/mifp@sha256:" + "0" * 63 + "2"
+    assert "Update available: YES" in result.stdout
+    assert f"Latest available: {expected}" in result.stdout
+    assert second["CURRENT_IMAGE"] == expected
+    assert second["PREVIOUS_IMAGE"] == first["CURRENT_IMAGE"]
+    assert ":latest" not in (home / "release.env").read_text(encoding="utf-8")
+
+
+def test_update_is_noop_when_latest_digest_is_already_active(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    _run(dict(env, LATEST_DIGEST_NUM="2"), "update")
+    before = _release(home)
+    state = Path(env["FAKE_DOCKER_STATE"])
+    pulls_before = (state / "pull-count").read_text(encoding="utf-8").strip()
+    starts_before = (state / "compose-up-count").read_text(encoding="utf-8").strip()
+
+    result = _run(dict(env, LATEST_DIGEST_NUM="2"), "update")
+
+    assert "Update available: NO" in result.stdout
+    assert "Already up to date." in result.stdout
+    assert _release(home) == before
+    assert (state / "pull-count").read_text(encoding="utf-8").strip() == pulls_before
+    assert (state / "compose-up-count").read_text(encoding="utf-8").strip() == starts_before
+
+
+def test_update_health_failure_preserves_release_and_restores_running_image(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+
+    result = _run(
+        dict(env, LATEST_DIGEST_NUM="2", FAIL_DIGEST_TWO_READY="1", MIFP_READY_ATTEMPTS="1"),
+        "update",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert _release(home) == before
+    active = (Path(env["FAKE_DOCKER_STATE"]) / "active-image").read_text(encoding="utf-8").strip()
+    assert active == before["CURRENT_IMAGE"]
+
+
+def test_update_check_falls_back_to_optional_registry_credentials(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+
+    result = _run(dict(env, FAIL_IMAGETOOLS_ANON_AUTH="1"), "update-check")
+
+    assert result.returncode == 0
+    assert "Update available: YES" in result.stdout
+    configs = (Path(env["FAKE_DOCKER_STATE"]) / "imagetools-configs").read_text(encoding="utf-8").splitlines()
+    assert len(configs) == 2
+    assert configs[0] != "authenticated"
+    assert configs[1] == "authenticated"
+    assert _release(home)["CURRENT_IMAGE"].endswith("@sha256:" + "0" * 63 + "1")
+
+
+def test_update_check_registry_failure_is_read_only(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+
+    result = _run(dict(env, FAIL_IMAGETOOLS_OTHER="1"), "update-check", check=False)
+
+    assert result.returncode != 0
+    assert "Impossibile ispezionare il canale di aggiornamento" in result.stderr
+    assert _release(home) == before
+
+
+def test_status_shows_immutable_release_and_latest_channel_without_network_lookup(tmp_path: Path) -> None:
+    env, _ = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+
+    result = _run(dict(env, FAIL_IMAGETOOLS_OTHER="1"), "status")
+
+    assert "Current release:" in result.stdout
+    assert "Configured channel: ghcr.io/example/mifp:latest" in result.stdout
 
 
 def test_init_refuses_incomplete_progressive_configuration(tmp_path: Path) -> None:
