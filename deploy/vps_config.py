@@ -188,6 +188,10 @@ class Store:
         runtime_updates = {
             "FLASK_ENV": "production" if values.get("ENVIRONMENT", "production") == "production" else "development",
             "MIFP_DOMAIN": domain,
+            # Compose interpolates the public event hostname before the container
+            # starts. Keep it in the runtime env for compatibility, while the
+            # canonical /etc/mifp/config.env is also passed directly to Compose.
+            "EVENTS_DOMAIN": values.get("EVENTS_DOMAIN", ""),
             "MIFP_IMAGE_REPOSITORY": values.get("IMAGE_REPOSITORY", ""),
             "TRUSTED_HOSTS": ",".join(filter(None, [domain, values.get("WWW_DOMAIN", ""), "127.0.0.1", "localhost"])),
             "MAIL_PROVIDER": provider,

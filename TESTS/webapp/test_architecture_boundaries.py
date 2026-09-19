@@ -388,3 +388,8 @@ def test_repository_hygiene_checker_accepts_the_source_tree() -> None:
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Repository hygiene OK" in result.stdout
+
+
+def test_compose_uses_canonical_public_config_for_interpolation() -> None:
+    deploy = _read("deploy", "deploy.sh")
+    assert '--env-file "$ENV_FILE" --env-file "$PUBLIC_CONFIG_FILE"' in deploy

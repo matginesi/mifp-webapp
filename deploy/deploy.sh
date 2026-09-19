@@ -35,7 +35,7 @@ SSHD_DROPIN="${MIFP_SSHD_DROPIN:-/etc/ssh/sshd_config.d/99-mifp-hardening.conf}"
 SSHD_ROLLBACK="${MIFP_SSHD_ROLLBACK:-/root/.mifp-sshd-rollback.conf}"
 RUNTIME_UID="${MIFP_RUNTIME_UID:-10001}"
 RUNTIME_GID="${MIFP_RUNTIME_GID:-10001}"
-COMPOSE_BASE=(docker compose --project-name mifp --project-directory "$MIFP_HOME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+COMPOSE_BASE=(docker compose --project-name mifp --project-directory "$MIFP_HOME" --env-file "$ENV_FILE" --env-file "$PUBLIC_CONFIG_FILE" -f "$COMPOSE_FILE")
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n==> %s\n' "$*"; }

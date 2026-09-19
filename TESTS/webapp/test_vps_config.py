@@ -84,6 +84,14 @@ def test_migration_preserves_legacy_admin_and_moves_secrets(tmp_path: Path) -> N
     assert runtime["SECRET_KEY"] == ""
 
 
+
+def test_runtime_env_keeps_events_domain_for_compose_interpolation(tmp_path: Path) -> None:
+    module, store = _store(tmp_path)
+    store.save(_ready_values())
+    runtime = module.read_env(store.runtime)
+    assert runtime["EVENTS_DOMAIN"] == "events.vpsbox.home.arpa"
+    assert runtime["MIFP_IMAGE_REPOSITORY"] == "ghcr.io/matginesi/mifp-webapp"
+
 def test_legacy_werkzeug_scrypt_admin_hash_is_accepted() -> None:
     module = _module()
     values = _ready_values() | {
