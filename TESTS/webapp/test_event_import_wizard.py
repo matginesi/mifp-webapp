@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from werkzeug.security import generate_password_hash
 
+from mifp_app.services.assets import resolve_db_asset_path
 from mifp_app.services.event_import import (
     apply_import,
     destination_url,
@@ -180,12 +181,27 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
     home = client.get("/")
     assert home.status_code == 200
     assert "PLMCN 2027" in home.get_data(as_text=True)
-    # Portable INFO packages may use legacy DB paths such as image/logo.svg.
-    # Dashboard previews must preserve that subdirectory instead of stripping it.
-    assert (Path(app.config["ASSETS_DIR"]) / "image/logo.svg").is_file()
+    # Portable INFO packages may use legacy package paths such as image/logo.svg.
+    # Normal import intentionally stores local assets using the existing
+    # content-addressed naming convention. Verify the DB-tracked path, the
+    # physical file, and the dashboard URL instead of assuming the ZIP name is
+    # retained verbatim.
+    with _conn(app) as conn:
+        asset = conn.execute(
+            """SELECT a.path FROM assets a
+               JOIN asset_links al ON al.asset_id=a.id
+               WHERE al.entity_type='event' AND al.entity_id=?
+               ORDER BY al.id LIMIT 1""",
+            (event["id"],),
+        ).fetchone()
+    assert asset is not None
+    asset_file = resolve_db_asset_path(Path(app.config["ASSETS_DIR"]), asset["path"])
+    assert asset_file.is_file()
+    asset_preview_path = asset_file.relative_to(Path(app.config["ASSETS_DIR"]).resolve()).as_posix()
+    dashboard_asset_url = f"/dashboard/assets/{asset_preview_path}"
     dashboard_events_body = events_page.get_data(as_text=True)
-    assert "/dashboard/assets/image/logo.svg" in dashboard_events_body
-    assert client.get("/dashboard/assets/image/logo.svg").status_code == 200
+    assert dashboard_asset_url in dashboard_events_body
+    assert client.get(dashboard_asset_url).status_code == 200
 
     conference_page = client.get("/dashboard/conferences").get_data(as_text=True)
     assert "Website installed" in conference_page

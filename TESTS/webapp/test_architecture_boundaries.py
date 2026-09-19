@@ -360,6 +360,9 @@ def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
     checker_text = checker.read_text(encoding="utf-8")
     assert '"MIFPAPP/DATABASE/events/"' in checker_text
     assert '"MIFPAPP/DATABASE/events-php-enabled.txt"' in checker_text
+    gitignore_lines = {line.strip() for line in gitignore.splitlines()}
+    assert "MIFPAPP/DATABASE/events/" in gitignore_lines
+    assert "MIFPAPP/DATABASE/events-php-enabled.txt" in gitignore_lines
 
 
 def test_deploy_security_hardening_contract() -> None:
