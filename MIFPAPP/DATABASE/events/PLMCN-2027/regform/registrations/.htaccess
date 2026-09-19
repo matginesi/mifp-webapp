@@ -1,5 +1,0 @@
-# Deny direct HTTP access to stored registrations using mod_rewrite only.
-<IfModule mod_rewrite.c>
-  RewriteEngine On
-  RewriteRule ^ - [F,L]
-</IfModule>

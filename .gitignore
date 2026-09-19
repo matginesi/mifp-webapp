@@ -117,4 +117,6 @@ MIFPAPP/DATABASE/tmp/
 MIFPAPP/DATABASE/uploads/
 
 
-.superpowers/
+.superpowers//MIFPAPP/DATABASE/events/
+/MIFPAPP/DATABASE/events-php-enabled.txt
+/MIFPAPP/DATABASE/events/
