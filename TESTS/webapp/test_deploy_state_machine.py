@@ -102,7 +102,10 @@ ln -sfn "$stamp" "$root/snapshots/latest"
     _write_executable(
         bin_dir / "systemctl",
         "#!/bin/sh\n"
-        "if [ \"${FAIL_BACKUP_TIMER:-0}\" = 1 ] && "
+        "if [ \"${1:-}\" = is-enabled ] && [ \"${2:-}\" = mifp-backup.timer ]; then "
+        "  if [ \"${BACKUP_TIMER_DISABLED:-0}\" = 1 ]; then echo disabled; exit 1; fi; "
+        "  echo enabled; exit 0; fi\n"
+        "if [ \"${FAIL_BACKUP_TIMER:-0}\" = 1 ] && [ \"${1:-}\" = enable ] && "
         "[ \"${3:-}\" = mifp-backup.timer ]; then exit 1; fi\n"
         "exit 0\n",
     )
@@ -611,6 +614,23 @@ def test_init_backup_timer_failure_is_atomic(tmp_path: Path) -> None:
     assert "timer backup non abilitato" in result.stderr
     assert not (home / "release.env").exists()
     assert not (home / "data" / "mifp.db").exists()
+
+
+def test_first_deploy_respects_disabled_backup_timer(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    config_file = Path(env["MIFP_CONFIG_DIR"]) / "config.env"
+    config_file.write_text(
+        config_file.read_text(encoding="utf-8").replace("BACKUP_ENABLED=true", "BACKUP_ENABLED=false"),
+        encoding="utf-8",
+    )
+
+    # Enabling the timer is forced to fail; a disabled configuration must still
+    # complete because first-deploy should issue disable --now, not enable --now.
+    result = _run(dict(env, FAIL_BACKUP_TIMER="1"), "first-deploy", "sha-a", check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "Backup timer: disabled by configuration" in result.stdout
+    assert (home / "release.env").is_file()
 
 
 def test_deploy_health_failure_restores_previous_release(tmp_path: Path) -> None:

@@ -273,7 +273,7 @@ def server():
         "Logs directory": str(cfg["LOG_DIR"]),
         "Debug": str(current_app.debug),
         "Environment": cfg.get("ENV", "development"),
-        "Max upload": f"{cfg.get('MAX_CONTENT_LENGTH', 0) // (1024 * 1024)} MB",
+        "Max upload": f"{cfg.get('MAX_UPLOAD_FILE_BYTES', cfg.get('MAX_CONTENT_LENGTH', 0)) // (1024 * 1024)} MB",
     }
     with connect(cfg["DATABASE_PATH"]) as conn:
         tables = _table_info(conn)

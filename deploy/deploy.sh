@@ -109,6 +109,23 @@ config_cli() {
     --docker-config "$DOCKER_CONFIG_FILE" "$@"
 }
 
+sync_backup_timer() {
+  # BACKUP_ENABLED is the single source of truth for scheduled host snapshots.
+  # Manual `mifpctl backup` remains available even when the timer is disabled.
+  local enabled
+  enabled="$(config_cli get BACKUP_ENABLED)"
+  if [[ "$enabled" == "false" ]]; then
+    systemctl disable --now mifp-backup.timer >/dev/null 2>&1 || true
+    say "Backup timer: disabled by configuration"
+    return 0
+  fi
+  if ! systemctl enable --now mifp-backup.timer; then
+    say "ERROR: impossibile abilitare mifp-backup.timer" >&2
+    return 1
+  fi
+  say "Backup timer: enabled"
+}
+
 apply_host_configuration() {
   local domain www_domain events_domain tls_directive="" tmp
   cleanup_host_config_tmp() { [[ -z "${tmp:-}" ]] || rm -f -- "$tmp"; }
@@ -644,9 +661,7 @@ do_init() {
     rm -f -- "$db" "$db-wal" "$db-shm"
     die "Init fallito; nessuna release o database iniziale è stato registrato."
   fi
-  if [[ "$(config_cli get BACKUP_ENABLED)" == "false" ]]; then
-    systemctl disable --now mifp-backup.timer >/dev/null 2>&1 || true
-  elif ! systemctl enable --now mifp-backup.timer; then
+  if ! sync_backup_timer; then
     compose_with_image "$image" down >/dev/null 2>&1 || true
     rm -f -- "$db" "$db-wal" "$db-shm"
     die "Init fallito: timer backup non abilitato; release e DB iniziale rimossi."
@@ -693,8 +708,8 @@ do_first_deploy() {
   activate_release "$image" "$old_current" || die "Primo deploy fallito; nessuna release nuova registrata."
   if [[ "$image" == "$old_current" ]]; then write_release_state "$image" "$old_previous"; else write_release_state "$image" "$old_current"; fi
   cleanup_old_release_images "$image" "$(previous_image || true)"
-  systemctl enable --now mifp-backup.timer \
-    || die "Applicazione avviata, ma il timer backup non è stato abilitato. Esegui: sudo systemctl enable --now mifp-backup.timer"
+  sync_backup_timer \
+    || die "Applicazione avviata, ma lo stato del timer backup non è stato applicato."
   say "Primo deploy completato. Ora importa lo ZIP contenuti dalla dashboard."
 }
 
@@ -1235,12 +1250,20 @@ do_backup() { [[ -x "$BACKUP_SCRIPT" ]] || die "Manca $BACKUP_SCRIPT"; "$BACKUP_
 # Report backup health without restoring anything: the newest published snapshot
 # must be found, fresh, and pass the same integrity verification restore uses.
 check_backup_health() {
-  local backup_root latest newest_age_h check_output
+  local backup_root latest newest_age_h check_output configured timer_enabled
   backup_root="${MIFP_BACKUP_ROOT:-/var/backups/mifp}"
+  configured="$(config_cli get BACKUP_ENABLED)"
+  if [[ "$configured" == "false" ]]; then
+    say "Backups: DISABLED by configuration"
+    return 0
+  fi
+  timer_enabled="$(systemctl is-enabled mifp-backup.timer 2>/dev/null || true)"
+  if [[ "$timer_enabled" != "enabled" ]]; then
+    say "Backups: ERROR (BACKUP_ENABLED=true but mifp-backup.timer is not enabled)"
+    return 1
+  fi
   if [[ ! -d "$backup_root/snapshots" ]]; then
-    # Not a defect before the first backup has ever run (or when backups are
-    # disabled); the runbook checklist covers enabling the timer.
-    say "Backups: NOT CONFIGURED (${backup_root}/snapshots missing)"
+    say "Backups: PENDING (timer enabled; no snapshot published yet)"
     return 0
   fi
   latest="$(readlink -f -- "$backup_root/snapshots/latest" 2>/dev/null || true)"
@@ -1642,19 +1665,26 @@ do_configure() {
   local current; shift || true
   config_cli configure "$@"
   apply_host_configuration
+  sync_backup_timer || die "Configurazione salvata, ma lo stato del timer backup non è stato applicato."
   current="$(current_image || true)"; [[ -n "$current" ]] && service_running "$current" && do_restart || true
 }
 
 do_config_set() {
   [[ $# -eq 2 ]] || die "Uso: mifpctl config-set KEY VALUE"
   config_cli set "$1" "$2"
-  case "${1^^}" in DOMAIN|WWW_DOMAIN|EVENTS_DOMAIN|ENVIRONMENT) apply_host_configuration ;; esac
+  case "${1^^}" in
+    DOMAIN|WWW_DOMAIN|EVENTS_DOMAIN|ENVIRONMENT) apply_host_configuration ;;
+    BACKUP_ENABLED) sync_backup_timer || die "Valore salvato, ma lo stato del timer backup non è stato applicato." ;;
+  esac
 }
 
 do_config_unset() {
   [[ $# -eq 1 ]] || die "Uso: mifpctl config-unset KEY"
   config_cli unset "$1"
-  case "${1^^}" in DOMAIN|WWW_DOMAIN|EVENTS_DOMAIN|ENVIRONMENT) apply_host_configuration ;; esac
+  case "${1^^}" in
+    DOMAIN|WWW_DOMAIN|EVENTS_DOMAIN|ENVIRONMENT) apply_host_configuration ;;
+    BACKUP_ENABLED) sync_backup_timer || die "Valore salvato, ma lo stato del timer backup non è stato applicato." ;;
+  esac
 }
 
 command="${1:-status}"

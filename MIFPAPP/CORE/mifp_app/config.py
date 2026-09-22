@@ -202,7 +202,14 @@ class Config:
     LOG_RETENTION_DAYS = int(os.getenv('LOG_RETENTION_DAYS', '30'))
     PRIVACY_SAFE_METRICS_ENABLED = os.getenv('PRIVACY_SAFE_METRICS_ENABLED', '1') in {'1','true','True','yes','on'}
     PRIVACY_SAFE_METRICS_RETENTION_DAYS = int(os.getenv('PRIVACY_SAFE_METRICS_RETENTION_DAYS', '730'))
-    MAX_CONTENT_LENGTH = int(os.getenv('MAX_CONTENT_LENGTH_MB', '768')) * 1024 * 1024
+    # One uploaded package may be up to 1 GiB.  Flask's request ceiling is a
+    # little higher to leave room for multipart/form-data boundaries and form
+    # fields; otherwise a file exactly at the advertised limit is rejected as
+    # HTTP 413 before the per-file validator can inspect it.
+    MAX_UPLOAD_FILE_BYTES = int(
+        os.getenv('MAX_UPLOAD_FILE_BYTES', str(1024 * 1024 * 1024))
+    )
+    MAX_CONTENT_LENGTH = int(os.getenv('MAX_CONTENT_LENGTH_MB', '1032')) * 1024 * 1024
     FLASK_HOST = os.getenv('FLASK_HOST', '127.0.0.1')
     FLASK_PORT = int(os.getenv('FLASK_PORT', '8000'))
     SITE_DEFAULTS = dict(_cfg("site_defaults", {}))
@@ -260,7 +267,9 @@ class Config:
     # never lock the administrator out; it only slows guessing from many IPs.
     LOGIN_ACCOUNT_MAX_ATTEMPTS = int(os.getenv('LOGIN_ACCOUNT_MAX_ATTEMPTS', '30'))
     LOGIN_ACCOUNT_LOCKOUT_SECONDS = int(os.getenv('LOGIN_ACCOUNT_LOCKOUT_SECONDS', '900'))
-    IMPORT_MAX_ZIP_BYTES = int(os.getenv('IMPORT_MAX_ZIP_BYTES', str(768 * 1024 * 1024)))
+    IMPORT_MAX_ZIP_BYTES = int(
+        os.getenv('IMPORT_MAX_ZIP_BYTES', str(MAX_UPLOAD_FILE_BYTES))
+    )
     # JSON/JSONL and ZIP metadata are parsed in memory. Keep their individual
     # limits well below the global HTTP upload ceiling to avoid memory spikes.
     IMPORT_MAX_JSONL_BYTES = int(os.getenv('IMPORT_MAX_JSONL_BYTES', str(128 * 1024 * 1024)))

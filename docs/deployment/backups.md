@@ -18,7 +18,7 @@ point-in-time complete:
     README.txt
 ```
 
-`mifp-backup.timer` esegue automaticamente il backup. Per garantire che DB e filesystem appartengano alla stessa fotografia, il container web viene brevemente messo in pausa durante la copia (`MIFP_BACKUP_QUIESCE=1`, default). Se il pool PHP-FPM dedicato agli eventi è attivo viene fermato per la stessa breve finestra, così anche i dati privati delle registrazioni hanno un confine point-in-time. Manualmente:
+`mifp-backup.timer` esegue automaticamente il backup quando `BACKUP_ENABLED=true`; `mifpctl configure --section backup` e `mifpctl config-set BACKUP_ENABLED ...` sincronizzano immediatamente lo stato del timer. Per garantire che DB e filesystem appartengano alla stessa fotografia, il container web viene brevemente messo in pausa durante la copia (`MIFP_BACKUP_QUIESCE=1`, default). Se il pool PHP-FPM dedicato agli eventi è attivo viene fermato per la stessa breve finestra, così anche i dati privati delle registrazioni hanno un confine point-in-time. Manualmente:
 
 ```bash
 sudo mifpctl backup

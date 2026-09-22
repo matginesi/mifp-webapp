@@ -281,7 +281,7 @@
   'exportZipUrl': url_for('dashboard.data_portability_export_post', fmt='zip'),
   'exportDlUrl': url_for('dashboard.data_portability_export_dl', token='TOKEN'),
   'smartMergeUrl': url_for('dashboard.data_quality_page'),
-  'maxUploadBytes': config.MAX_CONTENT_LENGTH,
+  'maxUploadBytes': config.MAX_UPLOAD_FILE_BYTES,
   'maxZipBytes': config.IMPORT_MAX_ZIP_BYTES,
   'maxJsonlBytes': config.IMPORT_MAX_JSONL_BYTES
 }|tojson }}</script>
