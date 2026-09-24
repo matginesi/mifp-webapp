@@ -18,6 +18,7 @@ from ..services.event_import import (
     save_upload,
 )
 from ..services.event_site_publisher import publisher_from_config
+from ..services.operation_maintenance import maintenance_guarded
 from ..utils.logger import audit_log
 from ._shared import admin_error_text
 from .auth import login_required
@@ -61,6 +62,7 @@ def event_import_wizard():
 
 @bp.post("/conferences/import/validate")
 @login_required
+@maintenance_guarded("conference package upload and validation")
 def event_import_validate():
     token, stage = create_staging(Path(current_app.config["TMP_DIR"]))
     names: dict[str, str] = {}
@@ -113,6 +115,7 @@ def event_import_validate():
 
 @bp.post("/conferences/import/apply")
 @login_required
+@maintenance_guarded("conference package import and publication")
 def event_import_apply():
     stage = None
     try:

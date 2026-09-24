@@ -590,3 +590,55 @@ def test_website_only_import_is_visible_in_conference_sites(app, client):
     page = client.get("/dashboard/conferences").get_data(as_text=True)
     assert "Website published" in page
     assert "Not linked" in page
+
+
+def test_event_import_route_enables_maintenance_during_apply_and_restores_after(app, client, monkeypatch):
+    response = client.post(
+        "/dashboard/conferences/import/validate",
+        data={"info_package": (io.BytesIO(_info()), "PLMCN-2027_INFO.zip")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    token = body.split('name="token" value="', 1)[1].split('"', 1)[0]
+
+    import mifp_app.routes.dashboard_event_import as route_module
+
+    original_apply_import = route_module.apply_import
+    observed: list[str] = []
+
+    def guarded_apply_import(*args, **kwargs):
+        with sqlite3.connect(app.config["DATABASE_PATH"]) as conn:
+            enabled = conn.execute(
+                "SELECT value FROM settings WHERE key='maintenance_enabled'"
+            ).fetchone()
+            count = conn.execute(
+                "SELECT value FROM settings WHERE key='maintenance_operation_count'"
+            ).fetchone()
+        observed.append(enabled[0] if enabled else "0")
+        assert count is not None and int(count[0]) >= 1
+        assert app.test_client().get("/").status_code == 503
+        return original_apply_import(*args, **kwargs)
+
+    monkeypatch.setattr(route_module, "apply_import", guarded_apply_import)
+
+    imported = client.post(
+        "/dashboard/conferences/import/apply",
+        data={
+            "token": token,
+            "destination": "plmcn-2027",
+            "forthcoming": "0",
+            "accept_warnings": "1",
+        },
+        follow_redirects=False,
+    )
+    assert imported.status_code == 302
+    assert observed == ["1"]
+    assert app.test_client().get("/").status_code == 200
+    with sqlite3.connect(app.config["DATABASE_PATH"]) as conn:
+        assert conn.execute(
+            "SELECT value FROM settings WHERE key='maintenance_enabled'"
+        ).fetchone()[0] == "0"
+        assert conn.execute(
+            "SELECT 1 FROM settings WHERE key='maintenance_operation_count'"
+        ).fetchone() is None

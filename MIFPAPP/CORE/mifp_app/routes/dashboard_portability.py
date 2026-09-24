@@ -43,7 +43,7 @@ from ..services.data_portability import (
 )
 from ..services.portability_contract import build_import_format_guide, scope_options
 from ..services.metrics_service import get_import_export_summary
-from ..services.operation_maintenance import operation_maintenance
+from ..services.operation_maintenance import maintenance_guarded, operation_maintenance
 from ..utils.logger import audit_log
 from ..utils.security import admin_password_matches, get_client_ip, ip_rate_allowed
 from .auth import login_required
@@ -718,6 +718,7 @@ def data_portability_export_dl(token: str):
 
 @bp.post("/data-portability/import")
 @login_required
+@maintenance_guarded("data portability upload and import")
 def data_portability_import():
     started = time.monotonic()
     scope = "all"

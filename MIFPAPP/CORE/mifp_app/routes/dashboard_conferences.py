@@ -45,6 +45,7 @@ from ..services.conference_sites import (
 from ..services.exporters import export_response_payload
 from ..services.event_import import destination_url
 from ..services.event_site_publisher import publisher_from_config
+from ..services.operation_maintenance import maintenance_guarded
 from ..services.conference_version_restore import restore_previous_website
 from ..services.versioning import conference_version_state
 from ..utils.logger import audit_log
@@ -341,6 +342,7 @@ def conference_sites():
 
 @bp.post("/conferences")
 @login_required
+@maintenance_guarded("conference create and package upload")
 def conference_create():
     site_id = None
     slug = None
@@ -501,6 +503,7 @@ def conference_edit(site_id: int):
 
 @bp.post("/conferences/<int:site_id>/restore-previous")
 @login_required
+@maintenance_guarded("conference website rollback")
 def conference_restore_previous(site_id: int):
     with connect(current_app.config["DATABASE_PATH"]) as conn:
         site = _site(conn, site_id)
@@ -593,6 +596,7 @@ def conference_delete(site_id: int):
 
 @bp.post("/conferences/<int:site_id>/import")
 @login_required
+@maintenance_guarded("conference package import")
 def conference_import(site_id: int):
     with connect(current_app.config["DATABASE_PATH"]) as conn:
         site = _site(conn, site_id)
@@ -714,6 +718,7 @@ def conference_person_delete(site_id: int, person_id: int):
 
 @bp.post("/conferences/<int:site_id>/people/import")
 @login_required
+@maintenance_guarded("conference people import")
 def conference_people_import(site_id: int):
     upload = request.files.get("people_file")
     if not upload or not upload.filename:
@@ -760,6 +765,7 @@ def conference_people_export(site_id: int, fmt: str):
 
 @bp.post("/conferences/<int:site_id>/assets")
 @login_required
+@maintenance_guarded("conference asset upload")
 def conference_asset_upload(site_id: int):
     uploads = [
         upload for upload in request.files.getlist("assets")

@@ -16,6 +16,7 @@ from ..services.historical_archive import (
     import_historical_archive,
 )
 from ..services.job_manager import JobQueueFull, get_job_manager
+from ..services.operation_maintenance import maintenance_guarded, operation_maintenance
 from ..utils.logger import audit_log
 from ..utils.security import admin_password_matches, get_client_ip, ip_rate_allowed
 from .auth import login_required
@@ -92,6 +93,7 @@ def archive_import_guide():
 
 @bp.post("/archive/import")
 @login_required
+@maintenance_guarded("historical archive upload and import")
 def archive_import():
     is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     password = request.form.get("password", "")
@@ -156,7 +158,11 @@ def archive_import():
 
             def run(cancelled: Callable[[], bool]) -> dict:
                 try:
-                    with app.app_context(), connect(database_path) as conn:
+                    with app.app_context(), operation_maintenance(
+                        database_path,
+                        "historical archive background import",
+                        logger=app.logger,
+                    ), connect(database_path) as conn:
                         result = import_historical_archive(
                             conn,
                             queued_path,
@@ -218,9 +224,14 @@ def archive_import():
             assets_dir = Path(current_app.config["ASSETS_DIR"])
             package_name = Path(upload.filename).name
             queued_path = staged
+            logger = current_app.logger
             def run(cancelled):
                 try:
-                    with connect(database_path) as conn:
+                    with operation_maintenance(
+                        database_path,
+                        "historical archive background import",
+                        logger=logger,
+                    ), connect(database_path) as conn:
                         return import_historical_archive(
                             conn, queued_path, assets_dir, source_name=package_name,
                             cancel_check=cancelled,
