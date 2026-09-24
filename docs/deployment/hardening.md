@@ -5,9 +5,24 @@ firewall, utenti dati separati e backup timer.
 
 ## SSH e firewall
 
-Usa chiavi SSH, disabilita password/root login e mantieni una sessione aperta
-mentre modifichi SSH. Il bootstrap rileva la porta della sessione corrente se
-`--ssh-port` non è specificata.
+La policy di produzione iniziale conserva il comportamento SSH del provider:
+autenticazione a password e login root con password possono restare attivi. Usa
+password robuste e uniche. Il bootstrap non modifica `sshd`; rileva soltanto la
+porta della sessione corrente se `--ssh-port` non è specificata, configura UFW
+con rate limiting e abilita fail2ban.
+
+Questa protezione riduce i tentativi brute-force ma non equivale alla sola
+autenticazione a chiave. Quando l'operatore vorrà adottare key-only potrà usare,
+come hardening aggiuntivo opzionale:
+
+```bash
+sudo mifpctl ssh-harden --operator USER
+# rollback, se necessario:
+sudo mifpctl ssh-rollback
+```
+
+Il comando verifica prima una chiave funzionante e va provato mantenendo aperta
+una sessione esistente.
 
 Porte pubbliche: SSH, 80 e 443. La webapp è bindata solo su
 `127.0.0.1:8000` e non va esposta nel firewall.
@@ -85,8 +100,11 @@ sudo mifpctl doctor
 sudo mifpctl security-check
 ```
 
-`security-check` non corregge automaticamente nulla: controlla permessi dei
-segreti, file world-writable, listener TCP pubblici inattesi, link/file speciali
-nei tree eventi, staging residui e proprietà di isolamento del container
+`security-check` non corregge automaticamente nulla. Legge la configurazione SSH
+effettiva con `sshd -T`: password/root-password consentite generano `WARN` chiari
+e non vengono chiamate key-only; non fanno fallire il comando da sole. Controlla
+inoltre permessi dei segreti, file world-writable, listener TCP pubblici
+inattesi, link/file speciali nei tree eventi, staging residui e proprietà di
+isolamento del container
 (non-root, rootfs read-only, no-new-privileges, niente host networking o
 Docker socket).

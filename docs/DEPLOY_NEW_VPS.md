@@ -1,16 +1,13 @@
 # Deploy MIFP on a brand-new VPS
 
 This is the operator runbook for going from an **empty, freshly rented VPS** to a
-running, hardened MIFP installation.
+running MIFP production installation with the selected host-security policy.
 
-> **Status of the controls referenced here.** Everything in this document has
-> been verified as *code and tooling* in the repository: the Caddyfile was
-> rendered and exercised, the container image was built and booted, the backup
-> and restore logic was tested against temporary fixtures, and the shell has
-> passed `bash -n` and `shellcheck -S warning`. **Nothing here has been verified
-> on a live production host, because no production VPS exists yet.** Every
-> `[ ]` item in the final checklist is a check *you* must perform on the real
-> machine.
+> **Status of the controls referenced here.** A real production VPS now exists.
+> Repository controls have been tested; host-specific checks must be completed
+> during the first production installation. This document does not claim that
+> `config-check`, `doctor`, `security-check`, DNS, HTTPS or backup verification
+> has already passed on that host. Every `[ ]` item remains an operator check.
 
 Companion documents: [DEPLOYMENT.md](../DEPLOYMENT.md) (reference),
 [VPS install guide](deployment/vps-installation.md) (DNS/VirtualBox/`.home.arpa`
@@ -25,7 +22,8 @@ details), [hardening](deployment/hardening.md), [backups](deployment/backups.md)
 | A VPS | Ubuntu LTS (22.04 or 24.04), root or sudo access |
 | A domain | e.g. `mifp.eu`; `www.` and `events.` subdomains will be derived |
 | DNS control | A/AAAA records for the apex, `www` and `events` |
-| Your SSH public key | See step 3 — this is what protects the host |
+| Strong SSH passwords | Required while the provider/default password policy is retained |
+| Your SSH public key | Optional now; required only before choosing key-only hardening |
 | A GitHub PAT (classic) | optional; only for a future private registry/package |
 | The `deploy/` directory | copied from this repository (see step 4) |
 
@@ -36,7 +34,8 @@ VPS. Production never compiles code and never runs scrapers.
 
 ## 1. Supported OS
 
-Ubuntu LTS only — the bootstrap refuses anything else:
+Only Ubuntu 22.04 and 24.04 are validated; the production target is 24.04 and
+the bootstrap fails closed on any other release:
 
 ```bash
 lsb_release -a                 # expect Ubuntu 22.04 or 24.04
@@ -57,14 +56,20 @@ apt-get update && apt-get -y upgrade
 [ -f /var/run/reboot-required ] && reboot   # reconnect afterwards
 ```
 
+For this first deployment, the provider/default SSH policy is intentionally
+retained. Password authentication and root password login may remain enabled;
+use strong, unique passwords. Bootstrap does not change `sshd`. It adds UFW SSH
+rate limiting and fail2ban, which reduce brute-force exposure but are not
+equivalent to key-only authentication.
+
 ---
 
-## 3. Create operator SSH key access
+## 3. Optional: create operator SSH key access
 
-**Do this before anything else.** The bootstrap never changes SSH by itself, and
-`mifpctl ssh-harden` (step 6) refuses to act until it can see a working public
-key for your operator user. Skipping this step is the only realistic way to lock
-yourself out.
+This is recommended but not required for the initial production cutover. The
+bootstrap never changes SSH. If you later choose the optional `mifpctl
+ssh-harden` step, it refuses to act until it can see a working public key for a
+non-root operator user.
 
 On your workstation:
 
@@ -74,13 +79,34 @@ ssh-copy-id operator@<VPS-IP>                  # or paste the public key manuall
 ssh operator@<VPS-IP> 'sudo -n true && echo "sudo OK"'
 ```
 
-Requirements for the operator account:
+Requirements before optional key-only hardening:
 
 * a public key in `~/.ssh/authorized_keys` (mode `600`, `~/.ssh` mode `700`);
 * passwordless `sudo` (or you will be prompted during bootstrap).
 
-Verify key-only login works **in a second terminal** and keep the first session
-open for the rest of the procedure.
+Verify key login works **in a second terminal** and keep the first session open
+if you proceed with optional hardening.
+
+---
+
+## Direct production cutover (no staging)
+
+The intended first-production sequence is:
+
+```text
+repository/CI green
+-> point mifp.eu, www.mifp.eu and events.mifp.eu to the VPS
+-> immediately bootstrap with --domain mifp.eu
+-> configure application and admin
+-> config-check -> init -> doctor -> security-check
+-> final HTTPS, DNS and backup verification
+```
+
+Changing DNS before the new application is running can cause short cutover
+downtime. That downtime is accepted for this deployment. Start with IPv4: an
+`A` record for `mifp.eu` and `A` or `CNAME` records for `www` and `events`.
+Publish `AAAA` only after IPv6 reachability and UFW's IPv6 behavior have been
+verified. Do not create or use a staging domain.
 
 ---
 
@@ -99,6 +125,7 @@ ssh operator@<VPS-IP>
 
 ```bash
 sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
+  --domain mifp.eu \
   --image-repository ghcr.io/<owner>/<repo>
 ```
 
@@ -122,9 +149,10 @@ What it does, in order:
     SSH rule and IPv6 rules are present before finishing;
 12. prints a post-condition summary and exits non-zero if anything is missing.
 
-It is idempotent and safe to re-run. It deliberately **does not** negotiate a TLS
-certificate yet if the domain is not configured, and it writes a placeholder
-`respond 503` site until you configure the domain.
+It is idempotent and safe to re-run. With `--domain mifp.eu`, Caddy follows the
+normal public DNS/ACME path. If the generic bootstrap is run without a domain,
+it instead writes a placeholder `respond 503` site until configuration exists.
+The bootstrap never modifies SSH authentication policy.
 
 > **Fingerprint mismatch.** If Caddy or Docker has rotated its signing key since
 > this repository was written, bootstrap stops with an explicit fingerprint
@@ -135,11 +163,16 @@ certificate yet if the domain is not configured, and it writes a placeholder
 
 ---
 
-## 6. Harden SSH
+## 6. Optional future key-only SSH hardening
 
 ```bash
 sudo mifpctl ssh-harden --operator operator
 ```
+
+Do not run this for the chosen initial provider/default policy. It remains
+available if the operator later decides that key-only authentication is worth
+the reduced password exposure and accepts the corresponding key-management and
+lockout tradeoff.
 
 The staged behaviour matters:
 
@@ -240,7 +273,7 @@ Create these records **before** expecting a certificate:
 
 | Name | Type | Value |
 | --- | --- | --- |
-| `<domain>` | A (and AAAA if you have IPv6) | VPS IP |
+| `<domain>` | A initially | VPS IPv4 |
 | `www.<domain>` | CNAME to `<domain>` | |
 | `events.<domain>` | A/CNAME | same host |
 
@@ -250,8 +283,8 @@ Verify from the VPS that the public resolver agrees:
 getent hosts <domain> www.<domain> events.<domain>
 ```
 
-If you also publish an `AAAA` record, the host must actually serve on IPv6 (the
-firewall already filters it). A dangling `AAAA` record is the most common cause
+Add `AAAA` only after the host actually serves on IPv6 and UFW behavior has been
+verified on IPv6. A dangling `AAAA` record is a common cause
 of failed ACME challenges.
 
 ---
@@ -470,6 +503,12 @@ the **effective** SSH policy (`sshd -T`), whether UFW is active with the expecte
 IPv4/IPv6 rules, file modes, unexpected public listeners, container isolation and
 whether backup credentials leaked into the web container.
 
+With the selected provider/default SSH policy, effective
+`PasswordAuthentication yes` and a `PermitRootLogin` mode that permits password
+login are explicit `WARN` findings, not failures. They are not described as
+key-only or hardened. Firewall, listener, Docker, permissions, secret exposure
+and container-isolation faults remain errors and keep the command non-zero.
+
 ---
 
 ## 19. Disaster-recovery smoke test
@@ -535,19 +574,20 @@ sudo ss -lntup | grep -vE '127\.0\.0\.1|\[::1\]'
 
 ---
 
-## WHEN THE VPS IS PURCHASED
+## FIRST PRODUCTION INSTALLATION
 
-This is the checklist for the **live host**. Everything above is repository-side
-readiness; the items below are the checks that can only be performed on a real
-machine. None of them has been verified yet.
+This is the checklist for the **live host**. The VPS exists, but repository
+testing is not evidence that these host-specific checks have passed. Complete
+and record them during the first production installation.
 
 ```text
 [ ] OS/version verified (Ubuntu LTS) and within support
 [ ] security updates applied; /var/run/reboot-required clear
 [ ] unattended-upgrades active, Automatic-Reboot false
-[ ] SSH key login verified from a NEW session
-[ ] SSH effective config audited: sshd -T shows PasswordAuthentication no,
-    PermitRootLogin prohibit-password, PermitEmptyPasswords no, MaxAuthTries <= 3
+[ ] SSH effective config audited with sshd -T; password/root-password access, if
+    retained, uses strong passwords and its security-check WARNs are understood
+[ ] optional only: if key-only hardening was chosen, key login verified from a
+    NEW session before the old session is closed
 [ ] fail2ban jail active for sshd
 [ ] firewall verified IPv4 AND IPv6 (ufw status verbose shows (v6) rules)
 [ ] only expected public listeners: SSH, 80, 443 (nothing else)
@@ -571,6 +611,6 @@ machine. None of them has been verified yet.
 [ ] sudo mifpctl doctor passes
 ```
 
-Expected outcome of the whole procedure: **ready to serve**, with every control
-either verified on the host or explicitly marked as not yet applicable. This
-checklist is what the separate live-VPS audit will use.
+Expected outcome: **ready to serve**, with every control verified on the host or
+explicitly marked not applicable. Until this checklist is completed, only the
+repository controls—not the live Aruba host—should be described as verified.

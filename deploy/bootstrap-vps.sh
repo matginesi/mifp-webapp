@@ -21,6 +21,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
+is_supported_ubuntu_release() {
+  [[ "$1" == "ubuntu" ]] && [[ "$2" == "22.04" || "$2" == "24.04" ]]
+}
+
 usage() {
   cat <<'EOF'
 Uso:
@@ -49,7 +53,8 @@ done
 [[ -r /etc/os-release ]] || die "Impossibile identificare il sistema operativo."
 # shellcheck disable=SC1091
 . /etc/os-release
-[[ "${ID:-}" == "ubuntu" ]] || die "Bootstrap supportato solo su Ubuntu (rilevato: ${ID:-unknown})."
+is_supported_ubuntu_release "${ID:-}" "${VERSION_ID:-}" \
+  || die "Sistema non supportato: ${ID:-unknown} ${VERSION_ID:-unknown}. Sono supportati esclusivamente Ubuntu 22.04 e Ubuntu 24.04 (target di produzione corrente: 24.04)."
 
 DOMAIN="${DOMAIN,,}"
 if [[ -n "$DOMAIN" ]]; then

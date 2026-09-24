@@ -63,7 +63,7 @@ Uso normale:
   sudo mifpctl backup                     snapshot point-in-time DB + file/eventi
   sudo mifpctl doctor                     diagnostica completa
   sudo mifpctl security-check             audit read-only di superficie e permessi host
-  sudo mifpctl ssh-harden --operator USER disabilita password SSH (staged, validato)
+  sudo mifpctl ssh-harden --operator USER hardening opzionale: disabilita password SSH
   sudo mifpctl ssh-rollback               rimuove il drop-in SSH e ricarica sshd
   sudo mifpctl fix-permissions            corregge ownership dati solo su richiesta
   sudo mifpctl events-check /backup/root  preflight read-only del backup storico
@@ -1361,10 +1361,11 @@ do_doctor() {
 }
 
 do_security_check() {
-  local failed=0 bad current cid inspect user privileged network_mode readonly_root security_opts mounts envs unexpected mode
+  local failed=0 warnings=0 bad current cid inspect user privileged network_mode readonly_root security_opts mounts envs unexpected mode
   step "Security check"
 
   security_error() { say "ERROR: $*"; failed=1; }
+  security_warn() { say "WARN: $*"; warnings=$((warnings + 1)); }
   security_ok() { say "$*: OK"; }
 
   if caddy validate --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null 2>&1; then
@@ -1381,12 +1382,12 @@ do_security_check() {
     if grep -qx 'passwordauthentication no' <<<"$ssh_effective"; then
       security_ok "SSH password authentication disabled"
     else
-      security_error "SSH PasswordAuthentication is not 'no' (run: mifpctl ssh-harden --operator USER)"
+      security_warn "SSH PasswordAuthentication allows password login. This is the retained provider/default policy, not key-only hardening; use strong passwords. Optional future hardening: mifpctl ssh-harden --operator USER"
     fi
     if grep -qxE 'permitrootlogin (no|prohibit-password|without-password)' <<<"$ssh_effective"; then
       security_ok "SSH root login restricted"
     else
-      security_error "SSH PermitRootLogin allows password root login (run: mifpctl ssh-harden --operator USER)"
+      security_warn "SSH PermitRootLogin allows root password login. This is the retained provider/default policy, not key-only hardening; use a strong root password. Optional future hardening: mifpctl ssh-harden --operator USER"
     fi
   else
     # A missing sshd is a limitation, not a finding: report it truthfully
@@ -1418,7 +1419,7 @@ do_security_check() {
       security_error "UFW is not active"
     fi
   else
-    say "WARN: ufw not available; firewall NOT VERIFIED"
+    security_error "ufw not available; firewall NOT VERIFIED"
   fi
 
   if [[ -f /var/run/reboot-required ]]; then
@@ -1548,7 +1549,11 @@ do_security_check() {
   if ((failed)); then
     die "Security check found problems."
   fi
-  say "Security check: OK"
+  if ((warnings)); then
+    say "Security check: OK ($warnings warning(s); review WARN lines)"
+  else
+    say "Security check: OK"
+  fi
 }
 
 do_ssh_harden() {

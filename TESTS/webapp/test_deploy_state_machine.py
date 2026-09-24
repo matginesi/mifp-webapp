@@ -396,8 +396,8 @@ def test_security_check_passes_on_hardened_preinit_host(tmp_path: Path) -> None:
     assert "Firewall IPv6 rules present" in result.stdout
 
 
-def test_security_check_fails_when_ssh_password_auth_is_enabled(tmp_path: Path) -> None:
-    """The check must not report OK on a host that still allows password SSH."""
+def test_security_check_warns_when_default_password_ssh_is_enabled(tmp_path: Path) -> None:
+    """The selected provider/default SSH policy is visible but not blocking."""
     env, home = _env(tmp_path)
     (home / "events").mkdir()
     (home / "events-private").mkdir()
@@ -416,10 +416,38 @@ def test_security_check_fails_when_ssh_password_auth_is_enabled(tmp_path: Path) 
         "#!/bin/sh\ncase \"$1\" in status) printf 'Status: active\\n22/tcp LIMIT Anywhere (v6)\\n80/tcp ALLOW Anywhere (v6)\\n443/tcp ALLOW Anywhere (v6)\\n' ;; *) exit 0 ;; esac\n",
     )
 
+    result = _run(env, "security-check")
+
+    assert result.returncode == 0
+    assert "WARN: SSH PasswordAuthentication allows password login" in result.stdout
+    assert "WARN: SSH PermitRootLogin allows root password login" in result.stdout
+    assert "not key-only hardening" in result.stdout
+    assert "mifpctl ssh-harden --operator USER" in result.stdout
+    assert "Security check: OK (2 warning(s); review WARN lines)" in result.stdout
+
+
+def test_security_check_still_fails_when_firewall_is_inactive(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    (home / "events").mkdir()
+    (home / "events-private").mkdir()
+    config_dir = Path(env["MIFP_CONFIG_DIR"])
+    (config_dir / "config.env").chmod(0o640)
+    (config_dir / "secrets.env").chmod(0o600)
+    Path(env["MIFP_DOCKER_CONFIG_FILE"]).chmod(0o600)
+    bin_dir = Path(env["PATH"].split(":", 1)[0])
+    _write_executable(bin_dir / "ss", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        bin_dir / "sshd",
+        "#!/bin/sh\n[ \"$1\" = -T ] || exit 0\nprintf 'port 22\\npasswordauthentication yes\\npermitrootlogin yes\\n'\n",
+    )
+    _write_executable(bin_dir / "ufw", "#!/bin/sh\nprintf 'Status: inactive\\n'\n")
+
     result = _run(env, "security-check", check=False)
 
     assert result.returncode != 0
-    assert "PasswordAuthentication" in result.stdout
+    assert "WARN: SSH PasswordAuthentication allows password login" in result.stdout
+    assert "ERROR: UFW is not active" in result.stdout
+    assert "Security check found problems" in result.stderr
 
 
 def test_init_uses_latest_only_as_selector_and_persists_clean_digest(tmp_path: Path) -> None:
@@ -1094,4 +1122,3 @@ def test_update_cleans_sqlite_preflight_sidecars(tmp_path: Path) -> None:
     assert result.returncode == 0
     leftovers = list((home / "data" / "tmp").glob("preflight-*.db-shm"))
     assert leftovers == []
-

@@ -31,14 +31,14 @@ CI/CD plus infrastructure-as-code review.
 ```text
 SECURITY POSTURE        READY TO DEPLOY SAFELY
 LIVE PRODUCTION         NOT LIVE-PRODUCTION VERIFIED
-VPS LIVE CHECKS         NOT YET APPLICABLE  (no VPS exists yet)
+VPS LIVE CHECKS         REQUIRED DURING FIRST INSTALLATION
 ```
 
-No production host exists, was contacted, or is claimed to have been verified.
-Every host-level control in this report is a **code/infrastructure-as-code**
-result. The live-host checks are listed in
-[`docs/DEPLOY_NEW_VPS.md`](../DEPLOY_NEW_VPS.md) under *WHEN THE VPS IS
-PURCHASED* and are repeated in the *PRE-DEPLOYMENT READINESS* section.
+A production VPS now exists, but it was not contacted or verified by this
+repository audit. Every host-level control in this report is a
+**code/infrastructure-as-code** result. The live-host checks are listed in
+[`docs/DEPLOY_NEW_VPS.md`](../DEPLOY_NEW_VPS.md) under *FIRST PRODUCTION
+INSTALLATION* and are repeated in the readiness section.
 
 ---
 
@@ -111,13 +111,13 @@ produced at [`docs/DEPLOY_NEW_VPS.md`](../DEPLOY_NEW_VPS.md).
 
 ### Current final state
 
-**READY TO DEPLOY SAFELY — NOT LIVE-PRODUCTION VERIFIED — VPS LIVE CHECKS NOT
-YET APPLICABLE.**
+**READY TO DEPLOY SAFELY — NOT LIVE-PRODUCTION VERIFIED — VPS LIVE CHECKS
+REQUIRED DURING FIRST INSTALLATION.**
 
 Every finding from both rounds is fixed except the short, explicitly listed set in
 *Residual Risks (current)*. Nothing remains that requires code changes before a
-VPS is provisioned; what remains either requires an actual host, is an accepted
-design trade-off, or is an unavoidable unpatchable base-image CVE.
+production installation; what remains either requires live-host evidence, is an
+accepted design trade-off, or is an unavoidable unpatchable base-image CVE.
 
 ---
 
@@ -126,7 +126,7 @@ design trade-off, or is an unavoidable unpatchable base-image CVE.
 | Area | Baseline | End of round 1 | Current (end of round 2) |
 | --- | --- | --- | --- |
 | Application security | 3 HIGH + 2 MEDIUM + LOW open | HIGH/MEDIUM fixed; CSRF/rate-limit/archive items **open** | All fixed; `MIFP-CSRF-001`, `MIFP-AUTH-002`, `MIFP-ERR-001`, `MIFP-ZIP-003…007` closed |
-| SSH on the future host | untouched prose only | **open** (documented operator action) | `mifpctl ssh-harden` (staged, lockout-safe) + `security-check` verifies **effective** policy |
+| SSH on the production host | untouched prose only | **open** (documented operator action) | provider/default password SSH retained; `security-check` warns, while staged `mifpctl ssh-harden` remains optional |
 | Host security updates | none | **open** | security-only `unattended-upgrades`, auto-reboot **false**, reboot-required in `doctor`/`security-check` |
 | Firewall | allow-before-enable only | adequate, IPv6/limit unasserted | `ufw limit`, IPv6 asserted, SSH rule verified before finishing |
 | GitHub Actions | tags unpinned | **open** (tag pinning) | **pinned to commit SHAs**; Dependabot keeps them current |
@@ -166,11 +166,11 @@ design trade-off, or is an unavoidable unpatchable base-image CVE.
 
 ### Not available / not inspected
 
-* **A production VPS.** There is no production host: none has been provisioned,
-  so no `mifpctl config-check` / `security-check` / `doctor` output exists and
-  none is reported here. Every host-level conclusion in this document is derived
-  from infrastructure-as-code and the operator tooling. This is **not** a failed
-  check — it is *not yet applicable*.
+* **Live production-host evidence.** A production VPS now exists, but this
+  repository audit did not execute `mifpctl config-check`, `security-check` or
+  `doctor` on it. Every host-level conclusion here remains derived from
+  infrastructure-as-code and operator tooling; host checks belong to the first
+  installation record.
 * **Actual historical conference PHP content.** The site *application* code that
   runs under PHP-FPM is not in this repository. Only the PHP **platform**
   configuration (pool, socket, allow-list, Caddy gating) was audited.
@@ -914,19 +914,21 @@ here only so the round-1 text is not misread:
 
 | Round-1 operator action | Current state |
 | --- | --- |
-| Harden SSH manually on the VPS | `sudo mifpctl ssh-harden --operator USER` (staged, validates before reload, rolls back on failure); `mifpctl ssh-rollback` reverts |
+| Harden SSH manually on the VPS | The tool exists and remains optional: `sudo mifpctl ssh-harden --operator USER` validates before reload; `mifpctl ssh-rollback` reverts |
 | Enable unattended security updates manually | Bootstrap configures security-only `unattended-upgrades` with auto-reboot disabled and reboot-required reporting |
 | Pin GitHub Actions to commit SHAs | Done (all third-party actions pinned); Dependabot keeps them current |
 | (implicit) add image CVE scanning | Trivy job gates `latest` promotion |
 | (implicit) scan Git history for secrets | gitleaks in CI + run manually over the full history (clean) |
 | Validate the modified Caddyfile before applying | Bootstrap renders to a temp file, `caddy fmt` + `caddy validate`, then atomic `mv`; the shipped Caddyfile was loaded and exercised with `caddy:2-alpine` |
 
-### Requires an actual VPS (not yet applicable)
+### Requires live checks on the existing VPS
 
-Nothing here is a failure — these checks simply cannot exist until a host does:
+Nothing here is a repository failure; these checks require first-installation
+evidence from the Aruba host:
 
 * Verify OS/version, applied security updates and `reboot-required` state.
-* Verify key-only SSH login from a new session and audit `sshd -T`.
+* Audit `sshd -T`; understand the warnings for retained password/root-password
+  access. If optional key-only hardening is chosen, test a new key session.
 * Verify UFW is active with IPv4 **and** IPv6 rules, and that only SSH/80/443
   listen publicly.
 * Verify the TLS certificate, DNS resolution and HTTP→HTTPS redirect.
@@ -1030,7 +1032,7 @@ Internet
   │     │     └── GET /ready                  (blocked at Caddy; deploy/healthcheck only)
   │     ├── events.mifp.eu → static files + opt-in PHP-FPM at explicit prefixes
   │     └── /ready blocked from the Internet
-  ├── SSH (key auth; `mifpctl ssh-harden` disables passwords, root key-only)
+  ├── SSH (provider/default password policy; optional `mifpctl ssh-harden` for key-only)
   └── HTTP :80 → redirect to HTTPS
 
 Outbound from the app
@@ -1059,9 +1061,9 @@ Supply chain
 > PRE-DEPLOYMENT READINESS section. Each item below is annotated with what
 > round 2 actually did, so a reader cannot mistake it for today's state.
 
-1. **Live infrastructure is unverified.** → **Still true, for a different and
-   stronger reason: no VPS exists yet.** This is *NOT YET APPLICABLE*, not a
-   failed check. Current: see *WHEN THE VPS IS PURCHASED*.
+1. **Live infrastructure is unverified.** At the time of this historical round,
+   no VPS existed. A VPS exists now, but this audit still contains no live-host
+   evidence. Current: see *FIRST PRODUCTION INSTALLATION*.
 2. **`verify_invariants` mutates while checking.** → **FIXED in round 2**: the
    function is non-destructive by default and `apply_bundle` opts into
    `repair=True` explicitly and reports `repaired_links`. A dedicated repair
@@ -1086,15 +1088,15 @@ Supply chain
    round 2**: `gitleaks 8.30.1` over the full commit history and the working tree:
    `no leaks found`.
 9. **Operator action remains load-bearing** (SSH hardening, apt-key fingerprint
-   verification, action SHA pinning). → **FIXED in round 2**: all three are now
-   implemented in code (staged `mifpctl ssh-harden`; fingerprint-pinned apt keys;
-   SHA-pinned actions). What remains operator-dependent is genuinely host-side —
-   see *Requires an actual VPS*.
+   verification, action SHA pinning). → **UPDATED in round 2**: staged
+   `mifpctl ssh-harden` exists but is now an optional policy choice; apt keys are
+   fingerprint-pinned and actions SHA-pinned. Live verification remains
+   operator-dependent — see *Requires live checks on the existing VPS*.
 
 ### Read-only production verification checklist (from round 1)
 
-Kept for reference. The maintained, current version is the *WHEN THE VPS IS
-PURCHASED* checklist in PRE-DEPLOYMENT READINESS and in
+Kept for reference. The maintained, current version is the *FIRST PRODUCTION
+INSTALLATION* checklist in PRE-DEPLOYMENT READINESS and in
 [`docs/DEPLOY_NEW_VPS.md`](../DEPLOY_NEW_VPS.md), which additionally covers SSH
 hardening state, host patching, fail2ban, backup freshness and secret escrow.
 
@@ -1133,12 +1135,11 @@ sudo ls -1 /var/backups/mifp/snapshots | tail -3
 
 ---
 
-## PRE-DEPLOYMENT READINESS (round 2 — no VPS exists yet)
+## PRE-DEPLOYMENT READINESS (historical round 2)
 
-This section records the follow-up hardening round performed **before** any VPS
-was purchased. Its purpose is to close every residual gap that could be closed
-without a live host. Nothing here is a claim about a production machine: no
-production host was contacted, and there is no production host to contact.
+This section records the historical follow-up hardening round performed before
+the current production VPS existed. Nothing here is a claim that the current
+host has passed live checks.
 
 ### Readiness matrix
 
@@ -1154,11 +1155,11 @@ production host was contacted, and there is no production host to contact.
 | Backup logic | **VERIFIED** | local fixtures reproduce and now pass the DR scenarios (rotation, stale allow-list, symlinked DB, tampered snapshot, symlink/FIFO rejection) |
 | Caddy config | **VERIFIED** | rendered and loaded by `caddy:2-alpine`; deny/allow matrix exercised over HTTP against a synthetic events tree |
 | PHP-FPM config | **VERIFIED (static)** | pool hardened further; `php-fpm -t` is the host-side gate |
-| VPS live configuration | **NOT YET APPLICABLE** | no VPS exists |
-| SSH live config | **NOT YET APPLICABLE** | no VPS exists; `mifpctl ssh-harden` is staged and refuses to act without a verified key |
-| Firewall live config | **NOT YET APPLICABLE** | no VPS exists |
-| TLS live certificate | **NOT YET APPLICABLE** | no domain or host exists |
-| Live backup schedule | **NOT YET APPLICABLE** | the systemd timer is configured by bootstrap; nothing has run on a host |
+| VPS live configuration | **NOT VERIFIED IN THIS AUDIT** | must be checked during first production installation |
+| SSH live config | **NOT VERIFIED IN THIS AUDIT** | provider/default password SSH is selected; optional `ssh-harden` remains available |
+| Firewall live config | **NOT VERIFIED IN THIS AUDIT** | must be checked on the Aruba VPS |
+| TLS live certificate | **NOT VERIFIED IN THIS AUDIT** | must be checked after DNS cutover |
+| Live backup schedule | **NOT VERIFIED IN THIS AUDIT** | timer behavior is repository-tested; host execution must be confirmed |
 
 ### Findings from this round
 
@@ -1214,9 +1215,10 @@ public key exists for the operator, requires `sshd -t` to pass first, writes
 `/etc/ssh/sshd_config.d/99-mifp-hardening.conf`, then asserts the **effective**
 `sshd -T` values (catching a cloud-init drop-in that wins over ours) before a
 `reload` — never a `restart` — and rolls the drop-in back on any failure. The
-port is unchanged and SSH is not restricted to a fixed source IP. `security-check`
-now reports `PasswordAuthentication`/`PermitRootLogin` from `sshd -T` and **fails**
-when password authentication is still enabled. `mifpctl ssh-rollback` reverts.
+port is unchanged and SSH is not restricted to a fixed source IP. The current
+production policy retains provider/default password SSH: `security-check`
+reports `PasswordAuthentication`/`PermitRootLogin` from `sshd -T` as explicit
+warnings, while `mifpctl ssh-harden` and `ssh-rollback` remain optional.
 
 **`MIFP-UPD-001`** — a long-lived public host was never patched. Bootstrap now
 installs `unattended-upgrades`, `needrestart` and `update-notifier-common`,
@@ -1376,9 +1378,8 @@ cross-referenced in comments so they cannot silently drift.
 
 This is the authoritative residual-risk list for the repository as it stands.
 
-1. **Live infrastructure remains unverified — because no VPS exists yet.** Not a
-   failed check: *NOT YET APPLICABLE*. Use the checklist below when a host is
-   provisioned.
+1. **Live infrastructure remains unverified by this repository audit.** The VPS
+   exists; complete the checklist below during its first installation.
 2. **`verify_invariants` is now non-destructive by default**, but
    `apply_bundle` still repairs orphan links by deletion inside its transaction;
    that deletion is explicit (`repair=True`) and reported (`repaired_links`), but
@@ -1399,18 +1400,18 @@ This is the authoritative residual-risk list for the repository as it stands.
 8. **`mifp-backup.service` has no `OnFailure=` alerting hook**; `doctor` now
    detects missing/failing/stale backups, but nothing pushes an alert.
 
-### WHEN THE VPS IS PURCHASED
+### FIRST PRODUCTION INSTALLATION
 
 Full runbook: [`docs/DEPLOY_NEW_VPS.md`](../DEPLOY_NEW_VPS.md). The live-host
-checklist, reproduced here for the future live audit:
+checklist, reproduced here for the first-installation record:
 
 ```text
 [ ] OS/version verified (Ubuntu LTS) and within support
 [ ] security updates applied; /var/run/reboot-required clear
 [ ] unattended-upgrades active, Automatic-Reboot false
-[ ] SSH key login verified from a NEW session
-[ ] SSH effective config audited: PasswordAuthentication no,
-    PermitRootLogin prohibit-password, PermitEmptyPasswords no, MaxAuthTries <= 3
+[ ] SSH effective config audited with sshd -T; retained password/root-password
+    access uses strong passwords and its WARNs are understood
+[ ] optional: if key-only hardening is chosen, key login verified in a NEW session
 [ ] fail2ban jail active for sshd
 [ ] firewall verified IPv4 AND IPv6 (ufw status verbose shows (v6) rules)
 [ ] only expected public listeners: SSH, 80, 443

@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -319,6 +321,63 @@ def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     assert 'MIFP_TLS_DIRECTIVE="tls internal"' in script
     assert 'MIFP_TLS_DIRECTIVE=""' in script
     assert 'bash "$SCRIPT_DIR/local-hosts.sh" "$DOMAIN"' in script
+
+
+@pytest.mark.parametrize(
+    ("os_id", "version", "supported"),
+    [
+        ("ubuntu", "22.04", True),
+        ("ubuntu", "24.04", True),
+        ("ubuntu", "20.04", False),
+        ("ubuntu", "26.04", False),
+        ("debian", "12", False),
+    ],
+)
+def test_bootstrap_validates_supported_ubuntu_releases(
+    os_id: str, version: str, supported: bool
+) -> None:
+    script = _read("deploy", "bootstrap-vps.sh")
+    function = script.split("is_supported_ubuntu_release() {", 1)[1].split("\n}", 1)[0]
+    probe = "is_supported_ubuntu_release() {" + function + "\n}\n" + (
+        f"is_supported_ubuntu_release {os_id!r} {version!r}"
+    )
+    result = subprocess.run(["bash", "-c", probe], check=False)
+    assert (result.returncode == 0) is supported
+    assert "Ubuntu 22.04 e Ubuntu 24.04" in script
+    assert "target di produzione corrente: 24.04" in script
+
+
+def test_ssh_hardening_remains_explicit_and_opt_in() -> None:
+    bootstrap = _read("deploy", "bootstrap-vps.sh")
+    deploy = _read("deploy", "deploy.sh")
+    assert "mifpctl ssh-harden" not in bootstrap
+    assert "sshd_config" not in bootstrap
+    assert "PasswordAuthentication" not in bootstrap
+    assert "PermitRootLogin" not in bootstrap
+    assert "do_ssh_harden" in deploy
+    assert "ssh-harden) shift; do_ssh_harden" in deploy
+    assert "PasswordAuthentication no" in deploy
+    assert "PermitRootLogin prohibit-password" in deploy
+    assert "do_ssh_rollback" in deploy
+
+
+def test_production_docs_match_ssh_cutover_and_schema_policy() -> None:
+    paths = (
+        "README.md",
+        "DEPLOYMENT.md",
+        "docs/DEPLOY_NEW_VPS.md",
+        "docs/deployment/vps-installation.md",
+        "docs/deployment/hardening.md",
+    )
+    docs = "\n".join(_read(*path.split("/")) for path in paths)
+    assert "no production VPS exists" not in docs.lower()
+    assert "schema-only v10" not in docs.lower()
+    assert "staging.mifp.eu" not in docs
+    assert "--domain mifp.eu" in docs
+    assert "mifp.eu, www.mifp.eu" in docs
+    assert "ssh-harden" in docs
+    assert "optional" in _read("docs", "DEPLOY_NEW_VPS.md").lower()
+    assert "WARN" in _read("docs", "deployment", "hardening.md")
 
 
 def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:

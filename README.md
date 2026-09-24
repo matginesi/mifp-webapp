@@ -101,9 +101,10 @@ definisce gli invarianti che un DB deve rispettare per essere avviato.
 ```
 
 Non esistono migration implicite all'avvio. Gli upgrade supportati sono
-espliciti e si eseguono sempre su una copia (`db-upgrade-copy`); in questa
-versione sono supportati gli upgrade adiacenti v9 -> v10 -> v11 -> v12. DB
-legacy/non versionati passano dai package versionati `mifp-content` v1 o
+espliciti e si eseguono sempre su una copia (`db-upgrade-copy`); la catena
+corrente è definita dai metadata dello schema e documentata in
+[docs/database-schema.md](docs/database-schema.md). DB legacy/non versionati
+passano dai package versionati `mifp-content` v1 o
 `mifp-jsonl-v2` v2; i vecchi ZIP non versionati sono rifiutati.
 
 JSONL è record-only. ZIP è il formato portabile per record/asset e, negli
@@ -143,15 +144,26 @@ builder DB o CLI locali. Sulla VPS non serve un venv.
 Prima installazione:
 
 ```bash
-sudo bash deploy/bootstrap-vps.sh
+sudo bash deploy/bootstrap-vps.sh --domain mifp.eu
 sudo mifpctl configure
 sudo mifpctl admin
-sudo mifpctl ssh-harden --operator <utente>
 sudo mifpctl config-check
 sudo mifpctl init
 sudo mifpctl doctor
 sudo mifpctl security-check
 ```
+
+Per il primo cutover senza staging, dopo una CI verde si aggiornano i record
+`mifp.eu`, `www.mifp.eu` ed `events.mifp.eu` verso la VPS e si esegue subito il
+bootstrap con `--domain mifp.eu`. È accettata una breve indisponibilità tra il
+cambio DNS e l'avvio dell'applicazione. Pubblica inizialmente solo record IPv4
+`A`/`CNAME`; aggiungi `AAAA` dopo aver verificato raggiungibilità e firewall IPv6.
+
+Il bootstrap conserva la policy SSH del provider: password SSH e login root con
+password possono restare attivi, protetti da password robuste, rate limiting UFW
+e fail2ban. `security-check` li segnala chiaramente come `WARN`, non come
+hardening key-only. `sudo mifpctl ssh-harden --operator <utente>` rimane un
+passaggio futuro opzionale e reversibile con `ssh-rollback`.
 
 Procedura completa per una VPS nuova (DNS, SSH, firewall, backup, smoke test di
 disaster recovery, checklist finale):

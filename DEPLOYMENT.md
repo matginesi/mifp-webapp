@@ -67,14 +67,33 @@ domini, admin, DNS (fuori dal local mode) e login registry.
 
 ## Prima installazione, una volta sola
 
-Per la procedura completa su una VPS vuota (DNS, chiavi SSH, hardening SSH,
-firewall, segreti, GHCR, primo deploy, backup, smoke test di disaster recovery e
+Per la procedura completa su una VPS vuota (DNS, policy SSH, firewall,
+segreti, GHCR, primo deploy, backup, smoke test di disaster recovery e
 checklist finale) usa il runbook dedicato:
 
 **[docs/DEPLOY_NEW_VPS.md](docs/DEPLOY_NEW_VPS.md)**
 
-Prerequisiti: Ubuntu e accesso SSH con `sudo`. Il DNS può essere completato
-anche dopo il bootstrap.
+Prerequisiti: Ubuntu 22.04 o 24.04 e accesso SSH con `sudo`. Il target reale è
+Ubuntu 24.04; il bootstrap rifiuta esplicitamente altre release.
+
+### Primo cutover diretto, senza staging
+
+Per questa prima produzione la sequenza prevista è:
+
+```text
+repository/CI verde
+-> DNS di mifp.eu, www.mifp.eu, events.mifp.eu verso la VPS
+-> bootstrap immediato con --domain mifp.eu
+-> configurazione applicazione/admin
+-> config-check -> init -> doctor -> security-check
+-> verifica finale HTTPS, DNS e backup
+```
+
+Il cambio DNS prima che l'applicazione sia avviata può causare una breve
+indisponibilità di cutover; per questo rilascio è accettata. Configura dapprima
+IPv4 (`A` per l'apex e `A`/`CNAME` per `www` ed `events`). Aggiungi record
+`AAAA` soltanto dopo aver verificato raggiungibilità IPv6 e comportamento UFW
+su IPv6. Non è previsto alcun dominio di staging.
 
 Dal PC:
 
@@ -87,13 +106,15 @@ Sulla VPS:
 
 ```bash
 sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
+  --domain mifp.eu \
   --image-repository ghcr.io/matginesi/mifp-webapp
 ```
 
-Il bootstrap installa Docker/Caddy/SQLite/PHP-FPM, crea `/opt/mifp`, configura firewall,
-systemd e `mifpctl`, quindi termina anche con configurazione incompleta. Finché
-il dominio manca, Caddy risponde su HTTP con una pagina di attesa; non tenta
-ACME e non inventa record locali.
+Il bootstrap installa Docker/Caddy/SQLite/PHP-FPM, crea `/opt/mifp`, configura
+firewall, systemd e `mifpctl`. Il supporto a un bootstrap senza dominio resta
+utile per installazioni non ancora configurate; il cutover reale usa invece
+`--domain mifp.eu` subito dopo il cambio DNS, così Caddy segue il normale
+percorso pubblico DNS/ACME.
 
 Configura poi, anche in più sessioni:
 
@@ -131,7 +152,8 @@ prima il manifest anonimamente e `init` esegue normalmente un pull anonimo.
 `registry-login` rimane disponibile soltanto per eventuali package privati; il
 PAT passa a `docker login` via stdin e non viene salvato nei file MIFP. `init`
 scarica `ghcr.io/matginesi/mifp-webapp:latest`, lo risolve nel digest OCI
-immutabile, crea un DB **schema-only v10**, lo verifica e avvia la webapp. Lo
+immutabile, crea un database schema-only usando lo schema incluso nell'immagine
+di produzione verificata, lo verifica e avvia la webapp. Lo
 stato persistente non contiene mai `latest`.
 `config-check` non modifica alcun file. SMTP e backup remoto mancanti sono
 opzionali; dominio/admin/DNS e accesso all'immagine sono bloccanti. `doctor` verifica invece
@@ -306,8 +328,8 @@ La VPS verifica nuova immagine + DB candidato, crea un backup del DB vivo,
 ferma il servizio solo per lo swap e ripristina DB+release precedenti se la
 nuova coppia non torna ready.
 
-I DB storici non vengono più "riparati" automaticamente: per dati precedenti a
-v9 crea un DB corrente e rigenera/converti i contenuti in un package moderno
+I DB storici fuori dalla catena di migrazione supportata non vengono "riparati"
+automaticamente: crea un DB corrente e rigenera/converti i contenuti in un package moderno
 `mifp-content` v1 o `mifp-jsonl-v2` v2 prima dell’import.
 
 ## Rollback
@@ -411,8 +433,10 @@ Prima di considerare una VPS pronta:
 [ ] sudo mifpctl doctor -> Doctor: OK
 [ ] sudo mifpctl security-check -> Security check: OK
 [ ] solo SSH, 80 e 443 sono listener pubblici attesi (v4 e v6)
-[ ] sudo mifpctl ssh-harden --operator <utente> applicato e provato da una
-    nuova sessione (sshd -T: PasswordAuthentication no)
+[ ] policy SSH effettiva revisionata con sshd -T; se password/root password sono
+    attivi, i WARN di security-check sono compresi e vengono usate password robuste
+[ ] opzionale: ssh-harden applicato e provato da una nuova sessione se si decide
+    in futuro di passare all'autenticazione key-only
 [ ] unattended-upgrades attivo e Automatic-Reboot false;
     /var/run/reboot-required assente
 [ ] Caddyfile valido e backend Flask solo su 127.0.0.1:8000
@@ -428,7 +452,10 @@ La checklist operativa completa, con i comandi di verifica, è in
 [docs/DEPLOY_NEW_VPS.md](docs/DEPLOY_NEW_VPS.md).
 
 `security-check` è diagnostico e non modifica la macchina. Verifica la policy SSH
-**effettiva** (`sshd -T`), che UFW sia attivo con le regole IPv4 e IPv6 attese, i
+**effettiva** (`sshd -T`): password e root-password consentite producono `WARN`
+espliciti ma non un errore, perché sono la policy scelta e non vengono descritte
+come key-only. Gli errori reali restano bloccanti. Verifica inoltre che UFW sia
+attivo con le regole IPv4 e IPv6 attese, i
 permessi dei file, i listener pubblici inaspettati, l'isolamento del container, la
 freschezza e l'integrità dell'ultimo backup, e che le credenziali di backup non
 siano esposte al container web.

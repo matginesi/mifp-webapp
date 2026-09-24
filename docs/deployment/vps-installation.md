@@ -37,7 +37,8 @@ usa mai la CA locale di Caddy.
 
 Servono:
 
-- una macchina Ubuntu Server pulita con accesso SSH e `sudo`;
+- Ubuntu Server 22.04 o 24.04 con accesso SSH e `sudo` (target attuale: 24.04;
+  altre release vengono rifiutate);
 - porte TCP 80 e 443 raggiungibili dal client;
 - il contenuto completo della directory `deploy/`;
 - almeno una pipeline GitHub Actions completata con successo;
@@ -73,20 +74,37 @@ file systemd del backup.
 
 ## 2. Deploy su VPS pubblica
 
+Il primo deploy reale avviene direttamente, senza staging:
+
+```text
+repository/CI verde
+-> DNS di mifp.eu, www.mifp.eu, events.mifp.eu verso la VPS
+-> bootstrap immediato con --domain mifp.eu
+-> configurazione applicazione/admin
+-> config-check -> init -> doctor -> security-check
+-> verifica finale HTTPS, DNS e backup
+```
+
+Il cambio DNS prima che l'app sia in esecuzione può causare una breve
+indisponibilità, accettata per questo cutover. Inizia con IPv4 (`A` per l'apex,
+`A`/`CNAME` per `www` ed `events`) e aggiungi `AAAA` solo dopo aver verificato
+raggiungibilità e firewall IPv6. Nessun dominio di staging fa parte del flusso.
+
 ### 2.1 Esegui il bootstrap dell'host
 
-Il dominio non è richiesto. Sulla VPS:
+Subito dopo il cambio DNS, sulla VPS:
 
 ```bash
 sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
+  --domain mifp.eu \
   --image-repository ghcr.io/matginesi/mifp-webapp
 ```
 
 Il comando installa Docker Engine, Compose, Caddy, SQLite, PHP-FPM e gli
 strumenti host; crea utenti/directory, systemd e firewall; installa `mifpctl`;
 infine inizializza i file di configurazione senza chiedere credenziali
-applicative. Se manca il dominio, Caddy resta su una configurazione HTTP di
-attesa. Il bootstrap è idempotente e non elimina DB, dati o release esistenti.
+applicative. Il bootstrap è idempotente e non elimina DB, dati o release
+esistenti. Non modifica la policy di autenticazione SSH del provider.
 
 Un vecchio `/opt/mifp/.env` viene migrato preservando dominio, repository,
 admin e segreti esistenti. Dopo la migrazione, i file autorevoli sono:
@@ -120,12 +138,13 @@ Crea record DNS verso l'IP pubblico della VPS:
 
 ```text
 mifp.eu         A       VPS_IPV4
-www.mifp.eu     A       VPS_IPV4
-events.mifp.eu  A       VPS_IPV4
+www.mifp.eu     CNAME   mifp.eu
+events.mifp.eu  CNAME   mifp.eu
 ```
 
-Aggiungi record `AAAA` soltanto se la VPS ha IPv6 funzionante e le porte 80/443
-sono raggiungibili anche via IPv6. Un record `AAAA` errato può impedire la
+Aggiungi record `AAAA` soltanto dopo aver verificato che la VPS ha IPv6
+funzionante, che UFW mostra le regole `(v6)` e che le porte 80/443 sono
+raggiungibili via IPv6. Un record `AAAA` errato può impedire la
 validazione ACME o rendere il sito intermittente.
 
 Verifica dal computer locale:
@@ -184,6 +203,7 @@ Se healthcheck o timer falliscono, DB iniziale e stato release vengono rimossi e
 
 ```bash
 sudo mifpctl doctor
+sudo mifpctl security-check
 sudo mifpctl status
 curl -I https://mifp.eu/health
 curl -I https://events.mifp.eu/.mifp-events-health
@@ -199,6 +219,12 @@ https://events.mifp.eu/
 
 Dalla dashboard importa il package dati prodotto dagli scraper. Non copiare mai
 un `mifp.db` locale sopra il database vivo.
+
+La policy iniziale conserva password SSH e, se previsto dall'immagine Aruba,
+root password login. Usa password robuste: UFW rate limiting e fail2ban
+attenuano il brute force ma non equivalgono a key-only. `security-check` mostra
+questa scelta come `WARN` senza fallire. `mifpctl ssh-harden --operator USER`
+resta un'opzione futura, non un requisito della prima installazione.
 
 ### 2.6 Required, optional e modifiche successive
 
@@ -552,6 +578,8 @@ VPS pubblica:
 - nessuna entry MIFP in `/etc/hosts`;
 - nessun `tls internal` in `/etc/caddy/Caddyfile`;
 - `sudo mifpctl doctor` termina con `Doctor: OK`;
+- `sudo mifpctl security-check` non riporta errori (i WARN SSH della policy
+  password scelta sono stati revisionati);
 - HTTPS usa una CA pubblica;
 - backup timer attivo.
 
