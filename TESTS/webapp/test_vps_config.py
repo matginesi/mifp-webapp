@@ -216,6 +216,21 @@ def test_show_redacts_every_secret_and_check_is_read_only(tmp_path: Path, capsys
     assert errors == []
     assert "NOT CONFIGURED (optional)" in "\n".join(notes)
     assert before == (store.config.read_bytes(), store.secrets_path.read_bytes(), store.runtime.read_bytes())
+    shown = subprocess.run(
+        [
+            "python3", str(HELPER),
+            "--config-file", str(store.config),
+            "--secrets-file", str(store.secrets_path),
+            "--runtime-env", str(store.runtime),
+            "--docker-config", str(docker_config),
+            "show",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert shown.returncode == 0, shown.stderr
+    assert "smtp-top-secret" not in shown.stdout + shown.stderr
 
 
 def test_required_missing_fails_but_optional_mail_and_remote_backup_do_not(tmp_path: Path) -> None:
@@ -344,12 +359,23 @@ def test_partial_repeated_wizard_preserves_other_sections(monkeypatch, tmp_path:
     module, store = _store(tmp_path)
     store.save(_ready_values() | {"PUBLIC_IPV4": "192.0.2.10"})
     monkeypatch.setattr(module.sys.stdin, "isatty", lambda: True)
-    answers = iter(["aruba", "smtp.aruba.it", "465", "tls", "info@mifp.eu", "info@mifp.eu", "MIFP", "", ""])
+    answers = iter(["smtp", "smtp.aruba.it", "465", "tls", "info@mifp.eu", "info@mifp.eu", "MIFP", ""])
     monkeypatch.setattr(builtins, "input", lambda _prompt: next(answers))
     monkeypatch.setattr(module.getpass, "getpass", lambda _prompt: "smtp-secret")
     assert module.run_wizard(store, "mail", tmp_path / "missing-docker.json") == 0
     assert store.values()["PUBLIC_IPV4"] == "192.0.2.10"
-    assert store.values()["SMTP_PASSWORD"] == "smtp-secret"
+    saved = store.values()
+    assert saved["MAIL_PROVIDER"] == "smtp"
+    assert saved["SMTP_HOST"] == "smtp.aruba.it"
+    assert saved["SMTP_PORT"] == "465"
+    assert saved["SMTP_SECURITY"] == "tls"
+    assert saved["SMTP_USERNAME"] == "info@mifp.eu"
+    assert saved["SMTP_FROM_ADDRESS"] == "info@mifp.eu"
+    assert saved["SMTP_FROM_NAME"] == "MIFP"
+    assert saved["SMTP_PASSWORD"] == "smtp-secret"
+    assert "SMTP_PASSWORD" not in module.read_env(store.config)
+    assert module.read_env(store.secrets_path)["SMTP_PASSWORD"] == "smtp-secret"
+    assert module.read_env(store.runtime)["SMTP_PASSWORD"] == ""
 
 
 def test_cancelled_wizard_does_not_modify_existing_files(monkeypatch, tmp_path: Path) -> None:
@@ -447,6 +473,23 @@ def test_render_msmtp_config_keeps_smtp_secret_out_of_cli_and_event_files(tmp_pa
     assert 'user "mailer@example.net"' in rendered
     assert 'password "test secret # with \\"quotes\\" and \\\\slashes"' in rendered
     assert "SMTP_PASSWORD" not in rendered
+    cli_output = tmp_path / "msmtprc-cli"
+    rendered_by_cli = subprocess.run(
+        [
+            "python3", str(HELPER),
+            "--config-file", str(store.config),
+            "--secrets-file", str(store.secrets_path),
+            "--runtime-env", str(store.runtime),
+            "render-mail-relay", "--output", str(cli_output),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert rendered_by_cli.returncode == 0, rendered_by_cli.stderr
+    assert rendered_by_cli.stdout.strip() == "configured"
+    assert values["SMTP_PASSWORD"] not in rendered_by_cli.stdout + rendered_by_cli.stderr
+    assert cli_output.read_text(encoding="utf-8") == rendered
 
 
 def test_render_msmtp_config_removes_transport_when_mail_disabled(tmp_path: Path) -> None:
@@ -455,6 +498,28 @@ def test_render_msmtp_config_removes_transport_when_mail_disabled(tmp_path: Path
     output.write_text("old-secret\n", encoding="utf-8")
 
     assert module.render_msmtp_config({"MAIL_PROVIDER": "disabled"}, output) is False
+    assert not output.exists()
+
+
+def test_invalid_smtp_configuration_removes_stale_credential_relay(tmp_path: Path) -> None:
+    module = _module()
+    output = tmp_path / "msmtprc"
+    output.write_text('password "old-secret"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="SMTP_PASSWORD"):
+        module.render_msmtp_config(
+            {
+                "MAIL_PROVIDER": "smtp",
+                "SMTP_HOST": "smtp.example.net",
+                "SMTP_PORT": "587",
+                "SMTP_SECURITY": "starttls",
+                "SMTP_USERNAME": "mailer@example.net",
+                "SMTP_PASSWORD": "",
+                "SMTP_FROM_ADDRESS": "no-reply@example.net",
+            },
+            output,
+        )
+
     assert not output.exists()
 
 

@@ -42,16 +42,24 @@ def test_regform_uses_private_runtime_and_cannot_write_public_tree(tmp_path: Pat
             "MIFP_CONTRACT_WRITE_UPLOAD": "1",
         }
     )
-    result = subprocess.run(
-        [php, str(script)], env=env, text=True, capture_output=True, check=False
-    )
+    try:
+        result = subprocess.run(
+            [php, str(script)], env=env, text=True, capture_output=True, check=False
+        )
 
-    assert result.returncode == 0, result.stderr
-    assert (registrations / "contract-submission.json").is_file()
-    assert (uploads / "contract-upload.txt").is_file()
-    assert not (public_regform / "must-not-be-created.txt").exists()
-    assert stat.S_IMODE(public_regform.stat().st_mode) == 0o555
-    assert stat.S_IMODE(private_root.stat().st_mode) == 0o700
+        assert result.returncode == 0, result.stderr
+        assert (registrations / "contract-submission.json").is_file()
+        assert (uploads / "contract-upload.txt").is_file()
+        assert not (public_regform / "must-not-be-created.txt").exists()
+        assert stat.S_IMODE(public_regform.stat().st_mode) == 0o555
+        assert stat.S_IMODE(private_root.stat().st_mode) == 0o700
+    finally:
+        # The read-only public tree is the behavior under test, not persistent
+        # test state. Restore owner-write permission so CI's runtime cleanup can
+        # remove the temporary tree even when an assertion fails.
+        public_regform.chmod(0o755)
+        public_regform.parent.chmod(0o755)
+        script.chmod(0o644)
 
 
 def test_bootstrap_assigns_public_and_private_event_permissions_to_distinct_users() -> None:

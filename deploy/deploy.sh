@@ -139,7 +139,10 @@ sync_mail_relay() {
   has msmtp || die "msmtp non disponibile; riesegui bootstrap-vps.sh."
   id "$EVENTS_PHP_USER" >/dev/null 2>&1 \
     || die "Utente PHP eventi mancante: $EVENTS_PHP_USER"
-  state="$(config_cli render-mail-relay --output "$MAIL_RELAY_CONFIG")"
+  if ! state="$(config_cli render-mail-relay --output "$MAIL_RELAY_CONFIG")"; then
+    rm -f -- "$MAIL_RELAY_CONFIG"
+    die "Configurazione SMTP incompleta o non valida; relay eventi disabilitato."
+  fi
   [[ "$state" == "configured" && -f "$MAIL_RELAY_CONFIG" && ! -L "$MAIL_RELAY_CONFIG" ]] \
     || die "Impossibile configurare il relay SMTP sicuro per i regform."
   chown root:"$EVENTS_PHP_USER" "$MAIL_RELAY_CONFIG"
@@ -1824,7 +1827,7 @@ do_config_unset() {
   [[ $# -eq 1 ]] || die "Uso: mifpctl config-unset KEY"
   config_cli unset "$1"
   case "${1^^}" in
-    DOMAIN|WWW_DOMAIN|ENVIRONMENT|EVENTS_PUBLISH_BACKEND|EVENTS_PUBLIC_BASE_URL|EVENTS_LOCAL_ROOT|EVENTS_REMOTE_PROTOCOL|EVENTS_REMOTE_HOST|EVENTS_REMOTE_PORT|EVENTS_REMOTE_USER|EVENTS_REMOTE_ROOT|EVENTS_REMOTE_TIMEOUT|MAIL_PROVIDER|SMTP_HOST|SMTP_PORT|SMTP_SECURITY|SMTP_USERNAME|SMTP_FROM_ADDRESS|SMTP_FROM_NAME)
+    DOMAIN|WWW_DOMAIN|ENVIRONMENT|EVENTS_PUBLISH_BACKEND|EVENTS_PUBLIC_BASE_URL|EVENTS_LOCAL_ROOT|EVENTS_REMOTE_PROTOCOL|EVENTS_REMOTE_HOST|EVENTS_REMOTE_PORT|EVENTS_REMOTE_USER|EVENTS_REMOTE_ROOT|EVENTS_REMOTE_TIMEOUT|MAIL_PROVIDER|SMTP_HOST|SMTP_PORT|SMTP_SECURITY|SMTP_USERNAME|SMTP_FROM_ADDRESS|SMTP_FROM_NAME|SMTP_PASSWORD)
       apply_host_configuration
       current="$(current_image || true)"; [[ -n "$current" ]] && service_running "$current" && do_restart || true ;;
     BACKUP_ENABLED) sync_backup_timer || die "Valore salvato, ma lo stato del timer backup non è stato applicato." ;;

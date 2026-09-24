@@ -116,6 +116,7 @@ ln -sfn "$stamp" "$root/snapshots/latest"
         "exit 0\n",
     )
     _write_executable(bin_dir / "caddy", "#!/bin/sh\nexit 0\n")
+    _write_executable(bin_dir / "msmtp", "#!/bin/sh\nexit 0\n")
     _write_executable(
         bin_dir / "curl",
         "#!/bin/sh\n"
@@ -260,6 +261,7 @@ exit 0
             "MIFP_EVENTS_PHP_STATE": str(php_state),
             "MIFP_EVENTS_PHP_SOCKET": str(tmp_path / "mifp-events.sock"),
             "MIFP_EVENTS_PRIVATE_DIR": str(tmp_path / "events-private"),
+            "MIFP_MAIL_RELAY_CONFIG": str(tmp_path / "msmtprc"),
             "MIFP_CADDY_CONFIG": str(caddy_dir / "Caddyfile"),
             "MIFP_CONFIG_DIR": str(config_dir),
             "MIFP_DOCKER_CONFIG_FILE": str(docker_config),
@@ -402,15 +404,54 @@ def test_event_caddy_site_is_enabled_only_for_local_vps_backend(tmp_path: Path) 
 def test_backend_transition_stops_remote_php_and_restarts_it_for_local_vps(tmp_path: Path) -> None:
     env, _home = _env(tmp_path)
     systemctl_log = Path(env["FAKE_SYSTEMCTL_LOG"])
+    relay = Path(env["MIFP_MAIL_RELAY_CONFIG"])
+    relay.write_text("stale local relay credential\n", encoding="utf-8")
 
     remote = _run(env, "config-set", "EVENTS_PUBLISH_BACKEND", "remote", check=False)
     assert remote.returncode == 0, remote.stderr
     assert "disable --now php8.3-fpm.service" in systemctl_log.read_text(encoding="utf-8")
+    assert not relay.exists()
 
     systemctl_log.write_text("", encoding="utf-8")
     local = _run(env, "config-set", "EVENTS_PUBLISH_BACKEND", "local-vps", check=False)
     assert local.returncode == 0, local.stderr
     assert "enable --now php8.3-fpm.service" in systemctl_log.read_text(encoding="utf-8")
+
+
+def test_local_vps_mail_change_regenerates_relay_and_secret_removal_fails_closed(tmp_path: Path) -> None:
+    env, _home = _env(tmp_path)
+    config_file = Path(env["MIFP_CONFIG_DIR"]) / "config.env"
+    secrets_file = Path(env["MIFP_CONFIG_DIR"]) / "secrets.env"
+    config_file.write_text(
+        config_file.read_text(encoding="utf-8")
+        + "MAIL_PROVIDER=smtp\nSMTP_HOST=smtp.old.example\nSMTP_PORT=587\n"
+        + "SMTP_SECURITY=starttls\nSMTP_USERNAME=mailer@example.test\n"
+        + "SMTP_FROM_ADDRESS=no-reply@example.test\nSMTP_FROM_NAME=MIFP\n",
+        encoding="utf-8",
+    )
+    secret = "relay-test-secret"
+    secrets_file.write_text(
+        secrets_file.read_text(encoding="utf-8") + f"SMTP_PASSWORD={secret}\n",
+        encoding="utf-8",
+    )
+    relay = Path(env["MIFP_MAIL_RELAY_CONFIG"])
+
+    changed = _run(env, "config-set", "SMTP_HOST", "smtp.new.example", check=False)
+
+    assert changed.returncode == 0, changed.stderr
+    rendered = relay.read_text(encoding="utf-8")
+    assert 'host "smtp.new.example"' in rendered
+    assert 'user "mailer@example.test"' in rendered
+    assert f'password "{secret}"' in rendered
+    assert stat.S_IMODE(relay.stat().st_mode) == 0o640
+    assert secret not in changed.stdout + changed.stderr
+
+    removed = _run(env, "config-unset", "SMTP_PASSWORD", check=False)
+
+    assert removed.returncode != 0
+    assert not relay.exists()
+    assert secret not in removed.stdout + removed.stderr
+    assert "relay eventi disabilitato" in removed.stderr
 
 
 def _release(home: Path) -> dict[str, str]:

@@ -205,39 +205,48 @@ def render_msmtp_config(values: dict[str, str], output: Path) -> bool:
             ("SMTP_SECURITY", security), ("SMTP_FROM_ADDRESS", from_address),
         ) if not value
     ]
-    if missing:
-        raise ValueError("SMTP relay configuration incomplete: " + ", ".join(missing))
-    if not port.isdigit() or not 1 <= int(port) <= 65535:
-        raise ValueError("SMTP_PORT must be between 1 and 65535")
-    if security not in {"tls", "starttls", "none"}:
-        raise ValueError("SMTP_SECURITY must be tls, starttls or none")
-    if username and not password:
-        raise ValueError("SMTP_PASSWORD is required when SMTP_USERNAME is configured")
+    try:
+        if missing:
+            raise ValueError("SMTP relay configuration incomplete: " + ", ".join(missing))
+        if not port.isdigit() or not 1 <= int(port) <= 65535:
+            raise ValueError("SMTP_PORT must be between 1 and 65535")
+        if security not in {"tls", "starttls", "none"}:
+            raise ValueError("SMTP_SECURITY must be tls, starttls or none")
+        if username and not password:
+            raise ValueError("SMTP_PASSWORD is required when SMTP_USERNAME is configured")
 
-    lines = [
-        "# Managed by mifpctl. Contains SMTP credentials; do not edit by hand.",
-        "defaults",
-        "timeout 20",
-        "tls_trust_file /etc/ssl/certs/ca-certificates.crt",
-        "account default",
-        f"host {_msmtp_quote(host)}",
-        f"port {int(port)}",
-        f"from {_msmtp_quote(from_address)}",
-    ]
-    if security == "tls":
-        lines.extend(["tls on", "tls_starttls off"])
-    elif security == "starttls":
-        lines.extend(["tls on", "tls_starttls on"])
-    else:
-        lines.append("tls off")
-    if username:
-        lines.extend([
-            "auth on",
-            f"user {_msmtp_quote(username)}",
-            f"password {_msmtp_quote(password)}",
-        ])
-    else:
-        lines.append("auth off")
+        lines = [
+            "# Managed by mifpctl. Contains SMTP credentials; do not edit by hand.",
+            "defaults",
+            "timeout 20",
+            "tls_trust_file /etc/ssl/certs/ca-certificates.crt",
+            "account default",
+            f"host {_msmtp_quote(host)}",
+            f"port {int(port)}",
+            f"from {_msmtp_quote(from_address)}",
+        ]
+        if security == "tls":
+            lines.extend(["tls on", "tls_starttls off"])
+        elif security == "starttls":
+            lines.extend(["tls on", "tls_starttls on"])
+        else:
+            lines.append("tls off")
+        if username:
+            lines.extend([
+                "auth on",
+                f"user {_msmtp_quote(username)}",
+                f"password {_msmtp_quote(password)}",
+            ])
+        else:
+            lines.append("auth off")
+    except ValueError:
+        # Fail closed when canonical SMTP settings become incomplete or unsafe:
+        # an older credential-bearing relay must not remain usable.
+        try:
+            output.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
     atomic_write_text(output, "\n".join(lines) + "\n", 0o600)
     return True
