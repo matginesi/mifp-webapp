@@ -5,6 +5,7 @@ import pty
 import re
 import select
 import shutil
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -98,7 +99,13 @@ ln -sfn "$stamp" "$root/snapshots/latest"
     )
     state = tmp_path / "docker-state"
     state.mkdir()
-    _write_executable(bin_dir / "id", "#!/bin/sh\n[ \"$1\" = -u ] && echo 0 || /usr/bin/id \"$@\"\n")
+    _write_executable(
+        bin_dir / "id",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = -u ]; then echo 0; exit 0; fi\n"
+        "if [ \"${1:-}\" = mifp-events ]; then exit 0; fi\n"
+        "exec /usr/bin/id \"$@\"\n",
+    )
     _write_executable(bin_dir / "chown", "#!/bin/sh\nexit 0\n")
     _write_executable(
         bin_dir / "install",
