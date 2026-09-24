@@ -43,7 +43,8 @@ from ..services.conference_sites import (
     validate_slug,
 )
 from ..services.exporters import export_response_payload
-from ..services.event_import import destination_url, php_execution_status
+from ..services.event_import import destination_url
+from ..services.event_site_publisher import publisher_from_config
 from ..services.conference_version_restore import restore_previous_website
 from ..services.versioning import conference_version_state
 from ..utils.logger import audit_log
@@ -124,47 +125,36 @@ def _site(conn, site_id: int) -> dict | None:
 
 
 def _conference_runtime_status(site: dict) -> dict:
-    """Decorate a conference-site DB row with public filesystem/runtime state."""
+    """Decorate a conference-site row without probing the publication target."""
     enriched = dict(site)
     try:
         manifest = json.loads(enriched.get("package_manifest_json") or "{}")
     except (TypeError, ValueError):
         manifest = {}
     public_path = str(enriched.get("public_path") or enriched.get("slug") or "").strip("/")
-    root = Path(current_app.config["EVENTS_ROOT"]).resolve()
-    candidate = (root / public_path).resolve() if public_path else root
     try:
-        candidate.relative_to(root)
+        normalize_public_path(public_path)
         safe_path = bool(public_path)
     except ValueError:
         safe_path = False
-    enriched["website_installed"] = bool(
-        safe_path and candidate.is_dir() and not (root / public_path).is_symlink()
-    )
+    enriched["website_installed"] = bool(safe_path and enriched.get("deploy_status") == "published")
     try:
         enriched["destination_url"] = (
-            destination_url(current_app.config["EVENTS_DOMAIN"], public_path)
+            destination_url(current_app.config["EVENTS_PUBLIC_BASE_URL"], public_path)
             if safe_path else ""
         )
     except ValueError:
         enriched["destination_url"] = ""
     enriched["php_files"] = int(manifest.get("php_files") or 0)
-    try:
-        enriched["php_execution"] = php_execution_status(
-            public_path, Path(current_app.config["EVENTS_PHP_STATE_PATH"])
-        ) if safe_path else "disabled"
-    except ValueError:
-        enriched["php_execution"] = "unknown"
+    enriched["regform_php_files"] = int(manifest.get("regform_php_files") or 0)
+    enriched["php_execution"] = "disabled"
     enriched["validation_status"] = str(manifest.get("validation") or "unknown")
     enriched["metadata_linked"] = enriched.get("event_id") is not None
     version_state = conference_version_state(enriched)
     enriched["current_version"] = version_state["current_label"]
     enriched["previous_version"] = version_state["previous_label"]
-    rollback = candidate.parent / f".{candidate.name}.rollback" if safe_path else None
     enriched["rollback_available"] = bool(
-        enriched["website_installed"]
-        and rollback and rollback.is_dir() and not rollback.is_symlink()
-        and version_state["previous"]
+        enriched["website_installed"] and version_state["previous"]
     )
     return enriched
 
@@ -337,7 +327,7 @@ def conference_sites():
         "total": len(sites),
         "installed": sum(1 for site in sites if site["website_installed"]),
         "linked": sum(1 for site in sites if site["metadata_linked"]),
-        "php_enabled": sum(1 for site in sites if site["php_execution"] == "enabled"),
+        "failed": sum(1 for site in sites if site["deploy_status"] == "failed"),
     }
     return render_template(
         "dashboard/conferences.html",
@@ -345,6 +335,7 @@ def conference_sites():
         q=q,
         event_options=event_options,
         overview=overview,
+        publisher_status=publisher_from_config(current_app.config).status(),
     )
 
 
@@ -519,8 +510,7 @@ def conference_restore_previous(site_id: int):
             restored_label = restore_previous_website(
                 conn,
                 site,
-                events_root=Path(current_app.config["EVENTS_ROOT"]),
-                php_state_path=Path(current_app.config["EVENTS_PHP_STATE_PATH"]),
+                publisher=publisher_from_config(current_app.config),
             )
         except (ValueError, OSError) as exc:
             current_app.logger.warning(

@@ -30,8 +30,8 @@ La produzione si rilascia esclusivamente via CI/CD.
 ```text
 CODICE:      GitHub -> GHCR -> VPS -> Docker
 CONTENUTI:   scraper -> ZIP -> Dashboard Import -> SQLite
-EVENTI:      backup/editor -> /opt/mifp/events -> Caddy -> events.mifp.eu
-BACKUP:      SQLite + file persistenti + eventi -> /var/backups/mifp
+EVENTI WEB:  WEBSITE ZIP -> publisher -> events.mifp.eu
+BACKUP VPS:  SQLite + file persistenti -> /var/backups/mifp
 ```
 
 Questi flussi non si mescolano. Un normale deploy non modifica i dati e un
@@ -153,8 +153,8 @@ sudo mifpctl doctor
 sudo mifpctl security-check
 ```
 
-Per il primo cutover senza staging, dopo una CI verde si aggiornano i record
-`mifp.eu`, `www.mifp.eu` ed `events.mifp.eu` verso la VPS e si esegue subito il
+Per il primo cutover senza staging, dopo una CI verde si aggiornano soltanto i
+record `mifp.eu` e `www.mifp.eu` verso la VPS e si esegue subito il
 bootstrap con `--domain mifp.eu`. È accettata una breve indisponibilità tra il
 cambio DNS e l'avvio dell'applicazione. Pubblica inizialmente solo record IPv4
 `A`/`CNAME`; aggiungi `AAAA` dopo aver verificato raggiungibilità e firewall IPv6.
@@ -196,18 +196,15 @@ sudo mifpctl rollback
 
 Per una release specifica resta disponibile `sudo mifpctl deploy sha-<commit>`.
 
-I micrositi storici di `events.mifp.eu` sono file host-side, non record Flask.
-Prima della pubblicazione il backup passa un preflight che blocca symlink, file
-speciali e materiale privato/secret-like:
+La produzione corrente è **Phase 1**: `EVENTS_PUBLISH_BACKEND=local-vps`, DNS
+di `events.mifp.eu` verso la VPS, pubblicazione in `/srv/mifp-events` e hosting
+statico/HTTPS tramite Caddy. PHP resta negato salvo regform esplicitamente
+approvati con `mifpctl events-php-enable` e serviti dal pool PHP-FPM dedicato;
+i dati di registrazione sono privati sotto `/srv/mifp-events-private`.
 
-```bash
-sudo mifpctl events-check /path/al/backup/document-root
-sudo mifpctl events-import /path/al/backup/document-root
-```
-
-Il bootstrap prepara anche PHP-FPM per futuri form, ma PHP resta disabilitato
-per ogni URL finché non viene abilitato esplicitamente su un prefix con
-`mifpctl events-php-enable`.
+La **Phase 2** è soltanto futura: dopo la riparazione dell'hosting Aruba si
+potrà passare a publisher remoto/FTPS e spostare `events.mifp.eu`; a quel punto
+la VPS non servirà più il dominio eventi. URL e record applicativi non cambiano.
 
 Dettagli: [panoramica deploy](DEPLOYMENT.md) e
 [guida passo-passo per VPS pubblica e VM locale](docs/deployment/vps-installation.md).

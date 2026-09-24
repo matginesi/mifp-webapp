@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 INSERT OR IGNORE INTO schema_migrations(version,name,checksum)
-VALUES(12,'canonical schema v12','mifp-schema-v12');
+VALUES(13,'canonical schema v13','mifp-schema-v13');
 
 CREATE TABLE IF NOT EXISTS source_systems (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -560,7 +560,8 @@ CREATE TABLE IF NOT EXISTS conference_sites (
     package_manifest_json TEXT NOT NULL DEFAULT '{}',
     deploy_status TEXT NOT NULL DEFAULT 'unpublished' CHECK(deploy_status IN ('unpublished','staged','published','failed')),
     imported_at TEXT,
-    published_at TEXT);
+    published_at TEXT,
+    publication_error TEXT);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_conference_sites_event
     ON conference_sites(event_id) WHERE event_id IS NOT NULL;

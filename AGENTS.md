@@ -58,9 +58,13 @@ bash MIFPAPP/DATABASE/build.sh --fresh
 - `deploy/` holds the VPS release artifacts: `compose.production.yaml` (no
   `build:`; GHCR image, `127.0.0.1:8000`, host data at `/opt/mifp/data`),
   `Caddyfile`, `.env.production.example`, `configure.py`, `deploy.sh`, and `bootstrap-vps.sh`.
-- Historical/public conference sites live on the host under `/opt/mifp/events`;
-  Caddy serves them directly at `events.mifp.eu`. PHP-FPM is host-side,
-  dedicated and deny-by-default; writable PHP state is `/opt/mifp/events-private`.
+- In Phase 1, public conference sites live under `/srv/mifp-events` and Caddy
+  serves them at `events.mifp.eu`. WEBSITE packages publish through the
+  `EventSitePublisher`; PHP is host-side, dedicated and deny-by-default, with
+  explicit `<public_path>/regform` approval only. Authoritative registration
+  data lives outside the public tree under `/srv/mifp-events-private`.
+- A future Phase 2 may switch the publisher to remote FTPS/Aruba only after
+  that hosting is repaired; then the VPS no longer serves `events.mifp.eu`.
 - `.github/workflows/ci-cd.yml` runs only for pushes to `main` (or explicit
   manual dispatch): it runs the versioned webapp + scraper + database quick
   suite and builds/pushes the image from `MIFPAPP/CORE`.

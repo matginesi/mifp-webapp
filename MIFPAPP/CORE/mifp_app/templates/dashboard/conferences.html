@@ -12,10 +12,12 @@
 
 <div class="conference-overview-grid" aria-label="Conference site overview">
   <article><span>Total workspaces</span><strong>{{ overview.total }}</strong><small>Imported and manual conference sites</small></article>
-  <article><span>Websites installed</span><strong>{{ overview.installed }}</strong><small>Present below the configured events root</small></article>
+  <article><span>Websites published</span><strong>{{ overview.installed }}</strong><small>Successfully sent to the configured publisher</small></article>
   <article><span>Linked metadata</span><strong>{{ overview.linked }}</strong><small>Connected to a canonical MIFP event</small></article>
-  <article><span>PHP enabled</span><strong>{{ overview.php_enabled }}</strong><small>Deny-by-default; enabled only by host operator</small></article>
+  <article><span>Publication failures</span><strong>{{ overview.failed }}</strong><small>Retry by importing the WEBSITE package again</small></article>
 </div>
+
+<div class="conference-boundary-note"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i><div><strong>Publisher: {{ publisher_status.backend }}</strong><span>{{ publisher_status.message }}. Event sites are hosted separately from the MIFP VPS.</span></div></div>
 
 <div class="conference-boundary-note">
   <i class="bi bi-diagram-3" aria-hidden="true"></i>
@@ -42,11 +44,13 @@
           </td>
           <td>
             <div class="conference-site-state">
-              <span class="status-badge status-{{ 'success' if site.website_installed else 'warning' }}">Website {{ 'installed' if site.website_installed else 'missing' }}</span>
-              {% if site.php_files %}<span class="status-badge status-{{ 'warning' if site.php_execution == 'enabled' else 'neutral' }}">PHP {{ site.php_files }} / {{ site.php_execution }}</span>{% endif %}
+              <span class="status-badge status-{{ 'success' if site.website_installed else 'warning' }}">Website {{ 'published' if site.website_installed else site.deploy_status|replace('_',' ') }}</span>
+              {% if site.php_files %}<span class="status-badge status-neutral">PHP {{ site.php_files }} / disabled</span>{% endif %}
             </div>
             {% if site.destination_url %}<a class="conference-public-url" href="{{ site.destination_url }}" target="_blank" rel="noopener">{{ site.destination_url }}</a>{% else %}<span class="cell-text">No safe public path</span>{% endif %}
             <span class="cell-text">/{{ site.public_path or site.slug }}/ · {{ site.deploy_status|replace('_',' ') }}</span>
+            {% if site.publication_error %}<span class="cell-text text-danger">{{ site.publication_error }}</span>{% endif %}
+            {% if site.regform_php_files %}<span class="cell-text"><code>sudo mifpctl events-php-enable {{ site.public_path or site.slug }}/regform</code></span>{% endif %}
           </td>
           <td class="d-none d-md-table-cell">
             {% if site.metadata_linked %}
@@ -168,7 +172,7 @@
       <input type="hidden" name="confirm_title" value="{{ site.title }}">
       <div class="modal-header"><div><h2 class="modal-title" id="deleteConferenceTitle{{ site.id }}"><i class="bi bi-exclamation-triangle"></i> Delete conference</h2><p class="modal-subtitle">This permanently removes the workspace, people, configuration and every conference asset from server storage.</p></div><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button></div>
       <div class="modal-body">
-        <div class="alert alert-danger mb-0"><b>{{ site.title }}</b> and all of its stored files will be permanently deleted. This action cannot be undone.</div>
+        <div class="alert alert-danger mb-0"><b>{{ site.title }}</b> and its private MIFP source package will be permanently deleted. The published website is intentionally retained and is not deleted by this action.</div>
       </div>
       <div class="modal-footer"><button class="btn btn-outline btn-sm" type="button" data-bs-dismiss="modal">Cancel</button><button class="btn btn-danger btn-sm" type="submit"><i class="bi bi-trash"></i> Delete conference and storage</button></div>
     </form>

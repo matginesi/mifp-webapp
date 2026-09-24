@@ -244,6 +244,8 @@ def create_app():
     app.register_blueprint(maintenance_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(dashboard_bp)
+    from .commands import events_republish_all
+    app.cli.add_command(events_republish_all)
 
     app.before_request(maintenance_gate)
 

@@ -50,7 +50,9 @@ def test_deploy_compose_binds_only_loopback_and_host_data() -> None:
     assert "127.0.0.1:8000:8000" in ports
     assert not any(not port.startswith("127.0.0.1:") for port in ports)
     assert "${MIFP_DATA_DIR:-/opt/mifp/data}:/app/data" in web["volumes"]
-    assert "${MIFP_EVENTS_DIR:-/opt/mifp/events}:/app/events" in web["volumes"]
+    assert all("/app/events" not in str(volume) for volume in web["volumes"])
+    assert "${EVENTS_LOCAL_ROOT:-/srv/mifp-events}:/app/event-sites" in web["volumes"]
+    assert all("/srv:/" not in str(volume) for volume in web["volumes"])
     assert all("docker.sock" not in volume and "/etc/caddy" not in volume for volume in web["volumes"])
     assert "image" in web
     assert "build" not in web
@@ -62,16 +64,28 @@ def test_deploy_caddyfile_proxies_to_localhost() -> None:
     assert "reverse_proxy 127.0.0.1:8000" in caddyfile
     assert "@ready path /ready" in caddyfile
     assert "respond @ready 404" in caddyfile
-    assert "__MIFP_EVENTS_DOMAIN__" in caddyfile
-    assert "root * /opt/mifp/events" in caddyfile
-    assert "mifp-events-php.caddy" in caddyfile
-    assert "@events_php_source" in caddyfile
-    assert "respond @events_php_source 404" in caddyfile
+    assert "__MIFP_EVENTS_DOMAIN__" not in caddyfile
+    assert "root * /opt/mifp/events" not in caddyfile
+    assert "mifp-events-php.caddy" not in caddyfile
+    assert "events.mifp.eu" not in caddyfile
+    assert "local-vps" in caddyfile and "Remote/disabled" in caddyfile
     assert "web:8000" not in caddyfile
 
     bootstrap = _read("deploy", "bootstrap-vps.sh")
-    assert 's/__MIFP_EVENTS_DOMAIN__/$EVENTS_DOMAIN/g' in bootstrap
-    assert '"$DOMAIN" "$WWW_DOMAIN" "$EVENTS_DOMAIN"' in bootstrap
+    assert "__MIFP_EVENTS_DOMAIN__" not in bootstrap
+    assert '"$DOMAIN" "$WWW_DOMAIN" "$EVENTS_DOMAIN"' not in bootstrap
+    deploy = _read("deploy", "deploy.sh")
+    assert '[[ "$events_backend" == "local-vps" ]]' in deploy
+    assert "root * $events_root" in deploy
+    assert "file_server" in deploy
+    assert "respond @event_php 404" in deploy
+    assert "respond @event_hidden 404" in deploy
+    assert "event_sensitive_tree" in deploy
+    assert "event_database_backup" in deploy
+    assert "event_sensitive_file" in deploy
+    assert "event_sensitive_extension" in deploy
+    assert "not path /.well-known /.well-known/*" in deploy
+    assert "file_server @event_public_conference_yaml" in deploy
 
 
 def test_production_env_template_is_committed_and_secret_safe() -> None:
@@ -287,12 +301,10 @@ def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     assert "php-fpm php-cli php-mbstring php-curl" in script
     assert "mifp-events.conf" in script
     assert "/run/php/mifp-events.sock" in script
-    # PHP-FPM pool files use INI syntax: comments are semicolon-prefixed and
-    # user_ini.filename must be an explicit empty string to disable .user.ini.
-    assert "; An imported conference tree must not ship a .user.ini" in script
-    assert "# An imported conference tree must not ship a .user.ini" not in script
-    assert 'php_admin_value[user_ini.filename] = ""' in script
-    assert 'EVENTS_PHP_USER="mifp-events"' in script
+    assert "security.limit_extensions = .php" in script
+    assert "php_admin_value[open_basedir]" in script
+    assert "php_admin_value[user_ini.filename]" in script
+    assert "php_admin_value[disable_functions]" in script
     assert "/etc/systemd/system/caddy.service" not in script
     assert 'install -o root -g root -m 0750 "$SCRIPT_DIR/configure.py"' in script
     assert 'install -o root -g root -m 0755 "$SCRIPT_DIR/mifpctl" /usr/local/sbin/mifpctl' in script
@@ -301,7 +313,7 @@ def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     assert "systemctl disable --now mifp-backup.timer" in script
     assert "--admin-if-missing" not in script
     assert 'install -o root -g root -m 0750 "$SCRIPT_DIR/vps_config.py"' in script
-    assert 'install -o root -g root -m 0750 "$SCRIPT_DIR/check-events-archive.py"' in script
+    assert 'install -o root -g root -m 0750 "$SCRIPT_DIR/check-events-archive.py"' not in script
     assert "Host bootstrap completed" in script
     # The live Caddyfile must never be written before it validates: render to a
     # temp file, format+validate it, then publish atomically.
@@ -374,10 +386,24 @@ def test_production_docs_match_ssh_cutover_and_schema_policy() -> None:
     assert "schema-only v10" not in docs.lower()
     assert "staging.mifp.eu" not in docs
     assert "--domain mifp.eu" in docs
-    assert "mifp.eu, www.mifp.eu" in docs
+    assert "mifp.eu" in docs and "www.mifp.eu" in docs
     assert "ssh-harden" in docs
     assert "optional" in _read("docs", "DEPLOY_NEW_VPS.md").lower()
     assert "WARN" in _read("docs", "deployment", "hardening.md")
+
+
+def test_events_domain_checks_are_backend_aware() -> None:
+    caddy = _read("deploy", "Caddyfile")
+    bootstrap = _read("deploy", "bootstrap-vps.sh")
+    deploy = _read("deploy", "deploy.sh")
+    config = _read("deploy", "vps_config.py")
+    assert "__MIFP_EVENTS_DOMAIN__" not in caddy
+    assert "https://$events_domain/.mifp-events-health" not in deploy
+    assert 'config_cli get EVENTS_DOMAIN' not in deploy.split("do_doctor() {", 1)[1].split("\n}", 1)[0]
+    assert 'if values.get("EVENTS_PUBLISH_BACKEND") == "local-vps"' in config
+    assert 'dns_hosts.append(urlsplit(values.get("EVENTS_PUBLIC_BASE_URL", "")).hostname or "")' in config
+    assert 'for key in ("DOMAIN", "WWW_DOMAIN", "EVENTS_DOMAIN")' not in config
+    assert '"$DOMAIN" "$WWW_DOMAIN" "$EVENTS_DOMAIN"' not in bootstrap
 
 
 def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
@@ -436,16 +462,11 @@ def test_deploy_security_hardening_contract() -> None:
     assert "Docker socket is mounted" in deploy
     assert "RESTIC_PASSWORD is exposed" in deploy
     assert 'RESTIC_PASSWORD: ""' in compose
-    assert "*.sqlite3" in caddy and "*.db" in caddy and "*.sql" in caddy
-    # Conference Editor websites fetch their canonical public conference.yaml
-    # at runtime. It must be served before the generic YAML deny rule, while
-    # private registration settings remain blocked.
-    assert "@events_public_conference_yaml" in caddy
-    assert "file_server @events_public_conference_yaml" in caddy
-    assert "conference\\.yaml$" in caddy
-    assert caddy.index("file_server @events_public_conference_yaml") < caddy.index("respond @events_sensitive_ext 404")
-    assert "*/regform/settings.yaml" in caddy
-    assert "yml|yaml" in caddy
+    # The base template has no unconditional event surface; local-vps appends
+    # its hardened event site dynamically and remote mode appends nothing.
+    assert "file_server" not in caddy
+    assert "@events_" not in caddy
+    assert "/opt/mifp/events" not in caddy
     assert "UnsetEnvironment=SECRET_KEY ADMIN_PASSWORD_HASH SMTP_PASSWORD" in backup_service
     assert "UMask=0077" in backup_service
 

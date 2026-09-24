@@ -27,10 +27,8 @@ os.environ["ASSETS_DIR"] = str(_TEST_RUNTIME / "assets")
 os.environ["EXPORT_DIR"] = str(_TEST_RUNTIME / "exports")
 os.environ["LOG_DIR"] = str(_TEST_RUNTIME / "logs")
 os.environ["CONFERENCES_DIR"] = str(_TEST_RUNTIME / "conferences")
-os.environ["EVENTS_ROOT"] = str(_TEST_RUNTIME / "events")
-os.environ["EVENTS_DOMAIN"] = "events.test"
-os.environ["EVENTS_PHP_STATE_PATH"] = str(_TEST_RUNTIME / "events-php-enabled.txt")
-(_TEST_RUNTIME / "events-php-enabled.txt").touch()
+os.environ["EVENTS_LOCAL_ROOT"] = str(_TEST_RUNTIME / "events")
+os.environ["EVENTS_PUBLIC_BASE_URL"] = "https://events.test"
 os.environ["RUNTIME_CONFIG_DIR"] = str(_TEST_RUNTIME / "config")
 os.environ["TMPDIR"] = str(_TEST_RUNTIME / "tmp")
 

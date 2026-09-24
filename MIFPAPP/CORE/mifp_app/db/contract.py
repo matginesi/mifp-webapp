@@ -7,7 +7,7 @@ must satisfy exactly this contract.
 """
 from __future__ import annotations
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 TABLE_GROUPS = {
     "content": frozenset({

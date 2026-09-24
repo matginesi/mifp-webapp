@@ -999,8 +999,7 @@ flowchart LR
     VPS --> Flask[Gunicorn / Flask on 127.0.0.1:8000]
     Internet --> Caddy[Caddy HTTPS :443]
     Caddy --> Flask
-    Caddy --> Events[Static conference archive /opt/mifp/events]
-    Events -. deny-by-default .-> PHP[PHP-FPM pool mifp-events]
+    VPS --> Events[events.mifp.eu via Caddy static + allow-listed PHP]
     VPS --> Backups[SQLite + file snapshots /var/backups/mifp]
     Backups -. optional .-> Restic[Off-site restic repository]
     Scrapers[SCRAPERS local pipeline] -->|MIFP_IMPORT.zip via dashboard| Flask
@@ -1030,7 +1029,6 @@ Internet
   │     │     │     └── exports, backups, data quality, safety operations
   │     │     ├── GET /health                 (public, minimal in production)
   │     │     └── GET /ready                  (blocked at Caddy; deploy/healthcheck only)
-  │     ├── events.mifp.eu → static files + opt-in PHP-FPM at explicit prefixes
   │     └── /ready blocked from the Internet
   ├── SSH (provider/default password policy; optional `mifpctl ssh-harden` for key-only)
   └── HTTP :80 → redirect to HTTPS
@@ -1041,8 +1039,10 @@ Outbound from the app
 
 Persistent state
   ├── SQLite (WAL) + assets + conferences on the host volume /opt/mifp/data
-  ├── Snapshot integrity manifest + optional restic off-site copy
-  └── /opt/mifp/events (host static tree, PHP deny-by-default)
+  └── Snapshot integrity manifest + optional restic off-site copy
+
+Event hosting, Phase 1
+  └── events.mifp.eu → VPS Caddy → /srv/mifp-events + dedicated regform PHP-FPM
 
 Supply chain
   ├── GitHub Actions → GHCR immutable image → VPS (actions pinned to commit SHAs)
@@ -1153,7 +1153,7 @@ host has passed live checks.
 | Git history secrets | **VERIFIED (clean)** | gitleaks 8.30.1 over the full history (76 commits) and the working tree: no real finding (4 exact fake-fixture literals allow-listed; env templates deliberately scanned) |
 | Deployment scripts | **VERIFIED** | `bash -n` and `shellcheck -S warning` clean across `deploy/`; SSH/UFW/apt-key/daemon/bootstrap hardening applied |
 | Backup logic | **VERIFIED** | local fixtures reproduce and now pass the DR scenarios (rotation, stale allow-list, symlinked DB, tampered snapshot, symlink/FIFO rejection) |
-| Caddy config | **VERIFIED** | rendered and loaded by `caddy:2-alpine`; deny/allow matrix exercised over HTTP against a synthetic events tree |
+| Caddy config | **VERIFIED** | apex/`www` proxy is loopback-only; local-vps event hosting is static with sensitive-file and default PHP denial |
 | PHP-FPM config | **VERIFIED (static)** | pool hardened further; `php-fpm -t` is the host-side gate |
 | VPS live configuration | **NOT VERIFIED IN THIS AUDIT** | must be checked during first production installation |
 | SSH live config | **NOT VERIFIED IN THIS AUDIT** | provider/default password SSH is selected; optional `ssh-harden` remains available |
@@ -1417,11 +1417,11 @@ checklist, reproduced here for the first-installation record:
 [ ] only expected public listeners: SSH, 80, 443
 [ ] Docker daemon not exposed; docker group empty; socket mode default
 [ ] Caddy configuration valid on the host
-[ ] DNS resolves correctly for apex, www and events
+[ ] DNS resolves correctly for apex, www and events in Phase 1
 [ ] TLS certificate valid and auto-renewing; HTTP redirects to HTTPS
 [ ] Flask reachable only on 127.0.0.1:8000
 [ ] /ready returns 404 from the Internet
-[ ] PHP-FPM not public; events vhost denies hidden/secret files
+[ ] Caddy/ACME includes mifp.eu, www.mifp.eu and events.mifp.eu in Phase 1
 [ ] container isolation verified (non-root, read-only rootfs,
     no-new-privileges, cap_drop ALL, no docker.sock)
 [ ] application health verified (/health 200)

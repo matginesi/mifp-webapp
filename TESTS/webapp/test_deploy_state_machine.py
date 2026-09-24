@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import pty
+import re
 import select
 import shutil
 import subprocess
@@ -41,14 +42,15 @@ def _env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     )
     _write_executable(home / "configure.py", "#!/usr/bin/env python3\nraise SystemExit(0)\n")
     shutil.copy2(ROOT / "deploy" / "vps_config.py", home / "vps_config.py")
-    shutil.copy2(ROOT / "deploy" / "check-events-archive.py", home / "check-events-archive.py")
     shutil.copy2(ROOT / "deploy" / "Caddyfile", home / "Caddyfile.example")
     shutil.copy2(ROOT / "deploy" / "local-hosts.sh", home / "local-hosts.sh")
     config_dir = tmp_path / "mifp-config"
     config_dir.mkdir()
     (config_dir / "config.env").write_text(
         "ENVIRONMENT=local\nDOMAIN=vpsbox.home.arpa\n"
-        "WWW_DOMAIN=www.vpsbox.home.arpa\nEVENTS_DOMAIN=events.vpsbox.home.arpa\n"
+        "WWW_DOMAIN=www.vpsbox.home.arpa\nEVENTS_PUBLISH_BACKEND=local-vps\n"
+        "EVENTS_PUBLIC_BASE_URL=https://events.vpsbox.home.arpa\n"
+        f"EVENTS_LOCAL_ROOT={tmp_path / 'event-sites'}\nEVENTS_REMOTE_PROTOCOL=ftps\n"
         "IMAGE_REPOSITORY=ghcr.io/example/mifp\nADMIN_USERNAME=admin\n"
         "BACKUP_ENABLED=true\n",
         encoding="utf-8",
@@ -66,19 +68,22 @@ def _env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     caddy_dir.mkdir()
     (caddy_dir / "Caddyfile").write_text("example.invalid { respond 200 }\n", encoding="utf-8")
     (caddy_dir / "mifp-events-php.caddy").write_text("# empty\n", encoding="utf-8")
+    php_state = home / "events-php-enabled.txt"
+    php_state.write_text("", encoding="utf-8")
+    (home / "php-fpm.service").write_text("php8.3-fpm.service\n", encoding="utf-8")
+    private_root = tmp_path / "events-private"
+    for name in ("registrations", "uploads", "sessions", "tmp"):
+        (private_root / name).mkdir(parents=True, exist_ok=True)
     _write_executable(home / "backup.sh", r"""#!/bin/bash
 set -eu
 root="${MIFP_BACKUP_ROOT:?}"
 home="${MIFP_HOME:?}"
 stamp="snapshot-test-$(date +%s%N)"
 dir="$root/snapshots/$stamp"
-mkdir -p "$dir/assets" "$dir/conferences" "$dir/config" "$dir/events" "$dir/events-private"
+mkdir -p "$dir/assets" "$dir/conferences" "$dir/config"
 cp "$home/data/mifp.db" "$dir/mifp.db"
 for name in assets conferences config; do cp -a "$home/data/$name/." "$dir/$name/" 2>/dev/null || true; done
-cp -a "$home/events/." "$dir/events/" 2>/dev/null || true
-cp -a "$home/events-private/." "$dir/events-private/" 2>/dev/null || true
-if [ -f "$home/events-php-enabled.txt" ] && [ ! -L "$home/events-php-enabled.txt" ]; then cp "$home/events-php-enabled.txt" "$dir/events-php-enabled.txt"; else : > "$dir/events-php-enabled.txt"; fi
-python3 -c 'import hashlib,json,sys; from pathlib import Path; root=Path(sys.argv[1]); candidates=[root/"mifp.db",root/"events-php-enabled.txt"]+[p for d in ("assets","conferences","config","events","events-private") for p in sorted((root/d).rglob("*")) if p.is_file() and not p.is_symlink()]; files={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in candidates}; (root/"manifest.json").write_text(json.dumps({"format":"mifp-host-snapshot","version":2,"files":files}), encoding="utf-8")' "$dir"
+python3 -c 'import hashlib,json,sys; from pathlib import Path; root=Path(sys.argv[1]); candidates=[root/"mifp.db"]+[p for d in ("assets","conferences","config") for p in sorted((root/d).rglob("*")) if p.is_file() and not p.is_symlink()]; files={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in candidates}; (root/"manifest.json").write_text(json.dumps({"format":"mifp-host-snapshot","version":3,"files":files}), encoding="utf-8")' "$dir"
 ln -sfn "$stamp" "$root/snapshots/latest"
 """)
 
@@ -102,6 +107,7 @@ ln -sfn "$stamp" "$root/snapshots/latest"
     _write_executable(
         bin_dir / "systemctl",
         "#!/bin/sh\n"
+        "printf '%s\\n' \"$*\" >> \"${FAKE_SYSTEMCTL_LOG:-/dev/null}\"\n"
         "if [ \"${1:-}\" = is-enabled ] && [ \"${2:-}\" = mifp-backup.timer ]; then "
         "  if [ \"${BACKUP_TIMER_DISABLED:-0}\" = 1 ]; then echo disabled; exit 1; fi; "
         "  echo enabled; exit 0; fi\n"
@@ -248,8 +254,12 @@ exit 0
             "MIFP_RUNTIME_UID": str(os.getuid()),
             "MIFP_RUNTIME_GID": str(os.getgid()),
             "FAKE_DOCKER_STATE": str(state),
+            "FAKE_SYSTEMCTL_LOG": str(tmp_path / "systemctl.log"),
             "MIFP_BACKUP_ROOT": str(tmp_path / "host-backups"),
             "MIFP_EVENTS_PHP_INCLUDE": str(caddy_dir / "mifp-events-php.caddy"),
+            "MIFP_EVENTS_PHP_STATE": str(php_state),
+            "MIFP_EVENTS_PHP_SOCKET": str(tmp_path / "mifp-events.sock"),
+            "MIFP_EVENTS_PRIVATE_DIR": str(tmp_path / "events-private"),
             "MIFP_CADDY_CONFIG": str(caddy_dir / "Caddyfile"),
             "MIFP_CONFIG_DIR": str(config_dir),
             "MIFP_DOCKER_CONFIG_FILE": str(docker_config),
@@ -312,6 +322,95 @@ def _run_tty(env: dict[str, str], *args: str, input_text: str) -> tuple[int, str
             break
     os.close(master)
     return process.returncode, b"".join(chunks).decode(errors="replace")
+
+
+def test_event_caddy_site_is_enabled_only_for_local_vps_backend(tmp_path: Path) -> None:
+    env, _home = _env(tmp_path)
+    caddy = Path(env["MIFP_CADDY_CONFIG"])
+
+    result = _run(env, "config-set", "EVENTS_PUBLISH_BACKEND", "local-vps", check=False)
+    assert result.returncode == 0, result.stderr
+    local_config = caddy.read_text(encoding="utf-8")
+    assert "events.vpsbox.home.arpa" in local_config
+    assert f"root * {tmp_path / 'event-sites'}" in local_config
+    assert "file_server" in local_config
+    assert "respond @event_php 404" in local_config
+    assert "respond @event_hidden 404" in local_config
+    assert "not path /.well-known /.well-known/*" in local_config
+    assert "event_sensitive_tree" in local_config
+    assert "event_database_backup" in local_config
+    assert "event_sensitive_file" in local_config
+    assert "event_sensitive_extension" in local_config
+    assert "file_server @event_public_conference_yaml" in local_config
+    assert "index index.html index.htm" in local_config
+
+    def matcher(name: str) -> re.Pattern[str]:
+        line = next(
+            value.strip()
+            for value in local_config.splitlines()
+            if f"path_regexp {name} " in value
+        )
+        return re.compile(line.split(f"path_regexp {name} ", 1)[1])
+
+    hidden = matcher("event_hidden")
+    for path in (
+        "/.PLMCN.stage-deadbeef/index.html",
+        "/.PLMCN.rollback/index.html",
+        "/.PLMCN.rollback-old-deadbeef/index.html",
+        "/.PLMCN.restore-deadbeef/index.html",
+        "/PLMCN/.git/config",
+    ):
+        assert hidden.search(path), path
+
+    sensitive_tree = matcher("event_sensitive_tree")
+    sensitive_file = matcher("event_sensitive_file")
+    database_backup = matcher("event_database_backup")
+    sensitive_extension = matcher("event_sensitive_extension")
+    php = matcher("event_php")
+    assert sensitive_tree.search("/PLMCN/.env.production")
+    assert sensitive_tree.search("/PLMCN/regform/registrations/private.csv")
+    assert sensitive_tree.search("/PLMCN/config/settings.json")
+    assert sensitive_file.search("/PLMCN/id_ed25519")
+    assert sensitive_file.search("/PLMCN/credentials.json")
+    assert database_backup.search("/PLMCN/data.sqlite3")
+    assert database_backup.search("/PLMCN/archive.backup")
+    assert sensitive_extension.search("/PLMCN/settings.yml")
+    assert sensitive_extension.search("/PLMCN/server.key")
+    assert php.search("/PLMCN/index.php")
+    assert php.search("/PLMCN/code.phtml")
+    assert php.search("/PLMCN/archive.phar")
+
+    # The explicit YAML handler precedes the generic YAML deny, while ordinary
+    # HTML/assets reach the final static file server.
+    assert local_config.index("file_server @event_public_conference_yaml") < local_config.index(
+        "respond @event_sensitive_extension 404"
+    )
+    assert local_config.index("import " + env["MIFP_EVENTS_PHP_INCLUDE"]) < local_config.index(
+        "respond @event_php 404"
+    )
+    assert hidden.search("/.well-known/acme-challenge/token")
+    assert "not path /.well-known /.well-known/*" in local_config
+    assert "file_server {" in local_config
+
+    result = _run(env, "config-set", "EVENTS_PUBLISH_BACKEND", "remote", check=False)
+    assert result.returncode == 0, result.stderr
+    remote_config = caddy.read_text(encoding="utf-8")
+    assert "events.vpsbox.home.arpa" not in remote_config
+    assert "file_server" not in remote_config
+
+
+def test_backend_transition_stops_remote_php_and_restarts_it_for_local_vps(tmp_path: Path) -> None:
+    env, _home = _env(tmp_path)
+    systemctl_log = Path(env["FAKE_SYSTEMCTL_LOG"])
+
+    remote = _run(env, "config-set", "EVENTS_PUBLISH_BACKEND", "remote", check=False)
+    assert remote.returncode == 0, remote.stderr
+    assert "disable --now php8.3-fpm.service" in systemctl_log.read_text(encoding="utf-8")
+
+    systemctl_log.write_text("", encoding="utf-8")
+    local = _run(env, "config-set", "EVENTS_PUBLISH_BACKEND", "local-vps", check=False)
+    assert local.returncode == 0, local.stderr
+    assert "enable --now php8.3-fpm.service" in systemctl_log.read_text(encoding="utf-8")
 
 
 def _release(home: Path) -> dict[str, str]:
@@ -751,7 +850,7 @@ def test_registry_login_uses_password_stdin_without_echoing_token(tmp_path: Path
     config_dir = Path(env["MIFP_CONFIG_DIR"])
     persisted = (config_dir / "config.env").read_text(encoding="utf-8")
     persisted += (config_dir / "secrets.env").read_text(encoding="utf-8")
-    assert "matteo" not in persisted
+    assert "REGISTRY_USERNAME=matteo" not in persisted
     assert token not in persisted
 
 
@@ -908,7 +1007,7 @@ def test_restore_snapshot_rejects_injected_php_allowlist(tmp_path: Path) -> None
     assert (home / "data" / "mifp.db").read_text(encoding="utf-8") == "fake-db"
 
 
-def test_restore_snapshot_v2_restores_public_and_private_event_trees(tmp_path: Path) -> None:
+def test_restore_snapshot_v2_verifies_but_does_not_restore_retired_event_trees(tmp_path: Path) -> None:
     import hashlib
     import json
 
@@ -947,131 +1046,137 @@ def test_restore_snapshot_v2_restores_public_and_private_event_trees(tmp_path: P
 
     _run(env, "restore-snapshot", str(snapshot))
 
-    assert not (home / "events" / "OLD").exists()
-    assert (home / "events" / "PLMCN-2025" / "index.html").read_text(encoding="utf-8") == "historic"
-    assert not (home / "events-private" / "registrations" / "old.csv").exists()
-    assert (home / "events-private" / "registrations" / "future.csv").read_text(encoding="utf-8") == "private"
-    assert (home / "events-php-enabled.txt").read_text(encoding="utf-8") == "PLMCN-2025/regform\n"
-    rendered = Path(env["MIFP_EVENTS_PHP_INCLUDE"]).read_text(encoding="utf-8")
-    assert "PLMCN-2025/regform" in rendered
+    assert (home / "events" / "OLD/index.html").read_text(encoding="utf-8") == "old"
+    assert not (home / "events" / "PLMCN-2025").exists()
+    assert (home / "events-private/registrations/old.csv").read_text(encoding="utf-8") == "old"
+    assert not (home / "events-private/registrations/future.csv").exists()
 
 
-def test_events_import_is_atomic_and_rollbackable(tmp_path: Path) -> None:
-    env, home = _env(tmp_path)
-    (home / "events-php-enabled.txt").write_text("OLD/regform\n", encoding="utf-8")
-
-    first = tmp_path / "events-backup-1"
-    (first / "PLMCN-2025").mkdir(parents=True)
-    (first / "PLMCN-2025" / "index.html").write_text("v1", encoding="utf-8")
-    _run(env, "events-import", str(first))
-    assert (home / "events" / "PLMCN-2025" / "index.html").read_text(encoding="utf-8") == "v1"
-    assert (home / "events-php-enabled.txt").read_text(encoding="utf-8") == ""
-    assert "OLD/regform" not in Path(env["MIFP_EVENTS_PHP_INCLUDE"]).read_text(encoding="utf-8")
-
-    second = tmp_path / "events-backup-2"
-    (second / "PLMCN-2025").mkdir(parents=True)
-    (second / "PLMCN-2025" / "index.html").write_text("v2", encoding="utf-8")
-    _run(env, "events-import", str(second))
-    assert (home / "events" / "PLMCN-2025" / "index.html").read_text(encoding="utf-8") == "v2"
-    assert (home / "events.previous" / "PLMCN-2025" / "index.html").read_text(encoding="utf-8") == "v1"
-
-    _run(env, "events-rollback")
-    assert (home / "events" / "PLMCN-2025" / "index.html").read_text(encoding="utf-8") == "v1"
-    assert (home / "events.previous" / "PLMCN-2025" / "index.html").read_text(encoding="utf-8") == "v2"
-
-
-def test_events_import_rejects_symlinks(tmp_path: Path) -> None:
-    env, home = _env(tmp_path)
-    source = tmp_path / "events-unsafe"
-    source.mkdir()
-    outside = tmp_path / "outside.txt"
-    outside.write_text("secret", encoding="utf-8")
-    (source / "leak").symlink_to(outside)
-
-    result = _run(env, "events-import", str(source), check=False)
-
-    assert result.returncode != 0
-    assert "symlink" in result.stderr
-    assert not (home / "events").exists()
-
-
-def test_events_import_rejects_fifo_special_file(tmp_path: Path) -> None:
-    env, home = _env(tmp_path)
-    source = tmp_path / "events-special"
-    source.mkdir()
-    os.mkfifo(source / "pipe")
-
-    result = _run(env, "events-import", str(source), check=False)
-
-    assert result.returncode != 0
-    assert "file speciale" in result.stderr
-    assert not (home / "events").exists()
-
-
-def test_php_enable_rejects_empty_and_traversal_prefixes(tmp_path: Path) -> None:
-    env, _ = _env(tmp_path)
-    for unsafe in ("/", "../regform", "event/../../outside", "event//regform"):
-        result = _run(env, "events-php-enable", unsafe, check=False)
-        assert result.returncode != 0
-        assert "Path conferenza" in result.stderr
-
-
-def test_php_execution_requires_explicit_event_prefix(tmp_path: Path) -> None:
-    import socket
-    import tempfile
+def test_v4_restore_recovers_private_regform_data_and_suspends_php_until_republish(tmp_path: Path) -> None:
+    import hashlib
+    import json
 
     env, home = _env(tmp_path)
-    regform = home / "events" / "PLMCN-2027" / "regform"
-    regform.mkdir(parents=True)
-    (home / "events-private").mkdir()
-    (regform / "index.php").write_text("<?php echo 'ok';", encoding="utf-8")
-    (home / "php-fpm.service").write_text("php8.3-fpm.service\n", encoding="utf-8")
+    _run(env, "first-deploy", "sha-a")
+    private_root = Path(env["MIFP_EVENTS_PRIVATE_DIR"])
+    for name in ("registrations", "uploads", "sessions", "tmp"):
+        (private_root / name).mkdir(parents=True, exist_ok=True)
+    (private_root / "registrations/old.json").write_text("old", encoding="utf-8")
 
+    snapshot = tmp_path / "candidate-snapshot-v4"
+    for name in ("assets", "conferences", "config", "events-private/registrations", "events-private/uploads"):
+        (snapshot / name).mkdir(parents=True, exist_ok=True)
+    (snapshot / "mifp.db").write_text("snapshot-db", encoding="utf-8")
+    (snapshot / "events-private/registrations/submission.json").write_text("restored", encoding="utf-8")
+    (snapshot / "events-private/uploads/proof.pdf").write_bytes(b"proof")
+    (snapshot / "events-php-enabled.txt").write_text("PLMCN-2027/regform\n", encoding="utf-8")
+    candidates = [snapshot / "mifp.db", snapshot / "events-php-enabled.txt"] + [
+        path
+        for dirname in ("assets", "conferences", "config", "events-private")
+        for path in sorted((snapshot / dirname).rglob("*"))
+        if path.is_file()
+    ]
+    files = {
+        path.relative_to(snapshot).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in candidates
+    }
+    (snapshot / "manifest.json").write_text(
+        json.dumps({"format": "mifp-host-snapshot", "version": 4, "files": files}),
+        encoding="utf-8",
+    )
+
+    restored = _run(env, "restore-snapshot", str(snapshot), check=False)
+    assert restored.returncode == 0, restored.stderr
+    assert not (private_root / "registrations/old.json").exists()
+    assert (private_root / "registrations/submission.json").read_text() == "restored"
+    assert (private_root / "uploads/proof.pdf").read_bytes() == b"proof"
+    assert (home / "events-php-enabled.txt").read_text() == "PLMCN-2027/regform\n"
     include = Path(env["MIFP_EVENTS_PHP_INCLUDE"])
-    config = Path(env["MIFP_CADDY_CONFIG"])
+    assert "Suspended until mifpctl events-republish-all" in include.read_text()
 
-    # Linux limits AF_UNIX paths to roughly 108 bytes.  test_all.sh places
-    # pytest's tmp_path below an intentionally isolated (and potentially long)
-    # runtime directory, so use a short dedicated directory below /tmp.
-    with tempfile.TemporaryDirectory(prefix="mifp-socket-", dir="/tmp") as socket_dir:
-        socket_path = Path(socket_dir) / "events.sock"
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            sock.bind(str(socket_path))
-        except PermissionError:
-            sock.close()
-            pytest.skip("sandbox does not allow Unix-domain socket creation")
-        try:
-            php_env = dict(
-                env,
-                MIFP_EVENTS_PHP_INCLUDE=str(include),
-                MIFP_CADDY_CONFIG=str(config),
-                MIFP_EVENTS_PHP_SOCKET=str(socket_path),
-            )
-            _run(php_env, "events-php-enable", "PLMCN-2027/regform")
-            _run(php_env, "events-php-enable", "PLMCN-2027/regform")
-            rendered = include.read_text(encoding="utf-8")
-            assert "path /PLMCN-2027/regform /PLMCN-2027/regform/*" in rendered
-            assert f"unix/{socket_path}" in rendered
-            assert (home / "events-php-enabled.txt").read_text(encoding="utf-8").count(
-                "PLMCN-2027/regform"
-            ) == 1
+    regform = tmp_path / "event-sites/PLMCN-2027/regform"
+    regform.mkdir(parents=True)
+    (regform / "index.php").write_text("<?php echo 'ok';", encoding="utf-8")
+    recovered = _run(env, "events-republish-all", check=False)
+    assert recovered.returncode == 0, recovered.stderr
+    assert "PLMCN\\-2027/regform" in include.read_text()
 
-            _run(php_env, "events-php-disable", "PLMCN-2027/regform")
-            assert "PLMCN-2027/regform" not in include.read_text(encoding="utf-8")
 
-            pre_init = _run(php_env, "doctor")
-            assert "DB: NOT INITIALIZED" in pre_init.stdout
-            assert "Release: NOT INITIALIZED" in pre_init.stdout
-            assert "HTTPS events: OK" in pre_init.stdout
+def test_v5_remote_restore_does_not_require_or_replace_local_php_state(tmp_path: Path) -> None:
+    import hashlib
+    import json
 
-            _run(php_env, "init")
-            post_init = _run(php_env, "doctor")
-            assert "DB: OK" in post_init.stdout
-            assert "Release: OK" in post_init.stdout
-            assert "Application health: OK" in post_init.stdout
-        finally:
-            sock.close()
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    _run(env, "config-set", "EVENTS_PUBLISH_BACKEND", "remote")
+    private_root = Path(env["MIFP_EVENTS_PRIVATE_DIR"])
+    (private_root / "registrations/local-phase-one.json").write_text("retained", encoding="utf-8")
+    include = Path(env["MIFP_EVENTS_PHP_INCLUDE"])
+    include.write_text("# inactive local policy\n", encoding="utf-8")
+
+    snapshot = tmp_path / "candidate-snapshot-v5-remote"
+    for name in ("assets", "conferences", "config"):
+        (snapshot / name).mkdir(parents=True, exist_ok=True)
+    (snapshot / "mifp.db").write_text("snapshot-db", encoding="utf-8")
+    files = {
+        "mifp.db": hashlib.sha256((snapshot / "mifp.db").read_bytes()).hexdigest()
+    }
+    (snapshot / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format": "mifp-host-snapshot",
+                "version": 5,
+                "events_backend": "remote",
+                "files": files,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    restored = _run(env, "restore-snapshot", str(snapshot), check=False)
+
+    assert restored.returncode == 0, restored.stderr
+    assert (private_root / "registrations/local-phase-one.json").read_text() == "retained"
+    assert include.read_text(encoding="utf-8") == "# inactive local policy\n"
+
+
+def test_retired_host_event_import_commands_are_not_exposed(tmp_path: Path) -> None:
+    env, _home = _env(tmp_path)
+    for command in ("events-import", "events-rollback", "events-check"):
+        result = _run(env, command, check=False)
+        assert result.returncode != 0
+        assert "Comando sconosciuto" in result.stderr
+
+
+def test_php_allowlist_is_regform_only_validated_and_reversible(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    event_root = tmp_path / "event-sites"
+    regform = event_root / "PLMCN-2027/regform"
+    regform.mkdir(parents=True)
+    (regform / "index.php").write_text("<?php echo 'ok';", encoding="utf-8")
+    (regform / "template.phtml").write_text("never executable", encoding="utf-8")
+    (event_root / "PLMCN-2027/admin.php").write_text("never executable", encoding="utf-8")
+    available_socket = next((path for path in Path("/run").rglob("*") if path.is_socket()), None)
+    if available_socket is None:
+        pytest.skip("No Unix socket is available to exercise the PHP-FPM readiness guard")
+    env["MIFP_EVENTS_PHP_SOCKET"] = str(available_socket)
+
+    traversal = _run(env, "events-php-enable", "../PLMCN-2027/regform", check=False)
+    assert traversal.returncode != 0
+    assert "Path PHP non valido" in traversal.stderr
+
+    enabled = _run(env, "events-php-enable", "PLMCN-2027/regform", check=False)
+    assert enabled.returncode == 0, enabled.stderr
+    include = Path(env["MIFP_EVENTS_PHP_INCLUDE"]).read_text(encoding="utf-8")
+    assert "^/PLMCN\\-2027/regform/(?:.*/)?[^/]+\\.php$" in include
+    assert "admin.php" not in include
+    assert "phtml" not in include
+    assert (home / "events-php-enabled.txt").read_text() == "PLMCN-2027/regform\n"
+
+    disabled = _run(env, "events-php-disable", "PLMCN-2027/regform", check=False)
+    assert disabled.returncode == 0, disabled.stderr
+    assert (home / "events-php-enabled.txt").read_text() == ""
+    assert "path_regexp" not in Path(env["MIFP_EVENTS_PHP_INCLUDE"]).read_text()
 
 
 def test_security_check_fails_when_docker_tcp_api_is_exposed(tmp_path: Path) -> None:

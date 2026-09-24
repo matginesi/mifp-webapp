@@ -17,6 +17,7 @@ from ..services.event_import import (
     resolve_staging,
     save_upload,
 )
+from ..services.event_site_publisher import publisher_from_config
 from ..utils.logger import audit_log
 from ._shared import admin_error_text
 from .auth import login_required
@@ -34,13 +35,12 @@ def _package_paths(stage: Path) -> tuple[Path | None, Path | None, dict]:
 
 
 def _existing_destinations() -> list[str]:
-    root = Path(current_app.config["EVENTS_ROOT"])
-    if not root.is_dir() or root.is_symlink():
-        return []
-    return sorted(
-        child.name for child in root.iterdir()
-        if child.is_dir() and not child.is_symlink() and not child.name.startswith(".")
-    )
+    with connect(current_app.config["DATABASE_PATH"]) as conn:
+        return [
+            str(row[0]) for row in conn.execute(
+                "SELECT public_path FROM conference_sites WHERE TRIM(public_path)<>'' ORDER BY public_path"
+            ).fetchall()
+        ]
 
 
 @bp.get("/conferences/import")
@@ -55,6 +55,7 @@ def event_import_wizard():
         inspection=None,
         token="",
         existing_destinations=_existing_destinations(),
+        publisher_status=publisher_from_config(current_app.config).status(),
     )
 
 
@@ -93,7 +94,7 @@ def event_import_validate():
                 names.get("website", ""),
                 names.get("info", ""),
                 assets_dir=Path(current_app.config["ASSETS_DIR"]),
-                events_domain=current_app.config["EVENTS_DOMAIN"],
+                events_domain=current_app.config["EVENTS_PUBLIC_BASE_URL"],
             )
         (stage / "upload.json").write_text(json.dumps({"names": names}), encoding="utf-8")
         return render_template(
@@ -101,6 +102,7 @@ def event_import_validate():
             inspection=inspection,
             token=token,
             existing_destinations=_existing_destinations(),
+            publisher_status=publisher_from_config(current_app.config).status(),
         )
     except Exception as exc:
         shutil.rmtree(stage, ignore_errors=True)
@@ -121,7 +123,7 @@ def event_import_apply():
             inspection = inspect_packages(
                 conn, website, info, names.get("website", ""), names.get("info", ""),
                 assets_dir=Path(current_app.config["ASSETS_DIR"]),
-                events_domain=current_app.config["EVENTS_DOMAIN"],
+                events_domain=current_app.config["EVENTS_PUBLIC_BASE_URL"],
             )
             if inspection.errors:
                 raise ValueError("Validation contains blocking errors; validate corrected packages.")
@@ -140,7 +142,8 @@ def event_import_apply():
                 forthcoming = raw_forthcoming == "1"
             result = apply_import(
                 conn, inspection, website, info,
-                events_root=Path(current_app.config["EVENTS_ROOT"]),
+                publisher=publisher_from_config(current_app.config),
+                conferences_root=Path(current_app.config["CONFERENCES_DIR"]),
                 assets_dir=Path(current_app.config["ASSETS_DIR"]),
                 destination=request.form.get("destination", inspection.destination),
                 publish_website=publish,
@@ -148,9 +151,7 @@ def event_import_apply():
                 forthcoming=forthcoming,
                 replace=request.form.get("existing_mode") == "replace",
                 keep_rollback=request.form.get("keep_rollback") == "1",
-                events_domain=current_app.config["EVENTS_DOMAIN"],
-                php_state_path=Path(current_app.config["EVENTS_PHP_STATE_PATH"]),
-                require_php_state=current_app.config.get("ENV") == "production",
+                public_base_url=current_app.config["EVENTS_PUBLIC_BASE_URL"],
             )
         audit_log(
             "event.import", "conference import completed",

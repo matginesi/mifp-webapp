@@ -12,12 +12,13 @@ clonare il repository, non compilare immagini e non eseguire scraper sulla VPS.
 
 ```text
 Internet/LAN -> Caddy host :443 -> 127.0.0.1:8000 -> container MIFP
-                           \-> /opt/mifp/events -> file statici
-                           \-> PHP-FPM host solo per path esplicitamente abilitati
 
 /opt/mifp/data/mifp.db     SQLite persistente
 /var/backups/mifp          snapshot host
 GHCR                       immagini applicative
+
+/srv/mifp-events           siti pubblicati (Phase 1)
+/srv/mifp-events-private   registrazioni/upload privati
 ```
 
 | Elemento | VPS pubblica | VM locale |
@@ -32,6 +33,11 @@ GHCR                       immagini applicative
 Il comportamento `.home.arpa` è esclusivamente un livello di compatibilità per
 test locale. Un dominio normale non riceve mai entry MIFP in `/etc/hosts` e non
 usa mai la CA locale di Caddy.
+
+Questa guida descrive la **Phase 1** corrente: publisher `local-vps`, DNS eventi
+alla VPS e Caddy/PHP-FPM host. La **Phase 2** sarà possibile solo dopo la
+riparazione Aruba: publisher remoto/FTPS, DNS eventi all'hosting esterno e
+nessun servizio eventi sulla VPS.
 
 ## 1. Prerequisiti comuni
 
@@ -78,7 +84,7 @@ Il primo deploy reale avviene direttamente, senza staging:
 
 ```text
 repository/CI verde
--> DNS di mifp.eu, www.mifp.eu, events.mifp.eu verso la VPS
+-> DNS di mifp.eu e www.mifp.eu verso la VPS
 -> bootstrap immediato con --domain mifp.eu
 -> configurazione applicazione/admin
 -> config-check -> init -> doctor -> security-check
@@ -87,7 +93,7 @@ repository/CI verde
 
 Il cambio DNS prima che l'app sia in esecuzione può causare una breve
 indisponibilità, accettata per questo cutover. Inizia con IPv4 (`A` per l'apex,
-`A`/`CNAME` per `www` ed `events`) e aggiungi `AAAA` solo dopo aver verificato
+`A`/`CNAME` per `www`) e aggiungi `AAAA` solo dopo aver verificato
 raggiungibilità e firewall IPv6. Nessun dominio di staging fa parte del flusso.
 
 ### 2.1 Esegui il bootstrap dell'host
@@ -128,8 +134,10 @@ sudo mifpctl config-set DNS_EXPECTED_IPV4 203.0.113.10
 sudo mifpctl admin
 ```
 
-Impostando `DOMAIN`, i default diventano `www.DOMAIN` ed `events.DOMAIN`; sono
-comunque personalizzabili. La modifica rigenera e valida Caddy prima del reload.
+Impostando `DOMAIN`, il default pubblico della VPS diventa `www.DOMAIN`. Con
+`EVENTS_PUBLISH_BACKEND=local-vps`, `EVENTS_PUBLIC_BASE_URL` è
+`https://events.mifp.eu` e Caddy aggiunge il virtual host eventi. Ogni modifica
+rigenera e valida Caddy prima del reload.
 Per un dominio pubblico rimuove un eventuale vecchio blocco MIFP da
 `/etc/hosts`, non configura `tls internal` e lascia certificati e redirect al
 normale percorso DNS/ACME di Caddy.
@@ -139,7 +147,7 @@ Crea record DNS verso l'IP pubblico della VPS:
 ```text
 mifp.eu         A       VPS_IPV4
 www.mifp.eu     CNAME   mifp.eu
-events.mifp.eu  CNAME   mifp.eu
+events.mifp.eu  A       VPS_IPV4
 ```
 
 Aggiungi record `AAAA` soltanto dopo aver verificato che la VPS ha IPv6
@@ -162,8 +170,9 @@ sudo mifpctl config-show
 sudo mifpctl config-check
 ```
 
-Il controllo mostra record correnti e attesi e spiega quali record correggere
-nel pannello Aruba; non modifica mai il provider DNS. L'assenza di credenziali
+Il controllo mostra i record di apex, `www` e, in modalità `local-vps`, eventi;
+in modalità remota salta correttamente DNS/HTTPS VPS per eventi. Non modifica
+mai il provider DNS. L'assenza di credenziali
 Docker non rende il sistema `NOT READY` se il package GHCR pubblico è leggibile.
 
 ### 2.3 Accesso registry e readiness pre-init
@@ -206,7 +215,6 @@ sudo mifpctl doctor
 sudo mifpctl security-check
 sudo mifpctl status
 curl -I https://mifp.eu/health
-curl -I https://events.mifp.eu/.mifp-events-health
 ```
 
 Apri:
@@ -214,11 +222,15 @@ Apri:
 ```text
 https://mifp.eu/
 https://mifp.eu/login
-https://events.mifp.eu/
 ```
 
 Dalla dashboard importa il package dati prodotto dagli scraper. Non copiare mai
 un `mifp.db` locale sopra il database vivo.
+
+In Phase 1 `events.mifp.eu` punta alla VPS ed è incluso nei check DNS/HTTPS e
+nel certificato Caddy. I siti sono statici per default. Per un regform PHP già
+revisionato usa `sudo mifpctl events-php-enable EVENTO/regform`; upload/import
+non abilita mai codice automaticamente.
 
 La policy iniziale conserva password SSH e, se previsto dall'immagine Aruba,
 root password login. Usa password robuste: UFW rate limiting e fail2ban
@@ -228,7 +240,7 @@ resta un'opzione futura, non un requisito della prima installazione.
 
 ### 2.6 Required, optional e modifiche successive
 
-Per arrivare a `READY` servono `ENVIRONMENT`, i tre domini, repository GHCR,
+Per arrivare a `READY` servono `ENVIRONMENT`, dominio principale e URL eventi,
 username e hash admin, `SECRET_KEY`, DNS coerente in produzione e login Docker
 a GHCR. `HOSTNAME`, IP pubblici/attesi e provider DNS sono utili alla diagnosi,
 ma gli IP diventano vincoli DNS soltanto quando impostati.
@@ -314,7 +326,7 @@ Quando `mifpctl` riceve un dominio `.home.arpa`, riconosce automaticamente
 
 ```text
 # BEGIN MIFP LOCAL HOSTS
-127.0.0.1 vpsbox.home.arpa www.vpsbox.home.arpa events.vpsbox.home.arpa
+127.0.0.1 vpsbox.home.arpa www.vpsbox.home.arpa
 # END MIFP LOCAL HOSTS
 ```
 
@@ -328,7 +340,7 @@ sulla workstation.
 `config-set DOMAIN` stampa una riga simile a:
 
 ```text
-192.168.1.50 vpsbox vpsbox.home.arpa www.vpsbox.home.arpa events.vpsbox.home.arpa
+192.168.1.50 vpsbox vpsbox.home.arpa www.vpsbox.home.arpa
 ```
 
 Aggiungila al file `hosts` della workstation.
@@ -418,7 +430,6 @@ Dalla workstation:
 
 ```bash
 curl -I https://vpsbox.home.arpa/health
-curl -I https://events.vpsbox.home.arpa/.mifp-events-health
 ```
 
 Apri:
@@ -426,7 +437,6 @@ Apri:
 ```text
 https://vpsbox.home.arpa/
 https://vpsbox.home.arpa/login
-https://events.vpsbox.home.arpa/
 ```
 
 Non usare `curl -k` come soluzione permanente: nasconde una CA non installata o
@@ -471,7 +481,7 @@ sudo mifpctl status
 sudo mifpctl logs
 ```
 
-## 5. Backup, eventi e PHP
+## 5. Backup e confine del dominio eventi
 
 Backup immediato:
 
@@ -479,27 +489,14 @@ Backup immediato:
 sudo mifpctl backup
 ```
 
-Preflight e import del document root eventi:
+Con `local-vps` le snapshot includono WEBSITE ZIP, registrazioni/upload private
+e allow-list PHP, ma non il tree pubblico estratto. Dopo un restore esegui
+`sudo mifpctl events-republish-all`: ricostruisce i siti attraverso il publisher
+e riattiva l'allow-list solo dopo averne validato i path.
 
-```bash
-sudo mifpctl events-check /percorso/al/document-root
-sudo mifpctl events-import /percorso/al/document-root
-```
-
-`events-check` è read-only e blocca prima della pubblicazione symlink, file speciali,
-filesystem annidati, `.env`, repository VCS, database/dump, chiavi/credential e dati
-legacy di registrazione. Usa come sorgente la document root pubblica, non l'intero
-backup dell'account hosting.
-
-Import e rollback completi azzerano sempre la allow-list PHP. PHP resta
-deny-by-default. Abilita soltanto un path verificato che contiene realmente
-file PHP:
-
-```bash
-sudo mifpctl events-php-enable PLMCN-2027/regform
-sudo mifpctl events-php-list
-sudo mifpctl events-php-disable PLMCN-2027/regform
-```
+Con backend remoto le snapshot non richiedono né includono il runtime PHP
+locale e non proteggono le submission remote. Backup, retention e restore dei
+dati autorevoli sul provider remoto devono essere verificati prima di Phase 2.
 
 ## 6. Troubleshooting
 
@@ -521,20 +518,6 @@ package/organizzazione.
 Controlla che GitHub Actions abbia completato anche il job “Promote verified
 image to latest”. `latest` non viene pubblicato se verifica immagine o
 healthcheck CI falliscono.
-
-### `HTTPS events: ERROR` su VM
-
-Nella VM:
-
-```bash
-getent hosts vpsbox.home.arpa
-getent hosts events.vpsbox.home.arpa
-sudo systemctl status caddy --no-pager
-sudo journalctl -u caddy -n 100 --no-pager
-```
-
-Entrambi i domini devono risolvere `127.0.0.1` nella VM. Sulla workstation
-devono invece risolvere l'IP LAN della VM.
 
 ### Il browser segnala certificato non attendibile sulla VM
 
@@ -574,7 +557,8 @@ sudo cat /opt/mifp/release.env
 
 VPS pubblica:
 
-- DNS `A`/`AAAA` corretto per dominio, `www` ed `events`;
+- DNS `A`/`AAAA` corretto per dominio e `www`;
+- `events.mifp.eu` risolve alla VPS in Phase 1;
 - nessuna entry MIFP in `/etc/hosts`;
 - nessun `tls internal` in `/etc/caddy/Caddyfile`;
 - `sudo mifpctl doctor` termina con `Doctor: OK`;

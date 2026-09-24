@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sqlite3
 import stat
 import zipfile
@@ -19,6 +20,11 @@ from mifp_app.services.event_import import (
     inspect_packages,
     inspect_website,
     normalize_destination,
+)
+from mifp_app.services.event_site_publisher import (
+    DisabledEventSitePublisher,
+    LocalEventSitePublisher,
+    PublicationError,
 )
 from mifp_app.config import Config
 
@@ -39,12 +45,13 @@ conference:
   end_date: '2027-09-24'
 """
     yaml_text = yaml_text.format(version=version)
+    prefix = f"{root}/" if root else ""
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(f"{root}/index.html", "<!doctype html><title>PLMCN</title>")
-        archive.writestr(f"{root}/conference.yaml", yaml_text)
-        archive.writestr(f"{root}/conference.version.json", json.dumps({"version": version}))
-        archive.writestr(f"{root}/regform/index.php", "<?php echo 'ok';")
+        archive.writestr(f"{prefix}index.html", "<!doctype html><title>PLMCN</title>")
+        archive.writestr(f"{prefix}conference.yaml", yaml_text)
+        archive.writestr(f"{prefix}conference.version.json", json.dumps({"version": version}))
+        archive.writestr(f"{prefix}regform/index.php", "<?php echo 'ok';")
         for name, payload in (extra or {}).items():
             archive.writestr(name, payload)
     return output.getvalue()
@@ -95,9 +102,11 @@ def app(tmp_path: Path):
     os.environ.update({
         "TESTING": "1", "DATABASE_PATH": str(tmp_path / "mifp.db"),
         "ASSETS_DIR": str(tmp_path / "assets"), "EXPORT_DIR": str(tmp_path / "exports"),
-        "CONFERENCES_DIR": str(tmp_path / "conferences"), "EVENTS_ROOT": str(tmp_path / "events"),
+        "CONFERENCES_DIR": str(tmp_path / "conferences"), "EVENTS_LOCAL_ROOT": str(tmp_path / "events"),
         "TMPDIR": str(tmp_path / "tmp"), "LOG_DIR": str(tmp_path / "logs"),
-        "EVENTS_DOMAIN": "events.vpsbox.home.arpa", "SECRET_KEY": "event-import-test-secret",
+        "EVENTS_PUBLISH_BACKEND": "local",
+        "EVENTS_PUBLIC_BASE_URL": "https://events.vpsbox.home.arpa",
+        "SECRET_KEY": "event-import-test-secret",
         "LOG_ACCESS_ENABLED": "0",
     })
     from mifp_app import create_app
@@ -107,12 +116,13 @@ def app(tmp_path: Path):
     app.config.update(
         TESTING=True, WTF_CSRF_ENABLED=False, DATABASE_PATH=tmp_path / "mifp.db",
         ASSETS_DIR=tmp_path / "assets", EXPORT_DIR=tmp_path / "exports",
-        CONFERENCES_DIR=tmp_path / "conferences", EVENTS_ROOT=tmp_path / "events",
+        CONFERENCES_DIR=tmp_path / "conferences", EVENTS_LOCAL_ROOT=tmp_path / "events",
         TMP_DIR=tmp_path / "tmp", LOG_DIR=tmp_path / "logs",
-        EVENTS_DOMAIN="events.vpsbox.home.arpa", ADMIN_USERNAME="admin",
+        EVENTS_PUBLISH_BACKEND="local",
+        EVENTS_PUBLIC_BASE_URL="https://events.vpsbox.home.arpa", ADMIN_USERNAME="admin",
         ADMIN_PASSWORD_HASH=generate_password_hash("secret123"),
     )
-    for key in ("ASSETS_DIR", "EXPORT_DIR", "CONFERENCES_DIR", "EVENTS_ROOT", "TMP_DIR", "LOG_DIR"):
+    for key in ("ASSETS_DIR", "EXPORT_DIR", "CONFERENCES_DIR", "EVENTS_LOCAL_ROOT", "TMP_DIR", "LOG_DIR"):
         Path(app.config[key]).mkdir(parents=True, exist_ok=True)
     init_database(Path(app.config["DATABASE_PATH"]))
     return app
@@ -161,8 +171,8 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
         },
     )
     assert imported.status_code == 302
-    assert (Path(app.config["EVENTS_ROOT"]) / "PLMCN-2027/index.html").is_file()
-    assert not (Path(app.config["EVENTS_ROOT"]) / "OTHER/index.html").exists()
+    assert (Path(app.config["EVENTS_LOCAL_ROOT"]) / "PLMCN-2027/index.html").is_file()
+    assert not (Path(app.config["EVENTS_LOCAL_ROOT"]) / "OTHER/index.html").exists()
     with _conn(app) as conn:
         event = conn.execute("SELECT * FROM events WHERE uid='event_plmcn_2027'").fetchone()
         assert event is not None
@@ -171,7 +181,11 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
         site = conn.execute("SELECT * FROM conference_sites").fetchone()
         assert site["public_path"] == "PLMCN-2027"
         assert json.loads(site["package_manifest_json"])["php_execution"] == "disabled"
-        assert event["remote_url"] == "https://events.vpsbox.home.arpa/PLMCN-2027/"
+        # INFO supplied an explicit URL, so publication must not overwrite it.
+        assert event["remote_url"] == "https://events.mifp.eu/PLMCN-2027/"
+        retained = Path(app.config["CONFERENCES_DIR"]) / site["slug"] / "packages" / f"{site['package_sha256']}.zip"
+        assert retained.is_file()
+        assert hashlib.sha256(retained.read_bytes()).hexdigest() == site["package_sha256"]
     events_page = client.get("/dashboard/events")
     assert events_page.status_code == 200
     assert "PLMCN 2027" in events_page.get_data(as_text=True)
@@ -204,9 +218,10 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
     assert client.get(dashboard_asset_url).status_code == 200
 
     conference_page = client.get("/dashboard/conferences").get_data(as_text=True)
-    assert "Website installed" in conference_page
+    assert "Website published" in conference_page
     assert "Open" in conference_page
     assert "PHP 1 / disabled" in conference_page
+    assert "sudo mifpctl events-php-enable PLMCN-2027/regform" in conference_page
     assert "Import WEBSITE / INFO" in conference_page
 
     # Same UID/slug updates instead of duplicating; existing path needs replace.
@@ -243,6 +258,104 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
         assert site["source_version"] == "0.4.2"
         versioning = json.loads(site["package_manifest_json"])["versioning"]
         assert versioning["previous"]["label"] == "0.5.0"
+
+
+def test_website_publish_does_not_treat_staged_editor_source_as_published_rollback(app, client):
+    with _conn(app) as conn:
+        conn.execute(
+            """INSERT INTO conference_sites(
+                   slug,title,public_path,source_format,deploy_status,package_sha256,
+                   package_manifest_json)
+               VALUES('plmcn-2027','Editor source','PLMCN-2027','conference-editor',
+                      'staged',?, '{}')""",
+            ("a" * 64,),
+        )
+        conn.commit()
+
+    validated = client.post(
+        "/dashboard/conferences/import/validate",
+        data={"website_package": (io.BytesIO(_website()), "PLMCN-2027_WEBSITE.zip")},
+        content_type="multipart/form-data",
+    )
+    token = validated.get_data(as_text=True).split('name="token" value="', 1)[1].split('"', 1)[0]
+    published = client.post(
+        "/dashboard/conferences/import/apply",
+        data={
+            "token": token,
+            "destination": "PLMCN-2027",
+            "existing_mode": "replace",
+            "keep_rollback": "1",
+            "accept_warnings": "1",
+        },
+    )
+
+    assert published.status_code == 302
+    with _conn(app) as conn:
+        site = conn.execute(
+            "SELECT * FROM conference_sites WHERE public_path='PLMCN-2027'"
+        ).fetchone()
+    assert site["source_format"] == "legacy-static"
+    assert site["deploy_status"] == "published"
+    assert "previous" not in json.loads(site["package_manifest_json"])["versioning"]
+
+
+def test_republish_all_recovers_from_retained_packages_and_continues_after_failure(app, client):
+    validated = client.post(
+        "/dashboard/conferences/import/validate",
+        data={"website_package": (io.BytesIO(_website()), "PLMCN-2027_WEBSITE.zip")},
+        content_type="multipart/form-data",
+    )
+    token = validated.get_data(as_text=True).split('name="token" value="', 1)[1].split('"', 1)[0]
+    imported = client.post(
+        "/dashboard/conferences/import/apply",
+        data={
+            "token": token,
+            "destination": "PLMCN-2027",
+            "existing_mode": "reject",
+            "keep_rollback": "1",
+            "accept_warnings": "1",
+        },
+    )
+    assert imported.status_code == 302
+    published_root = Path(app.config["EVENTS_LOCAL_ROOT"])
+    with _conn(app) as conn:
+        retained = conn.execute(
+            "SELECT slug,package_sha256 FROM conference_sites WHERE public_path='PLMCN-2027'"
+        ).fetchone()
+        conn.execute(
+            """INSERT INTO conference_sites(
+                   slug,title,public_path,source_format,deploy_status,package_sha256)
+               VALUES('missing-source','Missing source','Missing-Source',
+                      'legacy-static','published',NULL)"""
+        )
+        conn.commit()
+    retained_zip = (
+        Path(app.config["CONFERENCES_DIR"])
+        / retained["slug"]
+        / "packages"
+        / f"{retained['package_sha256']}.zip"
+    )
+    assert retained_zip.is_file()
+    shutil.rmtree(published_root / "PLMCN-2027")
+
+    result = app.test_cli_runner().invoke(args=["events-republish-all"])
+
+    assert result.exit_code == 1
+    assert "OK PLMCN-2027: published" in result.output
+    assert "FAILED Missing-Source: Retained WEBSITE package checksum is invalid." in result.output
+    assert "1 succeeded, 1 failed, 2 total" in result.output
+    assert (published_root / "PLMCN-2027/index.html").is_file()
+    assert retained_zip.is_file()
+    with _conn(app) as conn:
+        recovered = conn.execute(
+            "SELECT deploy_status,publication_error FROM conference_sites WHERE public_path='PLMCN-2027'"
+        ).fetchone()
+        failed = conn.execute(
+            "SELECT deploy_status,publication_error FROM conference_sites WHERE public_path='Missing-Source'"
+        ).fetchone()
+    assert tuple(recovered) == ("published", None)
+    assert failed["deploy_status"] == "failed"
+    assert "checksum is invalid" in failed["publication_error"]
 
 
 @pytest.mark.parametrize("payload,message", [
@@ -286,6 +399,14 @@ def test_website_rejects_symlink_and_malformed_yaml(tmp_path):
         inspect_website(malformed, malformed.name)
 
 
+def test_website_accepts_files_at_archive_root(tmp_path):
+    path = tmp_path / "root-layout.zip"
+    path.write_bytes(_website(root=""))
+    package = inspect_website(path, path.name)
+    assert package.root == ""
+    assert package.slug == "PLMCN-2027"
+
+
 def test_cross_mismatch_destination_and_configured_domains(app, tmp_path):
     website = tmp_path / "web.zip"
     info = tmp_path / "info.zip"
@@ -318,17 +439,19 @@ def test_existing_destination_rejected_without_replace(app, tmp_path):
     info = tmp_path / "info.zip"
     website.write_bytes(_website())
     info.write_bytes(_info(asset=False))
-    destination = Path(app.config["EVENTS_ROOT"]) / "PLMCN-2027"
+    destination = Path(app.config["EVENTS_LOCAL_ROOT"]) / "PLMCN-2027"
     destination.mkdir()
     (destination / "old.txt").write_text("old")
     with _conn(app) as conn:
         inspection = inspect_packages(conn, website, info, assets_dir=app.config["ASSETS_DIR"])
-        with pytest.raises(ValueError, match="already exists"):
+        with pytest.raises(PublicationError, match="already exists"):
             apply_import(
-                conn, inspection, website, info, events_root=app.config["EVENTS_ROOT"],
+                conn, inspection, website, info,
+                publisher=LocalEventSitePublisher(app.config["EVENTS_LOCAL_ROOT"]),
+                conferences_root=app.config["CONFERENCES_DIR"],
                 assets_dir=app.config["ASSETS_DIR"], destination="PLMCN-2027",
                 publish_website=True, import_metadata=True, replace=False,
-                keep_rollback=True, events_domain="events.vpsbox.home.arpa",
+                keep_rollback=True, public_base_url="https://events.vpsbox.home.arpa",
             )
     assert (destination / "old.txt").read_text() == "old"
 
@@ -338,7 +461,7 @@ def test_atomic_replace_rolls_back_and_preserves_siblings(app, tmp_path):
     info = tmp_path / "info.zip"
     website.write_bytes(_website())
     info.write_bytes(_info(asset=False))
-    root = Path(app.config["EVENTS_ROOT"])
+    root = Path(app.config["EVENTS_LOCAL_ROOT"])
     (root / "PLMCN-2027").mkdir()
     (root / "PLMCN-2027/old.txt").write_text("old")
     (root / "OTHER").mkdir()
@@ -356,10 +479,11 @@ def test_atomic_replace_rolls_back_and_preserves_siblings(app, tmp_path):
         with pytest.raises(sqlite3.OperationalError, match="forced"):
             apply_import(
                 FailingCommit(), inspection, website, info,
-                events_root=root, assets_dir=app.config["ASSETS_DIR"],
+                publisher=LocalEventSitePublisher(root),
+                conferences_root=app.config["CONFERENCES_DIR"], assets_dir=app.config["ASSETS_DIR"],
                 destination="PLMCN-2027", publish_website=True,
                 import_metadata=True, replace=True, keep_rollback=True,
-                events_domain="events.vpsbox.home.arpa",
+                public_base_url="https://events.vpsbox.home.arpa",
             )
     assert (root / "PLMCN-2027/old.txt").read_text() == "old"
     assert (root / "OTHER/index.html").read_text() == "other"
@@ -411,7 +535,7 @@ def test_info_only_creates_event_without_publishing_files_and_asks_forthcoming(a
     )
     assert imported.status_code == 302
     assert imported.headers["Location"].endswith("/dashboard/events")
-    assert not (Path(app.config["EVENTS_ROOT"]) / "plmcn-2027").exists()
+    assert not (Path(app.config["EVENTS_LOCAL_ROOT"]) / "plmcn-2027").exists()
     with _conn(app) as conn:
         event = conn.execute("SELECT * FROM events WHERE uid='event_plmcn_2027'").fetchone()
         assert event is not None
@@ -464,5 +588,5 @@ def test_website_only_import_is_visible_in_conference_sites(app, client):
         assert site["event_id"] is None
         assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
     page = client.get("/dashboard/conferences").get_data(as_text=True)
-    assert "Website installed" in page
+    assert "Website published" in page
     assert "Not linked" in page

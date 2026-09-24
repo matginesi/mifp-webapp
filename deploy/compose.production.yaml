@@ -44,9 +44,17 @@ services:
       TMPDIR: /app/data/tmp
       LOG_DIR: /app/data/logs
       CONFERENCES_DIR: /app/data/conferences
-      EVENTS_ROOT: /app/events
-      EVENTS_DOMAIN: "${EVENTS_DOMAIN:?EVENTS_DOMAIN must be configured}"
-      EVENTS_PHP_STATE_PATH: /app/events-php-enabled.txt
+      # Phase 1 publishes event mini-sites to a dedicated host directory. The
+      # source ZIPs remain private below CONFERENCES_DIR.
+      EVENTS_PUBLISH_BACKEND: "${EVENTS_PUBLISH_BACKEND:-local-vps}"
+      EVENTS_PUBLIC_BASE_URL: "${EVENTS_PUBLIC_BASE_URL:-https://events.mifp.eu}"
+      EVENTS_LOCAL_ROOT: /app/event-sites
+      EVENTS_REMOTE_PROTOCOL: "${EVENTS_REMOTE_PROTOCOL:-ftps}"
+      EVENTS_REMOTE_HOST: "${EVENTS_REMOTE_HOST:-}"
+      EVENTS_REMOTE_PORT: "${EVENTS_REMOTE_PORT:-21}"
+      EVENTS_REMOTE_USER: "${EVENTS_REMOTE_USER:-}"
+      EVENTS_REMOTE_ROOT: "${EVENTS_REMOTE_ROOT:-}"
+      EVENTS_REMOTE_TIMEOUT: "${EVENTS_REMOTE_TIMEOUT:-30}"
       RUNTIME_CONFIG_DIR: /app/data/config
       STORAGE_MIN_FREE_MB: "${STORAGE_MIN_FREE_MB:-1024}"
       LOG_OUTPUT: stdout
@@ -66,11 +74,9 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - "${MIFP_DATA_DIR:-/opt/mifp/data}:/app/data"
-      # Narrow writable mount: the non-root web process can atomically replace
-      # event content, but receives no access to Caddy/PHP configuration or
-      # private registration state.
-      - "${MIFP_EVENTS_DIR:-/opt/mifp/events}:/app/events"
-      - "${MIFP_EVENTS_PHP_STATE:-/opt/mifp/events-php-enabled.txt}:/app/events-php-enabled.txt:ro"
+      # Dedicated publication-only tree. It is outside normal application data
+      # and is served directly by host Caddy only in local-vps mode.
+      - "${EVENTS_LOCAL_ROOT:-/srv/mifp-events}:/app/event-sites"
     restart: unless-stopped
     init: true
     read_only: true

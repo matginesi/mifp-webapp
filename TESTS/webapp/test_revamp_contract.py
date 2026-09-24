@@ -195,12 +195,14 @@ def test_dashboard_page_families_share_the_control_instrument_contract():
 
 
 def test_repository_keeps_one_readme_and_no_orphan_database_tools():
+    runtime_event_sites = ROOT / "MIFPAPP" / "DATABASE" / "events"
     readmes = [
         path
         for path in ROOT.rglob("README.md")
         if ".git" not in path.parts
         and ".venv" not in path.parts
         and ".pytest_cache" not in path.parts
+        and runtime_event_sites not in path.parents
     ]
     assert readmes == [ROOT / "README.md"]
 

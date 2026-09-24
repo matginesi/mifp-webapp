@@ -131,11 +131,19 @@ def _migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE events ADD COLUMN {column} TEXT NOT NULL DEFAULT '[]'")
 
 
+def _migrate_v12_to_v13(conn: sqlite3.Connection) -> None:
+    """Track a safe last publication error without changing existing URLs."""
+    existing = {str(row[1]) for row in conn.execute("PRAGMA table_info(conference_sites)")}
+    if "publication_error" not in existing:
+        conn.execute("ALTER TABLE conference_sites ADD COLUMN publication_error TEXT")
+
+
 # Target-version -> migration from the immediately preceding supported version.
 MIGRATIONS: dict[int, Migration] = {
     10: _migrate_v9_to_v10,
     11: _migrate_v10_to_v11,
     12: _migrate_v11_to_v12,
+    13: _migrate_v12_to_v13,
 }
 MIN_UPGRADABLE_VERSION = 9
 

@@ -21,8 +21,8 @@ slug        = plmcn-2025       # storage interno, normalizzato
 public_path = PLMCN-2025       # URL storico, case-sensitive
 ```
 
-`public_path` viene quindi preservato esattamente. Questo evita regressioni durante la futura
-migrazione di `events.mifp.eu` sulla VPS.
+`public_path` viene quindi preservato esattamente per mantenere compatibili i
+link pubblici di `events.mifp.eu`, indipendentemente dal backend di pubblicazione.
 
 ## Pacchetti da mifp-conference-editor
 
@@ -79,35 +79,64 @@ unpublished -> staged -> published
                     \-> failed
 ```
 
-La dashboard **Conference sites** è il punto operativo unico per i micrositi. Nel wizard di import, `WEBSITE` e `INFO` sono indipendenti: WEBSITE pubblica i file del microsito, INFO crea/aggiorna il record Event. Se forniti insieme, il wizard valida entrambi in staging privato e applica le due operazioni soltanto dopo la review finale, con swap atomico della singola directory evento. PHP resta comunque
-disabilitato finché un operatore host non lo abilita esplicitamente.
+La dashboard **Conference sites** conserva e valida i package dei micrositi. Nel
+wizard di import, `WEBSITE` e `INFO` sono indipendenti: WEBSITE gestisce la copia
+applicativa del package, INFO crea/aggiorna il record Event. Questo stato non
+espone la scelta del backend nella normale UI evento.
 
-## Hosting VPS
+## Hosting pubblico e transizione
 
-Il publish pubblico è volutamente più semplice dello storage di authoring:
+La produzione corrente usa il backend locale della VPS:
 
 ```text
 Internet
-  -> Caddy :443
-       -> mifp.eu / www.mifp.eu -> Flask :8000
-       -> events.mifp.eu        -> /opt/mifp/events/ (file server)
-                                    \-> PHP-FPM solo per prefix esplicitamente abilitati
+  -> VPS Caddy :443 -> mifp.eu / www.mifp.eu -> Flask :8000
+  -> VPS Caddy :443 -> events.mifp.eu -> /srv/mifp-events
+                                      -> PHP-FPM dedicato (solo regform approvati)
 ```
 
-I siti storici possono quindi essere copiati 1:1 nella document root con
-`mifpctl events-import`; non devono essere convertiti in un package editor per
-essere pubblicati. Prima dell'import usa `mifpctl events-check <document-root>`:
-il preflight rifiuta materiale privato/secret-like e oggetti filesystem non sicuri,
-e l'import riesegue automaticamente lo stesso gate. I package `mifp-conference-editor` conservati sotto
-`data/conferences/` restano invece sorgenti/staging della dashboard e possono
-essere pubblicati nello stesso filesystem in una fase successiva.
+Questa è la Phase 1 (`EVENTS_PUBLISH_BACKEND=local-vps`). Il publisher scrive
+solo il `public_path` selezionato. Caddy nega dot/stage/rollback, file sensibili
+e ogni file PHP-like. L'operatore può autorizzare esclusivamente un path
+`<public_path>/regform`; i `.php` sotto quel prefisso passano al pool dedicato,
+mentre PHTML/PHAR e PHP fuori allow-list restano 404. Registrazioni, sessioni e
+upload vivono fuori dal document root in `/srv/mifp-events-private`.
 
-PHP è deny-by-default: i `.php` storici restituiscono 404. Il bootstrap prepara
-un pool FPM dedicato e `/opt/mifp/events-private`, ma l'esecuzione si abilita
-soltanto con `mifpctl events-php-enable <public-prefix>`. Un import completo o
-`events-rollback` svuota sempre la allow-list, così il nuovo tree non eredita
-codice eseguibile dal precedente. Le registrazioni non devono mai vivere sotto
-`/opt/mifp/events`.
+La Phase 2 è futura e richiede prima la riparazione dell'hosting Aruba: backend
+remoto/FTPS, DNS eventi verso Aruba e nessun virtual host eventi sulla VPS. Il
+modello DB non cambia. Prima del cutover l'operatore deve però definire e
+verificare sul provider remoto backup, retention e prova di restore delle
+registrazioni/upload autorevoli: le snapshot VPS non possono proteggerli.
+
+## Contratto runtime dei regform PHP
+
+L'allow-list autorizza l'esecuzione, non adatta il codice storico. Ogni regform
+approvato deve usare esplicitamente le directory comunicate dal pool:
+
+```text
+MIFP_EVENTS_PRIVATE_DIR=/srv/mifp-events-private
+MIFP_REGISTRATION_DIR=/srv/mifp-events-private/registrations
+MIFP_UPLOAD_DIR=/srv/mifp-events-private/uploads
+```
+
+Il document root pubblico appartiene all'utente applicativo e al gruppo di
+lettura eventi (`0750`); il processo PHP dedicato può leggerlo ma non scriverlo.
+Le directory private appartengono esclusivamente all'utente `mifp-events` e
+usano `0700`; i file ripristinati vengono normalizzati a `0600`. Sessioni e
+temporanei usano le rispettive sottodirectory private e non sono autorevoli.
+
+Un form deve quindi leggere `MIFP_REGISTRATION_DIR`, scrivere lì le submission
+e usare `MIFP_UPLOAD_DIR` per gli upload persistenti. Non deve creare database,
+CSV, upload o file di configurazione nel tree pubblico. Per mantenere lo stesso
+package utilizzabile anche su hosting condiviso Aruba, un regform può adottare
+un fallback esplicito: usa le directory `MIFP_*` quando sono presenti (VPS),
+altrimenti il proprio storage locale protetto da `.htaccess` (hosting remoto).
+Le credenziali SMTP non fanno parte del package: i regform continuano a usare
+`mail()` e, in `local-vps`, PHP-FPM lo instrada attraverso il relay host gestito
+da `sudo mifpctl configure --section mail`. Il repository include
+`TESTS/fixtures/regform_contract/index.php` come esempio eseguibile minimo;
+nessun PHP caricato viene riscritto automaticamente. Ogni form storico reale
+deve essere verificato separatamente prima dell'abilitazione.
 
 ## Versioning and rollback
 
@@ -120,5 +149,12 @@ When the import wizard keeps its rollback copy, **Dashboard → Conference sites
 shows both current and previous versions and exposes **Restore previous**.  The
 restore swaps only the public WEBSITE directory and package metadata; it does
 not modify the canonical Event record created from `_INFO.zip`. PHP remains
-host-controlled and restore fails closed while PHP execution is enabled for the
-conference path.
+operator-controlled and deny-by-default; publishing or restoring a package
+never adds its regform to the allow-list.
+
+`events-republish-all` recupera esclusivamente `source_format=legacy-static`:
+è l'unico formato che il workflow WEBSITE pubblica tramite `EventSitePublisher`.
+I package `conference-editor` sono conservati immutabili con stato `staged` e
+restano scaricabili, ma il workflow corrente non li pubblica; `internal` resta
+`unpublished`. Questa distinzione è coperta dai test e non modifica
+`public_path`.

@@ -2355,7 +2355,7 @@ conference:
     return output.getvalue()
 
 
-def test_conference_editor_package_is_linked_versioned_and_downloaded_verbatim(app, client):
+def test_conference_editor_upload_is_retained_but_not_published_by_supported_workflow(app, client):
     with _db(app) as conn:
         event_id = conn.execute(
             """INSERT INTO events(title,start_date,event_type,review_status,remote_url)
@@ -2398,6 +2398,7 @@ def test_conference_editor_package_is_linked_versioned_and_downloaded_verbatim(a
     assert site["source_version"] == "0.4.2"
     assert site["package_schema_version"] == 1
     assert site["deploy_status"] == "staged"
+    assert site["published_at"] is None
     assert site["title"].startswith("Physics of Low-dimensional")
     assert site["city"] == "Rome"
     assert site["package_sha256"]
@@ -2410,6 +2411,7 @@ def test_conference_editor_package_is_linked_versioned_and_downloaded_verbatim(a
     assert (workspace / "packages" / f"{site['package_sha256']}.zip").read_bytes() == payload
     assert (workspace / "sources" / site["package_sha256"] / "conference.yaml").is_file()
     assert (workspace / "sources" / site["package_sha256"] / "regform" / "index.php").is_file()
+    assert not (Path(app.config["EVENTS_LOCAL_ROOT"]) / "PLMCN-2027").exists()
 
     downloaded = client.get(f"/dashboard/conferences/{site_id}/build.zip")
     assert downloaded.status_code == 200

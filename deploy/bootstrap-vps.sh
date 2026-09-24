@@ -11,8 +11,12 @@ MIFP_USER="mifp"
 MIFP_GROUP="mifp"
 MIFP_UID="10001"
 MIFP_GID="10001"
-EVENTS_PHP_USER="mifp-events"
-EVENTS_PUBLIC_GROUP="mifp-events-public"
+EVENTS_PHP_USER="${MIFP_EVENTS_PHP_USER:-mifp-events}"
+EVENTS_PUBLIC_GROUP="${MIFP_EVENTS_PUBLIC_GROUP:-mifp-events-public}"
+EVENTS_PRIVATE_DIR="${MIFP_EVENTS_PRIVATE_DIR:-/srv/mifp-events-private}"
+EVENTS_PHP_STATE="${MIFP_EVENTS_PHP_STATE:-$MIFP_HOME/events-php-enabled.txt}"
+EVENTS_PHP_INCLUDE="${MIFP_EVENTS_PHP_INCLUDE:-/etc/caddy/mifp-events-php.caddy}"
+MAIL_RELAY_CONFIG="${MIFP_MAIL_RELAY_CONFIG:-/etc/msmtprc}"
 DOMAIN="${MIFP_DOMAIN:-}"
 IMAGE_REPOSITORY="${MIFP_IMAGE_REPOSITORY:-ghcr.io/matginesi/mifp-webapp}"
 SSH_PORT="${MIFP_SSH_PORT:-}"
@@ -78,7 +82,7 @@ if [[ -z "$SSH_PORT" ]]; then
   die "Impossibile determinare la porta SSH (nessuna sessione SSH attiva e sshd non leggibile). Rilancia con --ssh-port N."
 fi
 [[ "$SSH_PORT" =~ ^[0-9]+$ ]] && ((SSH_PORT >= 1 && SSH_PORT <= 65535)) || die "Porta SSH non valida: $SSH_PORT"
-[[ -f "$SCRIPT_DIR/configure.py" && -f "$SCRIPT_DIR/vps_config.py" && -f "$SCRIPT_DIR/check-events-archive.py" \
+[[ -f "$SCRIPT_DIR/configure.py" && -f "$SCRIPT_DIR/vps_config.py" \
   && -f "$SCRIPT_DIR/backup.sh" && -f "$SCRIPT_DIR/mifpctl" && -f "$SCRIPT_DIR/local-hosts.sh" ]] \
   || die "Cartella deploy incompleta: copia tutti i file deploy/."
 
@@ -92,7 +96,7 @@ flock -n 9 || die "Un altro bootstrap MIFP è in corso."
 dpkg --configure -a >/dev/null 2>&1 || true
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg debian-keyring debian-archive-keyring apt-transport-https \
-  python3 sqlite3 rsync restic ufw util-linux php-fpm php-cli php-mbstring php-curl \
+  python3 sqlite3 rsync restic ufw util-linux php-fpm php-cli php-mbstring php-curl msmtp-mta \
   unattended-upgrades needrestart update-notifier-common fail2ban python3-systemd
 
 say "Configuro Docker Engine dal repository ufficiale"
@@ -162,16 +166,13 @@ else
   useradd --system --uid "$MIFP_UID" --gid "$MIFP_GID" --home "$MIFP_HOME" --shell /usr/sbin/nologin "$MIFP_USER"
 fi
 
-# Conference sites are intentionally separate from the Flask data tree.  Caddy
-# and PHP need read-only access to the public tree, while only PHP may write
-# private registrations/sessions/uploads.
 if ! getent group "$EVENTS_PUBLIC_GROUP" >/dev/null 2>&1; then
   say "Creo il gruppo pubblico conferenze $EVENTS_PUBLIC_GROUP"
   groupadd --system "$EVENTS_PUBLIC_GROUP"
 fi
 if ! id "$EVENTS_PHP_USER" >/dev/null 2>&1; then
   say "Creo l'utente PHP dedicato $EVENTS_PHP_USER"
-  useradd --system --user-group --home "$MIFP_HOME/events-private" --shell /usr/sbin/nologin "$EVENTS_PHP_USER"
+  useradd --system --user-group --home "$EVENTS_PRIVATE_DIR" --shell /usr/sbin/nologin "$EVENTS_PHP_USER"
 fi
 usermod -a -G "$EVENTS_PUBLIC_GROUP" "$EVENTS_PHP_USER"
 usermod -a -G "$EVENTS_PUBLIC_GROUP" caddy
@@ -182,85 +183,11 @@ install -d -o "$MIFP_UID" -g "$MIFP_GID" -m 0750 "$MIFP_HOME/data"
 for dir in assets backups conferences exports logs config tmp; do
   install -d -o "$MIFP_UID" -g "$MIFP_GID" -m 0750 "$MIFP_HOME/data/$dir"
 done
-
-# Public archive: writable only by the unprivileged MIFP application UID;
-# Caddy/PHP receive group read/traverse access and cannot modify it.
-install -d -o "$MIFP_UID" -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$MIFP_HOME/events"
-if [[ ! -e "$MIFP_HOME/events-php-enabled.txt" ]]; then
-  install -o root -g root -m 0644 /dev/null "$MIFP_HOME/events-php-enabled.txt"
-fi
-[[ -f "$MIFP_HOME/events-php-enabled.txt" && ! -L "$MIFP_HOME/events-php-enabled.txt" ]] \
-  || die "Stato PHP eventi non valido: $MIFP_HOME/events-php-enabled.txt"
-# Private PHP runtime state never lives below the public document root.
-install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$MIFP_HOME/events-private"
-for dir in registrations sessions tmp; do
-  install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$MIFP_HOME/events-private/$dir"
-done
-
-say "Configuro il pool PHP-FPM dedicato alle conferenze"
-PHP_VERSION="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
-PHP_FPM_SERVICE="php${PHP_VERSION}-fpm.service"
-PHP_POOL_DIR="/etc/php/${PHP_VERSION}/fpm/pool.d"
-[[ -d "$PHP_POOL_DIR" ]] || die "Directory PHP-FPM non trovata: $PHP_POOL_DIR"
-cat > "$PHP_POOL_DIR/mifp-events.conf" <<EOF_PHP_POOL
-[mifp-events]
-user = $EVENTS_PHP_USER
-group = $EVENTS_PHP_USER
-listen = /run/php/mifp-events.sock
-listen.owner = caddy
-listen.group = caddy
-listen.mode = 0660
-
-pm = ondemand
-pm.max_children = 4
-pm.process_idle_timeout = 10s
-pm.max_requests = 500
-request_terminate_timeout = 60s
-catch_workers_output = yes
-clear_env = yes
-security.limit_extensions = .php
-
-php_admin_value[open_basedir] = $MIFP_HOME/events:$MIFP_HOME/events-private:/tmp
-php_admin_value[session.save_path] = $MIFP_HOME/events-private/sessions
-php_admin_value[upload_tmp_dir] = $MIFP_HOME/events-private/tmp
-php_admin_value[display_errors] = Off
-php_admin_value[log_errors] = On
-php_admin_value[error_log] = /var/log/php-mifp-events.log
-php_admin_value[expose_php] = Off
-php_admin_value[cgi.fix_pathinfo] = 0
-; An imported conference tree must not ship a .user.ini that re-enables
-; auto_prepend_file or loosens any of the values above.
-php_admin_value[user_ini.filename] = ""
-php_admin_flag[allow_url_include] = Off
-php_admin_value[session.cookie_secure] = 1
-php_admin_value[session.cookie_httponly] = 1
-php_admin_value[session.cookie_samesite] = Lax
-php_admin_value[session.use_strict_mode] = 1
-php_admin_value[memory_limit] = 128M
-php_admin_value[max_execution_time] = 30
-php_admin_value[upload_max_filesize] = 10M
-php_admin_value[post_max_size] = 12M
-php_admin_value[max_file_uploads] = 5
-php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,putenv
-EOF_PHP_POOL
-chmod 0644 "$PHP_POOL_DIR/mifp-events.conf"
-install -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0640 /dev/null /var/log/php-mifp-events.log
-PHP_FPM_BIN="$(command -v "php-fpm${PHP_VERSION}" || true)"
-[[ -n "$PHP_FPM_BIN" ]] || die "Binario PHP-FPM non trovato per PHP $PHP_VERSION"
-"$PHP_FPM_BIN" -t || die "Configurazione PHP-FPM non valida."
-printf '%s\n' "$PHP_FPM_SERVICE" > "$MIFP_HOME/php-fpm.service"
-chown root:root "$MIFP_HOME/php-fpm.service"
-chmod 0644 "$MIFP_HOME/php-fpm.service"
-systemctl enable "$PHP_FPM_SERVICE"
-systemctl restart "$PHP_FPM_SERVICE"
-[[ -S /run/php/mifp-events.sock ]] || die "Il pool PHP-FPM MIFP non ha creato /run/php/mifp-events.sock"
-
 say "Installo i file di deploy"
 install -o root -g root -m 0644 "$SCRIPT_DIR/compose.production.yaml" "$MIFP_HOME/compose.yaml"
 install -o root -g root -m 0750 "$SCRIPT_DIR/deploy.sh" "$MIFP_HOME/deploy.sh"
 install -o root -g root -m 0750 "$SCRIPT_DIR/configure.py" "$MIFP_HOME/configure.py"
 install -o root -g root -m 0750 "$SCRIPT_DIR/vps_config.py" "$MIFP_HOME/vps_config.py"
-install -o root -g root -m 0750 "$SCRIPT_DIR/check-events-archive.py" "$MIFP_HOME/check-events-archive.py"
 install -o root -g root -m 0644 "$SCRIPT_DIR/.env.production.example" "$MIFP_HOME/.env.example"
 install -o root -g root -m 0644 "$SCRIPT_DIR/Caddyfile" "$MIFP_HOME/Caddyfile.example"
 install -o root -g root -m 0750 "$SCRIPT_DIR/backup.sh" "$MIFP_HOME/backup.sh"
@@ -300,7 +227,103 @@ CONFIG_ARGS=(
 python3 "$MIFP_HOME/vps_config.py" "${CONFIG_ARGS[@]}"
 DOMAIN="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get DOMAIN)"
 WWW_DOMAIN="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get WWW_DOMAIN)"
-EVENTS_DOMAIN="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get EVENTS_DOMAIN)"
+EVENTS_BACKEND="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get EVENTS_PUBLISH_BACKEND)"
+EVENTS_PUBLIC_URL="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get EVENTS_PUBLIC_BASE_URL)"
+EVENTS_HOST="$(python3 -c 'import sys; from urllib.parse import urlsplit; print(urlsplit(sys.argv[1]).hostname or "")' "$EVENTS_PUBLIC_URL")"
+EVENTS_LOCAL_ROOT="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get EVENTS_LOCAL_ROOT)"
+
+# PHP regforms use PHP mail(), routed through a sendmail-compatible msmtp
+# transport. SMTP credentials never live in event ZIPs/settings.yaml and are
+# rendered from /etc/mifp/secrets.env without appearing on the command line.
+if [[ "$EVENTS_BACKEND" == "local-vps" ]]; then
+  MAIL_RELAY_STATE="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" render-mail-relay --output "$MAIL_RELAY_CONFIG")"
+  if [[ "$MAIL_RELAY_STATE" == "configured" ]]; then
+    chown root:"$EVENTS_PHP_USER" "$MAIL_RELAY_CONFIG"
+    chmod 0640 "$MAIL_RELAY_CONFIG"
+  else
+    rm -f -- "$MAIL_RELAY_CONFIG"
+  fi
+else
+  rm -f -- "$MAIL_RELAY_CONFIG"
+fi
+
+PHP_VERSION="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
+PHP_FPM_SERVICE="php${PHP_VERSION}-fpm.service"
+PHP_POOL_DIR="/etc/php/${PHP_VERSION}/fpm/pool.d"
+[[ -d "$PHP_POOL_DIR" ]] || die "Directory PHP-FPM non trovata: $PHP_POOL_DIR"
+if [[ "$EVENTS_BACKEND" == "local-vps" ]]; then
+  say "Configuro il runtime Phase 1 per regform PHP"
+  install -d -o "$MIFP_UID" -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$EVENTS_LOCAL_ROOT"
+  install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$EVENTS_PRIVATE_DIR"
+  for dir in registrations uploads sessions tmp; do
+    install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$EVENTS_PRIVATE_DIR/$dir"
+  done
+  if [[ ! -e "$EVENTS_PHP_STATE" ]]; then
+    install -o root -g root -m 0644 /dev/null "$EVENTS_PHP_STATE"
+  fi
+  [[ -f "$EVENTS_PHP_STATE" && ! -L "$EVENTS_PHP_STATE" ]] \
+    || die "Stato PHP eventi non valido: $EVENTS_PHP_STATE"
+  if [[ ! -e "$EVENTS_PHP_INCLUDE" ]]; then
+    install -o root -g caddy -m 0644 /dev/null "$EVENTS_PHP_INCLUDE"
+  fi
+  [[ -f "$EVENTS_PHP_INCLUDE" && ! -L "$EVENTS_PHP_INCLUDE" ]] \
+    || die "Include PHP Caddy non valido: $EVENTS_PHP_INCLUDE"
+  cat > "$PHP_POOL_DIR/mifp-events.conf" <<EOF_PHP_POOL
+[mifp-events]
+user = $EVENTS_PHP_USER
+group = $EVENTS_PHP_USER
+listen = /run/php/mifp-events.sock
+listen.owner = caddy
+listen.group = caddy
+listen.mode = 0660
+pm = ondemand
+pm.max_children = 4
+pm.process_idle_timeout = 10s
+pm.max_requests = 500
+request_terminate_timeout = 60s
+catch_workers_output = yes
+clear_env = yes
+security.limit_extensions = .php
+; Transport credentials are host-managed in /etc/msmtprc; event PHP never
+; receives SMTP passwords through environment variables or package files.
+php_admin_value[sendmail_path] = /usr/bin/msmtp --file=$MAIL_RELAY_CONFIG -t
+env[MIFP_EVENTS_PRIVATE_DIR] = $EVENTS_PRIVATE_DIR
+env[MIFP_REGISTRATION_DIR] = $EVENTS_PRIVATE_DIR/registrations
+env[MIFP_UPLOAD_DIR] = $EVENTS_PRIVATE_DIR/uploads
+php_admin_value[open_basedir] = $EVENTS_LOCAL_ROOT:$EVENTS_PRIVATE_DIR:/tmp
+php_admin_value[session.save_path] = $EVENTS_PRIVATE_DIR/sessions
+php_admin_value[upload_tmp_dir] = $EVENTS_PRIVATE_DIR/tmp
+php_admin_value[display_errors] = Off
+php_admin_value[log_errors] = On
+php_admin_value[error_log] = /var/log/php-mifp-events.log
+php_admin_value[expose_php] = Off
+php_admin_value[cgi.fix_pathinfo] = 0
+php_admin_value[user_ini.filename] = ""
+php_admin_flag[allow_url_include] = Off
+php_admin_value[session.cookie_secure] = 1
+php_admin_value[session.cookie_httponly] = 1
+php_admin_value[session.cookie_samesite] = Lax
+php_admin_value[session.use_strict_mode] = 1
+php_admin_value[memory_limit] = 128M
+php_admin_value[max_execution_time] = 30
+php_admin_value[upload_max_filesize] = 10M
+php_admin_value[post_max_size] = 12M
+php_admin_value[max_file_uploads] = 5
+php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,putenv
+EOF_PHP_POOL
+  chmod 0644 "$PHP_POOL_DIR/mifp-events.conf"
+  install -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0640 /dev/null /var/log/php-mifp-events.log
+  PHP_FPM_BIN="$(command -v "php-fpm${PHP_VERSION}" || true)"
+  [[ -n "$PHP_FPM_BIN" ]] || die "Binario PHP-FPM non trovato per PHP $PHP_VERSION"
+  "$PHP_FPM_BIN" -t || die "Configurazione PHP-FPM eventi non valida."
+  printf '%s\n' "$PHP_FPM_SERVICE" > "$MIFP_HOME/php-fpm.service"
+  chown root:root "$MIFP_HOME/php-fpm.service"; chmod 0644 "$MIFP_HOME/php-fpm.service"
+  systemctl enable --now "$PHP_FPM_SERVICE"
+  [[ -S /run/php/mifp-events.sock ]] || die "Il pool PHP-FPM eventi non ha creato il socket dedicato."
+else
+  say "Backend eventi $EVENTS_BACKEND: disattivo il runtime PHP locale"
+  systemctl disable --now "$PHP_FPM_SERVICE" >/dev/null 2>&1 || true
+fi
 
 if [[ -f "$MIFP_HOME/data/mifp.db" && ! -L "$MIFP_HOME/data/mifp.db" ]] \
   && [[ "$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get BACKUP_ENABLED)" != false ]]; then
@@ -310,8 +333,13 @@ else
 fi
 
 if [[ -n "$DOMAIN" ]]; then
-  say "Configuro Caddy per $DOMAIN e $EVENTS_DOMAIN"
-  bash "$SCRIPT_DIR/local-hosts.sh" "$DOMAIN" "${MIFP_HOSTS_FILE:-/etc/hosts}" "$WWW_DOMAIN" "$EVENTS_DOMAIN"
+  say "Configuro Caddy per $DOMAIN e $WWW_DOMAIN"
+  if [[ "$EVENTS_BACKEND" == "local-vps" ]]; then
+    install -d -o "$MIFP_UID" -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$EVENTS_LOCAL_ROOT"
+    bash "$SCRIPT_DIR/local-hosts.sh" "$DOMAIN" "${MIFP_HOSTS_FILE:-/etc/hosts}" "$WWW_DOMAIN" "$EVENTS_HOST"
+  else
+    bash "$SCRIPT_DIR/local-hosts.sh" "$DOMAIN" "${MIFP_HOSTS_FILE:-/etc/hosts}" "$WWW_DOMAIN"
+  fi
   if [[ "$DOMAIN" == *.home.arpa ]]; then
     MIFP_TLS_DIRECTIVE="tls internal"
   else
@@ -322,9 +350,49 @@ if [[ -n "$DOMAIN" ]]; then
   CADDY_TMP="$(mktemp /etc/caddy/.mifp-caddy.XXXXXX)"
   sed -e "s/__MIFP_DOMAIN__/$DOMAIN/g" \
     -e "s/__MIFP_WWW_DOMAIN__/$WWW_DOMAIN/g" \
-    -e "s/__MIFP_EVENTS_DOMAIN__/$EVENTS_DOMAIN/g" \
     -e "s/__MIFP_TLS__/$MIFP_TLS_DIRECTIVE/g" \
     "$SCRIPT_DIR/Caddyfile" > "$CADDY_TMP"
+  if [[ "$EVENTS_BACKEND" == "local-vps" ]]; then
+    cat >>"$CADDY_TMP" <<EOF_EVENTS_CADDY
+
+$EVENTS_HOST {
+    $MIFP_TLS_DIRECTIVE
+    root * $EVENTS_LOCAL_ROOT
+    encode zstd gzip
+    header {
+        -Server
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        Content-Security-Policy "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+    route {
+        @event_hidden {
+            not path /.well-known /.well-known/*
+            path_regexp event_hidden ^/(?:.*/)?\\.
+        }
+        @event_sensitive_tree path_regexp event_sensitive_tree (?i)^/(?:.*/)?(?:\\.env(?:\\..*)?|\\.git|\\.svn|private|registrations|config|regform/(?:registrations|src|config|settings\\.ya?ml|settings\\.json))(?:/|$)
+        @event_sensitive_file path_regexp event_sensitive_file (?i)^/(?:.*/)?(?:composer\\.(?:json|lock)|id_(?:rsa|dsa|ecdsa|ed25519)(?:\\.pub)?|creds?\\.json|credentials?\\.json|secrets?\\.json|tokens?\\.json|git-credentials|netrc|npmrc|ftpconfig|pgpass|my\\.cnf|s3cfg|dockercfg|htpasswd|shadow|bash_history|zsh_history)$
+        @event_database_backup path_regexp event_database_backup (?i)\\.(?:db|sqlite[0-9]*(?:-wal|-shm)?|sql|bak|backup|old|orig|save|swp)$
+        respond @event_hidden 404
+        respond @event_sensitive_tree 404
+        respond @event_sensitive_file 404
+        respond @event_database_backup 404
+        @event_public_conference_yaml path_regexp event_public_conference_yaml ^/(?:[^/]+/)*conference\\.yaml$
+        file_server @event_public_conference_yaml
+        @event_sensitive_extension path_regexp event_sensitive_extension (?i)\\.(?:inc|module|install|engine|ini|log|htpasswd|htaccess|sh|bash|zsh|fish|py|pyc|rb|pl|cgi|yml|yaml|toml|dist|pem|key|crt|cer|p12|pfx|gitignore|netrc|npmrc|ftpconfig)$
+        @event_php path_regexp event_php (?i)\\.(?:php|phtml|phar|phps|php[0-9]*)$
+        respond @event_sensitive_extension 404
+        import $EVENTS_PHP_INCLUDE
+        respond @event_php 404
+        file_server {
+            index index.html index.htm
+        }
+    }
+}
+EOF_EVENTS_CADDY
+  fi
   chown root:caddy "$CADDY_TMP"
   chmod 0644 "$CADDY_TMP"
   caddy fmt --overwrite "$CADDY_TMP" >/dev/null
@@ -353,17 +421,7 @@ EOF_CADDY_PENDING
 fi
 chown root:caddy /etc/caddy/Caddyfile
 chmod 0644 /etc/caddy/Caddyfile
-# PHP is deny-by-default.  mifpctl adds only explicit conference prefixes here.
-if [[ ! -f /etc/caddy/mifp-events-php.caddy ]]; then
-  cat > /etc/caddy/mifp-events-php.caddy <<'EOF_EVENTS_PHP'
-# Generated/managed by `mifpctl events-php-enable|events-php-disable`.
-# Empty means no public conference path can execute PHP.
-EOF_EVENTS_PHP
-fi
-chown root:caddy /etc/caddy/mifp-events-php.caddy
-chmod 0644 /etc/caddy/mifp-events-php.caddy
 systemctl enable --now caddy.service
-# Refresh supplementary group membership (mifp-events-public) on re-bootstrap.
 systemctl restart caddy.service
 
 if [[ "$DOMAIN" == *.home.arpa ]]; then
@@ -445,7 +503,9 @@ ufw status verbose | grep -q "(v6)" \
 
 say "Riepilogo post-condizioni"
 POSTCONDITIONS_OK=1
-for unit in docker.service caddy.service "php${PHP_VERSION}-fpm.service" fail2ban.service; do
+POSTCONDITION_UNITS=(docker.service caddy.service fail2ban.service)
+[[ "$EVENTS_BACKEND" != "local-vps" ]] || POSTCONDITION_UNITS+=("$PHP_FPM_SERVICE")
+for unit in "${POSTCONDITION_UNITS[@]}"; do
   if systemctl is-active --quiet "$unit"; then
     printf '  OK   %s attivo\n' "$unit"
   else
@@ -453,7 +513,11 @@ for unit in docker.service caddy.service "php${PHP_VERSION}-fpm.service" fail2ba
     POSTCONDITIONS_OK=0
   fi
 done
-for path in "$MIFP_HOME/data" "$MIFP_HOME/events" "$MIFP_HOME/events-private" /etc/mifp/config.env /etc/mifp/secrets.env; do
+POSTCONDITION_PATHS=("$MIFP_HOME/data" /etc/mifp/config.env /etc/mifp/secrets.env)
+if [[ "$EVENTS_BACKEND" == "local-vps" ]]; then
+  POSTCONDITION_PATHS+=("$EVENTS_LOCAL_ROOT" "$EVENTS_PRIVATE_DIR" "$EVENTS_PHP_STATE")
+fi
+for path in "${POSTCONDITION_PATHS[@]}"; do
   if [[ -e "$path" ]]; then
     printf '  OK   %s\n' "$path"
   else
@@ -485,10 +549,10 @@ if [[ "$DOMAIN" == *.home.arpa ]]; then
   HOST_SHORT="$(hostname -s 2>/dev/null || printf 'vpsbox')"
   if [[ "$(printf '%s\n' "$LAN_IPS" | awk 'NF {count++} END {print count+0}')" == 1 ]]; then
     LAN_IP="$LAN_IPS"
-    printf '\nAdd to your workstation /etc/hosts:\n\n%s %s %s %s %s\n' \
-      "$LAN_IP" "$HOST_SHORT" "$DOMAIN" "$WWW_DOMAIN" "$EVENTS_DOMAIN"
+    printf '\nAdd to your workstation /etc/hosts:\n\n%s %s %s %s\n' \
+      "$LAN_IP" "$HOST_SHORT" "$DOMAIN" "$WWW_DOMAIN"
   else
-    printf '\nWorkstation /etc/hosts: LAN IP ambiguous or unavailable. On the VPS run:\n\n  hostname -I\n\nThen map: %s %s %s %s\n' \
-      "$HOST_SHORT" "$DOMAIN" "$WWW_DOMAIN" "$EVENTS_DOMAIN"
+    printf '\nWorkstation /etc/hosts: LAN IP ambiguous or unavailable. On the VPS run:\n\n  hostname -I\n\nThen map: %s %s %s\n' \
+      "$HOST_SHORT" "$DOMAIN" "$WWW_DOMAIN"
   fi
 fi

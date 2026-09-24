@@ -4,7 +4,8 @@ Produzione usa un solo percorso:
 
 ```text
 GitHub Actions -> GHCR -> mifpctl sulla VPS -> Docker -> Caddy -> Flask/SQLite
-                                           \-> events.mifp.eu -> file statici (+ PHP-FPM opt-in)
+
+events.mifp.eu -> Caddy statico/PHP-FPM dedicato sulla VPS (Phase 1)
 ```
 
 La VPS non compila codice, non esegue scraper e non migra il database durante
@@ -60,8 +61,9 @@ bootstrap -> configure -> config-check -> init -> doctor
                                                                -> backup/restore
 ```
 
-`bootstrap-vps.sh` prepara Ubuntu, Docker, Caddy, PHP-FPM, utenti, firewall e
-file iniziali; non richiede dominio o admin. `configure` conserva i valori che
+`bootstrap-vps.sh` prepara Ubuntu, Docker, Caddy, utenti, firewall e file
+iniziali; configura e avvia il pool PHP-FPM eventi soltanto per `local-vps`.
+Non richiede dominio o admin. `configure` conserva i valori che
 non vengono modificati. `init` è ammesso solo quando `config-check` conferma
 domini, admin, DNS (fuori dal local mode) e login registry.
 
@@ -82,7 +84,7 @@ Per questa prima produzione la sequenza prevista è:
 
 ```text
 repository/CI verde
--> DNS di mifp.eu, www.mifp.eu, events.mifp.eu verso la VPS
+-> DNS di mifp.eu e www.mifp.eu verso la VPS
 -> bootstrap immediato con --domain mifp.eu
 -> configurazione applicazione/admin
 -> config-check -> init -> doctor -> security-check
@@ -91,7 +93,7 @@ repository/CI verde
 
 Il cambio DNS prima che l'applicazione sia avviata può causare una breve
 indisponibilità di cutover; per questo rilascio è accettata. Configura dapprima
-IPv4 (`A` per l'apex e `A`/`CNAME` per `www` ed `events`). Aggiungi record
+IPv4 (`A` per l'apex e `A`/`CNAME` per `www`). Aggiungi record
 `AAAA` soltanto dopo aver verificato raggiungibilità IPv6 e comportamento UFW
 su IPv6. Non è previsto alcun dominio di staging.
 
@@ -110,8 +112,9 @@ sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
   --image-repository ghcr.io/matginesi/mifp-webapp
 ```
 
-Il bootstrap installa Docker/Caddy/SQLite/PHP-FPM, crea `/opt/mifp`, configura
-firewall, systemd e `mifpctl`. Il supporto a un bootstrap senza dominio resta
+Il bootstrap installa Docker/Caddy/SQLite e i pacchetti PHP, crea `/opt/mifp`,
+configura firewall, systemd e `mifpctl`; il servizio eventi PHP viene attivato
+soltanto per `local-vps`. Il supporto a un bootstrap senza dominio resta
 utile per installazioni non ancora configurate; il cutover reale usa invece
 `--domain mifp.eu` subito dopo il cambio DNS, così Caddy segue il normale
 percorso pubblico DNS/ACME.
@@ -163,77 +166,29 @@ solo package moderni esplicitamente versionati (`mifp-content` v1 oppure
 `mifp-jsonl-v2` v2); vecchi ZIP e vecchi JSONL self-contained sono rifiutati.
 
 
-## `events.mifp.eu`: vecchi eventi e nuove conferenze
+## `events.mifp.eu`: transizione del publisher
 
-`events.mifp.eu` non passa da Flask. Caddy serve direttamente:
-
-```text
-/opt/mifp/events/
-  PLMCN-2025/
-  ICP2DC-2024/
-  ...
-```
-
-Per importare il backup storico completo della vecchia document root, esegui prima
-il preflight read-only e poi l'import:
+**Phase 1 (corrente):** `EVENTS_PUBLISH_BACKEND=local-vps`. Il DNS di
+`events.mifp.eu` punta alla VPS; Caddy gestisce HTTPS e serve
+`/srv/mifp-events`. WEBSITE ZIP validati vengono pubblicati attraverso
+`EventSitePublisher`. Tutto il PHP è negato, salvo un path esatto
+`<public_path>/regform` approvato dall'operatore; quel solo `.php` viene inviato
+al pool PHP-FPM host dedicato. Dati di registrazione e upload persistenti stanno
+in `/srv/mifp-events-private`, mai nel document root.
 
 ```bash
-sudo mifpctl events-check /path/al/backup/events.mifp.eu
-sudo mifpctl events-import /path/al/backup/events.mifp.eu
-```
-
-Passa **la document root pubblica degli eventi**, non un backup completo dell'hosting.
-Il preflight rifiuta symlink, file speciali, mount annidati e payload che non devono
-mai entrare nel tree pubblico (`.env`, repository `.git`, database/dump SQL, chiavi,
-credential file e vecchi dati di registrazione). Segnala inoltre file PHP e riferimenti
-residui a `old.mifp.eu` senza eseguirli o modificarli.
-
-L'import riesegue lo stesso preflight come gate, copia in staging, normalizza i permessi e sostituisce
-`/opt/mifp/events` con un rename atomico. Prima dello switch azzera sempre la
-allow-list PHP: un nuovo tree non eredita mai codice eseguibile dal precedente.
-Il tree precedente resta in `/opt/mifp/events.previous` e può essere scambiato
-di nuovo con:
-
-```bash
-sudo mifpctl events-rollback
-```
-
-Anche il rollback disabilita PHP per tutti i path; se la versione ripristinata
-ha davvero bisogno di PHP, il relativo prefix va riabilitato esplicitamente.
-
-Quindi la migrazione storica non richiede conversioni: `PLMCN-2025/index.html`
-continua a rispondere come `https://events.mifp.eu/PLMCN-2025/`, preservando il
-casing originale.
-
-### PHP: installato, ma deny-by-default
-
-Il bootstrap installa un pool PHP-FPM dedicato (`mifp-events`) sul socket
-`/run/php/mifp-events.sock`. **Nessun `.php` del backup storico viene eseguito o
-servito come sorgente**: Caddy risponde 404 finché un path non viene abilitato
-esplicitamente.
-
-Per una futura conferenza con form PHP:
-
-```bash
-sudo mifpctl events-php-enable PLMCN-2027/regform
 sudo mifpctl events-php-list
-```
-
-Per disabilitarlo:
-
-```bash
+sudo mifpctl events-php-enable PLMCN-2027/regform
 sudo mifpctl events-php-disable PLMCN-2027/regform
 ```
 
-Lo storage scrivibile di PHP è separato dal document root:
-`/opt/mifp/events-private/`. Un nuovo form deve quindi salvare registrazioni,
-upload e sessioni lì (per esempio
-`/opt/mifp/events-private/registrations/PLMCN-2027/`), non dentro il sito
-pubblico. `regform/settings.yaml`, `regform/src/` e `regform/registrations/`
-sono comunque negati da Caddy.
-
-PHP-FPM non configura da solo la consegna e-mail: per un futuro form che invia
-mail va scelta esplicitamente una configurazione SMTP/MTA o un provider.
+**Phase 2 (futura, solo dopo la riparazione Aruba):** backend remoto/FTPS e DNS
+di `events.mifp.eu` verso l'hosting esterno. In quella fase la VPS non crea il
+virtual host eventi e non usa PHP-FPM per i micrositi. Il DB resta neutrale al
+backend e `public_path` conserva l'identità di pubblicazione. Prima del cutover
+devono essere definiti e verificati backup, retention e restore delle
+registrazioni/upload autorevoli sul provider remoto: il backup VPS non li
+include e non li protegge.
 
 ## Tre cicli separati
 
@@ -286,7 +241,7 @@ sudo mifpctl doctor
 Solo per un dominio che termina esattamente in `.home.arpa`, il bootstrap:
 
 - mantiene un blocco marcato e idempotente in `/etc/hosts` con loopback per il
-  dominio, `www` ed `events`, così i check eseguiti dalla VM si autorisolvono;
+  dominio e `www`, così i check eseguiti dalla VM si autorisolvono;
 - configura `tls internal`, prova `caddy trust` sulla sola VPS e indica il file
   della root CA da importare manualmente sulla workstation;
 - stampa la riga `/etc/hosts` della workstation usando l'IP LAN se univoco.
@@ -346,7 +301,8 @@ DB.
 ## Backup e restore
 
 Un timer systemd esegue automaticamente `deploy/backup.sh`. I backup host-only
-sono snapshot point-in-time complete sotto `/var/backups/mifp/snapshots/`:
+sono snapshot point-in-time complete v5 sotto `/var/backups/mifp/snapshots/`.
+In Phase 1 (`local-vps`) includono:
 
 ```text
 snapshot-YYYYMMDD-HHMMSS-NNNNNNNNN/
@@ -356,7 +312,6 @@ snapshot-YYYYMMDD-HHMMSS-NNNNNNNNN/
   assets/
   conferences/
   config/
-  events/
   events-private/
   events-php-enabled.txt
   README.txt
@@ -365,7 +320,8 @@ snapshot-YYYYMMDD-HHMMSS-NNNNNNNNN/
 Il container viene brevemente messo in pausa durante la fotografia dei file;
 SQLite viene copiato con la Backup API e verificato. `manifest.json` registra
 l'SHA-256 dell'intero insieme ripristinabile (`mifp.db`, `assets/`, `conferences/`,
-`config/`, `events/`, `events-private/`, `events-php-enabled.txt`) e il restore rifiuta file mancanti, extra, alterati o symlink. Le
+`config/`, registrazioni/upload privati ed allow-list PHP) e il restore rifiuta
+file mancanti, extra, alterati o symlink. Le
 snapshot successive usano hardlink per i file invariati. Backup immediato:
 
 ```bash
@@ -382,6 +338,7 @@ Restore dell'intera fotografia DB + file:
 
 ```bash
 sudo mifpctl restore-snapshot /var/backups/mifp/snapshots/snapshot-...
+sudo mifpctl events-republish-all
 ```
 
 Entrambi pre-validano il DB e non effettuano alcuno swap se il servizio non
@@ -389,6 +346,13 @@ si arresta correttamente. Il restore completo verifica prima anche il manifest
 di integrità; se la webapp non torna ready, viene ripristinata la fotografia
 precedente. Per disaster recovery conserva anche una copia **off-site**;
 se configuri restic, ogni snapshot completata viene replicata cifrata.
+Il tree pubblico estratto `/srv/mifp-events` non viene duplicato: il secondo
+comando lo ricostruisce deterministicamente dai WEBSITE ZIP conservati e poi
+riattiva soltanto gli allow-list regform i cui path sono tornati validi. I dati
+privati di registrazione non vengono rigenerati: sono ripristinati dalla snapshot.
+Con backend remoto la snapshot non richiede né include runtime PHP, dati privati
+o allow-list locali e non protegge le submission remote; la relativa strategia
+di backup/restore deve essere verificata sul provider prima del cutover.
 
 ## Admin e segreti
 
@@ -407,6 +371,16 @@ configurare SMTP o restic senza esporre password nella shell history:
 sudo mifpctl configure --section mail
 sudo mifpctl configure --section backup
 ```
+
+La sezione `mail` è l'unico punto operativo per le credenziali SMTP. La password
+viene letta con input nascosto e salvata esclusivamente in `/etc/mifp/secrets.env`
+(`0600`). In `local-vps`, la stessa configurazione alimenta anche il relay
+`sendmail` compatibile usato dai `regform` PHP tramite un `/etc/msmtprc`
+root-owned e leggibile soltanto dall'utente PHP dedicato. Gli ZIP evento e
+`regform/settings.yaml` non devono contenere password SMTP. Cambiando in futuro
+le credenziali (per esempio verso SMTP Aruba) basta rieseguire
+`sudo mifpctl configure --section mail`; la configurazione host viene rigenerata
+senza esporre il segreto nella command line o nei log.
 
 Non scrivere password in chiaro nel repository, in `config.env` o nel file
 runtime `/opt/mifp/.env`.
@@ -443,7 +417,7 @@ Prima di considerare una VPS pronta:
 [ ] container non-root, rootfs read-only, no-new-privileges, niente docker.sock
 [ ] /etc/mifp/secrets.env è 0600; Docker config root è 0600 se presente
 [ ] /etc/mifp è custodito fuori dalla VPS (escrow dei segreti)
-[ ] PHP eventi è deny-by-default e la allow-list è stata revisionata
+[ ] Caddy gestisce soltanto mifp.eu e www.mifp.eu; nessun vhost/ACME per events
 [ ] backup locale riuscito e restore provato almeno una volta
 [ ] backup off-site verificato, se configurato
 ```

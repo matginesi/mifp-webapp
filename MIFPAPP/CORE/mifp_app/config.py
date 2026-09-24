@@ -156,19 +156,33 @@ class Config:
     CONFERENCES_DIR = _path_from_config(
         "conferences_dir", "CONFERENCES_DIR", "../DATABASE/conferences"
     )
-    # Caddy serves this tree directly. In production it is a narrowly-scoped
-    # bind mount of /opt/mifp/events; the application never receives access to
-    # Caddy configuration, the Docker socket, or host-private PHP state.
-    EVENTS_ROOT = _path_from_config(
-        "events_root", "EVENTS_ROOT", "../DATABASE/events"
+    # Event mini-sites are a separate publication capability. Phase 1 uses the
+    # local-vps backend and Caddy static hosting; a future remote backend can
+    # move publication without changing application or database semantics.
+    EVENTS_PUBLISH_BACKEND = os.getenv(
+        "EVENTS_PUBLISH_BACKEND", "local-vps" if ENV == "production" else "local"
+    ).strip().lower()
+    EVENTS_PUBLIC_BASE_URL = os.getenv(
+        "EVENTS_PUBLIC_BASE_URL",
+        (f"https://{os.getenv('EVENTS_DOMAIN')}" if os.getenv("EVENTS_DOMAIN") else
+         ("https://events.mifp.eu" if ENV == "production" else "http://events.localhost")),
+    ).strip().rstrip("/")
+    EVENTS_LOCAL_ROOT = _path_from_config(
+        "events_local_root", "EVENTS_LOCAL_ROOT", os.getenv("EVENTS_ROOT", "../DATABASE/events")
     )
-    EVENTS_DOMAIN = os.getenv("EVENTS_DOMAIN", "events.localhost").strip().lower()
-    EVENTS_PHP_STATE_PATH = _path_from_config(
-        "events_php_state_path", "EVENTS_PHP_STATE_PATH", "../DATABASE/events-php-enabled.txt"
-    )
+    EVENTS_REMOTE_HOST = os.getenv("EVENTS_REMOTE_HOST", "").strip()
+    EVENTS_REMOTE_PROTOCOL = os.getenv("EVENTS_REMOTE_PROTOCOL", "ftps").strip().lower()
+    EVENTS_REMOTE_PORT = int(os.getenv("EVENTS_REMOTE_PORT", "21"))
+    EVENTS_REMOTE_USER = os.getenv("EVENTS_REMOTE_USER", "")
+    EVENTS_REMOTE_PASSWORD = _secret_setting("EVENTS_REMOTE_PASSWORD")
+    EVENTS_REMOTE_ROOT = os.getenv("EVENTS_REMOTE_ROOT", "").strip()
+    EVENTS_REMOTE_TIMEOUT = max(5, int(os.getenv("EVENTS_REMOTE_TIMEOUT", "30")))
     EVENT_IMPORT_MAX_FILES = max(1, int(os.getenv("EVENT_IMPORT_MAX_FILES", "5000")))
     EVENT_IMPORT_MAX_UNPACKED_BYTES = max(
         1, int(os.getenv("EVENT_IMPORT_MAX_UNPACKED_BYTES", str(1024 * 1024 * 1024)))
+    )
+    EVENT_IMPORT_MAX_FILE_BYTES = max(
+        1, int(os.getenv("EVENT_IMPORT_MAX_FILE_BYTES", str(128 * 1024 * 1024)))
     )
     EVENT_IMPORT_MAX_COMPRESSION_RATIO = max(
         1, int(os.getenv("EVENT_IMPORT_MAX_COMPRESSION_RATIO", "1000"))

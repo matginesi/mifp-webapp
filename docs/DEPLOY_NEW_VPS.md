@@ -20,8 +20,8 @@ details), [hardening](deployment/hardening.md), [backups](deployment/backups.md)
 | Item | Notes |
 | --- | --- |
 | A VPS | Ubuntu LTS (22.04 or 24.04), root or sudo access |
-| A domain | e.g. `mifp.eu`; `www.` and `events.` subdomains will be derived |
-| DNS control | A/AAAA records for the apex, `www` and `events` |
+| A domain | `mifp.eu`; only the apex and `www` are served by this VPS |
+| DNS control | A/AAAA records for the apex and `www` only |
 | Strong SSH passwords | Required while the provider/default password policy is retained |
 | Your SSH public key | Optional now; required only before choosing key-only hardening |
 | A GitHub PAT (classic) | optional; only for a future private registry/package |
@@ -95,7 +95,7 @@ The intended first-production sequence is:
 
 ```text
 repository/CI green
--> point mifp.eu, www.mifp.eu and events.mifp.eu to the VPS
+-> point only mifp.eu and www.mifp.eu to the VPS
 -> immediately bootstrap with --domain mifp.eu
 -> configure application and admin
 -> config-check -> init -> doctor -> security-check
@@ -104,7 +104,7 @@ repository/CI green
 
 Changing DNS before the new application is running can cause short cutover
 downtime. That downtime is accepted for this deployment. Start with IPv4: an
-`A` record for `mifp.eu` and `A` or `CNAME` records for `www` and `events`.
+`A` record for `mifp.eu` and an `A` or `CNAME` record for `www`.
 Publish `AAAA` only after IPv6 reachability and UFW's IPv6 behavior have been
 verified. Do not create or use a staging domain.
 
@@ -138,7 +138,8 @@ What it does, in order:
 4. installs `/etc/docker/daemon.json` (`live-restore`, bounded log growth);
 5. creates the `mifp`/`mifp-events` users, groups and the `/opt/mifp` +
    `/etc/mifp` layout with restrictive modes;
-6. writes the hardened, deny-by-default PHP-FPM pool and validates it;
+6. for `local-vps`, writes, validates and starts the hardened deny-by-default
+   PHP-FPM pool; for a remote backend it leaves the event PHP service disabled;
 7. installs the deploy tooling, `mifpctl`, and the backup timer;
 8. configures **security-only** unattended upgrades with automatic reboot
    **disabled**;
@@ -275,12 +276,11 @@ Create these records **before** expecting a certificate:
 | --- | --- | --- |
 | `<domain>` | A initially | VPS IPv4 |
 | `www.<domain>` | CNAME to `<domain>` | |
-| `events.<domain>` | A/CNAME | same host |
 
 Verify from the VPS that the public resolver agrees:
 
 ```bash
-getent hosts <domain> www.<domain> events.<domain>
+getent hosts <domain> www.<domain>
 ```
 
 Add `AAAA` only after the host actually serves on IPv6 and UFW behavior has been
@@ -328,21 +328,19 @@ or in a chat message.
 
 ---
 
-## Historical `events.mifp.eu` archive
+## `events.mifp.eu` Phase 1
 
-The `events.<domain>` vhost is served directly by Caddy from `/opt/mifp/events`;
-it is not part of the Flask container. After DNS points `events.<domain>` to the
-VPS, validate and publish the old public document root with:
+The current deployment uses `EVENTS_PUBLISH_BACKEND=local-vps`. Point
+`events.mifp.eu` to the VPS before expecting its certificate. Caddy serves the
+published `/srv/mifp-events` tree; PHP remains denied unless an operator
+explicitly enables an existing `<public_path>/regform` directory. Registration
+data and uploads live under `/srv/mifp-events-private`, never in the public tree.
 
-```bash
-sudo mifpctl events-check /path/to/events-document-root
-sudo mifpctl events-import /path/to/events-document-root
-curl -I https://events.<domain>/.mifp-events-health
-```
-
-Do not point `events-import` at a full hosting-account backup. The preflight blocks
-secret/private payloads, special files and symlinks before anything reaches the
-public tree. PHP remains deny-by-default after every import and rollback.
+Phase 2 is future-only: after Aruba hosting is repaired, switch to remote/FTPS,
+move event DNS, and remove the VPS event virtual host by changing the backend.
+The transition disables the local event PHP-FPM service. Before enabling it,
+define and test the remote provider's backup and restore procedure for
+authoritative registrations/uploads; VPS snapshots do not protect remote data.
 
 ---
 
@@ -527,8 +525,13 @@ sudo mifpctl doctor | grep Backups
 #    safety snapshot first, and rolls back if the service does not come back).
 sudo mifpctl restore-snapshot /var/backups/mifp/snapshots/snapshot-<stamp>
 
-# 4. Confirm the site and the data are healthy again.
+# 4. Rebuild public event trees from retained WEBSITE packages. This also
+#    validates and reactivates restored regform PHP approvals.
+sudo mifpctl events-republish-all
+
+# 5. Confirm the site, event host and data are healthy again.
 sudo mifpctl status && curl -fsS https://<domain>/health
+curl -fsS -o /dev/null https://events.mifp.eu/
 ```
 
 Restoring onto a **replacement host** is: run steps 5–8 (fresh bootstrap +
@@ -536,7 +539,13 @@ SSH + firewall), restore `/etc/mifp/` from your escrow (step 11), then
 
 ```bash
 sudo mifpctl restore-snapshot <copied-snapshot-directory>
+sudo mifpctl events-republish-all
 ```
+
+For `local-vps`, the snapshot restores authoritative registrations/uploads
+before republication; rebuilding the public tree never removes those private
+records or retained ZIPs. A remote-backend snapshot intentionally excludes the
+local PHP runtime and does not claim to protect remote submissions.
 
 ---
 
@@ -593,18 +602,17 @@ and record them during the first production installation.
 [ ] only expected public listeners: SSH, 80, 443 (nothing else)
 [ ] Docker daemon not exposed; docker group empty; socket mode default
 [ ] Caddy configuration valid on the host (caddy validate)
-[ ] DNS resolves correctly for apex, www and events
+[ ] DNS resolves correctly for apex, www and events (Phase 1)
 [ ] TLS certificate valid and auto-renewing; HTTP redirects to HTTPS
 [ ] Flask reachable only on 127.0.0.1:8000
 [ ] /ready returns 404 from the Internet
-[ ] PHP-FPM not public; events vhost denies hidden/secret files (spot-check
-    /.gitignore, /.ssh/id_rsa, /<conf>/regform/settings.json -> 404)
+[ ] Caddy/ACME contains mifp.eu, www.mifp.eu and events.mifp.eu (Phase 1)
 [ ] container isolation verified (non-root, read-only rootfs,
     no-new-privileges, cap_drop ALL, no docker.sock)
 [ ] application health verified (/health 200)
 [ ] application readiness verified (/ready 200 from the host only)
 [ ] backup timer active and a snapshot exists
-[ ] isolated restore test performed (step 19)
+[ ] isolated restore plus `mifpctl events-republish-all` test performed (step 19)
 [ ] offsite backup verified if configured (restic snapshots + restic check)
 [ ] /etc/mifp escrowed outside the VPS
 [ ] sudo mifpctl security-check passes
@@ -613,4 +621,4 @@ and record them during the first production installation.
 
 Expected outcome: **ready to serve**, with every control verified on the host or
 explicitly marked not applicable. Until this checklist is completed, only the
-repository controls—not the live Aruba host—should be described as verified.
+repository controls—not the live host—should be described as verified.

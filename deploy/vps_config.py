@@ -18,18 +18,21 @@ from typing import Callable
 
 PUBLIC_KEYS = (
     "ENVIRONMENT", "HOSTNAME", "PUBLIC_IPV4", "PUBLIC_IPV6", "TIMEZONE",
-    "DOMAIN", "WWW_DOMAIN", "EVENTS_DOMAIN", "IMAGE_REPOSITORY",
+    "DOMAIN", "WWW_DOMAIN", "IMAGE_REPOSITORY",
+    "EVENTS_PUBLISH_BACKEND", "EVENTS_PUBLIC_BASE_URL", "EVENTS_LOCAL_ROOT",
+    "EVENTS_REMOTE_PROTOCOL", "EVENTS_REMOTE_HOST",
+    "EVENTS_REMOTE_PORT", "EVENTS_REMOTE_USER", "EVENTS_REMOTE_ROOT", "EVENTS_REMOTE_TIMEOUT",
     "REGISTRY", "DNS_PROVIDER", "DNS_EXPECTED_IPV4",
     "DNS_EXPECTED_IPV6", "MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT",
     "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME",
     "BACKUP_ENABLED", "BACKUP_LOCAL_RETENTION", "RESTIC_REPOSITORY",
     "ADMIN_USERNAME",
 )
-SECRET_KEYS = ("SECRET_KEY", "ADMIN_PASSWORD_HASH", "SMTP_PASSWORD", "RESTIC_PASSWORD")
+SECRET_KEYS = ("SECRET_KEY", "ADMIN_PASSWORD_HASH", "SMTP_PASSWORD", "RESTIC_PASSWORD", "EVENTS_REMOTE_PASSWORD")
 ALL_KEYS = frozenset(PUBLIC_KEYS + SECRET_KEYS)
-SECRET_INPUT_KEYS = frozenset({"SMTP_PASSWORD", "RESTIC_PASSWORD", "SECRET_KEY", "ADMIN_PASSWORD_HASH"})
+SECRET_INPUT_KEYS = frozenset({"SMTP_PASSWORD", "RESTIC_PASSWORD", "SECRET_KEY", "ADMIN_PASSWORD_HASH", "EVENTS_REMOTE_PASSWORD"})
 REQUIRED_KEYS = (
-    "ENVIRONMENT", "DOMAIN", "WWW_DOMAIN", "EVENTS_DOMAIN",
+    "ENVIRONMENT", "DOMAIN", "WWW_DOMAIN",
     "IMAGE_REPOSITORY", "ADMIN_USERNAME", "ADMIN_PASSWORD_HASH", "SECRET_KEY",
 )
 DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
@@ -55,6 +58,8 @@ RUNTIME_TO_CANONICAL = {
     "ADMIN_USERNAME": "ADMIN_USERNAME",
     "ADMIN_PASSWORD_HASH": "ADMIN_PASSWORD_HASH",
     "SECRET_KEY": "SECRET_KEY",
+    "EVENTS_PUBLIC_BASE_URL": "EVENTS_PUBLIC_BASE_URL",
+    "EVENTS_PUBLISH_BACKEND": "EVENTS_PUBLISH_BACKEND",
 }
 
 
@@ -163,6 +168,81 @@ def atomic_write_text(path: Path, text: str, mode: int) -> None:
         raise
 
 
+def _msmtp_quote(value: str) -> str:
+    """Quote one msmtp configuration value without invoking a shell."""
+    value = str(value or "")
+    if "\x00" in value or "\r" in value or "\n" in value:
+        raise ValueError("SMTP configuration values must not contain control characters")
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def render_msmtp_config(values: dict[str, str], output: Path) -> bool:
+    """Render the host sendmail-compatible relay used by PHP regforms.
+
+    The SMTP password remains outside event ZIPs and is never printed. The
+    caller is responsible for assigning the final group-readable ownership to
+    the dedicated PHP runtime user after this root-only atomic write.
+    """
+    provider = str(values.get("MAIL_PROVIDER", "disabled") or "disabled").lower()
+    if provider not in {"disabled", "console", "smtp"}:
+        provider = "smtp" if values.get("SMTP_HOST") else "disabled"
+    if provider != "smtp":
+        try:
+            output.unlink()
+        except FileNotFoundError:
+            pass
+        return False
+
+    host = values.get("SMTP_HOST", "").strip()
+    port = values.get("SMTP_PORT", "587").strip()
+    security = values.get("SMTP_SECURITY", "starttls").strip().lower()
+    username = values.get("SMTP_USERNAME", "")
+    password = values.get("SMTP_PASSWORD", "")
+    from_address = values.get("SMTP_FROM_ADDRESS", "").strip()
+    missing = [
+        name for name, value in (
+            ("SMTP_HOST", host), ("SMTP_PORT", port),
+            ("SMTP_SECURITY", security), ("SMTP_FROM_ADDRESS", from_address),
+        ) if not value
+    ]
+    if missing:
+        raise ValueError("SMTP relay configuration incomplete: " + ", ".join(missing))
+    if not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise ValueError("SMTP_PORT must be between 1 and 65535")
+    if security not in {"tls", "starttls", "none"}:
+        raise ValueError("SMTP_SECURITY must be tls, starttls or none")
+    if username and not password:
+        raise ValueError("SMTP_PASSWORD is required when SMTP_USERNAME is configured")
+
+    lines = [
+        "# Managed by mifpctl. Contains SMTP credentials; do not edit by hand.",
+        "defaults",
+        "timeout 20",
+        "tls_trust_file /etc/ssl/certs/ca-certificates.crt",
+        "account default",
+        f"host {_msmtp_quote(host)}",
+        f"port {int(port)}",
+        f"from {_msmtp_quote(from_address)}",
+    ]
+    if security == "tls":
+        lines.extend(["tls on", "tls_starttls off"])
+    elif security == "starttls":
+        lines.extend(["tls on", "tls_starttls on"])
+    else:
+        lines.append("tls off")
+    if username:
+        lines.extend([
+            "auth on",
+            f"user {_msmtp_quote(username)}",
+            f"password {_msmtp_quote(password)}",
+        ])
+    else:
+        lines.append("auth off")
+
+    atomic_write_text(output, "\n".join(lines) + "\n", 0o600)
+    return True
+
+
 class Store:
     def __init__(self, config: Path, secrets_path: Path, runtime: Path, example: Path | None):
         self.config = config
@@ -188,10 +268,14 @@ class Store:
         runtime_updates = {
             "FLASK_ENV": "production" if values.get("ENVIRONMENT", "production") == "production" else "development",
             "MIFP_DOMAIN": domain,
-            # Compose interpolates the public event hostname before the container
-            # starts. Keep it in the runtime env for compatibility, while the
-            # canonical /etc/mifp/config.env is also passed directly to Compose.
-            "EVENTS_DOMAIN": values.get("EVENTS_DOMAIN", ""),
+            "EVENTS_PUBLISH_BACKEND": values.get("EVENTS_PUBLISH_BACKEND", "local-vps"),
+            "EVENTS_PUBLIC_BASE_URL": values.get("EVENTS_PUBLIC_BASE_URL", "https://events.mifp.eu"),
+            "EVENTS_REMOTE_PROTOCOL": values.get("EVENTS_REMOTE_PROTOCOL", "ftps"),
+            "EVENTS_REMOTE_HOST": values.get("EVENTS_REMOTE_HOST", ""),
+            "EVENTS_REMOTE_PORT": values.get("EVENTS_REMOTE_PORT", "21"),
+            "EVENTS_REMOTE_USER": values.get("EVENTS_REMOTE_USER", ""),
+            "EVENTS_REMOTE_ROOT": values.get("EVENTS_REMOTE_ROOT", ""),
+            "EVENTS_REMOTE_TIMEOUT": values.get("EVENTS_REMOTE_TIMEOUT", "30"),
             "MIFP_IMAGE_REPOSITORY": values.get("IMAGE_REPOSITORY", ""),
             "TRUSTED_HOSTS": ",".join(filter(None, [domain, values.get("WWW_DOMAIN", ""), "127.0.0.1", "localhost"])),
             "MAIL_PROVIDER": provider,
@@ -209,6 +293,7 @@ class Store:
             "SMTP_PASSWORD": "",
             "ADMIN_PASSWORD_HASH": "",
             "SECRET_KEY": "",
+            "EVENTS_REMOTE_PASSWORD": "",
         }
         update_runtime_env(self.runtime, runtime_updates, self.example)
 
@@ -232,6 +317,11 @@ class Store:
         values.setdefault("REGISTRY", "ghcr.io")
         values.setdefault("BACKUP_ENABLED", "true")
         values.setdefault("BACKUP_LOCAL_RETENTION", "14")
+        values.setdefault("EVENTS_PUBLISH_BACKEND", "local-vps")
+        values.setdefault("EVENTS_LOCAL_ROOT", "/srv/mifp-events")
+        values.setdefault("EVENTS_REMOTE_PROTOCOL", "ftps")
+        values.setdefault("EVENTS_REMOTE_PORT", "21")
+        values.setdefault("EVENTS_REMOTE_TIMEOUT", "30")
         values.setdefault("SECRET_KEY", secrets.token_hex(32))
         values.setdefault("ADMIN_USERNAME", "admin")
         if domain:
@@ -239,6 +329,7 @@ class Store:
         if image_repository:
             values["IMAGE_REPOSITORY"] = image_repository
         derive_domains(values)
+        values.setdefault("EVENTS_PUBLIC_BASE_URL", "https://events.mifp.eu")
         if save:
             self.save(values)
         return values
@@ -249,16 +340,20 @@ def derive_domains(values: dict[str, str]) -> None:
     if domain:
         values["DOMAIN"] = domain
         values.setdefault("WWW_DOMAIN", f"www.{domain}")
-        values.setdefault("EVENTS_DOMAIN", f"events.{domain}")
         if domain.endswith(".home.arpa"):
             values["ENVIRONMENT"] = "local"
+            values.setdefault("EVENTS_PUBLISH_BACKEND", "local-vps")
+            values.setdefault("EVENTS_PUBLIC_BASE_URL", f"http://events.{domain}")
+        else:
+            values.setdefault("EVENTS_PUBLISH_BACKEND", "local-vps")
+            values.setdefault("EVENTS_PUBLIC_BASE_URL", "https://events.mifp.eu")
 
 
 def normalize_value(key: str, value: str) -> str:
     value = value.strip()
     if any(character in value for character in ("\x00", "\r", "\n")):
         raise ValueError(f"control characters are not allowed in {key}")
-    if key in {"DOMAIN", "WWW_DOMAIN", "EVENTS_DOMAIN"}:
+    if key in {"DOMAIN", "WWW_DOMAIN"}:
         value = value.lower()
         if not DOMAIN_RE.fullmatch(value) or "." not in value:
             raise ValueError(f"invalid domain for {key}: {value}")
@@ -275,6 +370,34 @@ def normalize_value(key: str, value: str) -> str:
     elif key == "SMTP_PORT" and value:
         if not value.isdigit() or not 1 <= int(value) <= 65535:
             raise ValueError("SMTP_PORT must be between 1 and 65535")
+    elif key in {"EVENTS_REMOTE_PORT", "EVENTS_REMOTE_TIMEOUT"} and value:
+        if not value.isdigit() or int(value) < 1 or (key.endswith("PORT") and int(value) > 65535):
+            raise ValueError(f"invalid {key}")
+    elif key == "EVENTS_PUBLISH_BACKEND" and value not in {"local-vps", "remote", "disabled"}:
+        raise ValueError("EVENTS_PUBLISH_BACKEND must be local-vps, remote or disabled")
+    elif key == "EVENTS_REMOTE_PROTOCOL" and value != "ftps":
+        raise ValueError("EVENTS_REMOTE_PROTOCOL currently supports only ftps")
+    elif key == "EVENTS_LOCAL_ROOT" and value:
+        path = Path(value)
+        if not path.is_absolute() or ".." in path.parts or value == "/":
+            raise ValueError("EVENTS_LOCAL_ROOT must be a safe absolute directory")
+    elif key == "EVENTS_PUBLIC_BASE_URL" and value:
+        from urllib.parse import urlsplit
+        parsed = urlsplit(value)
+        local_http = parsed.scheme == "http" and (parsed.hostname or "").endswith(".home.arpa")
+        if (
+            parsed.scheme != "https" and not local_http
+            or not parsed.netloc
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError(
+                "EVENTS_PUBLIC_BASE_URL must be an HTTPS origin "
+                "(HTTP is allowed only for .home.arpa local hosts)"
+            )
     elif key == "SMTP_SECURITY" and value not in {"tls", "starttls", "none"}:
         raise ValueError("SMTP_SECURITY must be tls, starttls or none")
     elif key in {"BACKUP_ENABLED"} and value.lower() not in {"true", "false"}:
@@ -329,8 +452,11 @@ def check_configuration(
     elif domain:
         expected_v4 = values.get("DNS_EXPECTED_IPV4") or values.get("PUBLIC_IPV4", "")
         expected_v6 = values.get("DNS_EXPECTED_IPV6") or values.get("PUBLIC_IPV6", "")
-        for key in ("DOMAIN", "WWW_DOMAIN", "EVENTS_DOMAIN"):
-            host = values.get(key, "")
+        dns_hosts = [values.get("DOMAIN", ""), values.get("WWW_DOMAIN", "")]
+        if values.get("EVENTS_PUBLISH_BACKEND") == "local-vps":
+            from urllib.parse import urlsplit
+            dns_hosts.append(urlsplit(values.get("EVENTS_PUBLIC_BASE_URL", "")).hostname or "")
+        for host in dns_hosts:
             if not host:
                 continue
             current, failure = resolver(host)
@@ -351,6 +477,8 @@ def check_configuration(
         missing_smtp = [key for key in smtp_fields if not values.get(key)]
         if missing_smtp:
             errors.append(f"SMTP: incomplete ({', '.join(missing_smtp)} missing)")
+        elif values.get("SMTP_USERNAME") and not values.get("SMTP_PASSWORD"):
+            errors.append("SMTP: SMTP_PASSWORD is required when SMTP_USERNAME is configured")
         elif values.get("SMTP_SECURITY") == "tls" and values.get("SMTP_PORT") != "465":
             errors.append("SMTP: tls normally requires port 465")
         elif values.get("SMTP_SECURITY") == "starttls" and values.get("SMTP_PORT") == "465":
@@ -360,6 +488,22 @@ def check_configuration(
     else:
         notes.append("SMTP: NOT CONFIGURED (optional)")
     notes.append("Remote backup: configured" if values.get("RESTIC_REPOSITORY") else "Remote backup: NOT CONFIGURED (optional)")
+    publisher_backend = values.get("EVENTS_PUBLISH_BACKEND", "disabled")
+    if publisher_backend == "local-vps":
+        root = values.get("EVENTS_LOCAL_ROOT", "")
+        if root:
+            notes.append(f"Event hosting: local-vps; public URL {values.get('EVENTS_PUBLIC_BASE_URL', '')}; local root {root}; publisher available")
+        else:
+            errors.append("Event publisher local-vps: EVENTS_LOCAL_ROOT is missing")
+    elif publisher_backend == "remote":
+        required = ("EVENTS_REMOTE_HOST", "EVENTS_REMOTE_USER", "EVENTS_REMOTE_PASSWORD", "EVENTS_REMOTE_ROOT")
+        missing = [key for key in required if not values.get(key)]
+        if missing:
+            notes.append(f"Event publisher: UNAVAILABLE (missing {', '.join(missing)}); application remains healthy")
+        else:
+            notes.append("Event publisher: FTPS configured (credentials redacted; connection not probed)")
+    else:
+        notes.append("Event publisher: DISABLED; application remains healthy")
     return errors, notes
 
 
@@ -376,6 +520,12 @@ def validate_configuration(values: dict[str, str]) -> list[str]:
             normalize_value(key, value)
         except (ValueError, ipaddress.AddressValueError) as exc:
             errors.append(str(exc))
+    if values.get("ENVIRONMENT") == "production":
+        from urllib.parse import urlsplit
+
+        events_url = values.get("EVENTS_PUBLIC_BASE_URL", "")
+        if events_url and urlsplit(events_url).scheme != "https":
+            errors.append("EVENTS_PUBLIC_BASE_URL must use HTTPS in production")
     return errors
 
 
@@ -390,7 +540,8 @@ def print_show(values: dict[str, str], docker_config: Path) -> None:
     print("MIFP configuration\n")
     sections = (
         ("Environment", ("ENVIRONMENT", "HOSTNAME", "PUBLIC_IPV4", "PUBLIC_IPV6", "TIMEZONE")),
-        ("Web", ("DOMAIN", "WWW_DOMAIN", "EVENTS_DOMAIN", "IMAGE_REPOSITORY")),
+        ("Web", ("DOMAIN", "WWW_DOMAIN", "IMAGE_REPOSITORY")),
+        ("Event publisher", ("EVENTS_PUBLISH_BACKEND", "EVENTS_PUBLIC_BASE_URL", "EVENTS_LOCAL_ROOT", "EVENTS_REMOTE_PROTOCOL", "EVENTS_REMOTE_HOST", "EVENTS_REMOTE_PORT", "EVENTS_REMOTE_USER", "EVENTS_REMOTE_ROOT", "EVENTS_REMOTE_TIMEOUT")),
         ("DNS", ("DNS_PROVIDER", "DNS_EXPECTED_IPV4", "DNS_EXPECTED_IPV6")),
         ("Registry", ("REGISTRY",)),
         ("Mail", ("MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME")),
@@ -402,12 +553,13 @@ def print_show(values: dict[str, str], docker_config: Path) -> None:
         for key in keys:
             print(f"  {key:<24} {display_value(values, key)}")
     print(f"  {'REGISTRY_AUTH':<24} {'configured' if registry_authenticated(docker_config) else 'not configured'}")
-    for key in ("SMTP_PASSWORD", "RESTIC_PASSWORD", "ADMIN_PASSWORD_HASH", "SECRET_KEY"):
+    for key in ("SMTP_PASSWORD", "RESTIC_PASSWORD", "EVENTS_REMOTE_PASSWORD", "ADMIN_PASSWORD_HASH", "SECRET_KEY"):
         print(f"  {key:<24} {display_value(values, key, secret=True)}")
 
 
 WIZARD_SECTIONS = {
-    "web": ("ENVIRONMENT", "DOMAIN", "WWW_DOMAIN", "EVENTS_DOMAIN", "IMAGE_REPOSITORY", "PUBLIC_IPV4", "PUBLIC_IPV6"),
+    "web": ("ENVIRONMENT", "DOMAIN", "WWW_DOMAIN", "IMAGE_REPOSITORY", "PUBLIC_IPV4", "PUBLIC_IPV6"),
+    "publisher": ("EVENTS_PUBLISH_BACKEND", "EVENTS_PUBLIC_BASE_URL", "EVENTS_LOCAL_ROOT", "EVENTS_REMOTE_PROTOCOL", "EVENTS_REMOTE_HOST", "EVENTS_REMOTE_PORT", "EVENTS_REMOTE_USER", "EVENTS_REMOTE_ROOT", "EVENTS_REMOTE_TIMEOUT", "EVENTS_REMOTE_PASSWORD"),
     "mail": ("MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME", "SMTP_PASSWORD"),
     "backup": ("BACKUP_ENABLED", "BACKUP_LOCAL_RETENTION", "RESTIC_REPOSITORY", "RESTIC_PASSWORD"),
 }
@@ -435,8 +587,9 @@ def run_wizard(store: Store, section: str | None, docker_config: Path) -> int:
             return 1
         if key == "DOMAIN":
             pending["WWW_DOMAIN"] = f"www.{pending[key]}"
-            pending["EVENTS_DOMAIN"] = f"events.{pending[key]}"
-            pending["ENVIRONMENT"] = "local" if pending[key].endswith(".home.arpa") else "production"
+            is_local = pending[key].endswith(".home.arpa")
+            pending["ENVIRONMENT"] = "local" if is_local else "production"
+            pending["EVENTS_PUBLIC_BASE_URL"] = f"http://events.{pending[key]}" if is_local else "https://events.mifp.eu"
     answer = input("Save changes? [Y/n] ").strip().lower()
     if answer not in {"", "y", "yes"}:
         print("No changes saved.")
@@ -471,6 +624,8 @@ def parser() -> argparse.ArgumentParser:
     subs.add_parser("import-admin", help=argparse.SUPPRESS)
     get_cmd = subs.add_parser("get")
     get_cmd.add_argument("key")
+    relay = subs.add_parser("render-mail-relay", help=argparse.SUPPRESS)
+    relay.add_argument("--output", type=Path, required=True)
     return root
 
 
@@ -482,6 +637,14 @@ def main() -> int:
         return 0
     if args.command == "configure":
         return run_wizard(store, args.section, args.docker_config)
+    if args.command == "render-mail-relay":
+        values = store.values()
+        try:
+            enabled = render_msmtp_config(values, args.output)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        print("configured" if enabled else "disabled")
+        return 0
     key = getattr(args, "key", "").upper()
     if args.command in {"set", "unset", "get"} and key not in ALL_KEYS:
         raise SystemExit(f"Unsupported configuration key: {key}")
@@ -508,8 +671,9 @@ def main() -> int:
             raise SystemExit(str(exc)) from exc
         if key == "DOMAIN":
             values["WWW_DOMAIN"] = f"www.{values[key]}"
-            values["EVENTS_DOMAIN"] = f"events.{values[key]}"
-            values["ENVIRONMENT"] = "local" if values[key].endswith(".home.arpa") else "production"
+            is_local = values[key].endswith(".home.arpa")
+            values["ENVIRONMENT"] = "local" if is_local else "production"
+            values["EVENTS_PUBLIC_BASE_URL"] = f"http://events.{values[key]}" if is_local else "https://events.mifp.eu"
         store.save(values)
         print(f"{key} updated.")
     elif args.command == "unset":

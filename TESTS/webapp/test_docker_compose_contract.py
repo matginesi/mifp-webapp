@@ -36,12 +36,16 @@ def test_production_compose_has_no_build_and_uses_registry_image() -> None:
     assert "build" not in web
     assert web["image"] == "${MIFP_IMAGE:?MIFP_IMAGE must be supplied by deploy.sh}"
     assert "${MIFP_DATA_DIR:-/opt/mifp/data}:/app/data" in web["volumes"]
-    assert "${MIFP_EVENTS_DIR:-/opt/mifp/events}:/app/events" in web["volumes"]
-    assert web["environment"]["EVENTS_ROOT"] == "/app/events"
+    assert all("/app/events" not in str(volume) for volume in web["volumes"])
+    assert "EVENTS_ROOT" not in web["environment"]
     assert web["read_only"] is True
     assert web["environment"]["FLASK_ENV"] == "production"
     assert web["environment"]["MIFP_RELEASE_REF"] == "${MIFP_IMAGE}"
     assert web["environment"]["MIFP_RELEASE_CHANNEL"].endswith(":latest")
+    assert web["environment"]["EVENTS_PUBLISH_BACKEND"] == "${EVENTS_PUBLISH_BACKEND:-local-vps}"
+    assert web["environment"]["EVENTS_PUBLIC_BASE_URL"] == "${EVENTS_PUBLIC_BASE_URL:-https://events.mifp.eu}"
+    assert web["environment"]["EVENTS_LOCAL_ROOT"] == "/app/event-sites"
+    assert "${EVENTS_LOCAL_ROOT:-/srv/mifp-events}:/app/event-sites" in web["volumes"]
     assert "AUTO_MIGRATE_ON_STARTUP" not in web["environment"]
     assert web["environment"]["TMPDIR"] == "/app/data/tmp"
     assert web["environment"]["SESSION_COOKIE_SECURE"] == "1"

@@ -29,9 +29,8 @@ def test_home_arpa_self_resolution_is_idempotent(tmp_path: Path) -> None:
     assert hosts.read_bytes() == first
     assert text.count("# BEGIN MIFP LOCAL HOSTS") == 1
     assert text.count("# END MIFP LOCAL HOSTS") == 1
-    assert text.count(
-        "127.0.0.1 vpsbox.home.arpa www.vpsbox.home.arpa events.vpsbox.home.arpa"
-    ) == 1
+    assert text.count("127.0.0.1 vpsbox.home.arpa www.vpsbox.home.arpa") == 1
+    assert "events.vpsbox.home.arpa" not in text
 
 
 
@@ -86,7 +85,7 @@ def test_local_tls_is_strictly_conditional_in_bootstrap() -> None:
     public_rendered = caddyfile.replace("__MIFP_DOMAIN__", "mifp.eu").replace(
         "__MIFP_TLS__", ""
     )
-    assert local_rendered.count("tls internal") == 2
+    assert local_rendered.count("tls internal") == 1
     assert "vpsbox.home.arpa" in local_rendered
     assert "tls internal" not in public_rendered
     assert "mifp.eu" in public_rendered

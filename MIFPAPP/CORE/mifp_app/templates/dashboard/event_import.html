@@ -26,7 +26,7 @@
     <section class="wizard-panel is-active event-import-panel" data-wizard-panel="1">
       <div class="event-import-intro">
         <h2>Choose conference packages</h2>
-        <p>WEBSITE and INFO are independent: WEBSITE publishes files under the configured events host; INFO creates or updates the Event shown by MIFP. Upload either package alone or both together. Package roles are detected from contents, so swapped upload fields are handled safely.</p>
+        <p>WEBSITE and INFO are independent: WEBSITE publishes through the configured event-site publisher; INFO creates or updates the Event shown by MIFP. Upload either package alone or both together. Package roles are detected from contents, so swapped upload fields are handled safely.</p>
       </div>
       <div class="event-package-grid">
         <label class="event-dropzone">
@@ -45,6 +45,7 @@
         </label>
       </div>
       <div class="event-import-note"><i class="bi bi-shield-check"></i><span>No file is published during validation. Uploads stay in private staging until the final import.</span></div>
+      <div class="event-import-note"><i class="bi bi-{{ 'cloud-check' if publisher_status.available else 'cloud-slash' }}"></i><span>Publisher: <b>{{ publisher_status.backend }}</b> — {{ publisher_status.message }}</span></div>
       <div class="wizard-footer"><span></span><button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle"></i> Validate packages</button></div>
     </section>
   </form>
@@ -63,7 +64,7 @@
             <dt>ZIP size</dt><dd>{{ (package.zip_bytes / 1048576)|round(2) }} MB</dd>
             <dt>Event</dt><dd>{{ package.event or package.title or '—' }}</dd>
             <dt>Version</dt><dd>{{ package.version or '—' }}</dd>
-            {% if package.kind == 'website' %}<dt>Root</dt><dd><code>{{ package.root }}/</code></dd>{% endif %}
+            {% if package.kind == 'website' %}<dt>ZIP layout</dt><dd><code>{{ (package.root ~ '/') if package.root else 'files at archive root' }}</code></dd>{% endif %}
             {% if package.uid %}<dt>UID</dt><dd><code>{{ package.uid }}</code></dd>{% endif %}
             {% if package.slug %}<dt>Slug</dt><dd><code>{{ package.slug }}</code></dd>{% endif %}
             <dt>Dates</dt><dd>{{ package.start_date or '—' }}{% if package.end_date %} – {{ package.end_date }}{% endif %}</dd>
@@ -84,7 +85,7 @@
 
     <section class="wizard-panel event-import-panel" data-wizard-panel="3">
       {% if inspection.website %}
-      <div class="event-import-intro"><h2>Website destination</h2><p>The host comes from <code>EVENTS_DOMAIN</code>. Only the WEBSITE package writes to this path.</p></div>
+      <div class="event-import-intro"><h2>Website destination</h2><p>The public address comes from <code>EVENTS_PUBLIC_BASE_URL</code>. Publication credentials and the remote filesystem root remain separate.</p></div>
       <div class="wizard-field-grid">
         <label class="field"><span>Events host</span><input class="form-control" value="{{ inspection.events_host }}" readonly></label>
         <label class="field"><span>Destination path</span><input class="form-control" name="destination" value="{{ inspection.destination }}" required pattern="[A-Za-z0-9][A-Za-z0-9._~\x2D]*(/[A-Za-z0-9][A-Za-z0-9._~\x2D]*){0,3}" data-destination></label>
@@ -95,7 +96,7 @@
       </div>
       {% else %}
       <input type="hidden" name="destination" value="{{ inspection.destination }}">
-      <div class="event-import-intro"><h2>No website files in this import</h2><p>Only the INFO package was supplied. No directory under <code>EVENTS_ROOT</code> will be created or replaced; you can add the website files later.</p></div>
+      <div class="event-import-intro"><h2>No website files in this import</h2><p>Only the INFO package was supplied. The publication backend will not be contacted; you can add the website files later.</p></div>
       <div class="event-import-note"><i class="bi bi-info-circle"></i><span>The Event record will still be created or updated from INFO.</span></div>
       {% endif %}
       <div class="wizard-footer"><button class="btn btn-outline btn-sm" type="button" data-wizard-back>Back</button><button class="btn btn-primary btn-sm" type="button" data-wizard-next>Settings <i class="bi bi-arrow-right"></i></button></div>
@@ -126,7 +127,7 @@
           {% endif %}
         </fieldset>
       </div>
-      {% if inspection.website %}<div class="php-policy"><i class="bi bi-filetype-php"></i><div><strong>PHP files detected: {{ inspection.website.php_files }}</strong><span>PHP execution after import: <b>DISABLED</b>. Operator action, if required: <code>sudo mifpctl events-php-enable {{ inspection.destination }}/regform</code></span></div></div>{% endif %}
+      {% if inspection.website and inspection.website.php_files %}<div class="php-policy"><i class="bi bi-filetype-php"></i><div><strong>Registration form PHP detected — PHP execution: disabled</strong><span>Publication does not enable code. {% if inspection.website.regform_php_files %}After review, an operator may run <code>sudo mifpctl events-php-enable {{ inspection.destination }}/regform</code>.{% else %}No executable regform path was detected; PHP remains denied.{% endif %}</span></div></div>{% endif %}
       <div class="wizard-footer"><button class="btn btn-outline btn-sm" type="button" data-wizard-back>Back</button><button class="btn btn-primary btn-sm" type="button" data-wizard-next>Review <i class="bi bi-arrow-right"></i></button></div>
     </section>
 

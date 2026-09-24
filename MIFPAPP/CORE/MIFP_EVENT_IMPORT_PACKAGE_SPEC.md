@@ -4,7 +4,7 @@ This is the operator and producer contract for **Dashboard → Conference sites 
 
 WEBSITE and INFO are independent operations:
 
-- `*_WEBSITE.zip` publishes the validated conference files under `EVENTS_DOMAIN`; it does **not** create an Event record.
+- `*_WEBSITE.zip` publishes validated conference files through the configured `EventSitePublisher`; it does **not** create an Event record.
 - `*_INFO.zip` creates or updates the canonical MIFP Event; it does **not** publish conference files.
 - Either package may be imported alone, or both may be supplied in one wizard run.
 
@@ -26,7 +26,7 @@ PLMCN-2027/
 └── regform/*.php                  # optional; disabled after import
 ```
 
-`conference.yaml` and one root `index.html`, `index.htm`, or `index.php` are
+`conference.yaml` and one static root `index.html` or `index.htm` are
 required. Other public static files are optional. The root is the default public path. When INFO is supplied in the same run, the importer cross-checks the root and event identity, but WEBSITE remains the sole source of filesystem publication.
 
 ## 3. INFO structure (`mifp-content` v1)
@@ -90,12 +90,12 @@ JSON containing an object; its `version` is shown by the dashboard.
 
 ## 9. URL and path rules
 
-The public host always comes from `EVENTS_DOMAIN`; a package cannot choose an
-external deployment host. A destination is a relative path of at most four
+The public host always comes from `EVENTS_PUBLIC_BASE_URL`; a package cannot choose a
+deployment backend. A destination is a relative path of at most four
 segments. Each segment starts with an ASCII letter/digit and then uses only
 letters, digits, `.`, `_`, `~`, or `-`. Absolute paths, drive paths, empty and
 dot segments, and traversal are rejected. The canonical preview is
-`https://<EVENTS_DOMAIN>/<path>/` (HTTP is used only for localhost).
+`<EVENTS_PUBLIC_BASE_URL>/<path>/`.
 
 An INFO `remote_url` for `events.mifp.eu` is metadata, not an instruction to
 bypass the configured environment host. Thus the same package works on a
@@ -103,25 +103,29 @@ bypass the configured environment host. Thus the same package works on a
 
 ## 10. PHP and `regform/`
 
-PHP source may be packaged, but execution is deny-by-default. Import never
-edits Caddy or the host allow-list. If reviewed code must run, an operator uses
-an explicit host action such as:
+PHP source may be packaged, but publication never enables execution. With the
+Phase-1 `local-vps` backend, Caddy denies every PHP-like file except lowercase
+`.php` below an explicitly approved `<public_path>/regform` prefix. After code
+review, an operator may run:
 
 ```bash
 sudo mifpctl events-php-enable PLMCN-2027/regform
 ```
 
-Private submissions must live in `/opt/mifp/events-private`, never in WEBSITE.
+Private submissions must live in `/srv/mifp-events-private/registrations`,
+never in WEBSITE. Persistent uploads use the sibling private `uploads/` tree;
+sessions/tmp are also outside the public root.
 Runtime registration records under `regform/registrations/` are rejected. The
 validator permits only a tiny public guard scaffold used by Conference Editor
 (`.gitignore`, deny-only `.htaccess`, a 404-only `index.php`, and empty
 `.gitkeep`/`.keep` placeholders). CSV/DB/proof/submission files and arbitrary
 PHP below that directory remain hard errors.
 
-The container receives the allow-list state as one read-only file. Publication
-fails closed in production if that state is missing or if the selected event
-already has an enabled PHP prefix; the operator must disable it before new code
-can replace the directory.
+The host owns the allow-list. Enabling validates an existing non-symlink
+regform, generates a candidate Caddy include, validates it, and reloads Caddy
+before committing the approval. PHTML/PHAR and PHP outside the approved prefix
+remain denied. Remote mode delegates runtime support to the remote host and
+does not use VPS Caddy/PHP-FPM.
 
 ## 11. Prohibited files
 
@@ -147,14 +151,14 @@ When INFO is imported, the wizard explicitly asks whether the Event should be fe
 
 ## 14. Atomic import and rollback
 
-The server uploads to private staging and validates first. WEBSITE publication safely extracts on the same filesystem as `EVENTS_ROOT` and atomically swaps only the selected conference directory. INFO import runs inside the database transaction and installs only its declared assets. With both packages, the two operations commit as one import. On failure the database/assets roll back and any replaced website directory is restored. A retained rollback copy is scoped to that conference.
+The server uploads to private staging and validates first. WEBSITE publication delegates the selected conference directory to `EventSitePublisher`; the local backend uses a same-filesystem atomic swap. INFO import runs inside the database transaction and installs only its declared assets. With both packages, the two operations commit as one import. On failure the database/assets roll back and any replaced website directory is restored. A retained rollback copy is scoped to that conference.
 
 The dashboard records the current WEBSITE package version/hash and one bounded previous package snapshot. When the rollback directory is still available, **Conference sites → Restore previous** atomically swaps the current and previous WEBSITE versions; Event/INFO metadata is not rolled back.
 
 ## 15. PLMCN-2027 example
 
 `PLMCN-2027_WEBSITE.zip` has root `PLMCN-2027/` and may be imported by itself to publish the conference site. `PLMCN-2027_INFO.zip` may be imported by itself to create/update the Event and choose whether it appears in Forthcoming. When both are supplied, its INFO record uses slug `plmcn-2027`; this case-only difference is valid. With
-`EVENTS_DOMAIN=events.vpsbox.home.arpa`, its preview is
+`EVENTS_PUBLIC_BASE_URL=https://events.vpsbox.home.arpa`, its preview is
 `https://events.vpsbox.home.arpa/PLMCN-2027/`, regardless of an older
 `events.mifp.eu` URL stored in INFO.
 

@@ -27,6 +27,7 @@ import yaml
 from ..config import Config
 from .assets import AssetWriteSession
 from .data_portability import import_zip_payload, parse_zip_payload
+from .event_site_publisher import EventSitePublisher, PublicationError
 from .portability_contract import CONTENT_FORMAT, CONTENT_FORMAT_VERSION
 from .registration_safety import is_registration_path, is_safe_public_registration_scaffold
 from .versioning import (
@@ -36,7 +37,7 @@ from .versioning import (
 )
 
 WEBSITE_REQUIRED = {"conference.yaml"}
-WEBSITE_INDEXES = {"index.html", "index.htm", "index.php"}
+WEBSITE_INDEXES = {"index.html", "index.htm"}
 PHP_SUFFIXES = {".php", ".phtml", ".phar", ".php3", ".php4", ".php5", ".php7", ".php8"}
 SENSITIVE_DIRS = {".git", ".svn"}
 SENSITIVE_NAMES = {
@@ -79,6 +80,7 @@ class PackageInfo:
     url: str = ""
     primary_link: str = ""
     php_files: int = 0
+    regform_php_files: int = 0
     assets: int = 0
     manifest_status: str = "not applicable"
     scope: str = ""
@@ -132,15 +134,14 @@ def normalize_destination(value: str) -> str:
     return "/".join(parts)
 
 
-def events_origin(domain: str) -> str:
-    host = str(domain or "").strip().lower().rstrip("/")
-    if "://" in host:
-        parsed = urlsplit(host)
-        host = parsed.netloc
-    if not host or "/" in host or "@" in host:
-        raise ValueError("EVENTS_DOMAIN is invalid.")
-    scheme = "http" if host in {"localhost", "127.0.0.1"} or host.endswith(".localhost") else "https"
-    return f"{scheme}://{host}"
+def events_origin(value: str) -> str:
+    configured = str(value or "").strip().rstrip("/")
+    if "://" not in configured:
+        configured = f"{'http' if configured.endswith('.localhost') else 'https'}://{configured}"
+    parsed = urlsplit(configured)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.path not in {"", "/"}:
+        raise ValueError("EVENTS_PUBLIC_BASE_URL is invalid.")
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def destination_url(domain: str, destination: str) -> str:
@@ -214,6 +215,8 @@ def _zip_entries(zf: zipfile.ZipFile) -> tuple[list[tuple[zipfile.ZipInfo, str]]
             raise ValueError(f"ZIP member is a link or special file: {normalized}")
         if info.is_dir():
             continue
+        if info.file_size > Config.EVENT_IMPORT_MAX_FILE_BYTES:
+            raise ValueError(f"ZIP member exceeds the configured per-file limit: {normalized}")
         unpacked += info.file_size
         if unpacked > Config.EVENT_IMPORT_MAX_UNPACKED_BYTES:
             raise ValueError("ZIP expands beyond the configured event import limit.")
@@ -259,19 +262,23 @@ def inspect_website(path: Path, filename: str) -> PackageInfo:
         if len(yaml_paths) != 1:
             raise ValueError("WEBSITE must contain exactly one conference.yaml.")
         yaml_path = PurePosixPath(yaml_paths[0])
-        if len(yaml_path.parts) != 2:
-            raise ValueError("WEBSITE must contain one safe top-level conference directory.")
-        root = yaml_path.parts[0]
-        if not SAFE_PATH_PART.fullmatch(root):
-            raise ValueError("WEBSITE top-level directory is not a safe event path.")
-        prefix = root + "/"
-        if any(not name.startswith(prefix) for name in files):
-            raise ValueError("WEBSITE must have exactly one top-level conference directory.")
+        if len(yaml_path.parts) == 1:
+            root = ""
+            prefix = ""
+        elif len(yaml_path.parts) == 2:
+            root = yaml_path.parts[0]
+            if not SAFE_PATH_PART.fullmatch(root):
+                raise ValueError("WEBSITE top-level directory is not a safe event path.")
+            prefix = root + "/"
+            if any(not name.startswith(prefix) for name in files):
+                raise ValueError("WEBSITE must have exactly one top-level conference directory.")
+        else:
+            raise ValueError("WEBSITE conference.yaml must be at archive root or inside one wrapper directory.")
         relative_names = {name[len(prefix):] for name in files}
         if not WEBSITE_REQUIRED <= {name.casefold() for name in relative_names}:
             raise ValueError("WEBSITE is missing conference.yaml.")
         if not WEBSITE_INDEXES & {name.casefold() for name in relative_names}:
-            raise ValueError("WEBSITE root is missing index.html, index.htm, or index.php.")
+            raise ValueError("WEBSITE root is missing the required static index.html or index.htm.")
         entry_by_name = {name: info for info, name in entries}
         for name in files:
             relative = PurePosixPath(name[len(prefix):])
@@ -311,16 +318,23 @@ def inspect_website(path: Path, filename: str) -> PackageInfo:
                 raise ValueError("conference.version.json must contain an object.")
             version = str(version_doc.get("version") or version).strip()
         php_files = sum(PurePosixPath(name).suffix.casefold() in PHP_SUFFIXES for name in files)
+        regform_php_files = sum(
+            PurePosixPath(name[len(prefix):]).suffix.casefold() == ".php"
+            and "regform" in {
+                part.casefold() for part in PurePosixPath(name[len(prefix):]).parts[:-1]
+            }
+            for name in files
+        )
         return PackageInfo(
             kind="website", filename=filename, zip_bytes=path.stat().st_size,
             sha256=_sha256(path), files=len(files), unpacked_bytes=unpacked,
             event=_human_event(conference, root), version=version, root=root,
-            slug=str(site.get("slug") or "").strip(),
+            slug=str(site.get("slug") or site.get("short_name") or "").strip(),
             title=str(conference.get("full_name") or site.get("title") or "").strip(),
             start_date=str(conference.get("start_date") or "").strip(),
             end_date=str(conference.get("end_date") or "").strip(),
             url=str(site.get("base_url") or site.get("canonical_url") or "").strip(),
-            php_files=php_files,
+            php_files=php_files, regform_php_files=regform_php_files,
         )
 
 
@@ -389,7 +403,8 @@ def inspect_packages(conn, website_path: Path | None, info_path: Path | None,
             raise ValueError(f"INFO record validation failed: {errors[0].get('error', 'invalid record')}")
         checks.append(Check("PASS", "INFO manifest, records hash, JSONL record, and declared assets passed."))
     if website and info:
-        if _identity(website.root) != _identity(info.slug):
+        website_identity = website.root or website.slug
+        if _identity(website_identity) != _identity(info.slug):
             checks.append(Check("ERROR", "WEBSITE root and INFO slug identify different events."))
         else:
             checks.append(Check("PASS", "WEBSITE root and INFO slug match case-insensitively."))
@@ -420,7 +435,7 @@ def inspect_packages(conn, website_path: Path | None, info_path: Path | None,
                     checks.append(Check("ERROR", f"{label} is not a valid public HTTP(S) URL."))
                 elif parsed.path.strip("/") and _identity(parsed.path.strip("/").split("/")[0]) != _identity(website.root):
                     checks.append(Check("WARNING", f"{label} uses a path different from the WEBSITE root."))
-    destination = website.root if website else (info.slug if info else "")
+    destination = (website.root or website.slug) if website else (info.slug if info else "")
     destination = normalize_destination(destination)
     existing = None
     if info:
@@ -428,7 +443,7 @@ def inspect_packages(conn, website_path: Path | None, info_path: Path | None,
     db_action = "UPDATE" if existing else ("CREATE" if info else "SKIP")
     return Inspection(
         website, info, checks, destination,
-        events_origin(events_domain or Config.EVENTS_DOMAIN), db_action,
+        events_origin(events_domain or Config.EVENTS_PUBLIC_BASE_URL), db_action,
     )
 
 
@@ -493,17 +508,16 @@ def resolve_staging(tmp_dir: Path, token: str) -> Path:
 
 def extract_website(path: Path, target: Path, expected_root: str) -> None:
     zf, entries, _ = _load_zip(path)
-    prefix = expected_root + "/"
+    prefix = expected_root + "/" if expected_root else ""
     target.mkdir(parents=True, mode=0o755, exist_ok=True)
-    # EVENTS_ROOT itself is group-gated by the host. Public conference files
-    # remain world-readable below that gate so Caddy does not need a host group
-    # identity inside the application container.
     os.chmod(target, 0o755)
     with zf:
         for info, name in entries:
             if not name.startswith(prefix):
                 raise ValueError("WEBSITE root changed during import validation.")
             relative = name[len(prefix):]
+            if not relative:
+                continue
             destination = target / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info) as source, destination.open("xb") as output:
@@ -513,51 +527,85 @@ def extract_website(path: Path, target: Path, expected_root: str) -> None:
         os.chmod(directory, 0o755)
 
 
+def _store_source_package(path: Path, conferences_root: Path, slug: str, sha256: str) -> Path:
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise ValueError("Website package checksum is invalid.")
+    safe_slug = re.sub(r"[^a-z0-9-]+", "-", slug.casefold()).strip("-")[:100]
+    if not safe_slug:
+        raise ValueError("Website package workspace is invalid.")
+    root = Path(conferences_root).resolve()
+    package_dir = (root / safe_slug / "packages").resolve()
+    package_dir.relative_to(root)
+    package_dir.mkdir(parents=True, mode=0o750, exist_ok=True)
+    target = package_dir / f"{sha256}.zip"
+    if target.exists():
+        if target.is_symlink() or not target.is_file() or _sha256(target) != sha256:
+            raise ValueError("Stored website package failed checksum verification.")
+        return target
+    temporary = package_dir / f".{sha256}.{uuid4().hex}.tmp"
+    try:
+        shutil.copyfile(path, temporary)
+        os.chmod(temporary, 0o640)
+        if _sha256(temporary) != sha256:
+            raise ValueError("Website package changed while being retained.")
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return target
+
+
+def retained_website_package_path(
+    conferences_root: Path, slug: str, sha256: str
+) -> Path:
+    """Resolve and verify one immutable WEBSITE source package."""
+    if not re.fullmatch(r"[0-9a-f]{64}", str(sha256 or "")):
+        raise ValueError("Retained WEBSITE package checksum is invalid.")
+    safe_slug = re.sub(r"[^a-z0-9-]+", "-", str(slug or "").casefold()).strip("-")[:100]
+    if not safe_slug:
+        raise ValueError("Retained WEBSITE package workspace is invalid.")
+    root = Path(conferences_root).resolve()
+    package = (root / safe_slug / "packages" / f"{sha256}.zip").resolve()
+    try:
+        package.relative_to(root)
+    except ValueError as exc:  # pragma: no cover - defense in depth
+        raise ValueError("Retained WEBSITE package path is unsafe.") from exc
+    if not package.is_file() or package.is_symlink():
+        raise ValueError("Retained WEBSITE package is missing.")
+    if _sha256(package) != sha256:
+        raise ValueError("Retained WEBSITE package failed checksum verification.")
+    return package
+
+
+def _use_generated_event_url(current: str, public_base_url: str) -> bool:
+    current = str(current or "").strip()
+    if not current:
+        return True
+    try:
+        return urlsplit(current).netloc.casefold() == urlsplit(events_origin(public_base_url)).netloc.casefold()
+    except ValueError:
+        return False
+
+
 def apply_import(conn, inspection: Inspection, website_path: Path | None, info_path: Path | None,
-                 *, events_root: Path, assets_dir: Path, destination: str,
+                 *, publisher: EventSitePublisher, conferences_root: Path,
+                 assets_dir: Path, destination: str,
                  publish_website: bool, import_metadata: bool,
                  forthcoming: bool | None = None,
-                 replace: bool, keep_rollback: bool, events_domain: str | None = None,
-                 php_state_path: Path | None = None, require_php_state: bool = False) -> dict[str, Any]:
+                 replace: bool, keep_rollback: bool,
+                 public_base_url: str | None = None) -> dict[str, Any]:
     destination = normalize_destination(destination)
-    configured_root = Path(events_root)
-    if configured_root.is_symlink():
-        raise ValueError("Configured EVENTS_ROOT must not be a symlink.")
-    root = configured_root.resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    final = (root / destination).resolve()
-    try:
-        final.relative_to(root)
-    except ValueError as exc:
-        raise ValueError("Destination escapes EVENTS_ROOT.") from exc
     if publish_website and not website_path:
         raise ValueError("Publish website requires a validated WEBSITE package.")
     if import_metadata and not info_path:
         raise ValueError("Metadata import requires a validated INFO package.")
-    if final.exists() and (final.is_symlink() or not final.is_dir()):
-        raise ValueError("Existing destination is not a safe directory.")
-    if publish_website and final.exists() and not replace:
-        raise ValueError("Destination already exists; select atomic replace/update.")
-    if publish_website:
-        php_status = php_execution_status(destination, php_state_path)
-        if require_php_state and php_status == "unknown":
-            raise ValueError("PHP allow-list state is unavailable; event publication fails closed.")
-        if php_status == "enabled":
-            raise ValueError(
-                f"PHP is enabled below this destination. Run 'sudo mifpctl events-php-disable "
-                f"{destination}' (or its enabled subpath) before replacing website code."
-            )
-
     stage: Path | None = None
-    backup: Path | None = None
-    prior_backup: Path | None = None
-    installed = False
-    moved_old = False
     asset_session = AssetWriteSession(Path(assets_dir))
     summary: dict[str, Any] = {"website": "skipped", "metadata": "skipped", "destination": destination}
+    site_id: int | None = None
+    committed = False
     try:
         if publish_website:
-            stage = Path(tempfile.mkdtemp(prefix=f".{final.name}.stage-", dir=final.parent))
+            stage = Path(tempfile.mkdtemp(prefix="mifp-event-site-"))
             extract_website(website_path, stage, inspection.website.root)
         conn.execute("BEGIN IMMEDIATE")
         event_id = None
@@ -591,34 +639,20 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
                     (1 if forthcoming else 0, event_id),
                 )
 
-        if publish_website:
-            backup = final.parent / f".{final.name}.rollback"
-            if final.exists():
-                if backup.exists():
-                    if backup.is_symlink() or not backup.is_dir():
-                        raise ValueError("Rollback location is unsafe.")
-                    prior_backup = final.parent / f".{final.name}.rollback.previous-{uuid4().hex}"
-                    backup.rename(prior_backup)
-                final.rename(backup)
-                moved_old = True
-            stage.rename(final)
-            installed = True
-
         if inspection.info:
             existing_event = conn.execute(
                 "SELECT id FROM events WHERE uid=? OR slug=? ORDER BY id LIMIT 1",
                 (inspection.info.uid, inspection.info.slug),
             ).fetchone()
             event_id = event_id or (int(existing_event["id"]) if existing_event else None)
-        domain = events_domain or Config.EVENTS_DOMAIN
+        base_url = public_base_url or Config.EVENTS_PUBLIC_BASE_URL
         if import_metadata and event_id:
-            # INFO creates/updates the canonical Event. Its website destination
-            # follows the configured events host even when WEBSITE files are
-            # uploaded later or managed manually.
-            conn.execute(
-                "UPDATE events SET remote_url=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (destination_url(domain, destination), event_id),
-            )
+            current_url = conn.execute("SELECT remote_url FROM events WHERE id=?", (event_id,)).fetchone()[0]
+            if publish_website and _use_generated_event_url(current_url, base_url):
+                conn.execute(
+                    "UPDATE events SET remote_url=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (destination_url(base_url, destination), event_id),
+                )
         if publish_website or inspection.website:
             base_manifest = {
                 "event_import": EVENT_WEBSITE_FORMAT_VERSION,
@@ -626,6 +660,7 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
                 "website_files": inspection.website.files if inspection.website else 0,
                 "website_bytes": inspection.website.unpacked_bytes if inspection.website else 0,
                 "php_files": inspection.website.php_files if inspection.website else 0,
+                "regform_php_files": inspection.website.regform_php_files if inspection.website else 0,
                 "php_execution": "disabled",
                 "validation": "passed",
             }
@@ -637,19 +672,30 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
             ).fetchone()
             source_version = inspection.website.version if inspection.website else inspection.info.version
             package_sha256 = inspection.website.sha256 if inspection.website else inspection.info.sha256
-            previous_snapshot = conference_snapshot(existing_site) if existing_site else None
+            # Only a successfully published WEBSITE has a matching publisher
+            # rollback tree. Conference Editor imports are retained/staged but
+            # never become a recoverable published version in this workflow.
+            previous_snapshot = (
+                conference_snapshot(existing_site)
+                if existing_site
+                and existing_site["source_format"] == "legacy-static"
+                and existing_site["deploy_status"] == "published"
+                else None
+            )
             manifest = versioned_manifest(
                 base_manifest,
                 source_version=source_version,
                 package_sha256=package_sha256,
                 previous=previous_snapshot,
             )
-            deploy_status = "published" if publish_website else "staged"
+            # ``staged`` is the durable pre-publication state. It is committed
+            # before remote I/O, then becomes published or failed.
+            deploy_status = "staged"
             common_values = (
                 title, inspection.website.event if inspection.website else inspection.info.event,
                 inspection.info.start_date if inspection.info else inspection.website.start_date,
                 inspection.info.end_date if inspection.info else inspection.website.end_date,
-                destination_url(domain, destination), f"/{destination}/", event_id, destination,
+                destination_url(base_url, destination), f"/{destination}/", event_id, destination,
                 source_version, EVENT_WEBSITE_FORMAT_VERSION, package_sha256,
                 json.dumps(manifest, ensure_ascii=False, sort_keys=True), deploy_status,
             )
@@ -658,7 +704,7 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
                     """UPDATE conference_sites SET title=?,acronym=?,start_date=?,end_date=?,
                            canonical_url=?,deploy_base_path=?,event_id=?,public_path=?,
                            source_format='legacy-static',source_version=?,package_schema_version=?,
-                           package_sha256=?,package_manifest_json=?,deploy_status=?,
+                           package_sha256=?,package_manifest_json=?,deploy_status=?,publication_error=NULL,
                            imported_at=CURRENT_TIMESTAMP,
                            published_at=CASE WHEN ?='published' THEN CURRENT_TIMESTAMP ELSE published_at END,
                            updated_at=CURRENT_TIMESTAMP WHERE id=?""",
@@ -674,26 +720,43 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
                               CASE WHEN ?='published' THEN CURRENT_TIMESTAMP ELSE NULL END)""",
                     (slug, *common_values, deploy_status),
                 )
+            site_row = conn.execute(
+                "SELECT id,slug FROM conference_sites WHERE public_path=?", (destination,)
+            ).fetchone()
+            site_id = int(site_row["id"])
+            if publish_website:
+                _store_source_package(
+                    website_path, Path(conferences_root), str(site_row["slug"]), inspection.website.sha256
+                )
         conn.commit()
+        committed = True
         summary["metadata"] = inspection.db_action if import_metadata else "skipped"
-        summary["website"] = "published" if publish_website else "skipped"
         summary["forthcoming"] = forthcoming if import_metadata else None
         if publish_website:
-            summary["url"] = destination_url(domain, destination)
-        if backup and backup.exists() and not keep_rollback:
-            shutil.rmtree(backup)
-        if prior_backup and prior_backup.exists():
-            shutil.rmtree(prior_backup)
+            assert stage is not None and site_id is not None
+            try:
+                publisher.publish(stage, destination, replace=replace, keep_rollback=keep_rollback)
+            except Exception as exc:
+                safe_error = str(exc) if isinstance(exc, PublicationError) else f"Publication failed ({type(exc).__name__})."
+                conn.execute(
+                    "UPDATE conference_sites SET deploy_status='failed',publication_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (safe_error[:500], site_id),
+                )
+                conn.commit()
+                raise PublicationError(safe_error) from None
+            conn.execute(
+                """UPDATE conference_sites SET deploy_status='published',publication_error=NULL,
+                   published_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (site_id,),
+            )
+            conn.commit()
+            summary["website"] = "published"
+            summary["url"] = destination_url(base_url, destination)
         return summary
     except Exception:
-        conn.rollback()
-        asset_session.rollback()
-        if installed and final.exists():
-            shutil.rmtree(final)
-        if moved_old and backup and backup.exists():
-            backup.rename(final)
-        if prior_backup and prior_backup.exists() and backup and not backup.exists():
-            prior_backup.rename(backup)
+        if not committed:
+            conn.rollback()
+            asset_session.rollback()
         raise
     finally:
         if stage and stage.exists():

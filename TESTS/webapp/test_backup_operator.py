@@ -19,14 +19,26 @@ def _backup_env(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     for name in ("assets", "conferences", "config"):
         (data / name).mkdir(parents=True, exist_ok=True)
         (data / name / f"{name}.txt").write_text(name, encoding="utf-8")
-    (home / "events" / "PLMCN-2025").mkdir(parents=True)
-    (home / "events" / "PLMCN-2025" / "index.html").write_text("historic", encoding="utf-8")
-    (home / "events-private" / "registrations").mkdir(parents=True)
-    (home / "events-private" / "registrations" / "future.csv").write_text("private", encoding="utf-8")
-    (home / "events" / "PLMCN-2027" / "regform").mkdir(parents=True)
-    (home / "events-php-enabled.txt").write_text("PLMCN-2027/regform\n", encoding="utf-8")
+    package = data / "conferences" / "plmcn-2027" / "packages" / "source.zip"
+    package.parent.mkdir(parents=True)
+    package.write_bytes(b"private-source-package")
+    public_root = tmp_path / "mifp-events" / "PLMCN-2027"
+    public_root.mkdir(parents=True)
+    (public_root / "index.html").write_text("deployment artifact", encoding="utf-8")
     (data / "mifp.db").write_bytes(b"SQLite format 3\x00" + b"x" * 200)
-    (home / ".env").write_text("MIFP_BACKUP_KEEP='2'\n", encoding="utf-8")
+    (home / ".env").write_text(
+        "MIFP_BACKUP_KEEP='2'\nEVENTS_PUBLISH_BACKEND='local-vps'\n",
+        encoding="utf-8",
+    )
+    private_root = tmp_path / "mifp-events-private"
+    (private_root / "registrations").mkdir(parents=True)
+    (private_root / "uploads").mkdir()
+    (private_root / "sessions").mkdir()
+    (private_root / "tmp").mkdir()
+    (private_root / "registrations/submission.json").write_text("private", encoding="utf-8")
+    (private_root / "uploads/proof.pdf").write_bytes(b"proof")
+    php_state = home / "events-php-enabled.txt"
+    php_state.write_text("PLMCN-2027/regform\n", encoding="utf-8")
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -73,6 +85,8 @@ print("ok")
             "MIFP_BACKUP_LOCK_FILE": str(tmp_path / "backup.lock"),
             "MIFP_DEPLOY_LOCK_FILE": str(tmp_path / "deploy.lock"),
             "MIFP_BACKUP_QUIESCE": "0",
+            "MIFP_EVENTS_PRIVATE_DIR": str(private_root),
+            "MIFP_EVENTS_PHP_STATE": str(php_state),
         }
     )
     return env, data, backup_root
@@ -92,9 +106,14 @@ def test_backup_is_point_in_time_and_retained(tmp_path: Path) -> None:
     assert (first / "mifp.db").is_file()
     assert (first / "mifp.db.sha256").is_file()
     assert (first / "manifest.json").is_file()
-    assert (first / "events" / "PLMCN-2025" / "index.html").read_text() == "historic"
-    assert (first / "events-private" / "registrations" / "future.csv").read_text() == "private"
+    assert (first / "conferences/plmcn-2027/packages/source.zip").read_bytes() == b"private-source-package"
+    assert not (first / "events").exists()
+    assert (first / "events-private/registrations/submission.json").read_text() == "private"
+    assert (first / "events-private/uploads/proof.pdf").read_bytes() == b"proof"
+    assert not (first / "events-private/sessions").exists()
     assert (first / "events-php-enabled.txt").read_text() == "PLMCN-2027/regform\n"
+    assert '"version": 5' in (first / "manifest.json").read_text()
+    assert '"events_backend": "local-vps"' in (first / "manifest.json").read_text()
 
     # A later backup must not mutate the older filesystem snapshot.
     (data / "config" / "config.txt").write_text("config-v2", encoding="utf-8")
@@ -113,11 +132,34 @@ def test_backup_is_point_in_time_and_retained(tmp_path: Path) -> None:
     assert all((snap / "assets").is_dir() for snap in kept)
     assert all((snap / "conferences").is_dir() for snap in kept)
     assert all((snap / "config").is_dir() for snap in kept)
-    assert all((snap / "events").is_dir() for snap in kept)
-    assert all((snap / "events-private").is_dir() for snap in kept)
+    assert all(not (snap / "events").exists() for snap in kept)
+    assert all((snap / "events-private/registrations/submission.json").is_file() for snap in kept)
     assert all((snap / "events-php-enabled.txt").is_file() for snap in kept)
     assert all((snap / "manifest.json").is_file() for snap in kept)
     assert not any(path.name.startswith(".snapshot-") for path in (backup_root / "snapshots").iterdir())
+
+
+def test_remote_backup_does_not_require_or_claim_local_regform_runtime(tmp_path: Path) -> None:
+    env, _data, backup_root = _backup_env(tmp_path)
+    home = Path(env["MIFP_HOME"])
+    (home / ".env").write_text(
+        "MIFP_BACKUP_KEEP='2'\nEVENTS_PUBLISH_BACKEND='remote'\n",
+        encoding="utf-8",
+    )
+    env["MIFP_EVENTS_PRIVATE_DIR"] = str(tmp_path / "absent-private-runtime")
+    env["MIFP_EVENTS_PHP_STATE"] = str(tmp_path / "absent-php-policy")
+
+    result = subprocess.run(
+        ["bash", str(BACKUP)], env=env, check=False, text=True, capture_output=True
+    )
+
+    assert result.returncode == 0, result.stderr
+    snapshot = _snapshots(backup_root)[0]
+    manifest = (snapshot / "manifest.json").read_text(encoding="utf-8")
+    assert '"events_backend": "remote"' in manifest
+    assert not (snapshot / "events-private").exists()
+    assert not (snapshot / "events-php-enabled.txt").exists()
+    assert "verify the remote host backup separately" in (snapshot / "README.txt").read_text()
 
 
 def test_backup_rejects_symlinks_in_restorable_trees(tmp_path: Path) -> None:
@@ -137,23 +179,6 @@ def test_backup_rejects_symlinks_in_restorable_trees(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "link simbolico" in result.stderr
     assert not _snapshots(backup_root)
-
-
-def test_backup_rejects_stale_php_allowlist_before_publishing(tmp_path: Path) -> None:
-    """A snapshot whose PHP allow-list names a missing directory can never be
-    restored, so the writer must refuse it instead of reporting success."""
-    env, _data, backup_root = _backup_env(tmp_path)
-    home = Path(env["MIFP_HOME"])
-    (home / "events-php-enabled.txt").write_text("GONE-2024/regform\n", encoding="utf-8")
-
-    result = subprocess.run(
-        ["bash", str(BACKUP)], env=env, check=False, text=True, capture_output=True
-    )
-
-    assert result.returncode != 0
-    assert "Allow-list PHP" in result.stderr
-    assert _snapshots(backup_root) == []
-    assert not list((backup_root / "snapshots").glob(".snapshot-*"))
 
 
 def test_backup_does_not_publish_when_live_db_is_a_symlink(tmp_path: Path) -> None:

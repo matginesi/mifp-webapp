@@ -7,7 +7,7 @@ umask 077
 DOMAIN="${1:-}"
 HOSTS_FILE="${2:-/etc/hosts}"
 WWW_DOMAIN="${3:-}"
-EVENTS_DOMAIN="${4:-}"
+EVENTS_HOST="${4:-}"
 BEGIN_MARKER="# BEGIN MIFP LOCAL HOSTS"
 END_MARKER="# END MIFP LOCAL HOSTS"
 
@@ -34,10 +34,13 @@ awk -v begin="$BEGIN_MARKER" -v end="$END_MARKER" '
 
 if [[ "$DOMAIN" == *.home.arpa ]]; then
   WWW_DOMAIN="${WWW_DOMAIN:-www.$DOMAIN}"
-  EVENTS_DOMAIN="${EVENTS_DOMAIN:-events.$DOMAIN}"
   {
     printf '%s\n' "$BEGIN_MARKER"
-    printf '127.0.0.1 %s %s %s\n' "$DOMAIN" "$WWW_DOMAIN" "$EVENTS_DOMAIN"
+    if [[ -n "$EVENTS_HOST" ]]; then
+      printf '127.0.0.1 %s %s %s\n' "$DOMAIN" "$WWW_DOMAIN" "$EVENTS_HOST"
+    else
+      printf '127.0.0.1 %s %s\n' "$DOMAIN" "$WWW_DOMAIN"
+    fi
     printf '%s\n' "$END_MARKER"
   } >> "$tmp"
 fi

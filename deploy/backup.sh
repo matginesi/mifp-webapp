@@ -4,15 +4,14 @@ set -Eeuo pipefail
 MIFP_HOME="${MIFP_HOME:-/opt/mifp}"
 DATA_DIR="$MIFP_HOME/data"
 DB="$DATA_DIR/mifp.db"
-EVENTS_DIR="$MIFP_HOME/events"
-EVENTS_PRIVATE_DIR="$MIFP_HOME/events-private"
-EVENTS_PHP_STATE="$MIFP_HOME/events-php-enabled.txt"
-PHP_FPM_SERVICE_FILE="$MIFP_HOME/php-fpm.service"
 BACKUP_ROOT="${MIFP_BACKUP_ROOT:-/var/backups/mifp}"
 ENV_FILE="$MIFP_HOME/.env"
 LOCK_FILE="${MIFP_BACKUP_LOCK_FILE:-/run/lock/mifp-backup.lock}"
 OPERATION_LOCK_FILE="${MIFP_DEPLOY_LOCK_FILE:-/run/lock/mifp-deploy.lock}"
 QUIESCE="${MIFP_BACKUP_QUIESCE:-1}"
+EVENTS_PRIVATE_DIR="${MIFP_EVENTS_PRIVATE_DIR:-/srv/mifp-events-private}"
+EVENTS_PHP_STATE="${MIFP_EVENTS_PHP_STATE:-$MIFP_HOME/events-php-enabled.txt}"
+PHP_FPM_SERVICE_FILE="${MIFP_PHP_FPM_SERVICE_FILE:-$MIFP_HOME/php-fpm.service}"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -43,6 +42,10 @@ fi
 
 KEEP="$(env_value MIFP_BACKUP_KEEP || true)"; KEEP="${KEEP:-14}"
 [[ "$KEEP" =~ ^[0-9]+$ ]] && ((KEEP >= 2)) || die "MIFP_BACKUP_KEEP deve essere un intero >= 2"
+EVENTS_BACKEND="$(env_value EVENTS_PUBLISH_BACKEND || true)"
+EVENTS_BACKEND="${EVENTS_BACKEND:-local-vps}"
+[[ "$EVENTS_BACKEND" == "local-vps" || "$EVENTS_BACKEND" == "remote" || "$EVENTS_BACKEND" == "disabled" ]] \
+  || die "EVENTS_PUBLISH_BACKEND non valido: $EVENTS_BACKEND"
 
 SNAPSHOT_ROOT="$BACKUP_ROOT/snapshots"
 install -d -o root -g root -m 0700 "$BACKUP_ROOT" "$SNAPSHOT_ROOT"
@@ -76,14 +79,14 @@ if [[ "$QUIESCE" == "1" ]] && command -v docker >/dev/null 2>&1 && docker info >
   fi
 fi
 
-# Future conference registration endpoints may write files outside the public
-# document root.  If the dedicated FPM service is active, briefly stop it so
-# events-private/ is captured at one coherent point in time as well.
-if [[ "$QUIESCE" == "1" && -f "$PHP_FPM_SERVICE_FILE" ]] && command -v systemctl >/dev/null 2>&1; then
-  candidate_service="$(tr -d '[:space:]' < "$PHP_FPM_SERVICE_FILE")"
-  if [[ "$candidate_service" =~ ^php[0-9]+\.[0-9]+-fpm\.service$ ]] && systemctl is-active "$candidate_service" >/dev/null 2>&1; then
-    systemctl stop "$candidate_service" || die "Impossibile sospendere PHP-FPM eventi per la snapshot."
-    paused_php_service="$candidate_service"
+if [[ "$EVENTS_BACKEND" == "local-vps" && "$QUIESCE" == "1" \
+   && -f "$PHP_FPM_SERVICE_FILE" && ! -L "$PHP_FPM_SERVICE_FILE" ]]; then
+  candidate_php_service="$(tr -d '[:space:]' < "$PHP_FPM_SERVICE_FILE")"
+  if [[ "$candidate_php_service" =~ ^php[0-9]+\.[0-9]+-fpm\.service$ ]] \
+     && systemctl is-active --quiet "$candidate_php_service"; then
+    systemctl stop "$candidate_php_service" \
+      || die "Impossibile fermare PHP-FPM eventi per la snapshot."
+    paused_php_service="$candidate_php_service"
   fi
 fi
 
@@ -100,13 +103,9 @@ chmod 0600 "$tmp/mifp.db" "$tmp/mifp.db.sha256"
 # Each directory is a real point-in-time tree. --link-dest hard-links files
 # unchanged since the previous snapshot, so snapshots stay cheap without the
 # ambiguity of one cumulative mirror shared by every DB generation.
-for name in assets conferences config events events-private; do
+for name in assets conferences config; do
   mkdir -m 0700 "$tmp/$name"
-  case "$name" in
-    events) source_dir="$EVENTS_DIR" ;;
-    events-private) source_dir="$EVENTS_PRIVATE_DIR" ;;
-    *) source_dir="$DATA_DIR/$name" ;;
-  esac
+  source_dir="$DATA_DIR/$name"
   if [[ -d "$source_dir" ]]; then
     args=(-a --delete)
     if [[ -n "$previous" && -d "$previous/$name" ]]; then
@@ -120,34 +119,32 @@ for name in assets conferences config events events-private; do
   [[ -z "$unsafe" ]] || die "Snapshot non sicura: link simbolico o file speciale trovato in $name/: $unsafe"
 done
 
-# PHP execution policy is part of the public conference state.  Store the
-# allow-list source, not the derived Caddy include.  Missing means empty/deny-all.
-if [[ -L "$EVENTS_PHP_STATE" ]]; then
-  die "Snapshot non sicura: $EVENTS_PHP_STATE è un symlink."
+# Phase 1 submissions are authoritative on this host. Remote backends have a
+# separate authority and must define their own verified backup before cutover.
+if [[ "$EVENTS_BACKEND" == "local-vps" ]]; then
+  [[ -d "$EVENTS_PRIVATE_DIR" && ! -L "$EVENTS_PRIVATE_DIR" ]] \
+    || die "Runtime privato eventi mancante o non sicuro: $EVENTS_PRIVATE_DIR"
+  mkdir -m 0700 "$tmp/events-private"
+  for name in registrations uploads; do
+    [[ -d "$EVENTS_PRIVATE_DIR/$name" && ! -L "$EVENTS_PRIVATE_DIR/$name" ]] \
+      || die "Runtime privato eventi mancante o non sicuro: $name/"
+    mkdir -m 0700 "$tmp/events-private/$name"
+    args=(-a --delete)
+    if [[ -n "$previous" && -d "$previous/events-private/$name" ]]; then
+      args+=(--link-dest="$previous/events-private/$name")
+    fi
+    rsync "${args[@]}" "$EVENTS_PRIVATE_DIR/$name/" "$tmp/events-private/$name/"
+  done
+  unsafe="$(find "$tmp/events-private" \( -type l -o -type b -o -type c -o -type p -o -type s \) -print -quit)"
+  [[ -z "$unsafe" ]] || die "Snapshot non sicura nel runtime privato eventi: $unsafe"
+  [[ -f "$EVENTS_PHP_STATE" && ! -L "$EVENTS_PHP_STATE" ]] \
+    || die "Allow-list PHP eventi mancante o non sicura: $EVENTS_PHP_STATE"
+  install -o root -g root -m 0600 "$EVENTS_PHP_STATE" "$tmp/events-php-enabled.txt"
 fi
-if [[ -f "$EVENTS_PHP_STATE" ]]; then
-  cp -- "$EVENTS_PHP_STATE" "$tmp/events-php-enabled.txt"
-else
-  : > "$tmp/events-php-enabled.txt"
-fi
-chmod 0600 "$tmp/events-php-enabled.txt"
-
-# Fail closed when the allow-list points at a directory that no longer exists:
-# the restore verifier (and Caddy include renderer) reject such a snapshot, so
-# publishing one would report success for a backup that can never be restored.
-while IFS= read -r prefix; do
-  [[ -n "$prefix" ]] || continue
-  if [[ "$prefix" == *..* || "$prefix" == /* || "$prefix" == *//* ]]; then
-    die "Allow-list PHP non valida: $prefix"
-  fi
-  if [[ ! -d "$EVENTS_DIR/$prefix" || -L "$EVENTS_DIR/$prefix" ]]; then
-    die "Allow-list PHP punta a una directory mancante o non sicura: $prefix (in $EVENTS_DIR)"
-  fi
-done < "$tmp/events-php-enabled.txt"
 
 # Integrity manifest for the entire restorable snapshot, not only SQLite.
 # JSON avoids pathname ambiguities and lets restore verify the exact file set.
-python3 - "$tmp" <<'PY_MANIFEST'
+python3 - "$tmp" "$EVENTS_BACKEND" <<'PY_MANIFEST'
 from __future__ import annotations
 
 import hashlib
@@ -156,6 +153,7 @@ import sys
 from pathlib import Path
 
 root = Path(sys.argv[1]).resolve()
+events_backend = sys.argv[2]
 files: dict[str, str] = {}
 
 def digest(path: Path) -> str:
@@ -165,16 +163,23 @@ def digest(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-for candidate in [root / "mifp.db", root / "events-php-enabled.txt"] + [
+for candidate in [root / "mifp.db"] + [
     path
-    for dirname in ("assets", "conferences", "config", "events", "events-private")
+    for dirname in ("assets", "conferences", "config", "events-private")
     for path in sorted((root / dirname).rglob("*"))
     if path.is_file() and not path.is_symlink()
 ]:
     relative = candidate.relative_to(root).as_posix()
     files[relative] = digest(candidate)
 
-manifest = {"format": "mifp-host-snapshot", "version": 2, "files": files}
+if events_backend == "local-vps":
+    files["events-php-enabled.txt"] = digest(root / "events-php-enabled.txt")
+manifest = {
+    "format": "mifp-host-snapshot",
+    "version": 5,
+    "events_backend": events_backend,
+    "files": files,
+}
 (root / "manifest.json").write_text(
     json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",
@@ -190,12 +195,18 @@ if [[ -n "$paused_php_service" ]]; then
   systemctl start "$paused_php_service" || die "Impossibile riattivare PHP-FPM dopo il backup."
   paused_php_service=""
 fi
-
+if [[ "$EVENTS_BACKEND" == "local-vps" ]]; then
+  EVENTS_BACKUP_SUMMARY="events-private/{registrations,uploads}/, events-php-enabled.txt"
+else
+  EVENTS_BACKUP_SUMMARY="remote event submissions excluded; verify the remote host backup separately"
+fi
 cat > "$tmp/README.txt" <<EOF
 MIFP point-in-time backup
 UTC: $stamp
 Database: mifp.db (verified with quick_check + foreign_key_check)
-Files: assets/, conferences/, config/, events/, events-private/, events-php-enabled.txt
+Event backend: $EVENTS_BACKEND
+Files: assets/, conferences/, config/, $EVENTS_BACKUP_SUMMARY
+Public event tree: excluded; rebuild with sudo mifpctl events-republish-all
 Integrity: manifest.json covers every restorable file
 Restore DB: sudo mifpctl restore-db $final/mifp.db
 Restore complete snapshot: sudo mifpctl restore-snapshot $final

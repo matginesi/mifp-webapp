@@ -1,6 +1,6 @@
 # Hardening VPS
 
-Il bootstrap configura il minimo necessario: Docker, Caddy, SQLite, PHP-FPM,
+Il bootstrap configura il minimo necessario: Docker, Caddy, SQLite, il pool PHP-FPM eventi,
 firewall, utenti dati separati e backup timer.
 
 ## SSH e firewall
@@ -50,20 +50,24 @@ runtime: il container non-root può leggerla senza rendere il DB scrivibile.
 Produzione usa filesystem root read-only, `cap_drop: ALL`,
 `no-new-privileges`, limiti PID/RAM/CPU e un solo worker Gunicorn.
 
-## Caddy ed eventi
+## Caddy e dominio eventi
 
 Caddy è installato dal repository ufficiale. `/ready` viene bloccato
-pubblicamente; `/health` espone soltanto lo stato minimo in produzione.
-`events.mifp.eu` viene servito direttamente da `/opt/mifp/events`, che è
-root-owned e leggibile soltanto dal gruppo pubblico dedicato. PHP, file di
-configurazione del registration form e dati runtime sensibili sono negati per
-default.
+pubblicamente; `/health` espone soltanto lo stato minimo in produzione. In
+Phase 1 serve anche `events.mifp.eu` direttamente da `/srv/mifp-events`.
 
-PHP-FPM gira come utente `mifp-events`, con pool separato, `open_basedir`,
-limiti di upload/memoria/tempo e funzioni di shell disabilitate. Il suo storage
-scrivibile è `/opt/mifp/events-private`, fuori dal document root. Aggiungere un
-path alla allow-list Caddy richiede un comando esplicito
-`mifpctl events-php-enable`.
+Il sito eventi nega dotfile (salvo `.well-known`), stage/rollback del publisher,
+repository, `.env`, database, backup, chiavi/certificati, configurazioni private
+e dati di registrazione. `conference.yaml` è l'unico YAML pubblico canonico.
+PHP-like è 404 per default; soltanto `.php` sotto regform approvati viene inviato
+al socket del pool non privilegiato. Il pool applica `open_basedir`, disabilita
+`.user.ini`, URL include, display errors e funzioni di processo, e usa storage
+privato separato.
+
+In una futura Phase 2 remota, Caddy non crea il sito eventi e il servizio
+PHP-FPM eventi VPS viene disabilitato. Le snapshot VPS non proteggono le
+submission remote: il provider deve avere un backup/restore verificato prima
+del cutover.
 
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
