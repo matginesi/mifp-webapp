@@ -9,7 +9,7 @@
 <meta property="og:description" content="{{ article.summary[:200] if article.summary else 'MIFP News' }}">
 <meta property="og:type" content="article">
 <meta property="og:url" content="{{ request.url }}">
-{% if article.cover_url %}<meta property="og:image" content="{{ article.cover_url }}">{% else %}<meta property="og:image" content="{{ url_for('static', filename='img/background.png', v=static_version, _external=True) }}">{% endif %}
+{% if article.primary_image %}<meta property="og:image" content="{{ article.primary_image }}">{% else %}<meta property="og:image" content="{{ url_for('static', filename='img/background.png', v=static_version, _external=True) }}">{% endif %}
 {% endblock %}
 
 {% block json_ld %}
@@ -21,7 +21,7 @@
   {% if article.date %}"datePublished": "{{ article.date[:10] }}",{% endif %}
   {% if article.updated_at %}"dateModified": "{{ article.updated_at[:10] }}",{% endif %}
   {% if article.summary %}"description": {{ article.summary|tojson }},{% endif %}
-  {% if article.cover_url %}"image": "{{ article.cover_url }}",{% endif %}
+  {% if article.primary_image %}"image": "{{ article.primary_image }}",{% endif %}
   "url": "{{ request.url }}",
   "publisher": {
     "@type": "Organization",
@@ -63,10 +63,10 @@
   <div class="container">
 
     {# ── Cover image ── #}
-    {% if article.cover_url %}
-    <div class="detail-media news-cover">
-      <button type="button" class="js-lightbox lightbox-trigger" data-lightbox-src="{{ article.cover_url }}" data-lightbox-caption="{{ article.title }}">
-        <img src="{{ article.cover_url }}" alt="{{ article.title }}">
+    {% if article.primary_image %}
+    <div class="detail-media news-cover{% if article.news_type == 'award' %} news-award-image{% endif %}">
+      <button type="button" class="js-lightbox lightbox-trigger" data-lightbox-src="{{ article.primary_image }}" data-lightbox-caption="{{ article.title }}">
+        <img src="{{ article.primary_image }}" alt="{{ article.title }}">
       </button>
     </div>
     {% endif %}

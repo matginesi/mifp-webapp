@@ -76,6 +76,23 @@
                         <textarea name="{{ f }}" rows="{{ 8 if f in ['body','description','abstract','bio'] else 3 }}" class="form-control form-control-sm">{{ val or '' }}</textarea>
                       {% elif f in bool_fields or f.startswith('is_') %}
                         <select name="{{ f }}" class="form-select form-select-sm"><option value="1" {{ 'selected' if val==1 }}>Yes</option><option value="0" {{ 'selected' if val!=1 }}>No</option></select>
+                      {% elif f == 'review_status' %}
+                        <input type="hidden" name="review_status" value="{{ val or 'draft' }}" data-review-status-input>
+                        <div class="review-status-control" role="group" aria-label="Publication status">
+                          {% for opt, label in [('draft','Draft'),('review','Review'),('published','Publish')] %}
+                          <button type="button" class="review-status-option {{ 'is-active' if (val or 'draft') == opt }}" data-review-status="{{ opt }}" aria-pressed="{{ 'true' if (val or 'draft') == opt else 'false' }}">{{ label }}</button>
+                          {% endfor %}
+                        </div>
+                      {% elif f == 'event_type' %}
+                        {% set event_types = ['conference','workshop','seminar','meeting','school','project_event','other'] %}
+                        <select name="event_type" class="form-select form-select-sm">
+                          {% if val and val not in event_types %}<option value="{{ val }}" selected>{{ val|replace('_',' ')|title }} (existing)</option>{% endif %}
+                          {% for opt in event_types %}<option value="{{ opt }}" {{ 'selected' if val==opt }}>{{ opt|replace('_',' ')|title }}</option>{% endfor %}
+                        </select>
+                      {% elif f == 'date_precision' %}
+                        <select name="date_precision" class="form-select form-select-sm">
+                          {% for opt in ['day','month','year','range','unknown'] %}<option value="{{ opt }}" {{ 'selected' if (val or 'unknown')==opt }}>{{ opt|capitalize }}</option>{% endfor %}
+                        </select>
                       {% elif f in date_fields %}
                         <input type="date" name="{{ f }}" value="{{ val or '' }}" class="form-control form-control-sm">
                       {% elif f in numeric_fields or f.endswith('_asset_id') %}
@@ -86,7 +103,7 @@
                     </label>
                   {% endfor %}
                   </div>
-                  <div class="record-assets-section" data-section="event" data-record-id="{{ r.id }}">
+                  <div class="record-assets-section" data-section="events" data-record-id="{{ r.id }}">
                     {% if linked_assets.get(r.id) %}
                     <div class="linked-assets-strip">
                       {% for a in linked_assets.get(r.id, []) %}
@@ -94,17 +111,17 @@
                         {% if a.kind == 'image' and a.path and a.preview_available %}<img src="{{ url_for('dashboard.asset_file', filename=a.preview_path) }}" alt="" width="22" height="22" class="linked-asset-thumb" loading="lazy">{% else %}<i class="bi {{ 'bi-image-fill text-warning' if a.kind == 'image' and not a.preview_available else ('bi-file-earmark-pdf' if a.kind == 'pdf' else 'bi-file-earmark-text') }}" title="{{ 'Local file missing' if a.kind == 'image' and not a.preview_available else '' }}"></i>{% endif %}
                         <span class="linked-asset-name">{{ a.original_filename or a.filename }}</span>
                         <small class="linked-asset-role">{{ a.role }}</small>
-                        <button class="btn btn-mini btn-outline-danger asset-unlink-btn" data-asset-id="{{ a.id }}" data-section="event" data-record-id="{{ r.id }}" title="Unlink asset">&times;</button>
+                        <button class="btn btn-mini btn-outline-danger asset-unlink-btn" data-asset-id="{{ a.id }}" data-section="events" data-record-id="{{ r.id }}" title="Unlink asset">&times;</button>
                       </span>
                       {% endfor %}
                     </div>
                     {% endif %}
                     <div class="record-asset-actions">
-                      <button class="btn btn-mini btn-outline asset-upload-btn" data-section="event" data-record-id="{{ r.id }}"><i class="bi bi-upload"></i> Upload file</button>
-                      <button class="btn btn-mini btn-outline asset-link-btn" data-section="event" data-record-id="{{ r.id }}" data-asset-role="cover" data-picker-kind="image"><i class="bi bi-image"></i> Set cover</button>
-                      <button class="btn btn-mini btn-outline asset-link-btn" data-section="event" data-record-id="{{ r.id }}" data-asset-role="document" data-picker-kind="document"><i class="bi bi-file-earmark-plus"></i> Add document</button>
-                      <button class="btn btn-mini btn-outline entity-link-add-btn" data-section="event" data-record-id="{{ r.id }}"><i class="bi bi-link-45deg"></i> Link</button>
-                      <input type="file" class="d-none asset-upload-input" data-section="event" data-record-id="{{ r.id }}" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.mp4,.mov,.txt,.csv">
+                      <button class="btn btn-mini btn-outline asset-upload-btn" data-section="events" data-record-id="{{ r.id }}"><i class="bi bi-upload"></i> Upload file</button>
+                      <button class="btn btn-mini btn-outline asset-link-btn" data-section="events" data-record-id="{{ r.id }}" data-asset-role="cover" data-picker-kind="image"><i class="bi bi-image"></i> Set cover</button>
+                      <button class="btn btn-mini btn-outline asset-link-btn" data-section="events" data-record-id="{{ r.id }}" data-asset-role="document" data-picker-kind="document"><i class="bi bi-file-earmark-plus"></i> Add document</button>
+                      <button class="btn btn-mini btn-outline entity-link-add-btn" data-section="events" data-record-id="{{ r.id }}"><i class="bi bi-link-45deg"></i> Link</button>
+                      <input type="file" class="d-none asset-upload-input" data-section="events" data-record-id="{{ r.id }}" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.mp4,.mov,.txt,.csv">
                     </div>
                     {% if linked_links.get(r.id) %}
                     <div class="linked-assets-strip">
@@ -113,7 +130,7 @@
                         <i class="bi bi-link-45deg"></i>
                         <span class="linked-asset-name">{{ link.label or link.url }}</span>
                         <small class="linked-asset-role">{{ link.role }}</small>
-                        <button class="btn btn-mini btn-outline-danger entity-link-delete-btn" data-link-id="{{ link.id }}" data-section="event" data-record-id="{{ r.id }}" title="Remove link">&times;</button>
+                        <button class="btn btn-mini btn-outline-danger entity-link-delete-btn" data-link-id="{{ link.id }}" data-section="events" data-record-id="{{ r.id }}" title="Remove link">&times;</button>
                       </span>
                       {% endfor %}
                     </div>
@@ -171,6 +188,21 @@
                         <textarea name="{{ f }}" rows="{{ 8 if f in ['body','description','abstract','bio'] else 3 }}" class="form-control form-control-sm">{{ val or '' }}</textarea>
                       {% elif f in bool_fields or f.startswith('is_') %}
                         <select name="{{ f }}" class="form-select form-select-sm"><option value="1" {{ 'selected' if val==1 }}>Yes</option><option value="0" {{ 'selected' if val!=1 }}>No</option></select>
+                      {% elif f == 'review_status' %}
+                        <input type="hidden" name="review_status" value="{{ val or 'draft' }}" data-review-status-input>
+                        <div class="review-status-control" role="group" aria-label="Publication status">
+                          {% for opt, label in [('draft','Draft'),('review','Review'),('published','Publish')] %}
+                          <button type="button" class="review-status-option {{ 'is-active' if (val or 'draft') == opt }}" data-review-status="{{ opt }}" aria-pressed="{{ 'true' if (val or 'draft') == opt else 'false' }}">{{ label }}</button>
+                          {% endfor %}
+                        </div>
+                      {% elif f == 'event_type' %}
+                        <select name="event_type" class="form-select form-select-sm">
+                          {% for opt in ['conference','workshop','seminar','meeting','school','project_event','other'] %}<option value="{{ opt }}" {{ 'selected' if val==opt }}>{{ opt|replace('_',' ')|title }}</option>{% endfor %}
+                        </select>
+                      {% elif f == 'date_precision' %}
+                        <select name="date_precision" class="form-select form-select-sm">
+                          {% for opt in ['day','month','year','range','unknown'] %}<option value="{{ opt }}" {{ 'selected' if (val or 'unknown')==opt }}>{{ opt|capitalize }}</option>{% endfor %}
+                        </select>
                       {% elif f in date_fields %}
                         <input type="date" name="{{ f }}" value="{{ val or '' }}" class="form-control form-control-sm">
                       {% elif f in numeric_fields or f.endswith('_asset_id') %}
@@ -181,7 +213,7 @@
                     </label>
                   {% endfor %}
                   </div>
-                  <div class="record-assets-section" data-section="event" data-record-id="{{ r.id }}">
+                  <div class="record-assets-section" data-section="events" data-record-id="{{ r.id }}">
                     {% if linked_assets.get(r.id) %}
                     <div class="linked-assets-strip">
                       {% for a in linked_assets.get(r.id, []) %}
@@ -189,17 +221,17 @@
                         {% if a.kind == 'image' and a.path and a.preview_available %}<img src="{{ url_for('dashboard.asset_file', filename=a.preview_path) }}" alt="" width="22" height="22" class="linked-asset-thumb" loading="lazy">{% else %}<i class="bi {{ 'bi-image-fill text-warning' if a.kind == 'image' and not a.preview_available else ('bi-file-earmark-pdf' if a.kind == 'pdf' else 'bi-file-earmark-text') }}" title="{{ 'Local file missing' if a.kind == 'image' and not a.preview_available else '' }}"></i>{% endif %}
                         <span class="linked-asset-name">{{ a.original_filename or a.filename }}</span>
                         <small class="linked-asset-role">{{ a.role }}</small>
-                        <button class="btn btn-mini btn-outline-danger asset-unlink-btn" data-asset-id="{{ a.id }}" data-section="event" data-record-id="{{ r.id }}" title="Unlink asset">&times;</button>
+                        <button class="btn btn-mini btn-outline-danger asset-unlink-btn" data-asset-id="{{ a.id }}" data-section="events" data-record-id="{{ r.id }}" title="Unlink asset">&times;</button>
                       </span>
                       {% endfor %}
                     </div>
                     {% endif %}
                     <div class="record-asset-actions">
-                      <button class="btn btn-mini btn-outline asset-upload-btn" data-section="event" data-record-id="{{ r.id }}"><i class="bi bi-upload"></i> Upload file</button>
-                      <button class="btn btn-mini btn-outline asset-link-btn" data-section="event" data-record-id="{{ r.id }}" data-asset-role="cover" data-picker-kind="image"><i class="bi bi-image"></i> Set cover</button>
-                      <button class="btn btn-mini btn-outline asset-link-btn" data-section="event" data-record-id="{{ r.id }}" data-asset-role="document" data-picker-kind="document"><i class="bi bi-file-earmark-plus"></i> Add document</button>
-                      <button class="btn btn-mini btn-outline entity-link-add-btn" data-section="event" data-record-id="{{ r.id }}"><i class="bi bi-link-45deg"></i> Link</button>
-                      <input type="file" class="d-none asset-upload-input" data-section="event" data-record-id="{{ r.id }}" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.mp4,.mov,.txt,.csv">
+                      <button class="btn btn-mini btn-outline asset-upload-btn" data-section="events" data-record-id="{{ r.id }}"><i class="bi bi-upload"></i> Upload file</button>
+                      <button class="btn btn-mini btn-outline asset-link-btn" data-section="events" data-record-id="{{ r.id }}" data-asset-role="cover" data-picker-kind="image"><i class="bi bi-image"></i> Set cover</button>
+                      <button class="btn btn-mini btn-outline asset-link-btn" data-section="events" data-record-id="{{ r.id }}" data-asset-role="document" data-picker-kind="document"><i class="bi bi-file-earmark-plus"></i> Add document</button>
+                      <button class="btn btn-mini btn-outline entity-link-add-btn" data-section="events" data-record-id="{{ r.id }}"><i class="bi bi-link-45deg"></i> Link</button>
+                      <input type="file" class="d-none asset-upload-input" data-section="events" data-record-id="{{ r.id }}" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.mp4,.mov,.txt,.csv">
                     </div>
                     {% if linked_links.get(r.id) %}
                     <div class="linked-assets-strip">
@@ -208,7 +240,7 @@
                         <i class="bi bi-link-45deg"></i>
                         <span class="linked-asset-name">{{ link.label or link.url }}</span>
                         <small class="linked-asset-role">{{ link.role }}</small>
-                        <button class="btn btn-mini btn-outline-danger entity-link-delete-btn" data-link-id="{{ link.id }}" data-section="event" data-record-id="{{ r.id }}" title="Remove link">&times;</button>
+                        <button class="btn btn-mini btn-outline-danger entity-link-delete-btn" data-link-id="{{ link.id }}" data-section="events" data-record-id="{{ r.id }}" title="Remove link">&times;</button>
                       </span>
                       {% endfor %}
                     </div>

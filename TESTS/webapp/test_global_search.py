@@ -316,6 +316,25 @@ def test_news_search(request_ctx):
     assert page["results"][0]["url"] == "/news/lab-news"
 
 
+def test_news_search_returns_the_matching_news_not_a_stale_previous_result(request_ctx):
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO news(id,slug,title,summary,review_status) VALUES (41,'bloch-award','Jacqueline Bloch award','CNRS polaritons marker','published')"
+    )
+    conn.execute(
+        "INSERT INTO news(id,slug,title,summary,review_status) VALUES (42,'different-news','Different research news','perovskite unique marker','published')"
+    )
+    conn.commit()
+
+    bloch = _search(conn, "polaritons")
+    perovskite = _search(conn, "perovskite")
+
+    assert [item["title"] for item in bloch["results"]] == ["Jacqueline Bloch award"]
+    assert bloch["results"][0]["url"] == "/news/bloch-award"
+    assert [item["title"] for item in perovskite["results"]] == ["Different research news"]
+    assert perovskite["results"][0]["url"] == "/news/different-news"
+
+
 def test_news_with_null_slug_links_to_news_index(request_ctx):
     conn = _conn()
     conn.execute(

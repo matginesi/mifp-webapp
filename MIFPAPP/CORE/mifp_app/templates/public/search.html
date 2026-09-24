@@ -16,9 +16,13 @@
 
 <section class="section-sm archive-index-section">
   <div class="container-wide">
-    <form class="archive-filters" method="get" action="{{ url_for('public.search') }}" role="search" aria-label="Search the site">
-      <label class="archive-search"><span>Search</span><span class="archive-input-wrap"><i class="bi bi-search" aria-hidden="true"></i><input name="q" value="{{ result.query }}" placeholder="Title, name, topic, location" autofocus autocomplete="off"></span></label>
-      <div class="archive-filter-actions"><button class="btn btn-primary" type="submit">Search</button></div>
+    <form class="filter-panel site-search-form" method="get" action="{{ url_for('public.search') }}" role="search" aria-label="Search the site">
+      <label class="filter-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="search" name="q" value="{{ result.query }}" placeholder="Title, name, topic, location" autofocus autocomplete="off" enterkeyhint="search" aria-label="Search MIFP">
+      </label>
+      <button class="filter-submit" type="submit">Search</button>
+      {% if result.query %}<a class="filter-clear" href="{{ url_for('public.search') }}">Clear</a>{% endif %}
     </form>
 
     {% if result.failed and not result.results %}

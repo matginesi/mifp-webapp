@@ -26,13 +26,15 @@
   <div class="container">
 
     {# ── Search ── #}
-    <div class="publication-search">
-      <div class="filter-search">
+    <form method="get" action="{{ url_for('public.publications') }}" class="filter-panel publication-search" role="search" aria-label="Search publications">
+      <label class="filter-search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input type="text" id="pubSearch" placeholder="{{ site_copy.publications_search }}" autocomplete="off" aria-label="Search publications">
-      </div>
+        <input type="search" id="pubSearch" name="q" value="{{ search or '' }}" placeholder="{{ site_copy.publications_search }}" autocomplete="off" aria-label="Search publications" enterkeyhint="search">
+      </label>
+      <button type="submit" class="filter-submit">Search</button>
+      {% if search %}<a href="{{ url_for('public.publications') }}" class="filter-clear">Clear</a>{% endif %}
       <div id="pubSearchStatus" class="visually-hidden" role="status" aria-live="polite"></div>
-    </div>
+    </form>
 
     {# ── Publications list ── #}
     {% if publications %}
@@ -92,7 +94,7 @@
       <div class="empty-state-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
       </div>
-      <p>{{ site_copy.publications_empty }}</p>
+      <p>{% if search %}No publications match “{{ search }}”.{% else %}{{ site_copy.publications_empty }}{% endif %}</p>
     </div>
     {% endif %}
   </div>

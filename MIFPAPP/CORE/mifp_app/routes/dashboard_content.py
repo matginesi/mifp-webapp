@@ -36,13 +36,31 @@ from .dashboard import bp
 _MD_DIR = Path(__file__).resolve().parent.parent.parent  # MIFPAPP/CORE/
 _CREATE_REQUIRED_FIELDS = {
     "members": {"display_name"},
+    "news": {"title"},
     "publications": {"title"},
     "research_areas": {"title"},
     "sponsors": {"name"},
 }
 
+_CREATE_HIDDEN_FIELDS = {
+    "members": {"slug", "sort_order"},
+    "news": {
+        "slug",
+        "date_is_inferred",
+        "date_inference_rule",
+        "original_date_text",
+        "display_order",
+        "sort_order",
+    },
+    "publications": {"slug", "sort_order"},
+    "research_areas": {"slug", "sort_order"},
+    "sponsors": {"slug", "sort_order"},
+}
+
+
 _CREATE_PRIMARY_ASSETS = {
     "members": ("profile", "Profile image", "image/*"),
+    "news": ("cover", "Main image", "image/*"),
     "publications": (
         "document",
         "Publication document",
@@ -67,6 +85,9 @@ def _prepare_new_content_data(table: str, data: dict[str, Any]) -> dict[str, Any
         prepared["slug"] = slugify(str(label or "")) or None
     if "review_status" in PUBLIC_TABLES[table]["fields"] and not prepared.get("review_status"):
         prepared["review_status"] = "draft"
+    if table == "news" and not str(prepared.get("date") or "").strip() and not str(prepared.get("date_text") or "").strip():
+        prepared["date"] = date.today().isoformat()
+        prepared["date_precision"] = "day"
     if "is_active" in PUBLIC_TABLES[table]["fields"] and "is_active" not in prepared:
         prepared["is_active"] = 0
     missing = sorted(
@@ -90,6 +111,8 @@ def _validate_new_record_completeness(table: str, data: dict[str, Any]) -> None:
         required = {"title", "authors", "year"}
     elif published and table == "research_areas":
         required = {"title", "summary", "description"}
+    elif published and table == "news":
+        required = {"title"}
     elif active and table == "sponsors":
         required = {"name", "description", "tier"}
     missing = sorted(field for field in required if not str(data.get(field) or "").strip())
@@ -422,6 +445,10 @@ def content(section):
 
         columns = display_columns(conn, table)
         editable = editable_columns(conn, table)
+        create_editable = [
+            field for field in editable
+            if field not in _CREATE_HIDDEN_FIELDS.get(table, set())
+        ]
         paginated = list_records_paginated(conn, table, q=q, page=page, per_page=50)
         records = paginated["records"]
         roles = list_roles(conn)
@@ -450,6 +477,8 @@ def content(section):
         meta=meta,
         columns=columns,
         editable=editable,
+        create_editable=create_editable,
+        today_iso=date.today().isoformat(),
         records=records,
         roles=roles,
         role_names=role_names,

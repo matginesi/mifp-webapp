@@ -48,6 +48,14 @@
 
 <section class="section-sm research-page-section" id="research-directory">
   <div class="container-wide">
+    <form method="get" action="{{ url_for('public.research') }}#research-directory" class="filter-panel directory-search-form no-pdf" role="search" aria-label="Search research areas">
+      <label class="filter-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="search" name="q" value="{{ search or '' }}" placeholder="Search research areas" aria-label="Search research areas" autocomplete="off" enterkeyhint="search">
+      </label>
+      <button type="submit" class="filter-submit">Search</button>
+      {% if search %}<a href="{{ url_for('public.research') }}#research-directory" class="filter-clear">Clear</a>{% endif %}
+    </form>
     <header class="research-section-head">
       <div>
         <span class="research-section-kicker">Research directory</span>
@@ -101,7 +109,7 @@
         <div class="empty-state-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
         </div>
-        <p>{{ site_copy.research_empty }}</p>
+        <p>{% if search %}No research areas match “{{ search }}”.{% else %}{{ site_copy.research_empty }}{% endif %}</p>
       </div>
       {% endif %}
     </article>

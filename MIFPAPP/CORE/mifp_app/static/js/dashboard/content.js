@@ -68,6 +68,21 @@ document.addEventListener('click', function (event) {
   });
 });
 
+document.addEventListener('click', function (event) {
+  var option = event.target.closest('.review-status-option[data-review-status]');
+  if (!option) return;
+  event.preventDefault();
+  var field = option.closest('.field');
+  var input = field ? field.querySelector('[data-review-status-input]') : null;
+  if (!input) return;
+  input.value = option.dataset.reviewStatus || 'draft';
+  field.querySelectorAll('.review-status-option').forEach(function (button) {
+    var active = button === option;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+});
+
 document.querySelectorAll('[data-create-record-form]').forEach(function(form) {
   form.addEventListener('invalid', function(event) {
     contentLog.warn('content.create.invalid', {
@@ -580,9 +595,18 @@ document.addEventListener('change', function (ev) {
   var section = fileInput.dataset.section;
   var recordId = fileInput.dataset.recordId;
   var file = fileInput.files[0];
-  var role = section === 'event'
-    ? (file.type.startsWith('image/') ? 'cover' : 'document')
-    : 'attachment';
+  var isImage = file.type.startsWith('image/');
+  var isDocument = file.type === 'application/pdf' || /\.(pdf|docx?|txt|csv)$/i.test(file.name || '');
+  var imageRoles = {
+    members: 'profile',
+    events: 'cover',
+    news: 'cover',
+    research: 'cover',
+    sponsors: 'logo'
+  };
+  var role = isImage && imageRoles[section]
+    ? imageRoles[section]
+    : (isDocument && ['events', 'news', 'publications', 'research'].includes(section) ? 'document' : 'attachment');
   uploadAssetToRecord(section, recordId, file, role).then(function(data) {
     if (data.success) {
       showToast('Asset uploaded and linked.', 'success');

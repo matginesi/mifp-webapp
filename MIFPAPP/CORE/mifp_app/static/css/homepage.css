@@ -3514,7 +3514,36 @@
 .index-note { margin-bottom: 24px; color: var(--paper-faint); font: .78rem var(--f-mono); }
 .sponsor-events-section { margin-top: 64px; }
 .sponsor-detail-actions { margin-top: 48px; text-align: center; }
-.publication-search { max-width: 320px; margin-bottom: 32px; }
+.publication-search { max-width: none; margin-bottom: 32px; }
+.directory-search-form,
+.site-search-form,
+.publication-search {
+  align-items: stretch;
+}
+.directory-search-form .filter-submit,
+.site-search-form .filter-submit,
+.publication-search .filter-submit,
+.directory-search-form .filter-clear,
+.site-search-form .filter-clear,
+.publication-search .filter-clear {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+@media (max-width: 640px) {
+  .directory-search-form .filter-search,
+  .site-search-form .filter-search,
+  .publication-search .filter-search {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+  .directory-search-form .filter-submit,
+  .site-search-form .filter-submit,
+  .publication-search .filter-submit {
+    flex: 1 1 auto;
+  }
+}
 .publication-meta-stack { display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: 6px; }
 .publication-empty { display: none; margin-top: 32px; }
 .publication-empty p { margin-top: 6px; font-size: .82rem; }

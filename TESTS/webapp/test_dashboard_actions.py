@@ -224,6 +224,44 @@ def test_conference_wizard_people_exports_assets_and_deploy_zip(app, client):
     assert client.get(f"/dashboard/conferences/{site_id}/assets/programme.pdf").status_code == 404
 
 
+def test_conference_site_creation_automatically_creates_draft_event(app, client):
+    response = client.post(
+        "/dashboard/conferences",
+        data={
+            "title": "Automatic Event Conference",
+            "slug": "automatic-event-conference",
+            "start_date": "2027-06-10",
+            "end_date": "2027-06-12",
+            "venue": "Main Hall",
+            "city": "Rome",
+            "country": "Italy",
+            "description": "Conference metadata mirrored into Events.",
+        },
+    )
+    assert response.status_code == 302
+
+    with _db(app) as conn:
+        site = conn.execute(
+            "SELECT event_id FROM conference_sites WHERE slug='automatic-event-conference'"
+        ).fetchone()
+        assert site is not None and site["event_id"] is not None
+        event = conn.execute(
+            "SELECT title,start_date,end_date,location,description,event_type,review_status "
+            "FROM events WHERE id=?",
+            (site["event_id"],),
+        ).fetchone()
+
+    assert dict(event) == {
+        "title": "Automatic Event Conference",
+        "start_date": "2027-06-10",
+        "end_date": "2027-06-12",
+        "location": "Main Hall, Rome, Italy",
+        "description": "Conference metadata mirrored into Events.",
+        "event_type": "conference",
+        "review_status": "draft",
+    }
+
+
 def test_conference_delete_removes_database_relations_and_storage(app, client):
     created = client.post("/dashboard/conferences", data={
         "title": "Disposable Conference",
@@ -677,6 +715,7 @@ def test_content_save_waits_for_a_transient_database_writer(app, monkeypatch):
     ("section", "table"),
     [
         ("members", "members"),
+        ("news", "news"),
         ("publications", "publications"),
         ("research", "research_areas"),
         ("sponsors", "sponsors"),
@@ -707,6 +746,43 @@ def test_new_member_can_derive_display_name_from_names(app, client):
         app,
         "SELECT slug FROM members ORDER BY id DESC LIMIT 1",
     ) == "ada-lovelace"
+
+
+def test_new_news_is_created_atomically_with_cover(app, client):
+    response = client.post(
+        "/dashboard/content/news",
+        data={
+            "title": "Jacqueline Bloch awarded the CNRS Gold Medal",
+            "news_type": "award",
+            "review_status": "published",
+            "card_layout": "text_image",
+            "primary_asset": (
+                io.BytesIO(b"\x89PNG\r\n\x1a\naward"),
+                "bloch-award.png",
+                "image/png",
+            ),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 302
+    with _db(app) as conn:
+        news = conn.execute(
+            "SELECT id,slug,news_type,card_layout,date,date_precision,review_status "
+            "FROM news WHERE title='Jacqueline Bloch awarded the CNRS Gold Medal'"
+        ).fetchone()
+        link = conn.execute(
+            "SELECT role,is_primary FROM asset_links WHERE entity_type='news' AND entity_id=?",
+            (news["id"],),
+        ).fetchone()
+
+    assert news["slug"] == "jacqueline-bloch-awarded-the-cnrs-gold-medal"
+    assert news["news_type"] == "award"
+    assert news["card_layout"] == "text_image"
+    assert news["date"]
+    assert news["date_precision"] == "day"
+    assert news["review_status"] == "published"
+    assert dict(link) == {"role": "cover", "is_primary": 1}
 
 
 def test_new_active_sponsor_is_created_atomically_with_logo(app, client):

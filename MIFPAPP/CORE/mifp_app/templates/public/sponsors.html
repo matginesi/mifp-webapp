@@ -22,6 +22,15 @@
 <section class="section-sm">
   <div class="container-wide">
 
+    <form method="get" action="{{ url_for('public.sponsors') }}" class="filter-panel directory-search-form" role="search" aria-label="Search sponsors and partners">
+      <label class="filter-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="search" name="q" value="{{ search or '' }}" placeholder="Search sponsors and partners" aria-label="Search sponsors and partners" autocomplete="off" enterkeyhint="search">
+      </label>
+      <button type="submit" class="filter-submit">Search</button>
+      {% if search %}<a href="{{ url_for('public.sponsors') }}" class="filter-clear">Clear</a>{% endif %}
+    </form>
+
     {% if sponsors %}
     <div class="partner-registry-head">
       <span>Institutional partner registry</span>
@@ -62,7 +71,7 @@
       <div class="empty-state-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
       </div>
-      <p>{{ site_copy.sponsors_empty }}</p>
+      <p>{% if search %}No sponsors or partners match “{{ search }}”.{% else %}{{ site_copy.sponsors_empty }}{% endif %}</p>
     </div>
     {% endif %}
 

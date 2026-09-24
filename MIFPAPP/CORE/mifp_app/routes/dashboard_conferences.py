@@ -49,6 +49,7 @@ from ..services.operation_maintenance import maintenance_guarded
 from ..services.conference_version_restore import restore_previous_website
 from ..services.versioning import conference_version_state
 from ..utils.logger import audit_log
+from ..utils.text_utils import slugify
 from .auth import login_required
 from .dashboard import bp
 
@@ -118,6 +119,114 @@ def _event_options(conn) -> list[dict]:
                ORDER BY COALESCE(start_date,'') DESC,title,id DESC"""
         ).fetchall()
     ]
+
+
+def _conference_event_location(values: dict) -> str | None:
+    parts: list[str] = []
+    for key in ("venue", "city", "country"):
+        value = str(values.get(key) or "").strip()
+        if value and value.casefold() not in {item.casefold() for item in parts}:
+            parts.append(value)
+    return ", ".join(parts) or None
+
+
+def _unique_event_slug(conn, preferred: str) -> str:
+    base = slugify(preferred) or "conference"
+    candidate = base
+    suffix = 2
+    while conn.execute("SELECT 1 FROM events WHERE slug=?", (candidate,)).fetchone():
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _sync_conference_event(
+    conn,
+    *,
+    event_id: int | None,
+    site_slug: str,
+    public_path: str,
+    values: dict,
+) -> tuple[int, bool]:
+    """Ensure every conference workspace has a canonical Events record.
+
+    Conference Sites owns microsite metadata while Events owns publication
+    state.  Non-empty conference metadata is mirrored into the linked event,
+    but blank conference fields never erase richer event information and the
+    event review status is deliberately left untouched after creation.
+    """
+    title = str(values.get("title") or "").strip()
+    if not title:
+        raise ValueError("Conference title is required.")
+    location = _conference_event_location(values)
+    remote_url = str(values.get("canonical_url") or "").strip()
+    if not remote_url:
+        remote_url = destination_url(current_app.config["EVENTS_PUBLIC_BASE_URL"], public_path)
+
+    if event_id is None:
+        event_slug = _unique_event_slug(conn, site_slug or title)
+        has_start = bool(values.get("start_date"))
+        has_end = bool(values.get("end_date"))
+        precision = (
+            "range"
+            if has_start and has_end and values.get("start_date") != values.get("end_date")
+            else ("day" if has_start or has_end else "unknown")
+        )
+        cursor = conn.execute(
+            """
+            INSERT INTO events(
+                slug,title,start_date,end_date,date_precision,location,description,
+                event_type,review_status,remote_url
+            ) VALUES(?,?,?,?,?,?,?,'conference','draft',?)
+            """,
+            (
+                event_slug,
+                title,
+                values.get("start_date") or None,
+                values.get("end_date") or None,
+                precision,
+                location,
+                values.get("description") or None,
+                remote_url or None,
+            ),
+        )
+        return int(cursor.lastrowid), True
+
+    if not conn.execute("SELECT 1 FROM events WHERE id=?", (event_id,)).fetchone():
+        raise ValueError("The selected institutional event no longer exists.")
+
+    updates: dict[str, object] = {"title": title, "event_type": "conference"}
+    for field in ("start_date", "end_date", "description"):
+        value = values.get(field)
+        if value not in {None, ""}:
+            updates[field] = value
+    if location:
+        updates["location"] = location
+    if remote_url:
+        updates["remote_url"] = remote_url
+    if values.get("start_date") or values.get("end_date"):
+        updates["date_precision"] = (
+            "range"
+            if values.get("start_date") and values.get("end_date") and values.get("start_date") != values.get("end_date")
+            else "day"
+        )
+    set_clause = ",".join(f"{field}=?" for field in updates)
+    conn.execute(
+        f"UPDATE events SET {set_clause},updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        (*updates.values(), event_id),
+    )
+    return event_id, False
+
+
+def _sync_conference_event_from_site(conn, site: dict) -> tuple[int, bool]:
+    values = {field: site.get(field) for field in SITE_FIELDS}
+    return _sync_conference_event(
+        conn,
+        event_id=int(site["event_id"]) if site.get("event_id") else None,
+        site_slug=str(site.get("slug") or values.get("title") or "conference"),
+        public_path=str(site.get("public_path") or site.get("slug") or "conference"),
+        values=values,
+    )
 
 
 def _site(conn, site_id: int) -> dict | None:
@@ -347,6 +456,7 @@ def conference_create():
     site_id = None
     slug = None
     imported_source = None
+    auto_event_id = None
     try:
         values = _site_values(request.form)
         slug = validate_slug(request.form.get("slug") or values["title"])
@@ -355,6 +465,15 @@ def conference_create():
         with connect(current_app.config["DATABASE_PATH"]) as conn:
             _validate_event_link(conn, event_id)
             _validate_public_path_unique(conn, public_path)
+            event_id, event_created = _sync_conference_event(
+                conn,
+                event_id=event_id,
+                site_slug=slug,
+                public_path=public_path,
+                values=values,
+            )
+            if event_created:
+                auto_event_id = event_id
             cursor = conn.execute(
                 f"""INSERT INTO conference_sites(
                         slug,public_path,event_id,{','.join(SITE_FIELDS)}
@@ -376,6 +495,15 @@ def conference_create():
                 created_site, config_upload, package_upload
             )
             imported_source = source
+            with connect(current_app.config["DATABASE_PATH"]) as conn:
+                refreshed_site = _site(conn, site_id)
+                if refreshed_site:
+                    synced_event_id, _ = _sync_conference_event_from_site(conn, refreshed_site)
+                    conn.execute(
+                        "UPDATE conference_sites SET event_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (synced_event_id, site_id),
+                    )
+                    conn.commit()
             audit_log(
                 "conference.import",
                 "conference source imported during creation",
@@ -420,6 +548,8 @@ def conference_create():
         if site_id is not None:
             with connect(current_app.config["DATABASE_PATH"]) as conn:
                 conn.execute("DELETE FROM conference_sites WHERE id=?", (site_id,))
+                if auto_event_id is not None:
+                    conn.execute("DELETE FROM events WHERE id=?", (auto_event_id,))
                 conn.commit()
             if slug:
                 shutil.rmtree(
@@ -443,9 +573,18 @@ def conference_edit(site_id: int):
                 public_path = normalize_public_path(
                     request.form.get("public_path") or site["public_path"] or site["slug"]
                 )
-                event_id = _event_id(request.form.get("event_id"))
+                event_id = _event_id(request.form.get("event_id")) or (
+                    int(site["event_id"]) if site.get("event_id") else None
+                )
                 _validate_event_link(conn, event_id, site_id=site_id)
                 _validate_public_path_unique(conn, public_path, site_id=site_id)
+                event_id, _ = _sync_conference_event(
+                    conn,
+                    event_id=event_id,
+                    site_slug=str(site.get("slug") or values["title"]),
+                    public_path=public_path,
+                    values=values,
+                )
                 conn.execute(
                     f"""UPDATE conference_sites
                         SET {','.join(f'{field}=?' for field in SITE_FIELDS)},
@@ -608,6 +747,15 @@ def conference_import(site_id: int):
             request.files.get("config_file"),
             request.files.get("package_file"),
         )
+        with connect(current_app.config["DATABASE_PATH"]) as conn:
+            refreshed_site = _site(conn, site_id)
+            if refreshed_site:
+                event_id, _ = _sync_conference_event_from_site(conn, refreshed_site)
+                conn.execute(
+                    "UPDATE conference_sites SET event_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (event_id, site_id),
+                )
+                conn.commit()
     except (ValueError, OSError) as exc:
         current_app.logger.warning(
             "conference import rejected site_id=%s error=%s", site_id, exc

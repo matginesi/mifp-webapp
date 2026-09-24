@@ -332,8 +332,11 @@ def enrich_event(conn, event: dict[str, Any], media_url: MediaUrl) -> dict[str, 
         al = conn.execute(
             "SELECT al.asset_id FROM asset_links al "
             "JOIN assets a ON a.id=al.asset_id "
-            "WHERE al.entity_type='event' AND al.entity_id=? AND al.role IN ('cover','logo') "
-            "LIMIT 1",
+            "WHERE al.entity_type='event' AND al.entity_id=? AND a.kind='image' "
+            "AND al.role IN ('cover','logo','attachment','gallery') "
+            "ORDER BY al.is_primary DESC, "
+            "CASE al.role WHEN 'cover' THEN 0 WHEN 'logo' THEN 1 WHEN 'gallery' THEN 2 ELSE 3 END, "
+            "al.sort_order ASC, al.id ASC LIMIT 1",
             (event["id"],),
         ).fetchone()
         if al:
@@ -386,6 +389,7 @@ def _archive_select() -> str:
 def news_asset_info(conn, news_row: dict[str, Any], media_url: MediaUrl) -> dict[str, Any]:
     cover = cover_url(conn, news_row, media_url)
     entity_id = news_row["id"]
+    cover_asset_id: int | None = None
 
     if not cover:
         al = conn.execute(
@@ -394,31 +398,69 @@ def news_asset_info(conn, news_row: dict[str, Any], media_url: MediaUrl) -> dict
             FROM asset_links al
             JOIN assets a ON a.id=al.asset_id
             WHERE al.entity_type='news' AND al.entity_id=? AND al.role='cover'
+            ORDER BY al.is_primary DESC, al.sort_order ASC, al.id ASC
             LIMIT 1
             """,
             (entity_id,),
         ).fetchone()
         if al:
+            cover_asset_id = int(al["asset_id"])
             cover = asset_url(conn, al["asset_id"], media_url)
+
+    # Backward compatibility for images uploaded through the old generic
+    # dashboard editor.  Those relations were saved as ``attachment`` even
+    # though the public news renderer only understood ``cover``/``gallery``.
+    # Reuse the first linked image as the main image instead of requiring a
+    # manual re-upload of existing content.
+    if not cover:
+        fallback = conn.execute(
+            """
+            SELECT al.asset_id
+            FROM asset_links al
+            JOIN assets a ON a.id=al.asset_id
+            WHERE al.entity_type='news' AND al.entity_id=?
+              AND a.kind='image'
+              AND al.role IN ('attachment','gallery')
+            ORDER BY al.is_primary DESC,
+                     CASE al.role WHEN 'gallery' THEN 0 ELSE 1 END,
+                     al.sort_order ASC, al.id ASC
+            LIMIT 1
+            """,
+            (entity_id,),
+        ).fetchone()
+        if fallback:
+            cover_asset_id = int(fallback["asset_id"])
+            cover = asset_url(conn, fallback["asset_id"], media_url)
 
     gallery_rows = conn.execute(
         """
         SELECT al.asset_id
         FROM asset_links al
         JOIN assets a ON a.id=al.asset_id
-        WHERE al.entity_type='news' AND al.entity_id=? AND al.role='gallery'
+        WHERE al.entity_type='news' AND al.entity_id=?
+          AND a.kind='image'
+          AND al.role IN ('gallery','attachment')
         ORDER BY al.sort_order ASC, al.id ASC
         """,
         (entity_id,),
     ).fetchall()
-    gallery_images = [url for r in gallery_rows if (url := asset_url(conn, r["asset_id"], media_url))]
+    gallery_images = [
+        url
+        for r in gallery_rows
+        if int(r["asset_id"]) != cover_asset_id
+        and (url := asset_url(conn, r["asset_id"], media_url))
+    ]
 
     doc_rows = conn.execute(
         """
         SELECT al.asset_id, a.filename, a.original_filename, a.path, a.kind, a.source_url, a.is_external, a.caption, a.checksum
         FROM asset_links al
         JOIN assets a ON a.id=al.asset_id
-        WHERE al.entity_type='news' AND al.entity_id=? AND al.role='document'
+        WHERE al.entity_type='news' AND al.entity_id=?
+          AND (
+            al.role='document'
+            OR (al.role='attachment' AND a.kind IN ('pdf','document'))
+          )
         ORDER BY al.sort_order ASC, al.id ASC
         """,
         (entity_id,),
@@ -505,7 +547,25 @@ def enrich_news(conn, row: dict[str, Any], media_url: MediaUrl) -> dict[str, Any
     return row
 
 
+# Keep homepage and the News index on exactly the same editorial ordering.
+# Dates remain the primary chronology; explicit display_order resolves manual
+# editorial ordering within the same date/undated bucket.  Fresh manual items
+# win ties over imported source rows, then source priority preserves import
+# provenance ordering where it still matters.
+_NEWS_ORDER_SQL = """
+  COALESCE(date, date_text, '0000-00-00') DESC,
+  date_is_inferred ASC,
+  CASE WHEN display_order IS NOT NULL THEN 0 ELSE 1 END,
+  COALESCE(display_order, 0) ASC,
+  CASE WHEN COALESCE(source_kind,'manual')='manual' THEN 0 ELSE 1 END,
+  source_priority ASC,
+  sort_order ASC,
+  id DESC
+"""
+
+
 def list_forthcoming_events(conn, media_url: MediaUrl, limit: int = 6) -> list[dict[str, Any]]:
+    today = date.today().isoformat()
     rows = [
         dict(r)
         for r in conn.execute(
@@ -513,33 +573,69 @@ def list_forthcoming_events(conn, media_url: MediaUrl, limit: int = 6) -> list[d
             {_archive_select()}
             WHERE COALESCE(e.is_featured,0)=1
               AND COALESCE(e.review_status,'draft')='published'
+              AND COALESCE(e.end_date,e.start_date,'') >= ?
             ORDER BY COALESCE(e.start_date,e.end_date,'9999-99-99') ASC, e.id DESC
             LIMIT ?
             """,
-            (limit,),
+            (today, limit),
         ).fetchall()
     ]
     return [enrich_event(conn, row, media_url) for row in rows]
 
 
-def list_public_events(conn, media_url: MediaUrl) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def list_public_events(
+    conn,
+    media_url: MediaUrl,
+    search: str | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    where = ["COALESCE(e.review_status,'draft')='published'"]
+    params: list[Any] = []
+    if search:
+        term = f"%{search}%"
+        where.append(
+            "(e.title LIKE ? OR COALESCE(e.location,'') LIKE ? OR "
+            "COALESCE(e.description,'') LIKE ? OR COALESCE(e.event_type,'') LIKE ? OR "
+            "COALESCE(e.date_text,'') LIKE ?)"
+        )
+        params.extend([term] * 5)
     rows = [
         dict(r)
         for r in conn.execute(
             f"""
             {_archive_select()}
-            WHERE COALESCE(e.review_status,'draft')='published'
-            ORDER BY COALESCE(e.start_date,e.end_date,'0000-00-00') DESC, e.id DESC
-            """
+            WHERE {' AND '.join(where)}
+            """,
+            params,
         ).fetchall()
     ]
     today = date.today().isoformat()
-    upcoming = [
-        r for r in rows
-        if str(r.get("end_date") or r.get("start_date") or "") >= today
-        or r.get("is_featured")
-    ]
-    past = [r for r in rows if r not in upcoming]
+    upcoming: list[dict[str, Any]] = []
+    past: list[dict[str, Any]] = []
+    undated: list[dict[str, Any]] = []
+    for row in rows:
+        end_or_start = str(row.get("end_date") or row.get("start_date") or "")
+        if not end_or_start:
+            undated.append(row)
+        elif end_or_start >= today:
+            upcoming.append(row)
+        else:
+            past.append(row)
+    # Upcoming events are useful nearest-first; the archive is newest-first.
+    upcoming.sort(
+        key=lambda row: (
+            str(row.get("start_date") or row.get("end_date") or "9999-99-99"),
+            int(row.get("id") or 0),
+        )
+    )
+    past.sort(
+        key=lambda row: (
+            str(row.get("end_date") or row.get("start_date") or "0000-00-00"),
+            int(row.get("id") or 0),
+        ),
+        reverse=True,
+    )
+    undated.sort(key=lambda row: (str(row.get("title") or "").casefold(), int(row.get("id") or 0)))
+    upcoming.extend(undated)
     return (
         [enrich_event(conn, r, media_url) for r in upcoming],
         [enrich_event(conn, r, media_url) for r in past],
@@ -640,13 +736,7 @@ def list_recent_news(conn, media_url: MediaUrl, limit: int = 10) -> list[dict[st
             SELECT *
             FROM news
             WHERE {PUBLIC_REVIEW_FILTER}
-            ORDER BY
-              COALESCE(date, date_text, '0000-00-00') DESC,
-              CASE WHEN display_order IS NOT NULL THEN 0 ELSE 1 END,
-              COALESCE(display_order, 0),
-              source_priority ASC,
-              sort_order ASC,
-              id DESC
+            ORDER BY {_NEWS_ORDER_SQL}
             LIMIT ?
             """,
             (limit,),
@@ -727,14 +817,7 @@ def list_news_page(conn, media_url: MediaUrl, news_type: str | None, search: str
             SELECT *
             FROM news
             WHERE {where_clause}
-            ORDER BY
-              COALESCE(date, date_text, '0000-00-00') DESC,
-              date_is_inferred ASC,
-              CASE WHEN display_order IS NOT NULL THEN 0 ELSE 1 END,
-              COALESCE(display_order, 0),
-              source_priority ASC,
-              sort_order ASC,
-              id DESC
+            ORDER BY {_NEWS_ORDER_SQL}
             LIMIT ? OFFSET ?
             """,
             (*params, per_page, offset),
@@ -810,16 +893,26 @@ def get_sponsor_how_to_page(conn) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def list_home_sponsors(conn, media_url: MediaUrl) -> list[dict[str, Any]]:
+def list_home_sponsors(conn, media_url: MediaUrl, search: str | None = None) -> list[dict[str, Any]]:
+    where = ["s.is_active=1"]
+    params: list[Any] = []
+    if search:
+        term = f"%{search}%"
+        where.append(
+            "(s.name LIKE ? OR COALESCE(s.description,'') LIKE ? OR "
+            "COALESCE(s.sponsor_type,'') LIKE ? OR COALESCE(s.tier,'') LIKE ?)"
+        )
+        params.extend([term] * 4)
     rows = [
         dict(r)
         for r in conn.execute(
-            """
+            f"""
             SELECT DISTINCT s.id, s.*
             FROM sponsors s
-            WHERE s.is_active=1
+            WHERE {' AND '.join(where)}
             ORDER BY s.sort_order ASC, s.name ASC
-            """
+            """,
+            params,
         ).fetchall()
     ]
     seen: set[int] = set()
@@ -841,9 +934,15 @@ def list_home_sponsors(conn, media_url: MediaUrl) -> list[dict[str, Any]]:
         ).fetchone()
         logo = conn.execute(
             """
-            SELECT asset_id FROM asset_links
-            WHERE entity_type='sponsor' AND entity_id=? AND role='logo'
-            ORDER BY is_primary DESC, sort_order ASC, id ASC
+            SELECT al.asset_id
+            FROM asset_links al
+            JOIN assets a ON a.id=al.asset_id
+            WHERE al.entity_type='sponsor' AND al.entity_id=?
+              AND a.kind='image'
+              AND al.role IN ('logo','attachment','gallery')
+            ORDER BY al.is_primary DESC,
+                     CASE al.role WHEN 'logo' THEN 0 WHEN 'gallery' THEN 1 ELSE 2 END,
+                     al.sort_order ASC, al.id ASC
             LIMIT 1
             """,
             (sid,),
@@ -881,9 +980,15 @@ def get_public_sponsor(conn, slug: str, media_url: MediaUrl) -> dict[str, Any] |
     ).fetchone()
     logo = conn.execute(
         """
-        SELECT asset_id FROM asset_links
-        WHERE entity_type='sponsor' AND entity_id=? AND role='logo'
-        ORDER BY is_primary DESC, sort_order ASC, id ASC
+        SELECT al.asset_id
+        FROM asset_links al
+        JOIN assets a ON a.id=al.asset_id
+        WHERE al.entity_type='sponsor' AND al.entity_id=?
+          AND a.kind='image'
+          AND al.role IN ('logo','attachment','gallery')
+        ORDER BY al.is_primary DESC,
+                 CASE al.role WHEN 'logo' THEN 0 WHEN 'gallery' THEN 1 ELSE 2 END,
+                 al.sort_order ASC, al.id ASC
         LIMIT 1
         """,
         (sponsor["id"],),
@@ -977,7 +1082,12 @@ def list_members_page(conn, media_url: MediaUrl, search: str | None, role_filter
                 SELECT al.asset_id
                 FROM asset_links al
                 JOIN assets a ON a.id=al.asset_id
-                WHERE al.entity_type='member' AND al.entity_id=? AND al.role IN ('profile','cover','gallery')
+                WHERE al.entity_type='member' AND al.entity_id=?
+                  AND a.kind='image'
+                  AND al.role IN ('profile','cover','gallery','attachment')
+                ORDER BY al.is_primary DESC,
+                         CASE al.role WHEN 'profile' THEN 0 WHEN 'cover' THEN 1 WHEN 'gallery' THEN 2 ELSE 3 END,
+                         al.sort_order ASC, al.id ASC
                 LIMIT 1
                 """,
                 (member["id"],),
@@ -986,27 +1096,41 @@ def list_members_page(conn, media_url: MediaUrl, search: str | None, role_filter
     return {"members": rows, "roles": list_member_roles(conn), "total": total, "total_pages": total_pages}
 
 
-def list_public_research(conn, media_url: MediaUrl) -> list[dict[str, Any]]:
+def list_public_research(conn, media_url: MediaUrl, search: str | None = None) -> list[dict[str, Any]]:
+    where = [PUBLIC_REVIEW_FILTER]
+    params: list[Any] = []
+    if search:
+        term = f"%{search}%"
+        where.append("(title LIKE ? OR COALESCE(summary,'') LIKE ? OR COALESCE(description,'') LIKE ?)")
+        params.extend([term] * 3)
     rows = [
         dict(r)
         for r in conn.execute(
             f"""
             SELECT *
             FROM research_areas
-            WHERE {PUBLIC_REVIEW_FILTER}
+            WHERE {' AND '.join(where)}
             ORDER BY sort_order ASC, title ASC
-            """
+            """,
+            params,
         ).fetchall()
     ]
     for area in rows:
         al = conn.execute(
-            "SELECT asset_id FROM asset_links WHERE entity_type='research_area' AND entity_id=? AND role='cover' ORDER BY is_primary DESC, sort_order ASC LIMIT 1",
+            "SELECT al.asset_id FROM asset_links al JOIN assets a ON a.id=al.asset_id "
+            "WHERE al.entity_type='research_area' AND al.entity_id=? AND a.kind='image' "
+            "AND al.role IN ('cover','attachment','gallery') "
+            "ORDER BY al.is_primary DESC, CASE al.role WHEN 'cover' THEN 0 WHEN 'gallery' THEN 1 ELSE 2 END, "
+            "al.sort_order ASC, al.id ASC LIMIT 1",
             (area["id"],),
         ).fetchone()
         cover = asset_url(conn, al["asset_id"], media_url) if al else None
         area["cover_url"] = cover
         doc_row = conn.execute(
-            "SELECT asset_id FROM asset_links WHERE entity_type='research_area' AND entity_id=? AND role='document' ORDER BY is_primary DESC, sort_order ASC LIMIT 1",
+            "SELECT al.asset_id FROM asset_links al JOIN assets a ON a.id=al.asset_id "
+            "WHERE al.entity_type='research_area' AND al.entity_id=? "
+            "AND (al.role='document' OR (al.role='attachment' AND a.kind IN ('pdf','document'))) "
+            "ORDER BY al.is_primary DESC, al.sort_order ASC, al.id ASC LIMIT 1",
             (area["id"],),
         ).fetchone()
         doc = document_asset_url(conn, doc_row["asset_id"], media_url) if doc_row else None
@@ -1035,22 +1159,35 @@ PUBLICATION_TITLE_BLACKLIST = frozenset({
 })
 
 
-def list_public_publications(conn, media_url: MediaUrl) -> list[dict[str, Any]]:
+def list_public_publications(conn, media_url: MediaUrl, search: str | None = None) -> list[dict[str, Any]]:
+    where = [PUBLIC_REVIEW_FILTER]
+    params: list[Any] = []
+    if search:
+        term = f"%{search}%"
+        where.append(
+            "(title LIKE ? OR COALESCE(authors,'') LIKE ? OR COALESCE(journal,'') LIKE ? "
+            "OR COALESCE(doi,'') LIKE ? OR COALESCE(abstract,'') LIKE ?)"
+        )
+        params.extend([term] * 5)
     rows = [
         dict(r)
         for r in conn.execute(
             f"""
             SELECT *
             FROM publications
-            WHERE {PUBLIC_REVIEW_FILTER}
+            WHERE {' AND '.join(where)}
             ORDER BY COALESCE(year,0) DESC, id DESC
-            """
+            """,
+            params,
         ).fetchall()
     ]
     rows = [r for r in rows if r.get("title", "").lower().strip() not in PUBLICATION_TITLE_BLACKLIST]
     for pub in rows:
         doc_row = conn.execute(
-            "SELECT asset_id FROM asset_links WHERE entity_type='publication' AND entity_id=? AND role='document' ORDER BY is_primary DESC, sort_order ASC LIMIT 1",
+            "SELECT al.asset_id FROM asset_links al JOIN assets a ON a.id=al.asset_id "
+            "WHERE al.entity_type='publication' AND al.entity_id=? "
+            "AND (al.role='document' OR (al.role='attachment' AND a.kind IN ('pdf','document'))) "
+            "ORDER BY al.is_primary DESC, al.sort_order ASC, al.id ASC LIMIT 1",
             (pub["id"],),
         ).fetchone()
         cover = document_asset_url(conn, doc_row["asset_id"], media_url) if doc_row else None

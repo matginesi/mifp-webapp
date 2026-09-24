@@ -101,6 +101,30 @@ def test_cleanup_plan_reports_unused_missing_and_orphan_files(tmp_path):
     assert [row["path"] for row in plan.orphan_files] == ["image/orphan.png"]
 
 
+def test_news_legacy_attachment_image_is_used_as_primary_image():
+    from mifp_app.services.public_repository import enrich_news
+
+    conn = _conn_with_migrations()
+    conn.execute(
+        "INSERT INTO assets(id,filename,path,kind,is_external,source_url) "
+        "VALUES(77,'award.jpg','image/award.jpg','image',1,'https://img.example/award.jpg')"
+    )
+    conn.execute(
+        "INSERT INTO news(id,title,slug,news_type,review_status) "
+        "VALUES(77,'Award news','award-news','award','published')"
+    )
+    _link_asset(conn, 77, "news", 77, role="attachment")
+    article = enrich_news(
+        conn,
+        dict(conn.execute("SELECT * FROM news WHERE id=77").fetchone()),
+        lambda path: f"/media/{path}",
+    )
+
+    assert article["cover_url"] == "https://img.example/award.jpg"
+    assert article["primary_image"] == "https://img.example/award.jpg"
+    assert "Image" in article["badges"]
+
+
 def test_news_pdf_names_are_clean_and_deduplicated():
     from mifp_app.services.public_repository import enrich_news
 
@@ -150,6 +174,68 @@ def test_clean_asset_display_name_falls_back_to_decoded_filename():
     ) == "science paper.pdf"
 
 
+def test_forthcoming_events_excludes_featured_past_records():
+    from mifp_app.services.public_repository import list_forthcoming_events, list_public_events
+
+    conn = _conn_with_migrations()
+    conn.execute(
+        "INSERT INTO events(id,title,slug,start_date,end_date,is_featured,review_status) "
+        "VALUES(90,'Past featured','past-featured','2000-01-01','2000-01-02',1,'published')"
+    )
+    conn.execute(
+        "INSERT INTO events(id,title,slug,start_date,end_date,is_featured,review_status) "
+        "VALUES(91,'Future featured','future-featured','2099-01-01','2099-01-02',1,'published')"
+    )
+
+    home = list_forthcoming_events(conn, lambda p: f"/media/{p}")
+    upcoming, past = list_public_events(conn, lambda p: f"/media/{p}")
+
+    assert [row["slug"] for row in home] == ["future-featured"]
+    assert "future-featured" in [row["slug"] for row in upcoming]
+    assert "past-featured" in [row["slug"] for row in past]
+
+
+def test_public_section_searches_filter_their_own_pages():
+    from mifp_app.services.public_repository import (
+        list_home_sponsors,
+        list_public_events,
+        list_public_publications,
+        list_public_research,
+    )
+
+    conn = _conn_with_migrations()
+    conn.execute(
+        "INSERT INTO events(id,title,slug,start_date,description,review_status) "
+        "VALUES(101,'Polariton Conference','polariton-conference','2099-01-01','Exciton polaritons','published')"
+    )
+    conn.execute(
+        "INSERT INTO events(id,title,slug,start_date,description,review_status) "
+        "VALUES(102,'Unrelated Conference','unrelated-conference','2099-02-01','Other topic','published')"
+    )
+    conn.execute(
+        "INSERT INTO publications(id,title,slug,authors,year,review_status) "
+        "VALUES(101,'Polariton paper','polariton-paper','A. Author',2026,'published')"
+    )
+    conn.execute(
+        "INSERT INTO research_areas(id,title,slug,summary,review_status) "
+        "VALUES(101,'Polariton physics','polariton-physics','Light matter coupling','published')"
+    )
+    conn.execute(
+        "INSERT INTO sponsors(id,name,slug,description,is_active) "
+        "VALUES(101,'Polariton Partner','polariton-partner','Supports polariton research',1)"
+    )
+
+    upcoming, _ = list_public_events(conn, lambda p: f"/media/{p}", search="polariton")
+    publications = list_public_publications(conn, lambda p: f"/media/{p}", search="polariton")
+    research = list_public_research(conn, lambda p: f"/media/{p}", search="polariton")
+    sponsors = list_home_sponsors(conn, lambda p: f"/media/{p}", search="polariton")
+
+    assert [row["slug"] for row in upcoming] == ["polariton-conference"]
+    assert [row["slug"] for row in publications] == ["polariton-paper"]
+    assert [row["slug"] for row in research] == ["polariton-physics"]
+    assert [row["slug"] for row in sponsors] == ["polariton-partner"]
+
+
 def test_news_page_view_model_handles_images_pdfs_and_filters():
     from mifp_app.services.public_repository import list_news_page
 
@@ -180,6 +266,30 @@ def test_news_page_view_model_handles_images_pdfs_and_filters():
 
     pdf_result = list_news_page(conn, lambda path: f"/media/{path}", None, None, 1, 12, content_filter="pdf")
     assert [row["slug"] for row in pdf_result["news"]] == ["with-pdf"]
+
+
+def test_homepage_and_news_index_share_the_same_news_order():
+    from mifp_app.services.public_repository import list_news_page, list_recent_news
+
+    conn = _conn_with_migrations()
+    conn.execute(
+        "INSERT INTO news(id,title,slug,date,source_kind,source_priority,review_status) "
+        "VALUES(1,'Older imported','older-imported','2026-09-20','remote',20,'published')"
+    )
+    conn.execute(
+        "INSERT INTO news(id,title,slug,date,source_kind,source_priority,review_status) "
+        "VALUES(2,'Fresh manual','fresh-manual','2026-09-24','manual',50,'published')"
+    )
+    conn.execute(
+        "INSERT INTO news(id,title,slug,date,source_kind,source_priority,review_status) "
+        "VALUES(3,'Same-day imported','same-day-imported','2026-09-24','remote',10,'published')"
+    )
+
+    homepage = list_recent_news(conn, lambda p: f"/media/{p}", limit=10)
+    index = list_news_page(conn, lambda p: f"/media/{p}", None, None, 1, 12)["news"]
+
+    assert [row["slug"] for row in homepage] == [row["slug"] for row in index]
+    assert [row["slug"] for row in index] == ["fresh-manual", "same-day-imported", "older-imported"]
 
 
 def test_news_ordering_by_source_then_date_desc():

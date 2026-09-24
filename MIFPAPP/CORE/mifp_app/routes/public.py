@@ -191,9 +191,10 @@ def _canonical_url() -> str:
 @bp.get("/events")
 def events():
     db_path = current_app.config["DATABASE_PATH"]
+    search = request.args.get("q", "").strip() or None
     with connect_readonly(db_path) as conn:
-        upcoming, past = list_public_events(conn, lambda filename: url_for("public.media", filename=filename))
-    return render_template("public/events.html", upcoming=upcoming, past=past)
+        upcoming, past = list_public_events(conn, lambda filename: url_for("public.media", filename=filename), search=search)
+    return render_template("public/events.html", upcoming=upcoming, past=past, search=search)
 
 
 @bp.get("/events/<slug>")
@@ -323,9 +324,10 @@ def news_detail(slug: str):
 @bp.get("/publications")
 def publications():
     db_path = current_app.config["DATABASE_PATH"]
+    search = request.args.get("q", "").strip() or None
     with connect_readonly(db_path) as conn:
-        pubs = list_public_publications(conn, lambda filename: url_for("public.media", filename=filename))
-    return render_template("public/publications.html", publications=pubs)
+        pubs = list_public_publications(conn, lambda filename: url_for("public.media", filename=filename), search=search)
+    return render_template("public/publications.html", publications=pubs, search=search)
 
 
 # ---------------------------------------------------------------------------
@@ -389,8 +391,9 @@ def pdf_page(page_name: str):
 @bp.get("/research")
 def research():
     db_path = current_app.config["DATABASE_PATH"]
+    search = request.args.get("q", "").strip() or None
     with connect_readonly(db_path) as conn:
-        areas = list_public_research(conn, lambda filename: url_for("public.media", filename=filename))
+        areas = list_public_research(conn, lambda filename: url_for("public.media", filename=filename), search=search)
         pub_by_year = [
             dict(r) for r in conn.execute(
                 "SELECT CAST(year AS TEXT) AS year, COUNT(*) AS total FROM publications WHERE review_status='published' AND year IS NOT NULL AND TRIM(year) != '' GROUP BY year ORDER BY year"
@@ -412,8 +415,11 @@ def research():
         published_total = conn.execute(
             "SELECT COUNT(*) AS total FROM publications WHERE review_status='published'"
         ).fetchone()
+        published_areas = conn.execute(
+            "SELECT COUNT(*) AS total FROM research_areas WHERE review_status='published'"
+        ).fetchone()
         research_stats = {
-            "areas": len(areas),
+            "areas": int(published_areas["total"] or 0),
             "publications": int(published_total["total"] or 0),
             "active_members": int(member_profile["active_members"] or 0),
             "countries": int(member_profile["represented_countries"] or 0),
@@ -421,6 +427,7 @@ def research():
     return render_template(
         "public/research.html",
         research_areas=areas,
+        search=search,
         pub_by_year=pub_by_year,
         members_by_country=members_by_country,
         research_stats=research_stats,
@@ -511,10 +518,11 @@ def code_of_conduct():
 @bp.get("/sponsors")
 def sponsors():
     db_path = current_app.config["DATABASE_PATH"]
+    search = request.args.get("q", "").strip() or None
     with connect_readonly(db_path) as conn:
-        sponsors_list = list_home_sponsors(conn, lambda filename: url_for("public.media", filename=filename))
+        sponsors_list = list_home_sponsors(conn, lambda filename: url_for("public.media", filename=filename), search=search)
         sponsor_how_to = get_public_page_by_slug(conn, "sponsors-how-to") or get_public_page(conn, "sponsor")
-    return render_template("public/sponsors.html", sponsors=sponsors_list, sponsor_how_to=sponsor_how_to)
+    return render_template("public/sponsors.html", sponsors=sponsors_list, sponsor_how_to=sponsor_how_to, search=search)
 
 
 @bp.get("/sponsors/<slug>")

@@ -671,8 +671,8 @@ def _prepare_singleton_primary_role(
     *,
     except_asset_id: int | None = None,
 ) -> None:
-    """Keep cover/logo unique while preserving the previous image as gallery."""
-    if role not in {"cover", "logo"}:
+    """Keep single-image roles unique while preserving the previous image as gallery."""
+    if role not in {"cover", "logo", "profile"}:
         return
     entity_type = ENTITY_TYPES.get(table, table)
     params: list[object] = [entity_type, record_id, role]
@@ -694,6 +694,40 @@ def _clear_primary_if_matching(conn, table: str, record_id: int, role: str, asse
         "UPDATE asset_links SET is_primary=0 WHERE entity_type=? AND entity_id=? AND role=? AND asset_id=?",
         (entity_type, record_id, role, asset_id),
     )
+
+
+def _default_content_asset_role(table: str, kind: str | None) -> str:
+    """Choose the semantic role used by the public renderer for dashboard assets.
+
+    The generic editor historically linked every upload as ``attachment``.
+    Public views, however, look for roles such as ``cover``, ``profile`` and
+    ``logo``.  Keep the default in one server-side place so uploads and picker
+    links cannot silently disappear from the website if the JavaScript client
+    changes again.
+    """
+    normalized_kind = str(kind or "").strip().lower()
+    if normalized_kind == "image":
+        return {
+            "members": "profile",
+            "events": "cover",
+            "news": "cover",
+            "research_areas": "cover",
+            "sponsors": "logo",
+        }.get(table, "attachment")
+    if normalized_kind in {"pdf", "document"}:
+        return "document" if table in {"events", "news", "publications", "pages", "research_areas"} else "attachment"
+    return "attachment"
+
+
+def _content_asset_role(table: str, requested_role: str | None, kind: str | None) -> str:
+    role = str(requested_role or "").strip().lower()
+    # ``attachment`` was the old generic client default, so treat it as
+    # unspecified for content types that have a semantic primary asset role.
+    if not role or role == "attachment":
+        inferred = _default_content_asset_role(table, kind)
+        if inferred != "attachment":
+            return inferred
+    return role or "attachment"
 
 
 @bp.post("/content/<section>/<int:record_id>/assets/upload")
@@ -731,8 +765,12 @@ def content_asset_upload(section, record_id):
             current_app.logger.exception("content asset upload failed")
             return admin_error_payload("The asset upload could not be completed.")
 
-        # Create asset_links entry
-        role = request.form.get("role") or "attachment"
+        asset_row = conn.execute("SELECT kind FROM assets WHERE id=?", (asset_id,)).fetchone()
+        role = _content_asset_role(
+            table,
+            request.form.get("role"),
+            asset_row["kind"] if asset_row else None,
+        )
         entity_type = ENTITY_TYPES.get(table, table)
         max_sort = conn.execute(
             "SELECT COALESCE(MAX(sort_order),0) FROM asset_links WHERE entity_type=? AND entity_id=?",
@@ -775,7 +813,7 @@ def content_asset_link(section, record_id):
 
         asset_id = request.form.get("asset_id", type=int)
         source_url = request.form.get("source_url", "").strip()
-        role = request.form.get("role") or "attachment"
+        requested_role = request.form.get("role")
 
         if not asset_id and not source_url:
             return jsonify({"error": "Provide asset_id or source_url"}), 400
@@ -798,16 +836,17 @@ def content_asset_link(section, record_id):
                 return admin_error_payload("The external asset could not be linked.")
 
         # Verify asset exists
-        asset_row = conn.execute("SELECT id FROM assets WHERE id=?", (asset_id,)).fetchone()
+        asset_row = conn.execute("SELECT id, kind FROM assets WHERE id=?", (asset_id,)).fetchone()
         if not asset_row:
             return jsonify({"error": "Asset not found"}), 404
+        role = _content_asset_role(table, requested_role, asset_row["kind"])
 
         # Check for duplicate link
         existing = conn.execute(
             "SELECT id, role FROM asset_links WHERE asset_id=? AND entity_type=? AND entity_id=?",
             (asset_id, entity_type, record_id),
         ).fetchone()
-        if existing and role not in {"cover", "logo"}:
+        if existing and role not in {"cover", "logo", "profile"}:
             return jsonify({"error": "Asset already linked to this record"}), 409
 
         _prepare_singleton_primary_role(

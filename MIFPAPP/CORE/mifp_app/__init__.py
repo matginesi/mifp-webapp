@@ -455,6 +455,14 @@ def create_app():
             # page after the protected operation has already completed.
             response.headers["Cache-Control"] = "no-store, max-age=0"
             response.headers["Pragma"] = "no-cache"
+        elif request.path == "/search" or (
+            request.args
+            and request.path in {"/news", "/members", "/events", "/publications", "/research", "/sponsors", "/archive"}
+        ):
+            # Search/filter responses are query-specific and must never be
+            # reused for a different query by a browser or intermediary cache.
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+            response.headers["Pragma"] = "no-cache"
         elif request.path.startswith("/static/"):
             response.headers.setdefault("Cache-Control", "public, max-age=86400, immutable")
         elif request.path.startswith("/media/"):

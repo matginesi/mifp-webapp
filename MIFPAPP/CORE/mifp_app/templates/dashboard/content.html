@@ -7,8 +7,17 @@
 {% set json_fields = [] %}
 {% set date_fields = ['created_at','updated_at','date','start_date','end_date','birth_date','death_date','effective_date'] %}
 {% set numeric_fields = ['id','year','sort_order','role_id','menu_order','parent_event_id','source_priority','source_order','display_order'] %}
-{% set bool_fields = ['is_active','is_featured'] %}
-{% set labels = {'is_featured': 'show in homepage forthcoming block' if section == 'events' else 'featured', 'event_type': 'event type', 'date_text': 'date shown publicly'} %}
+{% set bool_fields = ['is_active','is_featured','date_is_inferred'] %}
+{% set labels = {
+  'is_featured': 'show in homepage forthcoming block' if section == 'events' else 'featured',
+  'event_type': 'event type',
+  'date_text': 'date shown publicly',
+  'date_precision': 'date precision',
+  'date_is_inferred': 'date is inferred',
+  'date_inference_rule': 'date inference rule',
+  'original_date_text': 'original date text',
+  'display_order': 'display order'
+} %}
 {% set hints = {'is_featured': 'If Yes, shown in the homepage forthcoming block when the event dates are forthcoming'} if section == 'events' else {'is_featured': 'If Yes, highlighted on the site'} %}
 {% set empty_value %}<span class="cell-text">&mdash;</span>{% endset %}
 
@@ -39,9 +48,12 @@
       </div>
       <div class="modal-body">
         <div class="inline-form-grid create-record-grid">
-      {% for f in editable %}
+      {% for f in create_editable %}
         {% set suggested = news_templates.get(request.args.get('template'), {}).get(f, '') if section == 'news' and news_templates else '' %}
         {% set val = suggested %}
+        {% if section == 'news' and f == 'date' and not val %}{% set val = today_iso %}{% endif %}
+        {% if section == 'news' and f == 'date_precision' and not val %}{% set val = 'day' %}{% endif %}
+        {% if section == 'publications' and f == 'date_precision' and not val %}{% set val = 'year' %}{% endif %}
         <label class="field {{ 'wide' if f in long_fields else '' }}">
           <span>{{ labels.get(f, f|replace('_',' ')) }}{% if f in required_fields %} <b aria-hidden="true">*</b>{% endif %}{% if hints.get(f) %}<i class="bi bi-info-circle" title="{{ hints[f] }}" class="help-icon"></i>{% endif %}</span>
           {% if f in long_fields %}
@@ -52,15 +64,18 @@
             <select name="status" class="form-select form-select-sm"><option value="draft">draft</option><option value="upcoming">upcoming</option><option value="past">past</option></select>
           {% elif f == 'news_type' %}
             <select name="news_type" class="form-select form-select-sm">
-              {% for opt in ['general','announcement','publication_highlight','agreement','award','event_highlight','institutional','sponsor','memorial','science_commentary'] %}<option value="{{ opt }}" {{ 'selected' if val == opt }}>{{ opt }}</option>{% endfor %}
+              {% for opt in ['general','announcement','publication_highlight','agreement','award','event_highlight','institutional','sponsor','memorial','science_commentary'] %}<option value="{{ opt }}" {{ 'selected' if val == opt }}>{{ opt|replace('_',' ')|title }}</option>{% endfor %}
             </select>
           {% elif f == 'review_status' %}
-            <select name="review_status" class="form-select form-select-sm">
-              {% for opt in ['draft','review','published'] %}<option value="{{ opt }}">{{ opt }}</option>{% endfor %}
-            </select>
+            <input type="hidden" name="review_status" value="draft" data-review-status-input>
+            <div class="review-status-control" role="group" aria-label="Publication status">
+              <button type="button" class="review-status-option is-active" data-review-status="draft" aria-pressed="true">Draft</button>
+              <button type="button" class="review-status-option" data-review-status="review" aria-pressed="false">Review</button>
+              <button type="button" class="review-status-option" data-review-status="published" aria-pressed="false">Publish</button>
+            </div>
           {% elif f == 'sponsor_type' %}
             <select name="sponsor_type" class="form-select form-select-sm">
-              {% for opt in ['sponsor','partner','supporter','institution'] %}<option value="{{ opt }}">{{ opt }}</option>{% endfor %}
+              {% for opt in ['sponsor','institutional','partner','supporter'] %}<option value="{{ opt }}">{{ opt|replace('_',' ')|title }}</option>{% endfor %}
             </select>
           {% elif f == 'card_layout' %}
             <select name="card_layout" class="form-select form-select-sm">
@@ -68,6 +83,10 @@
               <option value="text" {{ 'selected' if val == 'text' }}>Text only</option>
               <option value="text_image" {{ 'selected' if val == 'text_image' }}>Text + Image</option>
               <option value="text_gallery" {{ 'selected' if val == 'text_gallery' }}>Text + Gallery</option>
+            </select>
+          {% elif f == 'date_precision' %}
+            <select name="date_precision" class="form-select form-select-sm">
+              {% for opt in ['day','month','year','range','unknown'] %}<option value="{{ opt }}" {{ 'selected' if val == opt or (not val and opt == 'unknown') }}>{{ opt|capitalize }}</option>{% endfor %}
             </select>
           {% elif f == 'role_id' and roles is defined %}
             <select name="role_id" class="form-select form-select-sm">
@@ -158,7 +177,33 @@
                   {% elif f == 'status' %}
                     <select name="status" class="form-select form-select-sm">{% for opt in ['draft','upcoming','past'] %}<option value="{{ opt }}" {{ 'selected' if val==opt }}>{{ opt }}</option>{% endfor %}</select>
                   {% elif f == 'news_type' %}
-                    <select name="news_type" class="form-select form-select-sm">{% for opt in ['general','announcement','publication_highlight','agreement','award','event_highlight','institutional','sponsor','memorial','science_commentary'] %}<option value="{{ opt }}" {{ 'selected' if val==opt }}>{{ opt }}</option>{% endfor %}</select>
+                    <select name="news_type" class="form-select form-select-sm">{% for opt in ['general','announcement','publication_highlight','agreement','award','event_highlight','institutional','sponsor','memorial','science_commentary'] %}<option value="{{ opt }}" {{ 'selected' if val==opt }}>{{ opt|replace('_',' ')|title }}</option>{% endfor %}</select>
+                  {% elif f == 'review_status' %}
+                    <input type="hidden" name="review_status" value="{{ val or 'draft' }}" data-review-status-input>
+                    <div class="review-status-control" role="group" aria-label="Publication status">
+                      {% for opt, label in [('draft','Draft'),('review','Review'),('published','Publish')] %}
+                      <button type="button" class="review-status-option {{ 'is-active' if (val or 'draft') == opt }}" data-review-status="{{ opt }}" aria-pressed="{{ 'true' if (val or 'draft') == opt else 'false' }}">{{ label }}</button>
+                      {% endfor %}
+                    </div>
+                  {% elif f == 'sponsor_type' %}
+                    {% set sponsor_types = ['sponsor','institutional','partner','supporter'] %}
+                    <select name="sponsor_type" class="form-select form-select-sm">
+                      {% if val and val not in sponsor_types %}<option value="{{ val }}" selected>{{ val|replace('_',' ')|title }} (existing)</option>{% endif %}
+                      {% for opt in sponsor_types %}<option value="{{ opt }}" {{ 'selected' if val==opt }}>{{ opt|replace('_',' ')|title }}</option>{% endfor %}
+                    </select>
+                  {% elif f == 'card_layout' %}
+                    {% set card_layouts = ['', 'text', 'text_image', 'text_gallery'] %}
+                    <select name="card_layout" class="form-select form-select-sm">
+                      {% if val and val not in card_layouts %}<option value="{{ val }}" selected>{{ val|replace('_',' ')|title }} (existing)</option>{% endif %}
+                      <option value="" {{ 'selected' if not val }}>Auto (default)</option>
+                      <option value="text" {{ 'selected' if val == 'text' }}>Text only</option>
+                      <option value="text_image" {{ 'selected' if val == 'text_image' }}>Text + Image</option>
+                      <option value="text_gallery" {{ 'selected' if val == 'text_gallery' }}>Text + Gallery</option>
+                    </select>
+                  {% elif f == 'date_precision' %}
+                    <select name="date_precision" class="form-select form-select-sm">
+                      {% for opt in ['day','month','year','range','unknown'] %}<option value="{{ opt }}" {{ 'selected' if val==opt }}>{{ opt|capitalize }}</option>{% endfor %}
+                    </select>
                   {% elif f == 'role_id' and roles is defined %}
                     <select name="role_id" class="form-select form-select-sm">
                       <option value="">No role</option>

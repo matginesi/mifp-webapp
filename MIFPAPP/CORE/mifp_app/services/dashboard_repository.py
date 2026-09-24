@@ -23,9 +23,14 @@ PUBLIC_TABLES = {
     "news": {
         "title": "News",
         "pk": "id",
-        "fields": ["title", "slug", "news_type", "card_layout", "date", "date_text", "date_precision", "summary", "body", "review_status", "is_featured", "sort_order"],
+        "fields": [
+            "title", "slug", "news_type", "card_layout", "date", "date_text",
+            "date_precision", "date_is_inferred", "date_inference_rule",
+            "original_date_text", "summary", "body", "review_status",
+            "is_featured", "display_order", "sort_order",
+        ],
         "search": ["title", "news_type", "date_text", "summary", "body"],
-        "order": "(COALESCE(date,date_text,'') != '') DESC, COALESCE(date,date_text,'') DESC, COALESCE(sort_order,id) DESC, id DESC",
+        "order": "(COALESCE(date,date_text,'') != '') DESC, COALESCE(date,date_text,'') DESC, date_is_inferred ASC, CASE WHEN display_order IS NOT NULL THEN 0 ELSE 1 END, COALESCE(display_order,0) ASC, CASE WHEN COALESCE(source_kind,'manual')='manual' THEN 0 ELSE 1 END, source_priority ASC, sort_order ASC, id DESC",
     },
     "events": {
         "title": "Events",
@@ -661,12 +666,15 @@ def display_columns(conn: sqlite3.Connection, table: str) -> list[str]:
 
 
 def editable_columns(conn: sqlite3.Connection, table: str) -> list[str]:
-    readonly = {"id", "created_at", "updated_at", "checksum", "size"}
-    internal = {"speakers_json", "chairs_json", "committee_json"} if table == "events" else set()
-    return [
-        c["name"] for c in table_schema(conn, table)
-        if c["name"] not in readonly and c["name"] not in internal
-    ]
+    """Return the supported dashboard editing contract for ``table``.
+
+    The generic content form used to expose almost every physical database
+    column.  That made importer/runtime metadata look editable even though
+    ``save_record`` intentionally ignored it.  Keep the form and persistence
+    contract identical by deriving editable fields from ``PUBLIC_TABLES``.
+    """
+    existing = {c["name"] for c in table_schema(conn, table)}
+    return [field for field in PUBLIC_TABLES[table]["fields"] if field in existing]
 
 def asset_usage(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute("""

@@ -2985,6 +2985,33 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 }
 .create-record-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .create-record-grid .field.wide { grid-column: 1 / -1; }
+.review-status-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .3rem;
+  padding: .25rem;
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+  background: var(--surface-2);
+}
+.review-status-option {
+  min-height: 2.15rem;
+  padding: .35rem .55rem;
+  border: 1px solid transparent;
+  border-radius: .38rem;
+  color: var(--text-2);
+  background: transparent;
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.review-status-option:hover { color: var(--text); background: var(--surface-3); }
+.review-status-option.is-active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
 .modal-footer-note {
   display: inline-flex;
   align-items: center;
