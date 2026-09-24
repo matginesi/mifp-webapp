@@ -529,6 +529,9 @@ def test_php_regform_mail_transport_is_host_managed() -> None:
 
     assert "msmtp-mta" in bootstrap
     assert "php_admin_value[sendmail_path] = /usr/bin/msmtp" in bootstrap
+    assert 'systemctl enable "$PHP_FPM_SERVICE"' in bootstrap
+    assert 'systemctl restart "$PHP_FPM_SERVICE"' in bootstrap
+    assert 'systemctl enable --now "$PHP_FPM_SERVICE"' not in bootstrap
     assert "render-mail-relay --output" in bootstrap
     assert "sync_mail_relay" in deploy
     assert 'chown root:"$EVENTS_PHP_USER" "$MAIL_RELAY_CONFIG"' in deploy

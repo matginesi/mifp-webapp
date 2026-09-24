@@ -318,7 +318,11 @@ EOF_PHP_POOL
   "$PHP_FPM_BIN" -t || die "Configurazione PHP-FPM eventi non valida."
   printf '%s\n' "$PHP_FPM_SERVICE" > "$MIFP_HOME/php-fpm.service"
   chown root:root "$MIFP_HOME/php-fpm.service"; chmod 0644 "$MIFP_HOME/php-fpm.service"
-  systemctl enable --now "$PHP_FPM_SERVICE"
+  # The pool file was just written. `enable --now` does not reload an
+  # already-running PHP-FPM service, so the new pool/socket may not exist.
+  # `restart` works both on first bootstrap and on subsequent idempotent runs.
+  systemctl enable "$PHP_FPM_SERVICE"
+  systemctl restart "$PHP_FPM_SERVICE"
   [[ -S /run/php/mifp-events.sock ]] || die "Il pool PHP-FPM eventi non ha creato il socket dedicato."
 else
   say "Backend eventi $EVENTS_BACKEND: disattivo il runtime PHP locale"
