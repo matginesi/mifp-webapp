@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import smtplib
+import ssl
 from email.message import EmailMessage
 from email.utils import formataddr, parseaddr
 
@@ -49,19 +50,32 @@ def send_mail(app, *, to: str, subject: str, body: str, reply_to: str | None = N
         log.debug("console mail body\n%s", msg.as_string())
         return True
     if provider == "smtp":
-        host = app.config.get("SMTP_HOST")
+        host = str(app.config.get("SMTP_HOST") or "").strip()
         if not host:
             raise RuntimeError("SMTP_HOST is not configured")
         port = int(app.config.get("SMTP_PORT", 587))
         security = str(app.config.get("SMTP_SECURITY", "starttls") or "starttls").lower()
+        if security not in {"tls", "starttls", "none"}:
+            raise RuntimeError("SMTP_SECURITY must be tls, starttls or none")
+        username = str(app.config.get("SMTP_USERNAME") or "")
+        password = str(app.config.get("SMTP_PASSWORD") or "")
+        if username and not password:
+            raise RuntimeError("SMTP credentials are incomplete")
+        if username and security == "none":
+            raise RuntimeError("Authenticated SMTP requires TLS or STARTTLS")
+
+        tls_context = ssl.create_default_context()
         smtp_class = smtplib.SMTP_SSL if security == "tls" else smtplib.SMTP
-        with smtp_class(host, port, timeout=20) as smtp:
+        smtp_kwargs = {"timeout": 20}
+        if security == "tls":
+            smtp_kwargs["context"] = tls_context
+        with smtp_class(host, port, **smtp_kwargs) as smtp:
             if security == "starttls":
-                smtp.starttls()
-            username = app.config.get("SMTP_USERNAME")
-            password = app.config.get("SMTP_PASSWORD")
+                smtp.ehlo()
+                smtp.starttls(context=tls_context)
+                smtp.ehlo()
             if username:
-                smtp.login(username, password or "")
+                smtp.login(username, password)
             smtp.send_message(msg)
         return True
     raise RuntimeError(f"Unsupported MAIL_PROVIDER: {provider}")

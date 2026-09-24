@@ -1,19 +1,27 @@
-<div class="modal fade" id="assetPickerModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+<div class="modal fade asset-picker-modal" id="assetPickerModal" tabindex="-1" aria-labelledby="assetPickerTitle" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content smart-modal">
       <div class="modal-header">
-        <h5 class="modal-title">Select asset</h5>
+        <div>
+          <h5 class="modal-title" id="assetPickerTitle"><i class="bi bi-images"></i> Asset library</h5>
+          <p class="modal-subtitle">Choose an existing asset, upload a new file, or register a validated public URL.</p>
+        </div>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close asset picker"></button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body asset-picker-body">
         <div class="asset-picker-tabs" role="tablist" aria-label="Asset source">
-          <button class="asset-tab is-active" id="asset-tab-control-existing" type="button" role="tab" aria-selected="true" aria-controls="asset-tab-existing" data-asset-tab="existing">Existing</button>
-          <button class="asset-tab" id="asset-tab-control-upload" type="button" role="tab" aria-selected="false" aria-controls="asset-tab-upload" tabindex="-1" data-asset-tab="upload">Upload</button>
-          <button class="asset-tab" id="asset-tab-control-url" type="button" role="tab" aria-selected="false" aria-controls="asset-tab-url" tabindex="-1" data-asset-tab="url">URL</button>
+          <button class="asset-tab is-active" id="asset-tab-control-existing" type="button" role="tab" aria-selected="true" aria-controls="asset-tab-existing" data-asset-tab="existing"><i class="bi bi-folder2-open"></i><span>Existing</span></button>
+          <button class="asset-tab" id="asset-tab-control-upload" type="button" role="tab" aria-selected="false" aria-controls="asset-tab-upload" tabindex="-1" data-asset-tab="upload"><i class="bi bi-cloud-arrow-up"></i><span>Upload</span></button>
+          <button class="asset-tab" id="asset-tab-control-url" type="button" role="tab" aria-selected="false" aria-controls="asset-tab-url" tabindex="-1" data-asset-tab="url"><i class="bi bi-link-45deg"></i><span>URL</span></button>
         </div>
+
         <div class="asset-tab-panel is-active" id="asset-tab-existing" role="tabpanel" aria-labelledby="asset-tab-control-existing">
           <div class="asset-picker-search">
-            <input type="search" class="form-control form-control-sm" id="assetPickerQuery" placeholder="Search by filename or caption…" autocomplete="off" aria-label="Search assets">
+            <label class="asset-picker-query">
+              <span class="visually-hidden">Search assets</span>
+              <i class="bi bi-search" aria-hidden="true"></i>
+              <input type="search" class="form-control form-control-sm" id="assetPickerQuery" placeholder="Search filename or caption…" autocomplete="off" aria-label="Search assets">
+            </label>
             <select class="form-select form-select-sm" id="assetPickerKind" aria-label="Filter assets by kind">
               <option value="">All kinds</option>
               <option value="image">Image</option>
@@ -22,39 +30,71 @@
               <option value="video">Video</option>
               <option value="other">Other</option>
             </select>
-            <button class="btn btn-primary btn-sm" id="assetPickerSearchBtn"><i class="bi bi-search"></i> Search</button>
+            <button class="btn btn-primary btn-sm" id="assetPickerSearchBtn" type="button"><i class="bi bi-search"></i> Search</button>
           </div>
-          <div class="asset-picker-grid" id="assetPickerResults">
+          <div class="asset-picker-grid" id="assetPickerResults" aria-live="polite">
             <div class="asset-picker-empty">Loading assets…</div>
           </div>
         </div>
+
         <div class="asset-tab-panel" id="asset-tab-upload" role="tabpanel" aria-labelledby="asset-tab-control-upload" hidden>
           <form id="assetPickerUploadForm" class="picker-create-form" enctype="multipart/form-data">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-            <input type="file" name="file" class="form-control form-control-sm" required aria-label="Asset file">
-            <select name="kind" class="form-select form-select-sm" aria-label="Asset kind">
-              <option value="">Auto kind</option><option value="image">Image</option><option value="pdf">PDF</option><option value="document">Document</option><option value="video">Video</option><option value="other">Other</option>
-            </select>
-            <input name="alt_text" class="form-control form-control-sm" placeholder="Alt text…" aria-label="Alternative text">
-            <input name="caption" class="form-control form-control-sm" placeholder="Caption…" aria-label="Caption">
-            <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-upload"></i> Upload and select</button>
+            <div class="picker-create-intro"><i class="bi bi-shield-check"></i><span><b>Upload a local asset</b><small>The file is validated and stored in the MIFP asset library before it is linked.</small></span></div>
+            <label class="field wide picker-file-field">
+              <span>File <b aria-hidden="true">*</b></span>
+              <input type="file" name="file" class="form-control form-control-sm" required aria-label="Asset file">
+            </label>
+            <label class="field">
+              <span>Kind</span>
+              <select name="kind" class="form-select form-select-sm" aria-label="Asset kind">
+                <option value="">Auto detect</option><option value="image">Image</option><option value="pdf">PDF</option><option value="document">Document</option><option value="video">Video</option><option value="other">Other</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Alt text</span>
+              <input name="alt_text" class="form-control form-control-sm" placeholder="Describe the image for accessibility" aria-label="Alternative text">
+            </label>
+            <label class="field wide">
+              <span>Caption</span>
+              <input name="caption" class="form-control form-control-sm" placeholder="Optional public caption" aria-label="Caption">
+            </label>
+            <div class="picker-create-actions wide">
+              <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-upload"></i> Upload and select</button>
+            </div>
           </form>
         </div>
+
         <div class="asset-tab-panel" id="asset-tab-url" role="tabpanel" aria-labelledby="asset-tab-control-url" hidden>
           <form id="assetPickerUrlForm" class="picker-create-form">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-            <input name="source_url" type="url" class="form-control form-control-sm" placeholder="https://…" required aria-label="External asset URL">
-            <select name="kind" class="form-select form-select-sm" aria-label="External asset kind">
-              <option value="other">Other</option><option value="image">Image</option><option value="pdf">PDF</option><option value="document">Document</option><option value="video">Video</option>
-            </select>
-            <input name="alt_text" class="form-control form-control-sm" placeholder="Alt text…" aria-label="Alternative text">
-            <input name="caption" class="form-control form-control-sm" placeholder="Caption…" aria-label="Caption">
-            <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-link-45deg"></i> Register and select</button>
+            <div class="picker-create-intro"><i class="bi bi-link-45deg"></i><span><b>Register an external asset</b><small>Use a public HTTPS URL. The server validates remote downloads before storing them.</small></span></div>
+            <label class="field wide">
+              <span>Public URL <b aria-hidden="true">*</b></span>
+              <input name="source_url" type="url" class="form-control form-control-sm" placeholder="https://…" required aria-label="External asset URL">
+            </label>
+            <label class="field">
+              <span>Kind</span>
+              <select name="kind" class="form-select form-select-sm" aria-label="External asset kind">
+                <option value="other">Other</option><option value="image">Image</option><option value="pdf">PDF</option><option value="document">Document</option><option value="video">Video</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Alt text</span>
+              <input name="alt_text" class="form-control form-control-sm" placeholder="Describe the image for accessibility" aria-label="Alternative text">
+            </label>
+            <label class="field wide">
+              <span>Caption</span>
+              <input name="caption" class="form-control form-control-sm" placeholder="Optional public caption" aria-label="Caption">
+            </label>
+            <div class="picker-create-actions wide">
+              <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-link-45deg"></i> Register and select</button>
+            </div>
           </form>
         </div>
       </div>
-      <div class="modal-footer">
-        <span class="tiny muted" id="assetPickerStatus" aria-live="polite"></span>
+      <div class="modal-footer asset-picker-footer">
+        <span class="tiny muted asset-picker-footer-status" id="assetPickerStatus" aria-live="polite"></span>
         <button type="button" class="btn btn-outline btn-sm" data-bs-dismiss="modal">Cancel</button>
       </div>
     </div>

@@ -407,7 +407,7 @@ def test_cli_set_unset_and_secret_command_line_refusal(tmp_path: Path) -> None:
     assert "leak" not in store.config.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize(("security", "uses_ssl", "starts_tls"), [("tls", True, False), ("starttls", False, True), ("none", False, False)])
+@pytest.mark.parametrize(("security", "uses_ssl", "starts_tls"), [("tls", True, False), ("starttls", False, True)])
 def test_mailer_honors_explicit_smtp_security(monkeypatch, security: str, uses_ssl: bool, starts_tls: bool) -> None:
     from mifp_app.services import mailer
 
@@ -423,7 +423,10 @@ def test_mailer_honors_explicit_smtp_security(monkeypatch, security: str, uses_s
         def __exit__(self, *_args):
             return None
 
-        def starttls(self):
+        def ehlo(self):
+            calls.append("ehlo")
+
+        def starttls(self, **_kwargs):
             calls.append("starttls")
 
         def login(self, *_args):
@@ -445,7 +448,20 @@ def test_mailer_honors_explicit_smtp_security(monkeypatch, security: str, uses_s
     assert mailer.send_mail(app, to="test@example.net", subject="test", body="body") is True
     assert ("ssl" in calls) is uses_ssl
     assert ("starttls" in calls) is starts_tls
+    assert "login" in calls
     assert "send" in calls
+
+
+def test_mailer_refuses_authenticated_plaintext_smtp() -> None:
+    from mifp_app.services import mailer
+
+    app = SimpleNamespace(config={
+        "MAIL_PROVIDER": "smtp", "MAIL_FROM": "info@mifp.eu",
+        "SMTP_HOST": "smtp.example", "SMTP_PORT": 25, "SMTP_SECURITY": "none",
+        "SMTP_USERNAME": "user", "SMTP_PASSWORD": "password",
+    })
+    with pytest.raises(RuntimeError, match="requires TLS or STARTTLS"):
+        mailer.send_mail(app, to="test@example.net", subject="test", body="body")
 
 
 def test_render_msmtp_config_keeps_smtp_secret_out_of_cli_and_event_files(tmp_path: Path) -> None:
@@ -536,3 +552,34 @@ def test_php_regform_mail_transport_is_host_managed() -> None:
     assert "sync_mail_relay" in deploy
     assert 'chown root:"$EVENTS_PHP_USER" "$MAIL_RELAY_CONFIG"' in deploy
     assert 'chmod 0640 "$MAIL_RELAY_CONFIG"' in deploy
+
+
+def test_secret_setting_uses_file_when_runtime_env_contains_blank_placeholder(monkeypatch, tmp_path: Path) -> None:
+    from mifp_app import config as app_config
+
+    secret_file = tmp_path / "smtp_password"
+    secret_file.write_text("smtp-file-secret\n", encoding="utf-8")
+    monkeypatch.setenv("SMTP_PASSWORD", "")
+    monkeypatch.setenv("SMTP_PASSWORD_FILE", str(secret_file))
+
+    assert app_config._secret_setting("SMTP_PASSWORD") == "smtp-file-secret"
+
+
+def test_dashboard_safe_settings_never_include_smtp_credentials() -> None:
+    from mifp_app.services.control_center import safe_settings
+
+    secret = "smtp-dashboard-secret"
+    rendered = json.dumps(safe_settings({
+        "ENV": "production",
+        "MAIL_PROVIDER": "smtp",
+        "SMTP_HOST": "smtp.example.net",
+        "SMTP_USERNAME": "mailer@example.net",
+        "SMTP_PASSWORD": secret,
+    }, {
+        "SMTP_PASSWORD": secret,
+        "SMTP_USERNAME": "should-not-be-read-from-db",
+    }))
+
+    assert secret not in rendered
+    assert "mailer@example.net" not in rendered
+    assert "should-not-be-read-from-db" not in rendered

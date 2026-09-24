@@ -148,26 +148,6 @@ def destination_url(domain: str, destination: str) -> str:
     return f"{events_origin(domain)}/{normalize_destination(destination)}/"
 
 
-def php_execution_status(destination: str, state_path: Path | None) -> str:
-    """Read the host-owned PHP allow-list without ever modifying it."""
-    if state_path is None:
-        return "unknown"
-    path = Path(state_path)
-    if not path.exists():
-        return "unknown"
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
-        raise ValueError("PHP allow-list state is unsafe.")
-    selected = normalize_destination(destination)
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        value = raw.strip()
-        if not value:
-            continue
-        enabled = normalize_destination(value)
-        if enabled == selected or enabled.startswith(selected + "/"):
-            return "enabled"
-    return "disabled"
-
-
 def _normalized_member(name: str) -> str:
     value = name.replace("\\", "/")
     if not value or "\x00" in value or value.startswith("/") or WINDOWS_DRIVE_RE.match(value):

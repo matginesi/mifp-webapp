@@ -455,3 +455,35 @@ def test_version_release_sidebar_entry_uses_vendored_icon():
     assert '<i class="bi bi-tags" aria-hidden="true"></i><span>Version &amp; Release</span>' in layout
     assert ".bi-tags::before" in icons
     assert "Secure session · v{{ app_version }}" in layout
+
+
+def test_shared_asset_picker_has_one_complete_visual_contract():
+    template = _read(TEMPLATES / "dashboard" / "_asset_picker.html")
+    css = _read(CSS / "dashboard.css")
+    core = _read(JS / "dashboard" / "core.js")
+
+    for marker in (
+        "asset-picker-modal",
+        "asset-picker-tabs",
+        "asset-picker-search",
+        "asset-picker-grid",
+        "picker-create-form",
+        "picker-create-intro",
+        "asset-picker-footer-status",
+    ):
+        assert marker in template, marker
+        assert f".{marker}" in css, marker
+
+    # Result cards are generated client-side, but they must still share the
+    # same CSS contract as the static modal shell.
+    assert "asset-picker-item" in core
+    assert ".asset-picker-item" in css
+
+    assert 'type="button"' in template.split('id="assetPickerSearchBtn"', 1)[1].split(">", 1)[0]
+    assert "bootstrap.Modal.getOrCreateInstance(modal).show()" in core
+    assert "assetPickerResolve(null)" in core
+
+
+def test_removed_event_import_dead_php_status_helper_stays_removed():
+    event_import = _read(APP / "services" / "event_import.py")
+    assert "def php_execution_status(" not in event_import

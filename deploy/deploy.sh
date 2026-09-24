@@ -341,6 +341,18 @@ validate_release_image() {
 
 compose_with_image() {
   local image="$1"; shift
+  # Compose secrets use the canonical root-only secrets.env as their source,
+  # but the values are never injected into the service environment. Ensure all
+  # names exist so optional SMTP/remote-publisher secrets become empty mounted
+  # files instead of breaking `docker compose config`.
+  local SECRET_KEY="" ADMIN_PASSWORD_HASH="" SMTP_PASSWORD="" EVENTS_REMOTE_PASSWORD=""
+  if [[ -f "$SECRETS_FILE" && ! -L "$SECRETS_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090 -- root-managed file written by vps_config.py.
+    source "$SECRETS_FILE"
+    set +a
+  fi
+  export SECRET_KEY ADMIN_PASSWORD_HASH SMTP_PASSWORD EVENTS_REMOTE_PASSWORD
   MIFP_IMAGE="$image" MIFP_DATA_DIR="$DATA_DIR" "${COMPOSE_BASE[@]}" "$@"
 }
 

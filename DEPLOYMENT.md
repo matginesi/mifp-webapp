@@ -374,7 +374,11 @@ sudo mifpctl configure --section backup
 
 La sezione `mail` è l'unico punto operativo per le credenziali SMTP. La password
 viene letta con input nascosto e salvata esclusivamente in `/etc/mifp/secrets.env`
-(`0600`). In `local-vps`, la stessa configurazione alimenta anche il relay
+(`0600`). In produzione Compose la legge dal file root-only e la consegna al solo
+servizio web come secret file in `/run/secrets`; non viene inserita nell'immagine,
+nel file runtime `.env` né nell'environment del container. La dashboard non rende
+host, username o password SMTP. In `local-vps`, la stessa configurazione alimenta
+anche il relay
 `sendmail` compatibile usato dai `regform` PHP tramite un `/etc/msmtprc`
 root-owned e leggibile soltanto dall'utente PHP dedicato. Gli ZIP evento e
 `regform/settings.yaml` non devono contenere password SMTP. Cambiando in futuro

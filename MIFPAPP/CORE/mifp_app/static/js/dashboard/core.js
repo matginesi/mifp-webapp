@@ -202,19 +202,35 @@ function storageStatusBadge(status) {
 
 function openAssetPicker(fieldId, kind) {
   return new Promise((resolve) => {
+    if (assetPickerResolve) assetPickerResolve(null);
     assetPickerResolve = resolve;
     pickerFocusIndex = -1;
     const modal = document.getElementById('assetPickerModal');
-    if (!modal || !window.bootstrap) return;
-    modal.dataset.targetField = fieldId;
+    if (!modal || !window.bootstrap) {
+      assetPickerResolve = null;
+      resolve(null);
+      return;
+    }
+    modal.dataset.targetField = fieldId || '';
     const query = document.getElementById('assetPickerQuery');
     const kindSel = document.getElementById('assetPickerKind');
     const results = document.getElementById('assetPickerResults');
-    if (kind && kindSel) kindSel.value = kind;
+    const existingTab = document.getElementById('asset-tab-control-existing');
+    if (existingTab) activateAssetTab(existingTab);
+    if (kindSel) kindSel.value = kind || '';
     if (query) query.value = '';
     if (results) pickerMessage(results, 'Loading assets…');
-    new bootstrap.Modal(modal).show();
-    // Auto-load first batch of assets
+
+    modal.addEventListener('hidden.bs.modal', function pickerClosed() {
+      modal.removeEventListener('hidden.bs.modal', pickerClosed);
+      if (assetSearchController) assetSearchController.abort();
+      assetSearchController = null;
+      if (assetPickerResolve) {
+        assetPickerResolve(null);
+        assetPickerResolve = null;
+      }
+    });
+    bootstrap.Modal.getOrCreateInstance(modal).show();
     searchAssets();
   });
 }
@@ -398,16 +414,29 @@ function selectAssetId(id) {
 
 async function createPickerAsset(form) {
   const status = document.getElementById('assetPickerStatus');
+  const submit = form.querySelector('button[type="submit"]');
   if (status) status.textContent = 'Saving asset…';
-  const result = await window.MIFP.request((document.documentElement.dataset.dashboardPrefix || '/dashboard') + '/assets/create.json', {
-    method: 'POST',
-    body: new FormData(form),
-    headers: { 'X-Requested-With': 'XMLHttpRequest' },
-  });
-  const data = result.data || {};
-  if (!data.id) throw new Error('Asset creation failed.');
-  if (status) status.textContent = 'Asset #' + data.id + ' selected';
-  selectAssetId(data.id);
+  if (submit) {
+    submit.disabled = true;
+    submit.setAttribute('aria-busy', 'true');
+  }
+  try {
+    const result = await window.MIFP.request((document.documentElement.dataset.dashboardPrefix || '/dashboard') + '/assets/create.json', {
+      method: 'POST',
+      body: new FormData(form),
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const data = result.data || {};
+    if (!data.id) throw new Error('Asset creation failed.');
+    if (status) status.textContent = 'Asset #' + data.id + ' selected';
+    form.reset();
+    selectAssetId(data.id);
+  } finally {
+    if (submit) {
+      submit.disabled = false;
+      submit.removeAttribute('aria-busy');
+    }
+  }
 }
 
 /* ── Page Loader — single DOMContentLoaded mechanism ───────── */

@@ -27,13 +27,20 @@ if _DOTENV_ENABLED:
 
 
 def _secret_setting(name: str, default: str = "") -> str:
-    """Read a secret from the environment or an explicitly configured file."""
+    """Read one secret without forcing production credentials into container env.
+
+    A non-empty direct environment variable remains supported for local
+    development and backwards compatibility.  When ``<NAME>_FILE`` is set, an
+    empty direct value deliberately falls through to the file so production can
+    keep compatibility placeholders in ``.env`` while Docker mounts the real
+    credential below ``/run/secrets``.
+    """
     direct = os.getenv(name)
-    if direct is not None:
-        return direct
     filename = os.getenv(f"{name}_FILE", "").strip()
+    if direct not in (None, ""):
+        return direct
     if not filename:
-        return default
+        return direct if direct is not None else default
     path = Path(filename)
     if not path.is_file() or path.is_symlink():
         raise RuntimeError(f"{name}_FILE must reference a regular, non-symlink file")
@@ -121,12 +128,11 @@ class Config:
     SMTP_HOST = os.getenv('SMTP_HOST', '')
     SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
     SMTP_USERNAME = os.getenv('SMTP_USERNAME', '')
-    SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
+    SMTP_PASSWORD = _secret_setting('SMTP_PASSWORD')
     SMTP_SECURITY = os.getenv(
         'SMTP_SECURITY',
         'starttls' if os.getenv('SMTP_USE_TLS', '1') in {'1','true','True','yes','on'} else 'none',
     ).strip().lower()
-    SMTP_USE_TLS = os.getenv('SMTP_USE_TLS', '1') in {'1','true','True','yes','on'}
     DATABASE_PATH = _path_from_config('db_path', 'DATABASE_PATH', '../DATABASE/mifp.db')
     ASSETS_DIR = _path_from_config('assets_dir', 'ASSETS_DIR', '../DATABASE/assets')
     EXPORT_DIR = _path_from_config('export_dir', 'EXPORT_DIR', '../DATABASE/exports')

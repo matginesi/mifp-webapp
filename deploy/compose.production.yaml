@@ -13,10 +13,15 @@ services:
     env_file:
       - path: .env
         required: false
-      - path: ${MIFP_SECRETS_FILE:-/etc/mifp/secrets.env}
-        required: false
     environment:
       MIFP_LOAD_DOTENV: "0"
+      # Application secrets are mounted as Docker secrets, not exposed through
+      # the container environment or baked into the image. Empty legacy values
+      # in .env intentionally fall through to these *_FILE paths.
+      SECRET_KEY_FILE: /run/secrets/mifp_secret_key
+      ADMIN_PASSWORD_HASH_FILE: /run/secrets/mifp_admin_password_hash
+      SMTP_PASSWORD_FILE: /run/secrets/mifp_smtp_password
+      EVENTS_REMOTE_PASSWORD_FILE: /run/secrets/mifp_events_remote_password
       # Read-only release identity for the dashboard. The host remains the only
       # component allowed to deploy/update/rollback images.
       MIFP_RELEASE_REF: "${MIFP_IMAGE}"
@@ -36,7 +41,7 @@ services:
       TRUSTED_HOSTS: "${TRUSTED_HOSTS:-mifp.eu,www.mifp.eu,127.0.0.1,localhost}"
       ALLOW_DB_DUMP: "0"
       ALLOW_DB_RESTORE: "0"
-      # Backup credentials are host-only even though secrets.env is shared as an env_file.
+      # Backup credentials are host-only and are never mounted into this service.
       RESTIC_PASSWORD: ""
       DATABASE_PATH: /app/data/mifp.db
       ASSETS_DIR: /app/data/assets
@@ -72,6 +77,11 @@ services:
       BACKGROUND_JOB_WORKERS: "${BACKGROUND_JOB_WORKERS:-1}"
     ports:
       - "127.0.0.1:8000:8000"
+    secrets:
+      - mifp_secret_key
+      - mifp_admin_password_hash
+      - mifp_smtp_password
+      - mifp_events_remote_password
     volumes:
       - "${MIFP_DATA_DIR:-/opt/mifp/data}:/app/data"
       # Dedicated publication-only tree. It is outside normal application data
@@ -102,3 +112,13 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+secrets:
+  mifp_secret_key:
+    environment: SECRET_KEY
+  mifp_admin_password_hash:
+    environment: ADMIN_PASSWORD_HASH
+  mifp_smtp_password:
+    environment: SMTP_PASSWORD
+  mifp_events_remote_password:
+    environment: EVENTS_REMOTE_PASSWORD

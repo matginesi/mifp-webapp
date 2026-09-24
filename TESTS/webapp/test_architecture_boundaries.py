@@ -495,3 +495,31 @@ def test_repository_hygiene_checker_accepts_the_source_tree() -> None:
 def test_compose_uses_canonical_public_config_for_interpolation() -> None:
     deploy = _read("deploy", "deploy.sh")
     assert '--env-file "$ENV_FILE" --env-file "$PUBLIC_CONFIG_FILE"' in deploy
+
+
+def test_production_container_receives_application_credentials_as_docker_secrets() -> None:
+    import yaml
+
+    compose = yaml.safe_load(_read("deploy", "compose.production.yaml"))
+    web = compose["services"]["web"]
+    env_files = web.get("env_file") or []
+    assert not any("secrets.env" in str(item) for item in env_files)
+    assert set(web.get("secrets") or []) >= {
+        "mifp_secret_key",
+        "mifp_admin_password_hash",
+        "mifp_smtp_password",
+        "mifp_events_remote_password",
+    }
+    environment = web["environment"]
+    assert environment["SMTP_PASSWORD_FILE"] == "/run/secrets/mifp_smtp_password"
+    assert environment["SECRET_KEY_FILE"] == "/run/secrets/mifp_secret_key"
+    assert "SMTP_PASSWORD" not in environment
+
+    secrets = compose["secrets"]
+    assert secrets["mifp_smtp_password"]["environment"] == "SMTP_PASSWORD"
+    assert secrets["mifp_secret_key"]["environment"] == "SECRET_KEY"
+
+    deploy = _read("deploy", "deploy.sh")
+    compose_fn = deploy.split("compose_with_image() {", 1)[1].split("\n}", 1)[0]
+    assert 'source "$SECRETS_FILE"' in compose_fn
+    assert "export SECRET_KEY ADMIN_PASSWORD_HASH SMTP_PASSWORD EVENTS_REMOTE_PASSWORD" in compose_fn

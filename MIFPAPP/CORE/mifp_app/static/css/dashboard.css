@@ -4777,3 +4777,224 @@ textarea:focus-visible { outline: 0; }.dash-empty-state,.empty-state{
 @media (max-width: 576px) {
   .conference-overview-grid { grid-template-columns: 1fr; }
 }
+
+/* Shared asset picker ---------------------------------------------------------
+   One component is used by every content wizard/editor. Keep upload/register
+   UI here instead of category-specific modal/totem variants. */
+.asset-picker-modal .modal-dialog {
+  --bs-modal-width: 54rem;
+}
+.asset-picker-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: .75rem;
+  min-height: min(34rem, calc(100dvh - 10rem));
+}
+.asset-picker-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .3rem;
+  padding: .25rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+.asset-tab {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 2.35rem;
+  align-items: center;
+  justify-content: center;
+  gap: .38rem;
+  padding: .4rem .6rem;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius-sm) - 1px);
+  font: inherit;
+  font-size: .72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.asset-tab:hover { color: var(--text); background: var(--surface-3); }
+.asset-tab.is-active {
+  color: var(--brand-red);
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-xs);
+}
+.asset-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.asset-tab-panel {
+  min-height: 0;
+}
+.asset-tab-panel[hidden] { display: none !important; }
+#asset-tab-existing.asset-tab-panel.is-active {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: .65rem;
+}
+.asset-picker-search {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) minmax(8.5rem, 10rem) auto;
+  gap: .45rem;
+  align-items: center;
+}
+.asset-picker-query {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+.asset-picker-query > i {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: .65rem;
+  color: var(--text-3);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.asset-picker-query .form-control { padding-left: 2rem; }
+.asset-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .45rem;
+  min-height: 12rem;
+  max-height: min(27rem, calc(100dvh - 17rem));
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: .05rem .15rem .05rem .05rem;
+  scrollbar-gutter: stable;
+}
+.asset-picker-item {
+  display: grid;
+  grid-template-columns: 3.2rem minmax(0, 1fr) auto;
+  gap: .55rem;
+  align-items: center;
+  min-width: 0;
+  padding: .55rem;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.asset-picker-item:hover,
+.asset-picker-item.is-focused,
+.asset-picker-item:focus-visible {
+  background: var(--surface-2);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: none;
+}
+.asset-picker-thumb {
+  width: 3.2rem;
+  height: 3.2rem;
+  flex: 0 0 3.2rem;
+  font-size: 1.15rem;
+}
+.asset-picker-info {
+  display: grid;
+  gap: .14rem;
+  min-width: 0;
+}
+.asset-picker-name-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: .3rem;
+  flex-wrap: wrap;
+}
+.asset-picker-name-row b {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: .72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asset-picker-info .tiny { font-size: .59rem; }
+.asset-picker-path {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asset-picker-select { min-width: 4.4rem; }
+.asset-picker-empty {
+  grid-column: 1 / -1;
+  display: grid;
+  min-height: 10rem;
+  place-items: center;
+  padding: 1rem;
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-size: .7rem;
+  text-align: center;
+}
+.picker-create-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .65rem;
+  align-content: start;
+  padding: .7rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+.picker-create-form .wide { grid-column: 1 / -1; }
+.picker-create-intro {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: .55rem;
+  padding: .55rem .65rem;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+.picker-create-intro > i {
+  margin-top: .08rem;
+  color: var(--accent);
+  font-size: 1rem;
+}
+.picker-create-intro > span { display: grid; gap: .08rem; }
+.picker-create-intro b { color: var(--text); font-size: .72rem; }
+.picker-create-intro small { color: var(--text-3); font-size: .62rem; line-height: 1.4; }
+.picker-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: .1rem;
+}
+.asset-picker-footer .asset-picker-footer-status {
+  margin-right: auto;
+  min-height: 1rem;
+}
+
+@media (max-width: 760px) {
+  .asset-picker-body { min-height: 0; }
+  .asset-picker-search { grid-template-columns: 1fr 8.5rem; }
+  .asset-picker-search .btn { grid-column: 1 / -1; }
+  .asset-picker-grid { grid-template-columns: 1fr; max-height: none; }
+}
+
+@media (max-width: 576px) {
+  .asset-picker-tabs { position: sticky; top: 0; z-index: 2; }
+  .asset-tab { padding-inline: .35rem; }
+  .asset-picker-search { grid-template-columns: 1fr; }
+  .asset-picker-search .btn { grid-column: auto; }
+  .asset-picker-item { grid-template-columns: 2.7rem minmax(0, 1fr); }
+  .asset-picker-thumb { width: 2.7rem; height: 2.7rem; flex-basis: 2.7rem; }
+  .asset-picker-select { grid-column: 1 / -1; width: 100%; }
+  .picker-create-form { grid-template-columns: 1fr; padding: .55rem; }
+  .picker-create-form .wide,
+  .picker-create-intro { grid-column: auto; }
+  .picker-create-actions .btn { width: 100%; }
+}

@@ -82,6 +82,17 @@ def test_conference_wizard_people_exports_assets_and_deploy_zip(app, client):
     assert created.status_code == 302
     site_id = _scalar(app, "SELECT id FROM conference_sites WHERE slug=?", ("quantum-mediterranean-2027",))
     assert site_id
+    with _db(app) as conn:
+        linked_event = conn.execute(
+            """SELECT e.id,e.review_status
+               FROM conference_sites c
+               JOIN events e ON e.id=c.event_id
+               WHERE c.id=?""",
+            (site_id,),
+        ).fetchone()
+    assert linked_event is not None
+    assert linked_event["review_status"] == "draft"
+
     listing = client.get("/dashboard/conferences")
     listing_body = listing.get_data(as_text=True)
     assert listing.status_code == 200
@@ -93,11 +104,18 @@ def test_conference_wizard_people_exports_assets_and_deploy_zip(app, client):
     assert f'href="/dashboard/conferences/{site_id}"' in listing_body
     assert "Delete conference and storage" in listing_body
     filtered = client.get("/dashboard/conferences?q=Quantum")
-    assert "Quantum Mediterranean 2027" in filtered.get_data(as_text=True)
-    assert "Reset" in filtered.get_data(as_text=True)
-    assert "Quantum Mediterranean 2027" not in client.get(
+    filtered_body = filtered.get_data(as_text=True)
+    assert f'href="/dashboard/conferences/{site_id}"' in filtered_body
+    assert "Reset" in filtered_body
+
+    missing_body = client.get(
         "/dashboard/conferences?q=missing-conference"
     ).get_data(as_text=True)
+    assert f'href="/dashboard/conferences/{site_id}"' not in missing_body
+    assert (
+        f'<option value="{linked_event["id"]}">'
+        "Undated · Quantum Mediterranean 2027</option>"
+    ) in missing_body
 
     saved = client.post(f"/dashboard/conferences/{site_id}", data={
         "title": "Quantum Mediterranean 2027",
