@@ -58,6 +58,7 @@ Test e gestione:
   ./mifp clean [cache|logs|outputs|archive-events|data|docker|all] [opzioni]
   ./mifp zip [opzioni zip_it.sh]
   ./mifp doctor
+  ./mifp security COMMAND [options] Local application/deployment security diagnostics
 
 Opzioni comuni di avvio:
   -d, --detach                  Solo local: avvio in background
@@ -865,6 +866,13 @@ archive_codebase() {
   run "$ROOT_DIR/zip_it.sh" "$@"
 }
 
+security_audit() {
+  [[ -f "$ROOT_DIR/tools/security_audit.py" ]] || die "tools/security_audit.py non trovato."
+  local python_bin="python3"
+  [[ -x "$VENV_DIR/bin/python" ]] && python_bin="$VENV_DIR/bin/python"
+  "$python_bin" "$ROOT_DIR/tools/security_audit.py" "$@"
+}
+
 doctor() {
   local failed=0
   step "File essenziali"
@@ -912,6 +920,7 @@ case "$command_name" in
   clean|clear) clean_project "$@" ;;
   zip|archive) archive_codebase "$@" ;;
   doctor) doctor ;;
+  security) security_audit "$@" ;;
   setup) ensure_venv; say "Ambiente Python locale pronto." ;;
   init) init_local ;;
   help|-h|--help) usage ;;

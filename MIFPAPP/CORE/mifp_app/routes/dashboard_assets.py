@@ -36,7 +36,7 @@ from ..services.assets import (
 )
 from ..services.dashboard_repository import asset_usage, assets_summary, dashboard_counts, list_assets, unused_assets
 from ..services.operation_maintenance import maintenance_guarded
-from ..utils.logger import audit_log
+from ..utils.logger import audit_log, security_event
 from ..utils.text_utils import normalize_url
 from ._shared import ENTITY_TYPES, SECTION_TABLES, admin_error_payload, admin_error_text
 from .auth import login_required
@@ -748,6 +748,22 @@ def content_asset_upload(section, record_id):
 
         validation_error = _validate_upload(file)
         if validation_error:
+            reason = (
+                "path" if validation_error == "Invalid filename"
+                else "extension" if validation_error.startswith("File extension")
+                else "mime" if validation_error.startswith("MIME type")
+                else "size" if validation_error.startswith("File too large")
+                else "validation"
+            )
+            security_event(
+                "upload.rejected",
+                "dashboard asset upload rejected",
+                severity="warning",
+                path=request.path,
+                section=section,
+                reason=reason,
+                declared_mime=str(file.mimetype or "")[:120],
+            )
             return jsonify({"error": validation_error}), 400
 
         try:
@@ -760,6 +776,14 @@ def content_asset_upload(section, record_id):
                 caption=request.form.get("caption") or None,
             )
         except ValueError as exc:
+            security_event(
+                "upload.rejected",
+                "dashboard asset content validation rejected",
+                severity="warning",
+                path=request.path,
+                section=section,
+                reason="content",
+            )
             return jsonify({"error": str(exc)}), 400
         except Exception:
             current_app.logger.exception("content asset upload failed")

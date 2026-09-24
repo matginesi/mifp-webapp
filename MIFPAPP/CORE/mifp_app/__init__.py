@@ -621,6 +621,15 @@ def create_app():
             "request rejected: payload too large path=%s bytes=%s max_mb=%s request_id=%s",
             request.path, content_length, max_mb, rid,
         )
+        security_event(
+            "upload.too_large",
+            "request payload exceeded the configured limit",
+            severity="warning",
+            path=request.path,
+            request_bytes=content_length,
+            max_bytes=app.config.get("MAX_CONTENT_LENGTH"),
+            request_id=rid,
+        )
         if request.path == "/dashboard/data-portability/import":
             audit_log(
                 "import.rejected_too_large",

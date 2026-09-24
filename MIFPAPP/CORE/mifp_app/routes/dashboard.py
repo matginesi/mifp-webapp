@@ -645,7 +645,9 @@ def assets_retry_external():
     except Exception:
         current_app.logger.exception("retry external assets failed")
         flash("Asset recovery failed. Check the server log for details.", "error")
-    return redirect(request.referrer or url_for("dashboard.server"))
+    # Referer is untrusted input and may be an external URL. This maintenance
+    # action has one stable, same-site destination.
+    return redirect(url_for("dashboard.server"))
 
 
 
@@ -660,5 +662,6 @@ from . import (  # noqa: E402,F401
     dashboard_event_import,
     dashboard_logs,
     dashboard_portability,
+    dashboard_security,
     dashboard_join,
 )

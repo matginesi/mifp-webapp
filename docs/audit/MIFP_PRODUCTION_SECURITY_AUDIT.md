@@ -1389,9 +1389,11 @@ This is the authoritative residual-risk list for the repository as it stands.
 4. **`/etc/mifp` is not inside the snapshots.** Secrets must be escrowed out of
    band (runbook step 11). Losing `SECRET_KEY` invalidates sessions only, but the
    admin hash must be recreated.
-5. **`secrets.env` is shared wholesale with the web container.** Only
-   `RESTIC_PASSWORD` is blanked; a future host-only key must add a matching blank
-   override. Documented in the compose file.
+5. **Application secrets are individually mounted into the web container.**
+   `SECRET_KEY`, the admin password hash, SMTP password and optional event
+   publisher password use Docker secret files. Host-only backup credentials are
+   not mounted. A future application secret must be added explicitly to this
+   allowlist; a future host-only key must remain outside it.
 6. **Off-site backup is opt-in and its repository lifecycle is manual**
    (`restic init` is an operator step, now documented). Real restic repository
    I/O and backend failure modes were not exercised.
@@ -1436,6 +1438,55 @@ checklist, reproduced here for the first-installation record:
 
 ---
 
+## Security management and verification layer (2026-09-25)
+
+The authenticated `/dashboard/security` page is a read-only projection over
+effective Flask configuration, a read-only SQLite integrity probe, the existing
+backup inventory, the current signed-cookie session and retained structured
+logs. It reports discrete `OK`, `WARNING`, `CRITICAL`, `UNKNOWN` or
+`NOT APPLICABLE` results—never a synthetic score. Secret fields expose only
+configured/not-configured and safe source categories. Recent events are passed
+through the existing recursive redactor and a second field allowlist before
+rendering.
+
+The dashboard deliberately does not provide Docker, shell, firewall, SSH,
+package, process, arbitrary-file, restore, or session-revocation controls.
+Flask's signed client-side session backend cannot enumerate or reliably revoke
+all active sessions, so the page shows only the current session and documents
+that limitation. Restore remains a VPS-side maintenance operation.
+
+The existing event taxonomy remains authoritative (`auth.*`, `csrf.failed`,
+`admin.write_rate_limited`, `host.rejected`, and related domain events). Upload
+validation failures now add `upload.rejected`; requests rejected by Flask's
+global payload ceiling add `upload.too_large`. Logger context supplies request
+ID, route/method, actor and privacy-configured client fingerprint, while the
+redactor removes passwords, tokens, cookies, authorization values and e-mail
+addresses.
+
+Local source/deployment checks are exposed through `./mifp security`; optional
+Gitleaks, `pip-audit`, and Trivy integrations are never installed
+automatically and never enter the runtime image. The bounded external checker
+validates HTTPS/redirect behavior, security headers, observed cookie flags,
+public health and private readiness behavior without authentication, crawling,
+brute force or mutation. Exit codes are stable: `0` non-blocking, `1` finding,
+`2` invalid/unreachable audit target. CI was not changed: its pinned Gitleaks,
+`pip-audit`, runtime-image verification and Trivy gates already provide the
+stronger reproducible enforcement appropriate there.
+
+Control ownership remains explicit:
+
+| Layer | Controls |
+| --- | --- |
+| Application/dashboard | authentication, authorization, CSRF, cookies, rate limits, headers, uploads, redacted logs, backup visibility |
+| Local CLI | source/config/filesystem audit, optional scanners, external production verification |
+| CI | full-history/tree secret scan, dependency audit, tests, immutable image verification and CVE gate |
+| Reverse proxy | TLS, public HTTP→HTTPS, server-header removal, public denial of `/ready` |
+| VPS/host | SSH, firewall, updates, Docker daemon/listeners, permissions, backup scheduling and restore |
+
+No schema or migration was added: logs and backup inventory remain the existing
+durable sources, and session revocation would require a deliberate future move
+to server-side session storage.
+
 ## Audit Tooling Used
 
 Tools actually executed during the two rounds. Versions are the ones observed at
@@ -1444,7 +1495,7 @@ into the application runtime or the production image.
 
 | Tool | Version | Round(s) | Result |
 | --- | --- | --- | --- |
-| `pytest` via `test_all.sh --suite quick` | Python 3.14.7, pytest 9.1.1 | 1 + 2 | **Baseline 873 pass** (historical) → 877 after round 1 → **890 pass currently** (807 webapp + 35 scraper + 48 database) |
+| `pytest` via `test_all.sh` and direct browser run | Python 3.14.7, pytest 9.1.1 | 1 + 2 + security management layer | **Baseline 873 pass** (historical) → 877 after round 1 → 890 after round 2 → **1,178 pass currently** (1,006 webapp + 35 scraper + 48 database + 89 browser) |
 | `tools/check_repo_hygiene.py` | in-repo | 1 + 2 | OK — 330 tracked files; no runtime data, DB/dump, archive, secret or >5 MiB file |
 | `pip-audit` | isolated audit venv | 1 + 2 | **No known vulnerabilities** in `MIFPAPP/CORE/requirements.lock`, `SCRAPERS/requirements.txt`, `MIFPAPP/DATABASE/requirements.txt` |
 | `bandit` | 1.9.4 | 1 + 2 | **0 HIGH**; 144 MEDIUM, all B608 identifier interpolation, each traced and dismissed; 7 LOW (config-key false positives, 2 `assert` invariants, `except: pass` sites subsequently fixed) |

@@ -17,7 +17,8 @@ La produzione si rilascia esclusivamente via CI/CD.
   news, membri, pubblicazioni, aree di ricerca, pagine e sponsor; la dashboard
   cerca anche asset e record delle conferenze.
 - **Dashboard amministrativa** — gestione contenuti e asset, conferenze,
-  import/export portabile, data quality, safety operations, log e incidenti.
+  import/export portabile, data quality, safety operations, log, incidenti e
+  una vista Security read-only sui controlli applicativi.
 - **Archivio storico eventi** — import una tantum di package versionati con
   metadata ricchi, persone e documenti, serviti internamente sotto `/archive/`.
 - **Scraper** — pipeline locale/remota che produce artefatti JSONL + un unico
@@ -135,6 +136,28 @@ usa lo stesso `requirements.lock` dell'immagine ed esegue le suite non-browser
 sui push a `main` (o su avvio manuale). Il repository non usa Dependabot per
 aprire PR/branch automatici: gli aggiornamenti delle dipendenze sono espliciti e
 passano dalla stessa CI.
+
+## Security operations
+
+La pagina autenticata `/dashboard/security` riunisce controlli applicativi
+verificabili, stato dei segreti (solo configured/source), sessione corrente,
+upload, backup ed eventi audit/security recenti. Non espone valori segreti e non
+controlla Docker, firewall, SSH, processi o filesystem arbitrari. Le sessioni
+admin sono cookie Flask firmati: la pagina mostra soltanto quella corrente;
+elenco globale e revoca server-side non sono simulati.
+
+Dal checkout locale:
+
+```bash
+./mifp security audit --strict
+./mifp security secrets --git-history
+./mifp security dependencies
+./mifp security production https://www.mifp.eu --strict
+```
+
+Gli scanner opzionali restano locali/CI. Per comandi, output JSON e codici di
+uscita vedi [riferimento CLI](docs/cli-reference.md). Sulla VPS il controllo
+host resta `sudo mifpctl security-check`.
 
 ## Produzione
 

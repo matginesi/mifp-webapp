@@ -1,0 +1,89 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Security{% endblock %}
+{% block content %}
+{% call page_header('System', 'Security', 'Verifiable application safeguards, recent security events, and explicit operational boundaries.') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.logs', log_file='security') }}"><i class="bi bi-list-ul"></i> Security logs</a>
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.control_backups') }}"><i class="bi bi-database-check"></i> Backups</a>
+{% endcall %}
+
+<section class="control-snapshot" aria-label="Security status summary">
+  <article><span>Checks</span><b>{{ posture.checks|length }}</b><small>Evidence-based controls</small></article>
+  <article><span>Critical</span><b class="{{ 'text-red' if posture.counts.CRITICAL else 'text-green' }}">{{ posture.counts.CRITICAL }}</b><small>Blocking findings</small></article>
+  <article><span>Warnings</span><b class="{{ 'text-amber' if posture.counts.WARNING else 'text-green' }}">{{ posture.counts.WARNING }}</b><small>Review recommended</small></article>
+  <article><span>Recent events</span><b>{{ events|length }}</b><small>Sanitized log view</small></article>
+  <article><span>Backups</span><b>{{ posture.backups.total }}</b><small>{% if posture.backups.latest %}Latest {{ posture.backups.latest.age_hours }}h ago{% else %}No snapshot{% endif %}</small></article>
+</section>
+
+<section class="control-panel">
+  <div class="panel-head"><div><span class="control-kicker">Effective configuration</span><h2>Security overview</h2><p>Every row reflects an actual application setting or read-only runtime check; there is no synthetic score.</p></div><span>{{ posture.counts.OK }}/{{ posture.checks|length }}</span></div>
+  <div class="control-table-wrap" role="region" tabindex="0" aria-label="Application security checks">
+    <table class="control-table">
+      <thead><tr><th>Area</th><th>Control</th><th>Status</th><th>Evidence and remediation</th></tr></thead>
+      <tbody>{% for item in posture.checks %}
+      {% set status_class = 'success' if item.status == 'OK' else 'danger' if item.status == 'CRITICAL' else 'warning' if item.status == 'WARNING' else 'info' %}
+      <tr data-security-check="{{ item.key }}">
+        <td>{{ item.group }}</td>
+        <td><b>{{ item.label }}</b></td>
+        <td><span class="status-chip status-{{ status_class }}">{{ item.status }}</span></td>
+        <td>{{ item.detail }}{% if item.remediation %}<span class="table-subline">{{ item.remediation }}</span>{% endif %}</td>
+      </tr>
+      {% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+
+<div class="control-two-column">
+  <section class="control-panel">
+    <div class="panel-head"><div><h2>Current administrator session</h2><p>Only this signed browser session is observable.</p></div><span class="status-chip status-success">current</span></div>
+    <dl class="system-facts">
+      <div><dt>Administrator</dt><dd>{{ active_session.username }}</dd></div>
+      <div><dt>Created</dt><dd>{{ active_session.created_at }}</dd></div>
+      <div><dt>Source address</dt><dd>{{ active_session.client_ip }}</dd></div>
+      <div><dt>User agent</dt><dd>{{ active_session.user_agent }}</dd></div>
+      <div><dt>Storage</dt><dd>{{ active_session.storage }}</dd></div>
+    </dl>
+    <div class="control-note"><i class="bi bi-info-circle"></i><div><b>Session limitation</b><span>{{ active_session.revocation }} Logout clears the current session.</span></div></div>
+  </section>
+
+  <section class="control-panel">
+    <div class="panel-head"><div><h2>Secret configuration</h2><p>Presence and source only. Values are never returned to the browser.</p></div><span><i class="bi bi-eye-slash"></i></span></div>
+    <div class="control-list" aria-label="Secret configuration status">{% for secret in posture.secrets %}
+      <div class="control-list-row"><span><b>{{ secret.label }}</b><small>Source: {{ secret.source }}</small></span><span class="status-chip status-{{ 'success' if secret.status == 'Configured' else 'warning' }}">{{ secret.status }}</span></div>
+    {% endfor %}</div>
+  </section>
+</div>
+
+<div class="control-two-column">
+  <section class="control-panel">
+    <div class="panel-head"><div><h2>Upload boundary</h2><p>Server-side checks remain authoritative.</p></div><span class="status-chip status-success">protected</span></div>
+    <div class="control-list">
+      <div class="control-list-row"><span><b>Maximum file size</b><small>Request and workflow-specific limits are both enforced.</small></span><span>{{ posture.uploads.max_mb }} MB</span></div>
+      <div class="control-list-row"><span><b>Content validation</b><small>Extension, declared type, signature/content and safe path are checked.</small></span><span class="status-chip status-success">enabled</span></div>
+      <div class="control-list-row"><span><b>Storage</b><small>{{ posture.uploads.storage }}</small></span><span class="status-chip status-success">private path</span></div>
+    </div>
+  </section>
+  <section class="control-panel">
+    <div class="panel-head"><div><h2>Backup posture</h2><p>Inventory only; restore stays server-side.</p></div><span>{{ posture.backups.total }}</span></div>
+    <div class="control-list">
+      {% if posture.backups.latest %}<div class="control-list-row"><span><b>Latest SQLite snapshot</b><small>{{ posture.backups.latest.modified_at }} · {{ (posture.backups.latest.size / 1024 / 1024)|round(2) }} MB</small></span><span class="status-chip status-{{ 'success' if posture.backups.latest.age_hours <= 168 else 'warning' }}">{{ posture.backups.latest.age_hours }}h</span></div>
+      {% else %}<div class="empty">No local SQLite snapshot is available.</div>{% endif %}
+      <div class="control-list-row"><span><b>Integrity verification</b><small>Use the existing read-only verification workflow for a selected snapshot.</small></span><a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.control_backups') }}">Review</a></div>
+    </div>
+  </section>
+</div>
+
+<section class="control-panel">
+  <div class="panel-head"><div><h2>Recent security and audit events</h2><p>Allowlisted fields from the existing redacted structured logs.</p></div><span>{{ events|length }}</span></div>
+  <div class="control-table-wrap" role="region" tabindex="0" aria-label="Recent security events">
+    <table class="control-table">
+      <thead><tr><th>Time</th><th>Event</th><th>Severity</th><th>Outcome</th><th>Actor / source</th><th>Route</th><th>Request</th></tr></thead>
+      <tbody>{% for event in events %}
+      <tr><td>{{ event.when[:19] or 'Unknown' }}</td><td><b>{{ event.event }}</b><span class="table-subline">{{ event.message }}</span></td><td><span class="status-chip status-{{ 'danger' if event.level in ['ERROR','CRITICAL'] else 'warning' if event.level == 'WARNING' else 'info' }}">{{ event.level }}</span></td><td>{{ event.details.get('outcome', '—') }}</td><td>{{ event.details.get('actor') or event.details.get('client_ip_hash') or event.details.get('client_ip') or '—' }}</td><td>{{ event.details.get('path', '—') }}</td><td><code>{{ event.request_id or '—' }}</code></td></tr>
+      {% else %}<tr><td colspan="7"><div class="empty">No recent security or audit event is available in the retained log window.</div></td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+
+<div class="control-note"><i class="bi bi-shield-lock"></i><div><b>Application boundary</b><span>This page cannot inspect Docker, the host firewall, SSH, packages, processes, or arbitrary files. Run <code>sudo mifpctl security-check</code> on the VPS and <code>./mifp security production URL</code> externally.</span></div></div>
+{% endblock %}

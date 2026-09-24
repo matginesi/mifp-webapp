@@ -80,6 +80,7 @@ class TestDashboardRoutes:
             ("data-quality", "/dashboard/data-quality", None),
             ("statistics", "/dashboard/stats", None),
             ("logs", "/dashboard/logs", None),
+            ("security", "/dashboard/security", None),
             ("server", "/dashboard/server", None),
             ("cookie-banner", "/dashboard/institutional/cookie", None),
         ]
@@ -120,7 +121,7 @@ class TestDashboardRoutes:
         page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
         page.set_viewport_size({"width": width, "height": height})
         _login(page, live_server)
-        for route in ("/dashboard/", "/dashboard/events", "/dashboard/assets", "/dashboard/data-portability"):
+        for route in ("/dashboard/", "/dashboard/events", "/dashboard/assets", "/dashboard/data-portability", "/dashboard/security"):
             page.goto(f"{live_server}{route}")
             page.wait_for_load_state("networkidle")
             overflow = page.evaluate(
@@ -129,6 +130,23 @@ class TestDashboardRoutes:
             assert overflow <= 1, f"{route} overflows by {overflow}px at {width}px"
         page.screenshot(path=f"/tmp/mifp-dashboard-{width}x{height}.png", full_page=True)
         assert not errors, f"Console errors at {width}px: {errors}"
+
+    @screenshot_on_failure
+    def test_security_page_is_responsive_and_does_not_render_secrets(self, live_server, page):
+        page.set_viewport_size({"width": 375, "height": 812})
+        _login(page, live_server)
+        response = page.goto(f"{live_server}/dashboard/security")
+        page.wait_for_load_state("networkidle")
+        assert response is None or response.ok
+        expect(page.get_by_role("heading", name="Security", exact=True)).to_be_visible()
+        expect(page.get_by_text("Security overview", exact=True)).to_be_visible()
+        body = page.locator("body").inner_text()
+        assert "browser-test-secret-key" not in body
+        assert "browser-test-password" not in body
+        overflow = page.evaluate(
+            "document.documentElement.scrollWidth - document.documentElement.clientWidth"
+        )
+        assert overflow <= 1
 
     @screenshot_on_failure
     def test_compact_shell_and_page_navigation(self, live_server, page):

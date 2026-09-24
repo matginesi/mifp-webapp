@@ -15,9 +15,51 @@
 ./mifp test [quick|webapp|scraper|database|browser|all]
 ./mifp admin
 ./mifp doctor
+./mifp security status
+./mifp security audit [--verbose] [--json] [--strict]
+./mifp security config|headers|filesystem|uploads
+./mifp security secrets [--git-history] [--json] [--strict]
+./mifp security dependencies
+./mifp security image IMAGE
+./mifp security production https://www.mifp.eu [--json] [--strict]
+./mifp security report [--json] [--strict]
 ```
 
 `./mifp` è solo locale. Produzione non usa virtualenv o sorgenti checkout.
+
+### Diagnostica di sicurezza locale
+
+`security status` e `security audit` verificano configurazione Flask, header,
+upload, confini filesystem, gestione dei segreti e contratti Docker/deploy senza
+caricare la webapp né leggere i valori dei segreti. `config`, `headers`,
+`filesystem` e `uploads` filtrano la stessa raccolta di controlli; `report`
+mostra anche le remediation disponibili. Non è un sostituto di
+`sudo mifpctl security-check`, che resta il controllo esplicito della VPS.
+
+Opzioni comuni:
+
+- `--json` produce un documento stabile con `key`, `group`, `status`, `summary`
+  e `remediation`;
+- `--verbose` include le remediation nell'output testuale;
+- `--strict` termina con `1` anche in presenza di `WARNING`.
+
+Codici di uscita: `0` nessun finding bloccante, `1` finding di sicurezza
+(`CRITICAL`, oppure `WARNING` con `--strict`), `2` input/tool non eseguibile o
+target di produzione irraggiungibile. `UNKNOWN` identifica una verifica non
+conclusiva e non viene trasformato in un falso finding.
+
+`security secrets` controlla nomi e pattern credential-shaped negli artefatti
+tracciati, riportando solo file/riga e mai il valore. Con `--git-history` usa
+Gitleaks se già installato; in sua
+assenza segnala lo scan come `UNKNOWN` e continua. `security dependencies` usa
+`pip-audit` dall'ambiente locale quando disponibile. `security image` usa una
+installazione esistente di Trivy. Nessuno dei due scanner viene installato
+automaticamente o aggiunto all'immagine di produzione.
+
+`security production` esegue solo richieste HTTP difensive e limitate: verifica
+TLS/HTTPS, redirect da HTTP, header, flag dei cookie osservati, `/health` e che
+`/ready` sia nascosto. Non effettua crawling, autenticazione, brute force o
+modifiche. I test usano risposte simulate e non dipendono da `mifp.eu`.
 
 ## VPS
 
@@ -41,6 +83,7 @@ sudo mifpctl logs
 sudo mifpctl rollback
 sudo mifpctl backup
 sudo mifpctl doctor
+sudo mifpctl security-check
 ```
 
 Prima installazione:

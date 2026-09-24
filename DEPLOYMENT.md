@@ -45,6 +45,17 @@ Audit read-only di superficie, permessi e isolamento:
 sudo mifpctl security-check
 ```
 
+Da un checkout locale indipendente dalla VPS, verifica inoltre la superficie
+pubblica dopo ogni rilascio:
+
+```bash
+./mifp security production https://www.mifp.eu --strict
+```
+
+Il controllo esterno non autentica, non modifica dati e non esegue crawling.
+Un target irraggiungibile termina con codice `2` e stato `UNKNOWN`, distinto da
+un finding di sicurezza.
+
 Backup manuale immediato:
 
 ```bash
@@ -225,6 +236,27 @@ Il motore di deploy:
 `latest` e ogni altro tag mutabile. Le operazioni che modificano la release
 (`update`, `deploy`, rollback) sono protette da `flock`, quindi non possono
 sovrapporsi.
+
+Procedura completa di aggiornamento sicuro, senza checkout del sorgente sulla
+VPS:
+
+```bash
+# VPS: la pipeline crea e verifica una snapshot prima dello switch
+sudo mifpctl update-check
+sudo mifpctl update
+sudo mifpctl status
+sudo mifpctl doctor
+sudo mifpctl security-check
+
+# workstation, dal checkout corrispondente alla release
+./mifp security production https://www.mifp.eu --strict
+```
+
+Se health/readiness o la verifica esterna falliscono, conserva i log con
+`sudo mifpctl logs` e usa `sudo mifpctl rollback`. Il normale deploy non migra
+il database; quando serve una migrazione, usare esclusivamente il flusso
+`upgrade-db` descritto sotto, che prova immagine e DB candidato su una copia e
+mantiene il rollback congiunto.
 
 ## Test locale con `.home.arpa`
 
