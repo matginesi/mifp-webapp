@@ -203,6 +203,9 @@ def test_show_redacts_every_secret_and_check_is_read_only(tmp_path: Path, capsys
     module, store = _store(tmp_path)
     values = _ready_values() | {"SMTP_PASSWORD": "smtp-top-secret", "RESTIC_PASSWORD": "backup-top-secret"}
     store.save(values)
+    runtime_values = module.read_env(store.runtime)
+    assert runtime_values.get("SMTP_PASSWORD", "") == ""
+    assert runtime_values.get("RESTIC_PASSWORD", "") == ""
     docker_config = tmp_path / "docker.json"
     docker_config.write_text(json.dumps({"auths": {"ghcr.io": {"auth": "opaque"}}}), encoding="utf-8")
     before = (store.config.read_bytes(), store.secrets_path.read_bytes(), store.runtime.read_bytes())
@@ -515,6 +518,55 @@ def test_render_msmtp_config_removes_transport_when_mail_disabled(tmp_path: Path
 
     assert module.render_msmtp_config({"MAIL_PROVIDER": "disabled"}, output) is False
     assert not output.exists()
+
+
+def test_audit_file_content_reports_secret_locations_without_values(tmp_path: Path) -> None:
+    module, store = _store(tmp_path)
+    runtime_secret = "runtime-secret-must-not-leak"
+    config_secret = "config-secret-must-not-leak"
+    store.config.parent.mkdir(parents=True, exist_ok=True)
+    store.runtime.parent.mkdir(parents=True, exist_ok=True)
+    store.config.write_text(f"DOMAIN=example.invalid\nSMTP_PASSWORD={config_secret}\n", encoding="utf-8")
+    store.secrets_path.write_text("SECRET_KEY=canonical-secret\nDOMAIN=wrong-class\n", encoding="utf-8")
+    store.runtime.write_text(f"SECRET_KEY={runtime_secret}\nRESTIC_PASSWORD=''\n", encoding="utf-8")
+
+    errors = module.audit_file_content(store.config, store.secrets_path, store.runtime)
+    rendered = "\n".join(errors)
+
+    assert f"SMTP_PASSWORD unexpectedly present in {store.config}" in rendered
+    assert f"SECRET_KEY unexpectedly present in {store.runtime}" in rendered
+    assert f"DOMAIN unexpectedly present in {store.secrets_path}" in rendered
+    assert runtime_secret not in rendered
+    assert config_secret not in rendered
+    assert "RESTIC_PASSWORD unexpectedly" not in rendered
+
+
+def test_audit_layout_cli_never_prints_secret_values(tmp_path: Path) -> None:
+    _module_obj, store = _store(tmp_path)
+    secret = "audit-cli-secret-must-not-leak"
+    store.config.parent.mkdir(parents=True, exist_ok=True)
+    store.runtime.parent.mkdir(parents=True, exist_ok=True)
+    store.config.write_text(f"SMTP_PASSWORD={secret}\n", encoding="utf-8")
+    store.secrets_path.write_text("SECRET_KEY=canonical-secret\n", encoding="utf-8")
+    store.runtime.write_text(f"EVENTS_REMOTE_PASSWORD={secret}\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "python3", str(HELPER),
+            "--config-file", str(store.config),
+            "--secrets-file", str(store.secrets_path),
+            "--runtime-env", str(store.runtime),
+            "audit-layout",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "SMTP_PASSWORD unexpectedly present" in result.stdout
+    assert "EVENTS_REMOTE_PASSWORD unexpectedly present" in result.stdout
+    assert secret not in result.stdout + result.stderr
 
 
 def test_invalid_smtp_configuration_removes_stale_credential_relay(tmp_path: Path) -> None:

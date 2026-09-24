@@ -112,6 +112,23 @@ attivo e, quando cambia, riusa il motore di `deploy`. Il comando esplicito
 `deploy` continua a rifiutare tag mutabili. `first-deploy sha-<commit>` resta
 disponibile soltanto per compatibilità operativa.
 
+`mifpctl update` aggiorna esclusivamente l'immagine applicativa. Per aggiornare
+il wrapper e gli strumenti installati sotto `/opt/mifp`, copia manualmente
+l'intero `deploy/` in `/tmp/mifp-deploy/` e usa:
+
+```bash
+sudo bash /tmp/mifp-deploy/refresh-host-tools.sh
+sudo mifpctl config-check
+sudo mifpctl security-check
+```
+
+Il refresh non cambia segreti/stato/dati e non riavvia l'applicazione. Il
+bootstrap completo resta riservato alla prima installazione o a provisioning
+host esplicitamente documentato. Se segnala un template Caddy cambiato,
+revisionarlo e applicarlo con `sudo mifpctl configure --section web` (può
+riavviare l'app); una Compose aggiornata attende il successivo deploy/restart
+esplicito.
+
 Manutenzione rara:
 
 ```bash

@@ -31,6 +31,7 @@ def _env(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "MIFP_DOMAIN='example.invalid'\n",
         encoding="utf-8",
     )
+    (home / ".env").chmod(0o600)
     (home / "compose.yaml").write_text(
         "services:\n"
         "  web:\n"
@@ -61,8 +62,11 @@ def _env(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "ADMIN_PASSWORD_HASH='pbkdf2:sha256:600000$abcd$abcd'\n",
         encoding="utf-8",
     )
+    (config_dir / "config.env").chmod(0o640)
+    (config_dir / "secrets.env").chmod(0o600)
     docker_config = tmp_path / "docker-config.json"
     docker_config.write_text('{}\n', encoding="utf-8")
+    docker_config.chmod(0o600)
     hosts_file = tmp_path / "hosts"
     hosts_file.write_text("127.0.0.1 localhost\n", encoding="utf-8")
     caddy_dir = tmp_path / "caddy"
@@ -75,6 +79,9 @@ def _env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     private_root = tmp_path / "events-private"
     for name in ("registrations", "uploads", "sessions", "tmp"):
         (private_root / name).mkdir(parents=True, exist_ok=True)
+    private_root.chmod(0o700)
+    events_root = tmp_path / "event-sites"
+    events_root.mkdir()
     _write_executable(home / "backup.sh", r"""#!/bin/bash
 set -eu
 root="${MIFP_BACKUP_ROOT:?}"
@@ -220,6 +227,27 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
   d="$(digest_for "$3")"; key="$(printf '%s' "$d" | tr '/:@' '___')"; [ -f "$state/$key" ]
   exit $?
 fi
+if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
+  case "$3" in
+    *Config.User*) printf '10001|false|default|true|["no-new-privileges:true"]|[]\n' ;;
+    *Config.Env*)
+      printf 'FLASK_DEBUG=0\nFLASK_ENV=production\n'
+      printf 'SECRET_KEY_FILE=/run/secrets/mifp_secret_key\n'
+      printf 'ADMIN_PASSWORD_HASH_FILE=/run/secrets/mifp_admin_password_hash\n'
+      printf 'SMTP_PASSWORD_FILE=/run/secrets/mifp_smtp_password\n'
+      printf 'EVENTS_REMOTE_PASSWORD_FILE=/run/secrets/mifp_events_remote_password\n'
+      [ -z "${FAKE_CONTAINER_SECRET_NAME:-}" ] || printf '%s=%s\n' "$FAKE_CONTAINER_SECRET_NAME" "${FAKE_CONTAINER_SECRET_VALUE:-hidden}"
+      ;;
+    *Mounts*)
+      printf '/var/lib/docker/secrets/one|/run/secrets/mifp_secret_key|bind\n'
+      printf '/var/lib/docker/secrets/two|/run/secrets/mifp_admin_password_hash|bind\n'
+      printf '/var/lib/docker/secrets/three|/run/secrets/mifp_smtp_password|bind\n'
+      printf '/var/lib/docker/secrets/four|/run/secrets/mifp_events_remote_password|bind\n'
+      [ -z "${FAKE_SENSITIVE_MOUNT_SOURCE:-}" ] || printf '%s|/mnt/unexpected|bind\n' "$FAKE_SENSITIVE_MOUNT_SOURCE"
+      ;;
+  esac
+  exit 0
+fi
 if [ "${1:-}" = run ]; then
   mount=''
   prev=''
@@ -261,6 +289,10 @@ exit 0
             "MIFP_DEPLOY_LOCK_FILE": str(tmp_path / "deploy.lock"),
             "MIFP_RUNTIME_UID": str(os.getuid()),
             "MIFP_RUNTIME_GID": str(os.getgid()),
+            "MIFP_SECURITY_ROOT_UID": str(os.getuid()),
+            "MIFP_SECURITY_ROOT_GID": str(os.getgid()),
+            "MIFP_SECURITY_EVENTS_UID": str(os.getuid()),
+            "MIFP_SECURITY_EVENTS_GID": str(os.getgid()),
             "FAKE_DOCKER_STATE": str(state),
             "FAKE_SYSTEMCTL_LOG": str(tmp_path / "systemctl.log"),
             "MIFP_BACKUP_ROOT": str(tmp_path / "host-backups"),
@@ -286,6 +318,33 @@ def _run(env: dict[str, str], *args: str, check: bool = True) -> subprocess.Comp
         capture_output=True,
         check=check,
     )
+
+
+def _prepare_security_host(env: dict[str, str]) -> None:
+    bin_dir = Path(env["PATH"].split(":", 1)[0])
+    _write_executable(bin_dir / "ss", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        bin_dir / "sshd",
+        "#!/bin/sh\n"
+        "[ \"$1\" = -T ] || exit 0\n"
+        "printf 'port 22\\npasswordauthentication no\\npermitrootlogin prohibit-password\\n'\n",
+    )
+    _write_executable(
+        bin_dir / "ufw",
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  status) printf 'Status: active\\n22/tcp LIMIT Anywhere (v6)\\n80/tcp ALLOW Anywhere (v6)\\n443/tcp ALLOW Anywhere (v6)\\n' ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n",
+    )
+
+
+def _set_running_release(home: Path) -> None:
+    (home / "release.env").write_text(
+        "CURRENT_IMAGE=ghcr.io/example/mifp@sha256:" + "1" * 64 + "\nPREVIOUS_IMAGE=\n",
+        encoding="utf-8",
+    )
+    (home / "release.env").chmod(0o600)
 
 
 def _run_tty(env: dict[str, str], *args: str, input_text: str) -> tuple[int, str]:
@@ -541,6 +600,126 @@ def test_security_check_passes_on_hardened_preinit_host(tmp_path: Path) -> None:
     assert "SSH password authentication disabled" in result.stdout
     assert "Firewall active" in result.stdout
     assert "Firewall IPv6 rules present" in result.stdout
+
+
+def test_security_check_rejects_unsafe_runtime_env_permissions(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _prepare_security_host(env)
+    (home / ".env").chmod(0o644)
+
+    result = _run(env, "security-check", check=False)
+
+    assert result.returncode != 0
+    assert "Runtime environment must be" in result.stdout
+    assert "mode 644" in result.stdout
+
+
+def test_security_check_rejects_runtime_env_symlink(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _prepare_security_host(env)
+    target = tmp_path / "runtime-target.env"
+    target.write_text((home / ".env").read_text(encoding="utf-8"), encoding="utf-8")
+    target.chmod(0o600)
+    (home / ".env").unlink()
+    (home / ".env").symlink_to(target)
+
+    result = _run(env, "security-check", check=False)
+
+    assert result.returncode != 0
+    assert "Runtime environment is not a safe regular file" in result.stdout
+
+
+def test_security_check_rejects_wrong_sensitive_file_owner(tmp_path: Path) -> None:
+    env, _home = _env(tmp_path)
+    _prepare_security_host(env)
+    env["MIFP_SECURITY_ROOT_UID"] = str(os.getuid() + 1)
+
+    result = _run(env, "security-check", check=False)
+
+    assert result.returncode != 0
+    assert "Secrets file must be uid" in result.stdout
+
+
+@pytest.mark.parametrize("location,key", [("runtime", "SMTP_PASSWORD"), ("config", "RESTIC_PASSWORD")])
+def test_security_check_reports_misplaced_secret_key_without_value(
+    tmp_path: Path, location: str, key: str
+) -> None:
+    env, home = _env(tmp_path)
+    _prepare_security_host(env)
+    secret = "do-not-print-this-secret-value"
+    path = home / ".env" if location == "runtime" else Path(env["MIFP_CONFIG_DIR"]) / "config.env"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"{key}={secret}\n")
+
+    result = _run(env, "security-check", check=False)
+    combined = result.stdout + result.stderr
+
+    assert result.returncode != 0
+    assert f"ERROR: {key} unexpectedly present in {path}" in result.stdout
+    assert secret not in combined
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["SECRET_KEY", "ADMIN_PASSWORD_HASH", "SMTP_PASSWORD", "EVENTS_REMOTE_PASSWORD", "RESTIC_PASSWORD"],
+)
+def test_security_check_rejects_every_direct_container_secret_without_printing_value(
+    tmp_path: Path, key: str
+) -> None:
+    env, home = _env(tmp_path)
+    _prepare_security_host(env)
+    _set_running_release(home)
+    secret = "container-secret-must-never-be-printed"
+    env.update(FAKE_CONTAINER_SECRET_NAME=key, FAKE_CONTAINER_SECRET_VALUE=secret)
+
+    result = _run(env, "security-check", check=False)
+    combined = result.stdout + result.stderr
+
+    assert result.returncode != 0
+    assert f"{key} is exposed to the web container" in result.stdout
+    assert secret not in combined
+
+
+def test_security_check_detects_sensitive_public_tree_path(tmp_path: Path) -> None:
+    env, _home = _env(tmp_path)
+    _prepare_security_host(env)
+    public_root = tmp_path / "event-sites"
+    sensitive = public_root / "conference" / "private"
+    sensitive.mkdir(parents=True)
+    (sensitive / "registrations.sqlite").write_text("private-data", encoding="utf-8")
+
+    result = _run(env, "security-check", check=False)
+
+    assert result.returncode != 0
+    assert "sensitive path in published event tree: conference/private" in result.stdout
+    assert "private-data" not in result.stdout + result.stderr
+
+
+def test_security_check_accepts_safe_metadata_and_container_secret_contract(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _prepare_security_host(env)
+    _set_running_release(home)
+
+    result = _run(env, "security-check")
+
+    assert "Secrets file permissions and ownership: OK" in result.stdout
+    assert "Direct container secret isolation: OK" in result.stdout
+    assert "Container /run/secrets mounts: OK" in result.stdout
+    assert "Published event tree sensitive paths: OK" in result.stdout
+
+
+def test_security_check_rejects_sensitive_host_mount_without_printing_source(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _prepare_security_host(env)
+    _set_running_release(home)
+    sensitive_source = str(home / ".env")
+    env["FAKE_SENSITIVE_MOUNT_SOURCE"] = sensitive_source
+
+    result = _run(env, "security-check", check=False)
+
+    assert result.returncode != 0
+    assert "sensitive host path is mounted at /mnt/unexpected" in result.stdout
+    assert sensitive_source not in result.stdout + result.stderr
 
 
 def test_security_check_warns_when_default_password_ssh_is_enabled(tmp_path: Path) -> None:
@@ -1275,3 +1454,131 @@ def test_update_cleans_sqlite_preflight_sidecars(tmp_path: Path) -> None:
     assert result.returncode == 0
     leftovers = list((home / "data" / "tmp").glob("preflight-*.db-shm"))
     assert leftovers == []
+
+
+def _refresh_env(tmp_path: Path, bundle: Path) -> tuple[dict[str, str], Path, Path]:
+    home = tmp_path / "installed" / "opt-mifp"
+    config = tmp_path / "installed" / "etc-mifp"
+    systemd = tmp_path / "installed" / "systemd"
+    sbin = tmp_path / "installed" / "sbin"
+    for directory in (home / "data", config, systemd, sbin):
+        directory.mkdir(parents=True, exist_ok=True)
+    (home / ".env").write_text("runtime-preserved\n", encoding="utf-8")
+    (home / "release.env").write_text("release-preserved\n", encoding="utf-8")
+    (home / "upgrade.env").write_text("upgrade-preserved\n", encoding="utf-8")
+    (home / "data" / "marker").write_text("data-preserved\n", encoding="utf-8")
+    backup = tmp_path / "installed" / "backups"
+    backup.mkdir()
+    (backup / "marker").write_text("backup-preserved\n", encoding="utf-8")
+    (config / "config.env").write_text("config-preserved\n", encoding="utf-8")
+    (config / "secrets.env").write_text("secrets-preserved\n", encoding="utf-8")
+
+    bin_dir = tmp_path / "refresh-bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "id", "#!/bin/sh\n[ \"${1:-}\" = -u ] && { echo 0; exit 0; }\nexec /usr/bin/id \"$@\"\n")
+    _write_executable(
+        bin_dir / "docker",
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"${REFRESH_COMMAND_LOG:?}\"\n"
+        "[ \"${1:-}\" = compose ] && exit 0\nexit 90\n",
+    )
+    _write_executable(
+        bin_dir / "systemctl",
+        "#!/bin/sh\nprintf 'systemctl %s\\n' \"$*\" >> \"${REFRESH_COMMAND_LOG:?}\"\nexit 0\n",
+    )
+    _write_executable(
+        bin_dir / "install",
+        "#!/bin/bash\n"
+        "mode=0755; directory=0; values=()\n"
+        "while (($#)); do case \"$1\" in -m) mode=$2; shift 2;; -o|-g) shift 2;; -d) directory=1; shift;; *) values+=(\"$1\"); shift;; esac; done\n"
+        "if ((directory)); then for value in \"${values[@]}\"; do mkdir -p \"$value\"; chmod \"$mode\" \"$value\"; done; else cp \"${values[-2]}\" \"${values[-1]}\"; chmod \"$mode\" \"${values[-1]}\"; fi\n",
+    )
+    for command in ("apt-get", "ufw", "sshd"):
+        _write_executable(
+            bin_dir / command,
+            f"#!/bin/sh\nprintf '{command} invoked\\n' >> \"${{REFRESH_COMMAND_LOG:?}}\"\nexit 91\n",
+        )
+    env = os.environ.copy()
+    env.update(
+        PATH=f"{bin_dir}:{env['PATH']}",
+        MIFP_HOME=str(home),
+        MIFP_CONFIG_DIR=str(config),
+        MIFP_SYSTEMD_DIR=str(systemd),
+        MIFPCTL_TARGET=str(sbin / "mifpctl"),
+        MIFP_REFRESH_LOCK_FILE=str(tmp_path / "refresh.lock"),
+        REFRESH_COMMAND_LOG=str(tmp_path / "refresh-commands.log"),
+    )
+    return env, home, config
+
+
+def test_host_tool_refresh_preserves_state_and_avoids_provisioning(tmp_path: Path) -> None:
+    bundle = tmp_path / "deploy-bundle"
+    shutil.copytree(ROOT / "deploy", bundle)
+    env, home, config = _refresh_env(tmp_path, bundle)
+    before = {
+        "runtime": (home / ".env").read_bytes(),
+        "release": (home / "release.env").read_bytes(),
+        "upgrade": (home / "upgrade.env").read_bytes(),
+        "data": (home / "data" / "marker").read_bytes(),
+        "backup": (home.parent / "backups" / "marker").read_bytes(),
+        "config": (config / "config.env").read_bytes(),
+        "secrets": (config / "secrets.env").read_bytes(),
+    }
+
+    result = subprocess.run(
+        ["bash", str(bundle / "refresh-host-tools.sh")],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert before == {
+        "runtime": (home / ".env").read_bytes(),
+        "release": (home / "release.env").read_bytes(),
+        "upgrade": (home / "upgrade.env").read_bytes(),
+        "data": (home / "data" / "marker").read_bytes(),
+        "backup": (home.parent / "backups" / "marker").read_bytes(),
+        "config": (config / "config.env").read_bytes(),
+        "secrets": (config / "secrets.env").read_bytes(),
+    }
+    assert stat.S_IMODE((home / "deploy.sh").stat().st_mode) == 0o750
+    assert stat.S_IMODE((home / "compose.yaml").stat().st_mode) == 0o644
+    assert stat.S_IMODE((home / "configure.py").stat().st_mode) == 0o750
+    assert stat.S_IMODE((home / "vps_config.py").stat().st_mode) == 0o750
+    assert stat.S_IMODE((home / "backup.sh").stat().st_mode) == 0o750
+    assert stat.S_IMODE((home / "Caddyfile.example").stat().st_mode) == 0o644
+    assert stat.S_IMODE(Path(env["MIFPCTL_TARGET"]).stat().st_mode) == 0o755
+    log = Path(env["REFRESH_COMMAND_LOG"]).read_text(encoding="utf-8")
+    assert "apt-get invoked" not in log
+    assert "ufw invoked" not in log
+    assert "sshd invoked" not in log
+    assert "restart" not in log
+    assert "reload caddy" not in log
+    assert "Application images remain unchanged" in result.stdout
+    assert "Caddy template changed but the live Caddyfile did not" in result.stdout
+    assert "Compose definition changed" in result.stdout
+
+
+@pytest.mark.parametrize("failure", ["incomplete", "invalid-shell"])
+def test_host_tool_refresh_rejects_invalid_bundle(tmp_path: Path, failure: str) -> None:
+    bundle = tmp_path / "deploy-bundle"
+    shutil.copytree(ROOT / "deploy", bundle)
+    env, home, _config = _refresh_env(tmp_path, bundle)
+    if failure == "incomplete":
+        (bundle / "backup.sh").unlink()
+    else:
+        with (bundle / "deploy.sh").open("a", encoding="utf-8") as handle:
+            handle.write("\nif then invalid shell\n")
+
+    result = subprocess.run(
+        ["bash", str(bundle / "refresh-host-tools.sh")],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert not (home / "deploy.sh").exists()
+    assert (home / ".env").read_text(encoding="utf-8") == "runtime-preserved\n"

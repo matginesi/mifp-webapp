@@ -415,6 +415,43 @@ readable copy of the database **before** switching, waits for `/ready`, and
 records `CURRENT_IMAGE`/`PREVIOUS_IMAGE` only after success. `release.env` never
 persists `:latest`.
 
+### Updating host deploy tooling later
+
+An application image update and a host-tool update are separate operations. If
+files under `deploy/` change, copy that complete directory from a trusted
+workstation and run its narrow refresh script on the already deployed VPS:
+
+```bash
+# workstation
+rsync -a --delete deploy/ OPERATOR@VPS:/tmp/mifp-deploy/
+
+# VPS
+sudo bash /tmp/mifp-deploy/refresh-host-tools.sh
+sudo mifpctl config-check
+sudo mifpctl security-check
+```
+
+The refresh validates the local bundle and updates the installed operator,
+helpers, Compose definition, templates and systemd units. It preserves config,
+secrets, runtime `.env`, release state, data and backups; it does not provision
+packages, firewall, SSH, Docker repositories or live Caddy, and does not restart
+the application. Existing hosts can migrate from the former bootstrap-based
+tool refresh simply by running the script from the newly copied bundle. Keep
+the full bootstrap for first installation and explicit host provisioning only.
+If the Caddy template changed, review it and apply it explicitly with
+`sudo mifpctl configure --section web` (this may restart a running app); the
+refresh deliberately leaves the live Caddyfile untouched. Compose changes take
+effect only on a later explicit application deploy/restart.
+
+To update the application afterwards, run the normal explicit image workflow:
+
+```bash
+sudo mifpctl update-check
+sudo mifpctl update
+sudo mifpctl status
+sudo mifpctl doctor
+```
+
 ---
 
 ## 15. Health verification

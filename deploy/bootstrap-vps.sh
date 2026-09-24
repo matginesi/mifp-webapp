@@ -83,7 +83,8 @@ if [[ -z "$SSH_PORT" ]]; then
 fi
 [[ "$SSH_PORT" =~ ^[0-9]+$ ]] && ((SSH_PORT >= 1 && SSH_PORT <= 65535)) || die "Porta SSH non valida: $SSH_PORT"
 [[ -f "$SCRIPT_DIR/configure.py" && -f "$SCRIPT_DIR/vps_config.py" \
-  && -f "$SCRIPT_DIR/backup.sh" && -f "$SCRIPT_DIR/mifpctl" && -f "$SCRIPT_DIR/local-hosts.sh" ]] \
+  && -f "$SCRIPT_DIR/backup.sh" && -f "$SCRIPT_DIR/mifpctl" && -f "$SCRIPT_DIR/local-hosts.sh" \
+  && -f "$SCRIPT_DIR/refresh-host-tools.sh" ]] \
   || die "Cartella deploy incompleta: copia tutti i file deploy/."
 
 say "Installo i pacchetti di base"
@@ -192,6 +193,7 @@ install -o root -g root -m 0644 "$SCRIPT_DIR/.env.production.example" "$MIFP_HOM
 install -o root -g root -m 0644 "$SCRIPT_DIR/Caddyfile" "$MIFP_HOME/Caddyfile.example"
 install -o root -g root -m 0750 "$SCRIPT_DIR/backup.sh" "$MIFP_HOME/backup.sh"
 install -o root -g root -m 0750 "$SCRIPT_DIR/local-hosts.sh" "$MIFP_HOME/local-hosts.sh"
+install -o root -g root -m 0750 "$SCRIPT_DIR/refresh-host-tools.sh" "$MIFP_HOME/refresh-host-tools.sh"
 install -o root -g root -m 0755 "$SCRIPT_DIR/mifpctl" /usr/local/sbin/mifpctl
 install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-backup.service" /etc/systemd/system/mifp-backup.service
 install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-backup.timer" /etc/systemd/system/mifp-backup.timer

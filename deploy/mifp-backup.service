@@ -5,7 +5,7 @@ After=local-fs.target
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/mifp/secrets.env
-UnsetEnvironment=SECRET_KEY ADMIN_PASSWORD_HASH SMTP_PASSWORD
+UnsetEnvironment=SECRET_KEY ADMIN_PASSWORD_HASH SMTP_PASSWORD EVENTS_REMOTE_PASSWORD
 UMask=0077
 ExecStart=/opt/mifp/backup.sh
 Nice=10

@@ -203,6 +203,52 @@ include e non li protegge.
 
 ## Tre cicli separati
 
+### Aggiornare gli strumenti host (senza aggiornare l'app)
+
+Una modifica sotto `deploy/` non è una nuova immagine applicativa. Da un
+checkout verificato, copia manualmente l'intero bundle e avvia lo script che si
+trova **nel bundle copiato**:
+
+```bash
+# workstation
+rsync -a --delete deploy/ OPERATOR@VPS:/tmp/mifp-deploy/
+
+# VPS
+sudo bash /tmp/mifp-deploy/refresh-host-tools.sh
+sudo mifpctl config-check
+sudo mifpctl security-check
+```
+
+`refresh-host-tools.sh` è riservato a un host già inizializzato. Verifica che il
+bundle sia completo, rifiuta symlink/file modificabili da gruppo o altri,
+controlla la sintassi shell/Python e valida Compose prima di installare i file
+con sostituzioni atomiche. Aggiorna il wrapper, `deploy.sh`, helper, backup,
+template, Compose e unit systemd; esegue `daemon-reload` soltanto se le unit sono
+cambiate. Non esegue apt, non modifica firewall/SSH/repository Docker, non
+tocca il Caddyfile live, non riavvia container o servizi e conserva
+`/etc/mifp/{config,secrets}.env`, `/opt/mifp/.env`, release/upgrade state, DB,
+dati e backup.
+Se cambia il template Caddy, il comando lascia intenzionalmente invariata la
+configurazione live e segnala di revisionarla e applicarla esplicitamente con
+`sudo mifpctl configure --section web` (che può riavviare l'app in esecuzione).
+Una nuova Compose entra invece in vigore solo al successivo deploy/restart
+applicativo esplicito.
+
+Questo sostituisce il vecchio uso del bootstrap idempotente per il solo refresh
+degli strumenti. `bootstrap-vps.sh` resta il percorso corretto per una prima
+installazione o per modifiche esplicite di provisioning host. Non esiste alcun
+self-update remoto: la sorgente è sempre il bundle `deploy/` copiato a mano.
+
+Se il refresh include una nuova definizione Compose, questa viene usata solo al
+successivo comando applicativo esplicito. Per aggiornare poi l'applicazione:
+
+```bash
+sudo mifpctl update-check
+sudo mifpctl update
+sudo mifpctl status
+sudo mifpctl doctor
+```
+
 ### 1. Nuovo codice
 
 Flusso normale dopo `git push origin main` e GitHub Actions verde:

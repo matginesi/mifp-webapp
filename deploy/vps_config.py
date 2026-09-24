@@ -58,6 +58,8 @@ RUNTIME_TO_CANONICAL = {
     "ADMIN_USERNAME": "ADMIN_USERNAME",
     "ADMIN_PASSWORD_HASH": "ADMIN_PASSWORD_HASH",
     "SECRET_KEY": "SECRET_KEY",
+    "RESTIC_PASSWORD": "RESTIC_PASSWORD",
+    "EVENTS_REMOTE_PASSWORD": "EVENTS_REMOTE_PASSWORD",
     "EVENTS_PUBLIC_BASE_URL": "EVENTS_PUBLIC_BASE_URL",
     "EVENTS_PUBLISH_BACKEND": "EVENTS_PUBLISH_BACKEND",
 }
@@ -303,9 +305,9 @@ class Store:
             "ADMIN_PASSWORD_HASH": "",
             "SECRET_KEY": "",
             "EVENTS_REMOTE_PASSWORD": "",
+            "RESTIC_PASSWORD": "",
         }
         update_runtime_env(self.runtime, runtime_updates, self.example)
-
     def migrate(
         self, *, domain: str = "", image_repository: str = "", save: bool = True
     ) -> dict[str, str]:
@@ -342,6 +344,25 @@ class Store:
         if save:
             self.save(values)
         return values
+
+
+def audit_file_content(config: Path, secrets_path: Path, runtime: Path) -> list[str]:
+    """Return location/class violations without ever returning secret values."""
+    errors: list[str] = []
+    public_values = read_env(config)
+    secret_values = read_env(secrets_path)
+    runtime_values = read_env(runtime)
+
+    for key in sorted(public_values):
+        if key not in PUBLIC_KEYS:
+            errors.append(f"{key} unexpectedly present in {config}")
+    for key in SECRET_KEYS:
+        if runtime_values.get(key):
+            errors.append(f"{key} unexpectedly present in {runtime}")
+    for key in sorted(secret_values):
+        if key not in SECRET_KEYS:
+            errors.append(f"{key} unexpectedly present in {secrets_path}")
+    return errors
 
 
 def derive_domains(values: dict[str, str]) -> None:
@@ -630,6 +651,7 @@ def parser() -> argparse.ArgumentParser:
     subs.add_parser("show")
     subs.add_parser("check")
     subs.add_parser("validate", help=argparse.SUPPRESS)
+    subs.add_parser("audit-layout", help=argparse.SUPPRESS)
     subs.add_parser("import-admin", help=argparse.SUPPRESS)
     get_cmd = subs.add_parser("get")
     get_cmd.add_argument("key")
@@ -660,7 +682,7 @@ def main() -> int:
     if args.command == "set" and key in SECRET_INPUT_KEYS:
         raise SystemExit("Refusing secret on command line; use: sudo mifpctl configure")
     # show/check/get are intentionally read-only: no migration, defaults or chmod.
-    if args.command in {"show", "check", "validate", "get"}:
+    if args.command in {"show", "check", "validate", "audit-layout", "get"}:
         values = store.values()
     elif args.command == "import-admin":
         values = store.values()
@@ -709,6 +731,11 @@ def main() -> int:
             for error in errors:
                 print(f"ERROR: {error}", file=sys.stderr)
             return 1
+    elif args.command == "audit-layout":
+        errors = audit_file_content(store.config, store.secrets_path, store.runtime)
+        for error in errors:
+            print(f"ERROR: {error}")
+        return 1 if errors else 0
     elif args.command == "get":
         if key in SECRET_KEYS:
             raise SystemExit("Secret values cannot be displayed")

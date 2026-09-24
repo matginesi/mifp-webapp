@@ -53,6 +53,23 @@ def test_production_compose_has_no_build_and_uses_registry_image() -> None:
     assert web["environment"]["GUNICORN_BIND"] == "0.0.0.0:8000"
     assert web["environment"]["LOG_OUTPUT"] == "stdout"
     assert web["environment"]["RESTIC_PASSWORD"] == ""
+    expected_secret_files = {
+        "SECRET_KEY_FILE": "/run/secrets/mifp_secret_key",
+        "ADMIN_PASSWORD_HASH_FILE": "/run/secrets/mifp_admin_password_hash",
+        "SMTP_PASSWORD_FILE": "/run/secrets/mifp_smtp_password",
+        "EVENTS_REMOTE_PASSWORD_FILE": "/run/secrets/mifp_events_remote_password",
+    }
+    for key, target in expected_secret_files.items():
+        assert web["environment"][key] == target
+    for key in ("SECRET_KEY", "ADMIN_PASSWORD_HASH", "SMTP_PASSWORD", "EVENTS_REMOTE_PASSWORD"):
+        assert key not in web["environment"]
+    assert set(web["secrets"]) == {
+        "mifp_secret_key",
+        "mifp_admin_password_hash",
+        "mifp_smtp_password",
+        "mifp_events_remote_password",
+    }
+    assert set(compose["secrets"]) == set(web["secrets"])
     assert "127.0.0.1:8000:8000" in web["ports"]
     assert web["cap_drop"] == ["ALL"]
     assert web["security_opt"] == ["no-new-privileges:true"]

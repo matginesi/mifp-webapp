@@ -442,7 +442,37 @@ https://vpsbox.home.arpa/login
 Non usare `curl -k` come soluzione permanente: nasconde una CA non installata o
 un hostname errato.
 
-## 4. Deploy delle versioni successive
+## 4. Aggiornamenti successivi
+
+### 4.1 Strumenti host da `deploy/`
+
+Gli strumenti host e l'immagine applicativa hanno cicli distinti. Quando cambia
+`deploy/`, copia il bundle completo dalla workstation e usa il refresh ristretto:
+
+```bash
+# workstation, dalla root del repository
+rsync -a --delete deploy/ OPERATOR@VPS:/tmp/mifp-deploy/
+
+# VPS già inizializzata
+sudo bash /tmp/mifp-deploy/refresh-host-tools.sh
+sudo mifpctl config-check
+sudo mifpctl security-check
+```
+
+Il refresh valida completezza e sintassi del bundle, installa atomicamente dove
+possibile e ricarica systemd solo se cambiano le unit. Non installa pacchetti,
+non modifica UFW o SSH, non riconfigura i repository Docker, non sostituisce il
+Caddyfile live e non riavvia l'app. Conserva configurazione, segreti, `.env`,
+stato release/upgrade, DB, dati e backup. Anche su host creati col workflow
+precedente si esegue direttamente lo script del nuovo bundle copiato; non serve
+prima installarlo. Usa ancora `bootstrap-vps.sh` soltanto per il provisioning
+iniziale o quando una modifica documentata richiede provisioning host.
+Se il template Caddy è cambiato, il refresh non lo applica live: dopo la
+revisione usa esplicitamente `sudo mifpctl configure --section web` (può
+riavviare l'app). Le modifiche Compose attendono il successivo deploy/restart
+applicativo esplicito.
+
+### 4.2 Immagine applicativa
 
 Dopo un push su `main`, attendi che GitHub Actions sia verde e usa il canale
 `latest` soltanto per scoprire la release verificata più recente:

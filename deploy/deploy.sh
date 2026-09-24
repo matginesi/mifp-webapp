@@ -33,6 +33,8 @@ SSHD_DROPIN="${MIFP_SSHD_DROPIN:-/etc/ssh/sshd_config.d/99-mifp-hardening.conf}"
 SSHD_ROLLBACK="${MIFP_SSHD_ROLLBACK:-/root/.mifp-sshd-rollback.conf}"
 RUNTIME_UID="${MIFP_RUNTIME_UID:-10001}"
 RUNTIME_GID="${MIFP_RUNTIME_GID:-10001}"
+SECURITY_ROOT_UID="${MIFP_SECURITY_ROOT_UID:-0}"
+SECURITY_ROOT_GID="${MIFP_SECURITY_ROOT_GID:-0}"
 COMPOSE_BASE=(docker compose --project-name mifp --project-directory "$MIFP_HOME" --env-file "$ENV_FILE" --env-file "$PUBLIC_CONFIG_FILE" -f "$COMPOSE_FILE")
 
 say() { printf '%s\n' "$*"; }
@@ -348,7 +350,8 @@ compose_with_image() {
   local SECRET_KEY="" ADMIN_PASSWORD_HASH="" SMTP_PASSWORD="" EVENTS_REMOTE_PASSWORD=""
   if [[ -f "$SECRETS_FILE" && ! -L "$SECRETS_FILE" ]]; then
     set -a
-    # shellcheck disable=SC1090 -- root-managed file written by vps_config.py.
+    # Root-managed file written by vps_config.py.
+    # shellcheck disable=SC1090
     source "$SECRETS_FILE"
     set +a
   fi
@@ -1500,6 +1503,39 @@ do_security_check() {
   security_warn() { say "WARN: $*"; warnings=$((warnings + 1)); }
   security_ok() { say "$*: OK"; }
 
+  security_file() {
+    local label="$1" path="$2" expected_mode="$3" expected_uid="$4" expected_gid="$5" optional="${6:-false}" details
+    if [[ ! -e "$path" && ! -L "$path" ]]; then
+      [[ "$optional" == true ]] && { say "$label: NOT CONFIGURED"; return 0; }
+      security_error "missing $label: $path"
+      return
+    fi
+    if [[ -L "$path" || ! -f "$path" ]]; then
+      security_error "$label is not a safe regular file: $path"
+      return
+    fi
+    details="$(stat -c '%a|%u|%g' "$path" 2>/dev/null || true)"
+    if [[ "$details" == "$expected_mode|$expected_uid|$expected_gid" ]]; then
+      security_ok "$label permissions and ownership"
+    else
+      IFS='|' read -r mode file_uid file_gid <<<"$details"
+      security_error "$label must be uid ${expected_uid}, gid ${expected_gid}, mode 0${expected_mode} (found uid ${file_uid:-unknown}, gid ${file_gid:-unknown}, mode ${mode:-unknown})"
+    fi
+  }
+
+  security_state_file() {
+    local path="$1" label="$2" allowed="$3"
+    [[ -e "$path" || -L "$path" ]] || return 0
+    security_file "$label" "$path" 600 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID"
+    [[ -f "$path" && ! -L "$path" ]] || return 0
+    if ! grep -Eq "^(${allowed})=" "$path" 2>/dev/null \
+       || grep -Evq "^(${allowed})=[^[:cntrl:]]*$" "$path" 2>/dev/null; then
+      security_error "$label contains an unexpected key or malformed line"
+    else
+      security_ok "$label content class"
+    fi
+  }
+
   if caddy validate --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null 2>&1; then
     security_ok "Caddy configuration"
   else
@@ -1610,19 +1646,28 @@ do_security_check() {
   bad="$(find "$MIFP_HOME" -maxdepth 1 \( -name '.release.env.*' -o -name '.upgrade.env.*' \) -print -quit 2>/dev/null || true)"
   [[ -z "$bad" ]] && security_ok "Stale deployment staging" || security_error "stale staging file/directory: $bad"
 
-  if [[ -f "$SECRETS_FILE" && ! -L "$SECRETS_FILE" ]]; then
-    mode="$(stat -c '%a' "$SECRETS_FILE" 2>/dev/null || true)"
-    [[ "$mode" == 600 ]] && security_ok "Secrets permissions" || security_error "$SECRETS_FILE mode is ${mode:-unknown}, expected 600"
+  security_file "Runtime environment" "$ENV_FILE" 600 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID"
+  security_file "Secrets file" "$SECRETS_FILE" 600 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID"
+  security_file "Public config" "$PUBLIC_CONFIG_FILE" 640 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID"
+  security_state_file "$RELEASE_FILE" "Release state" 'CURRENT_IMAGE|PREVIOUS_IMAGE'
+  security_state_file "$UPGRADE_FILE" "Upgrade state" 'UPGRADED_IMAGE|PREVIOUS_IMAGE|PREVIOUS_DB'
+
+  local layout_audit=""
+  if layout_audit="$(config_cli audit-layout 2>&1)"; then
+    security_ok "Secret/config location"
   else
-    security_error "missing or unsafe secrets file: $SECRETS_FILE"
+    local layout_line layout_reported=0
+    while IFS= read -r layout_line; do
+      if [[ "$layout_line" =~ ^ERROR:\ (SECRET_KEY|ADMIN_PASSWORD_HASH|SMTP_PASSWORD|RESTIC_PASSWORD|EVENTS_REMOTE_PASSWORD|[A-Z][A-Z0-9_]*)\ unexpectedly\ present\ in\  ]]; then
+        say "$layout_line"
+        layout_reported=1
+      fi
+    done <<<"$layout_audit"
+    (( layout_reported )) || security_error "unable to verify secret/config content classes"
+    failed=1
   fi
-  if [[ -f "$PUBLIC_CONFIG_FILE" && ! -L "$PUBLIC_CONFIG_FILE" ]]; then
-    mode="$(stat -c '%a' "$PUBLIC_CONFIG_FILE" 2>/dev/null || true)"
-    [[ "$mode" == 640 ]] && security_ok "Public config permissions" || security_error "$PUBLIC_CONFIG_FILE mode is ${mode:-unknown}, expected 640"
-  else
-    security_error "missing or unsafe public config: $PUBLIC_CONFIG_FILE"
-  fi
-  local events_backend mail_provider smtp_host relay_owner relay_group
+
+  local events_backend mail_provider smtp_host
   events_backend="$(config_cli get EVENTS_PUBLISH_BACKEND)"
   mail_provider="$(config_cli get MAIL_PROVIDER)"
   smtp_host="$(config_cli get SMTP_HOST)"
@@ -1630,26 +1675,58 @@ do_security_check() {
     mail_provider="smtp"
   fi
   if [[ "$events_backend" == "local-vps" && "$mail_provider" == "smtp" ]]; then
-    if [[ -f "$MAIL_RELAY_CONFIG" && ! -L "$MAIL_RELAY_CONFIG" ]]; then
-      mode="$(stat -c '%a' "$MAIL_RELAY_CONFIG" 2>/dev/null || true)"
-      relay_owner="$(stat -c '%U' "$MAIL_RELAY_CONFIG" 2>/dev/null || true)"
-      relay_group="$(stat -c '%G' "$MAIL_RELAY_CONFIG" 2>/dev/null || true)"
-      [[ "$mode" == 640 && "$relay_owner" == root && "$relay_group" == "$EVENTS_PHP_USER" ]]         && security_ok "Event SMTP relay secret permissions"         || security_error "$MAIL_RELAY_CONFIG must be root:$EVENTS_PHP_USER mode 0640"
-    else
-      security_error "missing or unsafe event SMTP relay config: $MAIL_RELAY_CONFIG"
-    fi
+    local events_php_gid
+    events_php_gid="$(id -g "$EVENTS_PHP_USER" 2>/dev/null || true)"
+    [[ -n "$events_php_gid" ]] \
+      && security_file "Event SMTP relay secret" "$MAIL_RELAY_CONFIG" 640 "$SECURITY_ROOT_UID" "$events_php_gid" \
+      || security_error "cannot resolve group for event PHP user: $EVENTS_PHP_USER"
   elif [[ -e "$MAIL_RELAY_CONFIG" ]]; then
     security_error "stale event SMTP relay config exists while it is not required: $MAIL_RELAY_CONFIG"
   fi
-  if [[ -f "$DOCKER_CONFIG_FILE" ]]; then
-    if [[ -L "$DOCKER_CONFIG_FILE" ]]; then
-      security_error "Docker config is a symlink: $DOCKER_CONFIG_FILE"
+  security_file "Docker credentials" "$DOCKER_CONFIG_FILE" 600 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID" true
+
+  local backup_root restic_password_file
+  backup_root="${MIFP_BACKUP_ROOT:-/var/backups/mifp}"
+  if [[ -e "$backup_root" || -L "$backup_root" ]]; then
+    local backup_details
+    backup_details="$(stat -c '%F|%a|%u|%g' "$backup_root" 2>/dev/null || true)"
+    [[ ! -L "$backup_root" && "$backup_details" == "directory|700|$SECURITY_ROOT_UID|$SECURITY_ROOT_GID" ]] \
+      && security_ok "Backup root permissions and ownership" \
+      || security_error "backup root must be a root-owned mode 0700 directory: $backup_root"
+  fi
+  restic_password_file="$(env_value MIFP_RESTIC_PASSWORD_FILE || true)"
+  if [[ -n "$restic_password_file" ]]; then
+    security_file "Restic password file" "$restic_password_file" 600 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID"
+  fi
+
+  if [[ "$events_backend" == "local-vps" ]]; then
+    local events_uid events_gid private_details events_root
+    events_uid="${MIFP_SECURITY_EVENTS_UID:-$(id -u "$EVENTS_PHP_USER" 2>/dev/null || true)}"
+    events_gid="${MIFP_SECURITY_EVENTS_GID:-$(id -g "$EVENTS_PHP_USER" 2>/dev/null || true)}"
+    private_details="$(stat -c '%F|%a|%u|%g' "$EVENTS_PRIVATE_DIR" 2>/dev/null || true)"
+    [[ -n "$events_uid" && -n "$events_gid" && ! -L "$EVENTS_PRIVATE_DIR" && "$private_details" == "directory|700|$events_uid|$events_gid" ]] \
+      && security_ok "Private event storage permissions and ownership" \
+      || security_error "private event storage must be owned by $EVENTS_PHP_USER and mode 0700: $EVENTS_PRIVATE_DIR"
+
+    events_root="$(config_cli get EVENTS_LOCAL_ROOT)"
+    if [[ -d "$events_root" && ! -L "$events_root" ]]; then
+      if bad="$(find "$events_root" -xdev -mindepth 1 \
+        \( -type d \( -iname private -o -iname registrations -o -iname config \) \
+        -o -iname '.env' -o -iname '.env.*' -o -iname '*.key' -o -iname '*.pem' \
+        -o -iname 'credentials*.json' -o -iname 'secrets*.json' -o -iname 'tokens*.json' \
+        -o -iname '*.db' -o -iname '*.sqlite*' -o -iname '*.bak' -o -iname '*.backup' \
+        -o -iname '.htpasswd' -o -iname 'git-credentials' \) -print -quit 2>/dev/null)"; then
+        if [[ -z "$bad" ]]; then
+          security_ok "Published event tree sensitive paths"
+        else
+          security_error "sensitive path in published event tree: ${bad#"$events_root"/}"
+        fi
+      else
+        security_error "unable to inspect the published event tree"
+      fi
     else
-      mode="$(stat -c '%a' "$DOCKER_CONFIG_FILE" 2>/dev/null || true)"
-      [[ "$mode" == 600 ]] && security_ok "Docker credentials permissions" || security_error "$DOCKER_CONFIG_FILE mode is ${mode:-unknown}, expected 600"
+      security_error "event publication root is missing, unsafe, or a symlink: $events_root"
     fi
-  else
-    say "Docker credentials: NOT CONFIGURED"
   fi
 
   if has ss; then
@@ -1659,7 +1736,7 @@ do_security_check() {
         if (local_addr ~ /^127\.0\.0\.1:/ || local_addr ~ /^\[::1\]:/) next;
         n=split(local_addr, parts, ":"); port=parts[n]; gsub(/[^0-9]/, "", port);
         if (port == "80" || port == "443" || proc ~ /sshd/) next;
-        print; exit;
+        print local_addr; exit;
       }')"
     [[ -z "$unexpected" ]] && security_ok "Unexpected public TCP listeners" || security_error "unexpected public listener: $unexpected"
   else
@@ -1684,11 +1761,59 @@ do_security_check() {
       envs="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$cid" 2>/dev/null || true)"
       grep -Fxq 'FLASK_DEBUG=0' <<<"$envs" && security_ok "Production debug" || security_error "FLASK_DEBUG is not explicitly 0"
       grep -Fxq 'FLASK_ENV=production' <<<"$envs" && security_ok "Production environment" || security_error "FLASK_ENV is not production"
-      if grep -Eq '^RESTIC_PASSWORD=.+$' <<<"$envs"; then
-        security_error "RESTIC_PASSWORD is exposed to the web container"
-      else
-        security_ok "Backup credential isolation"
-      fi
+      local secret_key secret_exposed=0
+      # Each finding is key-only (for example, "RESTIC_PASSWORD is exposed");
+      # never echo the corresponding environment entry or value.
+      for secret_key in SECRET_KEY ADMIN_PASSWORD_HASH SMTP_PASSWORD EVENTS_REMOTE_PASSWORD RESTIC_PASSWORD; do
+        if grep -Eq "^${secret_key}=.+$" <<<"$envs"; then
+          security_error "$secret_key is exposed to the web container"
+          secret_exposed=1
+        fi
+      done
+      (( secret_exposed )) || security_ok "Direct container secret isolation"
+
+      local file_key file_path
+      while IFS='|' read -r file_key file_path; do
+        grep -Fxq "${file_key}_FILE=${file_path}" <<<"$envs" \
+          && security_ok "Container ${file_key}_FILE contract" \
+          || security_error "${file_key}_FILE does not use the expected /run/secrets target"
+      done <<'EOF_SECRET_FILES'
+SECRET_KEY|/run/secrets/mifp_secret_key
+ADMIN_PASSWORD_HASH|/run/secrets/mifp_admin_password_hash
+SMTP_PASSWORD|/run/secrets/mifp_smtp_password
+EVENTS_REMOTE_PASSWORD|/run/secrets/mifp_events_remote_password
+EOF_SECRET_FILES
+
+      local mount_lines mount_source mount_target _mount_type mount_problem=0
+      local found_secret_key=0 found_admin_hash=0 found_smtp_password=0 found_events_password=0
+      mount_lines="$(docker inspect --format '{{range .Mounts}}{{println .Source "|" .Destination "|" .Type}}{{end}}' "$cid" 2>/dev/null || true)"
+      while IFS='|' read -r mount_source mount_target _mount_type; do
+        [[ -n "$mount_target" ]] || continue
+        case "$mount_target" in
+          /run/secrets/mifp_secret_key) found_secret_key=1 ;;
+          /run/secrets/mifp_admin_password_hash) found_admin_hash=1 ;;
+          /run/secrets/mifp_smtp_password) found_smtp_password=1 ;;
+          /run/secrets/mifp_events_remote_password) found_events_password=1 ;;
+          /run/secrets/*)
+            security_error "unexpected secret mount target in web container: $mount_target"
+            mount_problem=1
+            ;;
+        esac
+        case "$mount_target" in /run/secrets/mifp_*) continue ;; esac
+        case "$mount_source|$mount_target" in
+          "$DATA_DIR|/app/data"|"$events_root|/app/event-sites") continue ;;
+        esac
+        case "$mount_source" in
+          "$ENV_FILE"|"$PUBLIC_CONFIG_FILE"|"$SECRETS_FILE"|"$DOCKER_CONFIG_FILE"|"$MAIL_RELAY_CONFIG"|"$MIFP_HOME"|"$MIFP_HOME"/*|"$CONFIG_DIR"|"$CONFIG_DIR"/*|"$EVENTS_PRIVATE_DIR"|"$EVENTS_PRIVATE_DIR"/*|"$backup_root"|"$backup_root"/*|/root|/root/*|/etc|/etc/*)
+            security_error "sensitive host path is mounted at $mount_target"
+            mount_problem=1
+            ;;
+        esac
+      done <<<"$mount_lines"
+      [[ "$found_secret_key$found_admin_hash$found_smtp_password$found_events_password" == 1111 ]] \
+        && security_ok "Container /run/secrets mounts" \
+        || security_error "one or more required /run/secrets mounts are missing"
+      (( mount_problem )) || security_ok "Unexpected sensitive host mounts"
     fi
   else
     say "Container checks: NOT INITIALIZED"
