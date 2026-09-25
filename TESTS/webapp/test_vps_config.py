@@ -193,7 +193,7 @@ def test_deterministic_atomic_saves_have_no_duplicate_keys(tmp_path: Path) -> No
 @pytest.mark.parametrize(
     ("key", "value"),
     [("DOMAIN", "bad domain"), ("PUBLIC_IPV4", "999.1.2.3"),
-     ("SMTP_PORT", "70000"), ("SMTP_SECURITY", "sometimes")],
+     ("SMTP_PORT", "70000"), ("SMTP_SECURITY", "sometimes"), ("MAIL_TO", "not-an-email")],
 )
 def test_invalid_values_are_rejected(key: str, value: str) -> None:
     with pytest.raises(ValueError):
@@ -235,6 +235,16 @@ def test_show_redacts_every_secret_and_check_is_read_only(tmp_path: Path, capsys
     )
     assert shown.returncode == 0, shown.stderr
     assert "smtp-top-secret" not in shown.stdout + shown.stderr
+
+
+def test_smtp_provider_requires_complete_notification_destination(tmp_path: Path) -> None:
+    module = _module()
+    docker_config = tmp_path / "docker.json"
+    docker_config.write_text('{"auths":{"ghcr.io":{}}}', encoding="utf-8")
+    values = _ready_values() | {"MAIL_PROVIDER": "smtp"}
+    errors, _notes = module.check_configuration(values, docker_config=docker_config)
+    assert any("SMTP: incomplete" in error for error in errors)
+    assert any("MAIL_TO" in error for error in errors)
 
 
 def test_required_missing_fails_but_optional_mail_and_remote_backup_do_not(tmp_path: Path) -> None:
@@ -363,7 +373,7 @@ def test_partial_repeated_wizard_preserves_other_sections(monkeypatch, tmp_path:
     module, store = _store(tmp_path)
     store.save(_ready_values() | {"PUBLIC_IPV4": "192.0.2.10"})
     monkeypatch.setattr(module.sys.stdin, "isatty", lambda: True)
-    answers = iter(["smtp", "smtp.aruba.it", "465", "tls", "info@mifp.eu", "info@mifp.eu", "MIFP", ""])
+    answers = iter(["smtp", "smtp.aruba.it", "465", "tls", "info@mifp.eu", "info@mifp.eu", "MIFP", "operator@example.net", ""])
     monkeypatch.setattr(builtins, "input", lambda _prompt: next(answers))
     monkeypatch.setattr(module.getpass, "getpass", lambda _prompt: "smtp-secret")
     assert module.run_wizard(store, "mail", tmp_path / "missing-docker.json") == 0
@@ -376,6 +386,7 @@ def test_partial_repeated_wizard_preserves_other_sections(monkeypatch, tmp_path:
     assert saved["SMTP_USERNAME"] == "info@mifp.eu"
     assert saved["SMTP_FROM_ADDRESS"] == "info@mifp.eu"
     assert saved["SMTP_FROM_NAME"] == "MIFP"
+    assert saved["MAIL_TO"] == "operator@example.net"
     assert saved["SMTP_PASSWORD"] == "smtp-secret"
     assert "SMTP_PASSWORD" not in module.read_env(store.config)
     assert module.read_env(store.secrets_path)["SMTP_PASSWORD"] == "smtp-secret"

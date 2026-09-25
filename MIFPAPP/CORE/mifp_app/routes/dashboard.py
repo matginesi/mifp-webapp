@@ -661,6 +661,7 @@ from . import (  # noqa: E402,F401
     dashboard_data_quality,
     dashboard_event_import,
     dashboard_logs,
+    dashboard_notifications,
     dashboard_portability,
     dashboard_security,
     dashboard_seo,

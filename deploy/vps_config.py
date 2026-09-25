@@ -24,7 +24,7 @@ PUBLIC_KEYS = (
     "EVENTS_REMOTE_PORT", "EVENTS_REMOTE_USER", "EVENTS_REMOTE_ROOT", "EVENTS_REMOTE_TIMEOUT",
     "REGISTRY", "DNS_PROVIDER", "DNS_EXPECTED_IPV4",
     "DNS_EXPECTED_IPV6", "MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT",
-    "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME",
+    "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME", "MAIL_TO",
     "BACKUP_ENABLED", "BACKUP_LOCAL_RETENTION", "RESTIC_REPOSITORY",
     "ADMIN_USERNAME",
 )
@@ -44,6 +44,7 @@ REQUIRED_KEYS = (
 DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
 REPO_RE = re.compile(r"^ghcr\.io/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,64}$")
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 ADMIN_HASH_RE = re.compile(
     r"^(?:pbkdf2:sha256:\d+|scrypt:\d+:\d+:\d+)\$[^$\s]+\$[^$\s]+$"
 )
@@ -59,6 +60,7 @@ RUNTIME_TO_CANONICAL = {
     "SMTP_USERNAME": "SMTP_USERNAME",
     "SMTP_PASSWORD": "SMTP_PASSWORD",
     "MAIL_FROM": "SMTP_FROM_ADDRESS",
+    "MAIL_TO": "MAIL_TO",
     "MIFP_BACKUP_KEEP": "BACKUP_LOCAL_RETENTION",
     "MIFP_RESTIC_REPOSITORY": "RESTIC_REPOSITORY",
     "ADMIN_USERNAME": "ADMIN_USERNAME",
@@ -240,11 +242,12 @@ def _msmtp_quote(value: str) -> str:
 
 
 def render_msmtp_config(values: dict[str, str], output: Path) -> bool:
-    """Render the host sendmail-compatible relay used by PHP regforms.
+    """Render the root-managed host SMTP relay.
 
-    The SMTP password remains outside event ZIPs and is never printed. The
-    caller is responsible for assigning the final group-readable ownership to
-    the dedicated PHP runtime user after this root-only atomic write.
+    The relay is used by the independent notification monitor and, when the
+    event backend is local-vps, by PHP regforms. The SMTP password is never
+    printed. The caller assigns the narrowest final ownership required by the
+    selected host features after this root-only atomic write.
     """
     provider = str(values.get("MAIL_PROVIDER", "disabled") or "disabled").lower()
     if provider not in {"disabled", "console", "smtp"}:
@@ -357,6 +360,7 @@ class Store:
             "SMTP_USERNAME": values.get("SMTP_USERNAME", ""),
             "MAIL_FROM": values.get("SMTP_FROM_ADDRESS", ""),
             "MAIL_FROM_NAME": values.get("SMTP_FROM_NAME", ""),
+            "MAIL_TO": values.get("MAIL_TO", ""),
             "MIFP_BACKUP_KEEP": values.get("BACKUP_LOCAL_RETENTION", "14"),
             "MIFP_RESTIC_REPOSITORY": values.get("RESTIC_REPOSITORY", ""),
             "ADMIN_USERNAME": values.get("ADMIN_USERNAME", "admin"),
@@ -491,6 +495,8 @@ def normalize_value(key: str, value: str) -> str:
             )
     elif key == "SMTP_SECURITY" and value not in {"tls", "starttls", "none"}:
         raise ValueError("SMTP_SECURITY must be tls, starttls or none")
+    elif key in {"SMTP_FROM_ADDRESS", "MAIL_TO"} and value and not EMAIL_RE.fullmatch(value):
+        raise ValueError(f"invalid email address for {key}")
     elif key in {"BACKUP_ENABLED"} and value.lower() not in {"true", "false"}:
         raise ValueError(f"{key} must be true or false")
     elif key == "BACKUP_LOCAL_RETENTION" and (not value.isdigit() or int(value) < 2):
@@ -563,8 +569,9 @@ def check_configuration(
         notes.append("Registry authentication: configured (optional)")
     else:
         notes.append("Registry authentication: not configured (optional; public images use anonymous access)")
-    smtp_fields = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS")
-    if values.get("SMTP_HOST"):
+    smtp_fields = ("SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "MAIL_TO")
+    smtp_requested = values.get("MAIL_PROVIDER") == "smtp" or bool(values.get("SMTP_HOST"))
+    if smtp_requested:
         missing_smtp = [key for key in smtp_fields if not values.get(key)]
         if missing_smtp:
             errors.append(f"SMTP: incomplete ({', '.join(missing_smtp)} missing)")
@@ -635,7 +642,7 @@ def print_show(values: dict[str, str], docker_config: Path) -> None:
         ("Event publisher", ("EVENTS_PUBLISH_BACKEND", "EVENTS_PUBLIC_BASE_URL", "EVENTS_LOCAL_ROOT", "EVENTS_REMOTE_PROTOCOL", "EVENTS_REMOTE_HOST", "EVENTS_REMOTE_PORT", "EVENTS_REMOTE_USER", "EVENTS_REMOTE_ROOT", "EVENTS_REMOTE_TIMEOUT")),
         ("DNS", ("DNS_PROVIDER", "DNS_EXPECTED_IPV4", "DNS_EXPECTED_IPV6")),
         ("Registry", ("REGISTRY",)),
-        ("Mail", ("MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME")),
+        ("Mail", ("MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME", "MAIL_TO")),
         ("Backups", ("BACKUP_ENABLED", "BACKUP_LOCAL_RETENTION", "RESTIC_REPOSITORY")),
         ("Application", ("ADMIN_USERNAME",)),
     )
@@ -651,7 +658,7 @@ def print_show(values: dict[str, str], docker_config: Path) -> None:
 WIZARD_SECTIONS = {
     "web": ("ENVIRONMENT", "DOMAIN", "WWW_DOMAIN", "IMAGE_REPOSITORY", "PUBLIC_IPV4", "PUBLIC_IPV6"),
     "publisher": ("EVENTS_PUBLISH_BACKEND", "EVENTS_PUBLIC_BASE_URL", "EVENTS_LOCAL_ROOT", "EVENTS_REMOTE_PROTOCOL", "EVENTS_REMOTE_HOST", "EVENTS_REMOTE_PORT", "EVENTS_REMOTE_USER", "EVENTS_REMOTE_ROOT", "EVENTS_REMOTE_TIMEOUT", "EVENTS_REMOTE_PASSWORD"),
-    "mail": ("MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME", "SMTP_PASSWORD"),
+    "mail": ("MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME", "MAIL_TO", "SMTP_PASSWORD"),
     "backup": ("BACKUP_ENABLED", "BACKUP_LOCAL_RETENTION", "RESTIC_REPOSITORY", "RESTIC_PASSWORD"),
 }
 

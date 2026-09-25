@@ -487,15 +487,19 @@ viene letta con input nascosto e salvata esclusivamente come valore canonico in
 root-only in `/etc/mifp/secrets/mifp_smtp_password`; Compose usa esclusivamente
 la sorgente file-backed e la consegna al solo servizio web come
 `/run/secrets/mifp_smtp_password`. Non viene inserita nell'immagine,
-nel file runtime `.env` né nell'environment del container. La dashboard non rende
-host, username o password SMTP. In `local-vps`, la stessa configurazione alimenta
-anche il relay
-`sendmail` compatibile usato dai `regform` PHP tramite un `/etc/msmtprc`
-root-owned e leggibile soltanto dall'utente PHP dedicato. Gli ZIP evento e
-`regform/settings.yaml` non devono contenere password SMTP. Cambiando in futuro
-le credenziali (per esempio verso SMTP Aruba) basta rieseguire
-`sudo mifpctl configure --section mail`; la configurazione host viene rigenerata
-senza esporre il segreto nella command line o nei log.
+nel file runtime `.env` né nell'environment del container. La pagina dashboard
+**Notifications** mostra soltanto stato/parametri non segreti e destinatario
+mascherato: non rende username o password e non offre campi per modificarli.
+
+La stessa configurazione alimenta un `/etc/msmtprc` root-owned per il monitor
+indipendente `mifp-alert-check.timer`, così down, readiness/storage degradati e
+backup falliti possono essere notificati anche se il container web non risponde.
+Quando il backend eventi è `local-vps`, il relay è inoltre leggibile dal solo
+utente PHP dedicato per i `regform`; negli altri casi resta `root:root 0600`.
+Gli ZIP evento e `regform/settings.yaml` non devono contenere password SMTP.
+Cambiando in futuro le credenziali (per esempio verso SMTP Aruba) basta
+rieseguire `sudo mifpctl configure --section mail`; relay, timer e runtime
+vengono riallineati senza esporre il segreto nella command line o nei log.
 
 Non scrivere password in chiaro nel repository, in `config.env` o nel file
 runtime `/opt/mifp/.env`.

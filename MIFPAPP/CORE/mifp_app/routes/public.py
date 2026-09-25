@@ -20,7 +20,7 @@ from flask import (
 from werkzeug.exceptions import HTTPException
 
 from ..db.connection import connect, connect_readonly, write_transaction
-from ..services.mailer import send_mail
+from ..services.notifications import notify
 from ..services.metrics_service import classify_asset_key, increment_daily
 from ..services.public_repository import (
     NEWS_TYPE_LABELS,
@@ -625,24 +625,25 @@ def join():
                             "join.submitted", "Join request submitted", category="join",
                             entity_type="join_request", entity_id=request_id,
                         )
-                        try:
-                            send_mail(
-                                current_app,
-                                to=current_app.config.get("MAIL_TO", "info@mifp.eu"),
-                                subject="New MIFP Join request",
-                                reply_to=form["email"],
-                                body=(
-                                    f"New Join request\n\n"
-                                    f"Name: {form['first_name']} {form['last_name']}\n"
-                                    f"Email: {form['email']}\n"
-                                    f"Affiliation: {form['affiliation']}\n"
-                                    f"Country: {form['country']}\n"
-                                    f"Field: {form['field']}\n\n"
-                                    f"Motivation:\n{form['motivation']}\n"
-                                ),
-                            )
-                        except Exception:
-                            current_app.logger.exception("join notification email failed")
+                        notify(
+                            current_app,
+                            event="join_request",
+                            category="join",
+                            severity="info",
+                            subject="[MIFP] New member request",
+                            body=(
+                                "New MIFP membership request\n\n"
+                                f"Request ID: {request_id}\n"
+                                f"Name: {form['first_name']} {form['last_name']}\n"
+                                f"Affiliation: {form['affiliation'] or 'Not provided'}\n"
+                                f"Country: {form['country'] or 'Not provided'}\n"
+                                f"Field: {form['field'] or 'Not provided'}\n\n"
+                                "Review the complete request in Dashboard → Join requests.\n"
+                            ),
+                            dedup_key=f"join_request:{request_id}",
+                            reply_to=form["email"],
+                            metadata={"request_id": request_id},
+                        )
                         success = True
                         form = {}
             except ValueError:

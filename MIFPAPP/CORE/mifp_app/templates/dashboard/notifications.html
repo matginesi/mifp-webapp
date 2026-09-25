@@ -1,0 +1,92 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Notifications{% endblock %}
+{% block content %}
+{% call page_header('System', 'Notifications', 'Email alerts for application errors, operational problems, downtime and new member requests.') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.logs', event='notification.') }}"><i class="bi bi-list-check"></i> Notification logs</a>
+{% endcall %}
+
+<section class="control-snapshot notification-snapshot" aria-label="Notification status summary">
+  <article><span>Delivery</span><b class="{{ 'text-green' if transport.ready else 'text-amber' }}">{{ 'Ready' if transport.ready else 'Not configured' }}</b><small>{{ transport.provider|upper }}</small></article>
+  <article><span>Recipient</span><b>{{ transport.recipient_masked }}</b><small>Host-managed setting</small></article>
+  <article><span>Errors</span><b>{{ 'On' if notification_settings.notification_errors_enabled == '1' else 'Off' }}</b><small>After {{ notification_settings.notification_error_threshold }} occurrence(s)</small></article>
+  <article><span>Downtime</span><b>{{ 'On' if notification_settings.notification_down_enabled == '1' else 'Off' }}</b><small>After {{ notification_settings.notification_down_threshold }} failed checks</small></article>
+  <article><span>Join requests</span><b>{{ 'On' if notification_settings.notification_join_enabled == '1' else 'Off' }}</b><small>Immediate notification</small></article>
+  <article><span>Security</span><b>{{ 'On' if notification_settings.notification_auth_failed_enabled == '1' or notification_settings.notification_auth_success_enabled == '1' else 'Off' }}</b><small>Login and access activity</small></article>
+</section>
+
+<div class="control-two-column">
+  <section class="control-panel">
+    <div class="panel-head"><div><span class="control-kicker">Mail transport</span><h2>SMTP status</h2><p>Credentials remain on the VPS and are never returned to the browser.</p></div><span class="status-chip status-{{ 'success' if transport.ready else 'warning' }}">{{ 'ready' if transport.ready else 'setup required' }}</span></div>
+    <dl class="system-facts">
+      <div><dt>Provider</dt><dd>{{ transport.provider }}</dd></div>
+      <div><dt>Server</dt><dd>{{ transport.host or 'Not configured' }}{% if transport.port %}:{{ transport.port }}{% endif %}</dd></div>
+      <div><dt>Security</dt><dd>{{ transport.security|upper }}</dd></div>
+      <div><dt>Sender</dt><dd>{{ transport.from_address or 'Not configured' }}</dd></div>
+      <div><dt>Recipient</dt><dd>{{ transport.recipient_masked }}</dd></div>
+      <div><dt>Credentials</dt><dd>{{ 'Configured' if transport.password_configured and transport.username_configured else 'Not configured' }}</dd></div>
+    </dl>
+    <div class="control-note"><i class="bi bi-shield-lock"></i><div><b>Host-managed credentials</b><span>Configure or rotate SMTP only from the VPS with <code>sudo mifpctl configure --section mail</code>. For Aruba use SMTP over TLS on port 465. The dashboard never stores or displays the password.</span></div></div>
+    <form method="post" action="{{ url_for('dashboard.notifications_test') }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <button class="btn btn-outline btn-sm" type="submit"><i class="bi bi-send-check"></i> Send test email</button>
+    </form>
+  </section>
+
+  <section class="control-panel">
+    <div class="panel-head"><div><span class="control-kicker">Delivery policy</span><h2>Alert rules</h2><p>Repeated failures are aggregated before mail is sent.</p></div><span class="status-chip status-{{ 'success' if notification_settings.notification_enabled == '1' else 'warning' }}">{{ 'enabled' if notification_settings.notification_enabled == '1' else 'paused' }}</span></div>
+    <form method="post" action="{{ url_for('dashboard.notifications_save') }}" class="notification-settings-form">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <div class="control-list notification-policy-list">
+        {% set toggles = [
+          ('notification_enabled', 'Email notifications', 'Master switch. SMTP configuration is left untouched.'),
+          ('notification_errors_enabled', 'Application errors', 'Unhandled HTTP/application failures.'),
+          ('notification_problems_enabled', 'Operational problems', 'Readiness, storage and other degraded conditions.'),
+          ('notification_down_enabled', 'Service down', 'Host-level monitor detects repeated failed health checks.'),
+          ('notification_recovery_enabled', 'Recovery messages', 'Send one message when a monitored incident clears.'),
+          ('notification_join_enabled', 'Join requests', 'Send one notification for each new membership request.'),
+          ('notification_auth_failed_enabled', 'Failed access attempts', 'Aggregate failed logins and unauthenticated dashboard access; rate-limit events are highlighted.'),
+          ('notification_auth_success_enabled', 'Successful administrator logins', 'Send a security notification when an administrator signs in; repeated logins respect the cooldown.')
+        ] %}
+        {% for key, label, help_text in toggles %}
+        <label class="control-list-row"><span><b>{{ label }}</b><small>{{ help_text }}</small></span><input type="checkbox" name="{{ key }}" value="1" {{ 'checked' if notification_settings.get(key) == '1' }} aria-label="{{ label }}"></label>
+        {% endfor %}
+      </div>
+      <div class="notification-threshold-grid mt-3">
+        <label class="field"><span>Error threshold</span><input class="form-control form-control-sm" type="number" min="1" max="20" name="notification_error_threshold" value="{{ notification_settings.notification_error_threshold }}" required><small>Occurrences inside the aggregation window.</small></label>
+        <label class="field"><span>Problem threshold</span><input class="form-control form-control-sm" type="number" min="1" max="20" name="notification_problem_threshold" value="{{ notification_settings.notification_problem_threshold }}" required><small>Repeated degraded checks before email.</small></label>
+        <label class="field"><span>Down threshold</span><input class="form-control form-control-sm" type="number" min="1" max="20" name="notification_down_threshold" value="{{ notification_settings.notification_down_threshold }}" required><small>Consecutive host checks before declaring downtime.</small></label>
+        <label class="field"><span>Failed access threshold</span><input class="form-control form-control-sm" type="number" min="1" max="20" name="notification_auth_failed_threshold" value="{{ notification_settings.notification_auth_failed_threshold }}" required><small>Failed login/access events inside the aggregation window.</small></label>
+        <label class="field"><span>Aggregation window</span><input class="form-control form-control-sm" type="number" min="1" max="1440" name="notification_window_minutes" value="{{ notification_settings.notification_window_minutes }}" required><small>Minutes used to count repeated failures.</small></label>
+        <label class="field"><span>Cooldown</span><input class="form-control form-control-sm" type="number" min="1" max="1440" name="notification_cooldown_minutes" value="{{ notification_settings.notification_cooldown_minutes }}" required><small>Minimum minutes between repeated messages for the same issue.</small></label>
+      </div>
+      <div class="inline-actions mt-3"><button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-check2"></i> Save notification rules</button></div>
+    </form>
+  </section>
+</div>
+
+<section class="control-panel">
+  <div class="panel-head"><div><h2>Recent notification activity</h2><p>Sanitized delivery, suppression and failure records from the structured application log.</p></div><span>{{ history|length }}</span></div>
+  <div class="control-table-wrap" role="region" tabindex="0" aria-label="Notification history">
+    <table class="control-table">
+      <thead><tr><th>Time</th><th>Event</th><th>State</th><th>Category</th><th>Message</th></tr></thead>
+      <tbody>
+      {% for row in history %}
+        {% set state = row.event.rsplit('.', 1)[-1] if row.event else 'log' %}
+        <tr>
+          <td>{{ row.when[:19] or '—' }}</td>
+          <td><code>{{ row.details.get('notification_event') or '—' }}</code></td>
+          <td><span class="status-chip status-{{ 'success' if state == 'delivered' else 'danger' if state == 'failed' else 'warning' if state in ['suppressed','skipped'] else 'info' }}">{{ state }}</span></td>
+          <td>{{ row.details.get('category') or '—' }}</td>
+          <td>{{ row.message }}{% if row.details.get('reason') %}<span class="table-subline">{{ row.details.get('reason') }}</span>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5"><div class="empty">No notification activity has been recorded yet.</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="control-note"><i class="bi bi-info-circle"></i><div><b>What is monitored</b><span>Application errors, new member requests and authentication activity are detected inside MIFP. Downtime, public reachability, readiness/storage degradation and failed backup service checks are monitored independently by the VPS timer, so a dead web container cannot silence the alert path.</span></div></div>
+{% endblock %}

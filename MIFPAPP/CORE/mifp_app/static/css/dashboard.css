@@ -2172,6 +2172,26 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .status-danger { color: var(--red); background: var(--red-bg); }
 .status-info { color: var(--blue); background: var(--blue-bg); }
 
+/* Notification settings reuse the control-center language with only scoped
+   layout rules; no parallel component system is introduced. */
+.notification-snapshot { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.notification-policy-list {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+.notification-policy-list .control-list-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+}
+.notification-threshold-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .55rem;
+}
+.notification-threshold-grid .field small { color: var(--text-3); font-size: .58rem; line-height: 1.35; }
+
 .control-list { max-height: 31rem; overflow-y: auto; overscroll-behavior: contain; }
 .control-list:focus-visible { outline-color: var(--focus-ring); outline-offset: -2px; }
 .control-list-row {
@@ -2316,6 +2336,7 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 
 @media (max-width: 900px) {
   .control-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .notification-snapshot { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .control-snapshot > :nth-child(2) { border-right: 0; }
   .control-snapshot > :nth-child(-n+2) { border-bottom: 1px solid var(--border-soft); }
   .storage-row { grid-template-columns: 2rem minmax(0, 1fr) 7rem; }
@@ -2325,6 +2346,7 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 @media (max-width: 680px) {
   .control-tabs { margin-inline: -.1rem; }
   .control-two-column { grid-template-columns: 1fr; }
+  .notification-threshold-grid { grid-template-columns: 1fr; }
   .control-finding { grid-template-columns: .22rem minmax(0, 1fr) auto; }
   .finding-action { grid-column: 2 / -1; text-align: left; }
   .control-quality-workflow { grid-template-columns: 1fr; align-items: start; }
@@ -2345,6 +2367,7 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 
 @media (max-width: 420px) {
   .control-snapshot { grid-template-columns: 1fr; }
+  .notification-snapshot { grid-template-columns: 1fr; }
   .control-snapshot > a,
   .control-snapshot > article { border-right: 0; border-bottom: 1px solid var(--border-soft); }
   .control-snapshot > :last-child { border-bottom: 0; }

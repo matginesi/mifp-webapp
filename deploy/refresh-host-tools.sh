@@ -27,6 +27,7 @@ required=(
   bootstrap-vps.sh refresh-host-tools.sh deploy.sh configure.py vps_config.py
   backup.sh local-hosts.sh mifpctl compose.production.yaml .env.production.example
   Caddyfile mifp-backup.service mifp-backup.timer
+  mifp-alert-check.sh mifp-alert-check.service mifp-alert-check.timer
 )
 for name in "${required[@]}"; do
   source_path="$SCRIPT_DIR/$name"
@@ -35,7 +36,7 @@ for name in "${required[@]}"; do
   (( (8#$mode & 8#022) == 0 )) || die "File bundle modificabile da gruppo/altri: $name"
 done
 
-for script in bootstrap-vps.sh refresh-host-tools.sh deploy.sh backup.sh local-hosts.sh mifpctl; do
+for script in bootstrap-vps.sh refresh-host-tools.sh deploy.sh backup.sh local-hosts.sh mifp-alert-check.sh mifpctl; do
   bash -n "$SCRIPT_DIR/$script" || die "Sintassi shell non valida: $script"
 done
 for helper in configure.py vps_config.py; do
@@ -98,10 +99,14 @@ stage_file "$SCRIPT_DIR/refresh-host-tools.sh" "$MIFP_HOME/refresh-host-tools.sh
 stage_file "$SCRIPT_DIR/mifpctl" "$MIFPCTL_TARGET" 0755
 stage_file "$SCRIPT_DIR/mifp-backup.service" "$SYSTEMD_DIR/mifp-backup.service" 0644
 stage_file "$SCRIPT_DIR/mifp-backup.timer" "$SYSTEMD_DIR/mifp-backup.timer" 0644
+stage_file "$SCRIPT_DIR/mifp-alert-check.sh" "$MIFP_HOME/mifp-alert-check.sh" 0750
+stage_file "$SCRIPT_DIR/mifp-alert-check.service" "$SYSTEMD_DIR/mifp-alert-check.service" 0644
+stage_file "$SCRIPT_DIR/mifp-alert-check.timer" "$SYSTEMD_DIR/mifp-alert-check.timer" 0644
 
 if [[ "$MIFP_HOME" != /opt/mifp || "$CONFIG_DIR" != /etc/mifp ]]; then
-  service_stage="${staged[10]}"
-  sed -i -e "s|/opt/mifp|$MIFP_HOME|g" -e "s|/etc/mifp|$CONFIG_DIR|g" "$service_stage"
+  backup_service_stage="${staged[10]}"
+  alert_service_stage="${staged[13]}"
+  sed -i -e "s|/opt/mifp|$MIFP_HOME|g" -e "s|/etc/mifp|$CONFIG_DIR|g" "$backup_service_stage" "$alert_service_stage"
 fi
 
 systemd_changed=0
@@ -114,7 +119,8 @@ for index in "${!staged[@]}"; do
     staged[index]=""
     continue
   fi
-  [[ "$target" != "$SYSTEMD_DIR/mifp-backup.service" && "$target" != "$SYSTEMD_DIR/mifp-backup.timer" ]] \
+  [[ "$target" != "$SYSTEMD_DIR/mifp-backup.service" && "$target" != "$SYSTEMD_DIR/mifp-backup.timer" \
+     && "$target" != "$SYSTEMD_DIR/mifp-alert-check.service" && "$target" != "$SYSTEMD_DIR/mifp-alert-check.timer" ]] \
     || systemd_changed=1
   [[ "$target" != "$MIFP_HOME/compose.yaml" ]] || compose_changed=1
   [[ "$target" != "$MIFP_HOME/Caddyfile.example" ]] || caddy_template_changed=1

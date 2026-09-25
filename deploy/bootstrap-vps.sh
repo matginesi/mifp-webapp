@@ -84,7 +84,8 @@ fi
 [[ "$SSH_PORT" =~ ^[0-9]+$ ]] && ((SSH_PORT >= 1 && SSH_PORT <= 65535)) || die "Porta SSH non valida: $SSH_PORT"
 [[ -f "$SCRIPT_DIR/configure.py" && -f "$SCRIPT_DIR/vps_config.py" \
   && -f "$SCRIPT_DIR/backup.sh" && -f "$SCRIPT_DIR/mifpctl" && -f "$SCRIPT_DIR/local-hosts.sh" \
-  && -f "$SCRIPT_DIR/refresh-host-tools.sh" ]] \
+  && -f "$SCRIPT_DIR/refresh-host-tools.sh" && -f "$SCRIPT_DIR/mifp-alert-check.sh" \
+  && -f "$SCRIPT_DIR/mifp-alert-check.service" && -f "$SCRIPT_DIR/mifp-alert-check.timer" ]] \
   || die "Cartella deploy incompleta: copia tutti i file deploy/."
 
 say "Installo i pacchetti di base"
@@ -197,12 +198,15 @@ install -o root -g root -m 0750 "$SCRIPT_DIR/refresh-host-tools.sh" "$MIFP_HOME/
 install -o root -g root -m 0755 "$SCRIPT_DIR/mifpctl" /usr/local/sbin/mifpctl
 install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-backup.service" /etc/systemd/system/mifp-backup.service
 install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-backup.timer" /etc/systemd/system/mifp-backup.timer
-# The unit is written for the default layout; rewrite the two paths when the
+install -o root -g root -m 0750 "$SCRIPT_DIR/mifp-alert-check.sh" "$MIFP_HOME/mifp-alert-check.sh"
+install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-alert-check.service" /etc/systemd/system/mifp-alert-check.service
+install -o root -g root -m 0644 "$SCRIPT_DIR/mifp-alert-check.timer" /etc/systemd/system/mifp-alert-check.timer
+# The units are written for the default layout; rewrite paths when the
 # operator overrides MIFP_HOME / MIFP_CONFIG_DIR so the timer cannot silently
 # run a non-existent script.
 if [[ "$MIFP_HOME" != "/opt/mifp" || "${MIFP_CONFIG_DIR:-/etc/mifp}" != "/etc/mifp" ]]; then
   sed -i -e "s|/opt/mifp|$MIFP_HOME|g" -e "s|/etc/mifp|${MIFP_CONFIG_DIR:-/etc/mifp}|g" \
-    /etc/systemd/system/mifp-backup.service
+    /etc/systemd/system/mifp-backup.service /etc/systemd/system/mifp-alert-check.service
 fi
 systemctl daemon-reload
 
@@ -240,14 +244,21 @@ EVENTS_PUBLIC_URL="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/
 EVENTS_HOST="$(python3 -c 'import sys; from urllib.parse import urlsplit; print(urlsplit(sys.argv[1]).hostname or "")' "$EVENTS_PUBLIC_URL")"
 EVENTS_LOCAL_ROOT="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get EVENTS_LOCAL_ROOT)"
 
-# PHP regforms use PHP mail(), routed through a sendmail-compatible msmtp
-# transport. SMTP credentials never live in event ZIPs/settings.yaml and are
-# rendered from /etc/mifp/secrets.env without appearing on the command line.
-if [[ "$EVENTS_BACKEND" == "local-vps" ]]; then
+# The host relay serves two constrained purposes: the independent systemd
+# notification monitor, and (only for local-vps conference sites) PHP mail().
+# SMTP credentials remain in /etc/mifp/secrets.env and the root-managed relay
+# file; they never enter event packages or command-line arguments.
+MAIL_PROVIDER="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get MAIL_PROVIDER)"
+if [[ "$MAIL_PROVIDER" == "smtp" ]]; then
   MAIL_RELAY_STATE="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" render-mail-relay --output "$MAIL_RELAY_CONFIG")"
   if [[ "$MAIL_RELAY_STATE" == "configured" ]]; then
-    chown root:"$EVENTS_PHP_USER" "$MAIL_RELAY_CONFIG"
-    chmod 0640 "$MAIL_RELAY_CONFIG"
+    if [[ "$EVENTS_BACKEND" == "local-vps" ]]; then
+      chown root:"$EVENTS_PHP_USER" "$MAIL_RELAY_CONFIG"
+      chmod 0640 "$MAIL_RELAY_CONFIG"
+    else
+      chown root:root "$MAIL_RELAY_CONFIG"
+      chmod 0600 "$MAIL_RELAY_CONFIG"
+    fi
   else
     rm -f -- "$MAIL_RELAY_CONFIG"
   fi
@@ -342,6 +353,11 @@ if [[ -f "$MIFP_HOME/data/mifp.db" && ! -L "$MIFP_HOME/data/mifp.db" ]] \
   systemctl enable --now mifp-backup.timer
 else
   systemctl disable --now mifp-backup.timer >/dev/null 2>&1 || true
+fi
+if [[ "$MAIL_PROVIDER" == "smtp" && -f "$MAIL_RELAY_CONFIG" ]]; then
+  systemctl enable --now mifp-alert-check.timer
+else
+  systemctl disable --now mifp-alert-check.timer >/dev/null 2>&1 || true
 fi
 
 if [[ -n "$DOMAIN" ]]; then

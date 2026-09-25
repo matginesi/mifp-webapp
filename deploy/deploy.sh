@@ -24,6 +24,7 @@ EVENTS_PHP_STATE="${MIFP_EVENTS_PHP_STATE:-$MIFP_HOME/events-php-enabled.txt}"
 EVENTS_PHP_INCLUDE="${MIFP_EVENTS_PHP_INCLUDE:-/etc/caddy/mifp-events-php.caddy}"
 EVENTS_PHP_SOCKET="${MIFP_EVENTS_PHP_SOCKET:-/run/php/mifp-events.sock}"
 MAIL_RELAY_CONFIG="${MIFP_MAIL_RELAY_CONFIG:-/etc/msmtprc}"
+SYSTEMD_DIR="${MIFP_SYSTEMD_DIR:-/etc/systemd/system}"
 PHP_FPM_SERVICE_FILE="${MIFP_PHP_FPM_SERVICE_FILE:-$MIFP_HOME/php-fpm.service}"
 CADDY_CONFIG="${MIFP_CADDY_CONFIG:-/etc/caddy/Caddyfile}"
 CADDY_TEMPLATE="$MIFP_HOME/Caddyfile.example"
@@ -139,26 +140,51 @@ sync_mail_relay() {
   fi
 
   # The Flask container uses the canonical SMTP configuration directly. The
-  # host relay exists only so allow-listed local-vps PHP regforms can keep
-  # using PHP mail() without ever receiving SMTP credentials themselves.
-  if [[ "$backend" != "local-vps" || "$provider" != "smtp" ]]; then
+  # host relay is also the independent emergency path used by the systemd
+  # health monitor, so downtime can be reported when the web container is dead.
+  # Local-vps PHP regforms may share this relay without receiving credentials.
+  if [[ "$provider" != "smtp" ]]; then
     rm -f -- "$MAIL_RELAY_CONFIG"
-    say "Event mail relay: disabled (${backend}/${provider:-disabled})"
+    say "Host mail relay: disabled (${provider:-disabled})"
     return 0
   fi
 
   has msmtp || die "msmtp non disponibile; riesegui bootstrap-vps.sh."
-  id "$EVENTS_PHP_USER" >/dev/null 2>&1 \
-    || die "Utente PHP eventi mancante: $EVENTS_PHP_USER"
   if ! state="$(config_cli render-mail-relay --output "$MAIL_RELAY_CONFIG")"; then
     rm -f -- "$MAIL_RELAY_CONFIG"
-    die "Configurazione SMTP incompleta o non valida; relay eventi disabilitato."
+    die "Configurazione SMTP incompleta o non valida; relay host disabilitato."
   fi
   [[ "$state" == "configured" && -f "$MAIL_RELAY_CONFIG" && ! -L "$MAIL_RELAY_CONFIG" ]] \
-    || die "Impossibile configurare il relay SMTP sicuro per i regform."
-  chown root:"$EVENTS_PHP_USER" "$MAIL_RELAY_CONFIG"
-  chmod 0640 "$MAIL_RELAY_CONFIG"
-  say "Event mail relay: configured (credentials not displayed)"
+    || die "Impossibile configurare il relay SMTP sicuro host."
+  if [[ "$backend" == "local-vps" ]]; then
+    id "$EVENTS_PHP_USER" >/dev/null 2>&1 \
+      || die "Utente PHP eventi mancante: $EVENTS_PHP_USER"
+    chown root:"$EVENTS_PHP_USER" "$MAIL_RELAY_CONFIG"
+    chmod 0640 "$MAIL_RELAY_CONFIG"
+  else
+    chown root:root "$MAIL_RELAY_CONFIG"
+    chmod 0600 "$MAIL_RELAY_CONFIG"
+  fi
+  say "Host mail relay: configured (credentials not displayed)"
+}
+
+sync_alert_timer() {
+  local provider smtp_host
+  provider="$(config_cli get MAIL_PROVIDER)"
+  smtp_host="$(config_cli get SMTP_HOST)"
+  if [[ "$provider" != "disabled" && "$provider" != "console" && "$provider" != "smtp" && -n "$smtp_host" ]]; then
+    provider="smtp"
+  fi
+  if [[ "$provider" != "smtp" ]]; then
+    systemctl disable --now mifp-alert-check.timer >/dev/null 2>&1 || true
+    say "Notification monitor: disabled by mail configuration"
+    return 0
+  fi
+  [[ -f "$SYSTEMD_DIR/mifp-alert-check.timer" ]] \
+    || { say "ERROR: manca mifp-alert-check.timer; aggiorna prima gli host tools." >&2; return 1; }
+  systemctl enable --now mifp-alert-check.timer \
+    || { say "ERROR: impossibile abilitare mifp-alert-check.timer" >&2; return 1; }
+  say "Notification monitor: enabled"
 }
 
 
@@ -268,6 +294,7 @@ EOF_EVENTS_CADDY
   trap - EXIT
   systemctl reload caddy.service 2>/dev/null || systemctl restart caddy.service
   sync_mail_relay "$events_backend"
+  sync_alert_timer || die "Configurazione mail salvata, ma il monitor notifiche non è stato applicato."
   sync_events_php_lifecycle "$events_backend"
   if [[ "$domain" == *.home.arpa ]]; then
     caddy trust --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null 2>&1 \
@@ -1684,6 +1711,13 @@ do_status() {
   [[ -z "$repo" ]] || say "Configured channel: $repo:latest"
   [[ -n "$current" ]] && compose_with_image "$current" ps || docker ps --filter label=com.docker.compose.project=mifp || true
   systemctl is-active caddy >/dev/null 2>&1 && say "Caddy: attivo" || say "Caddy: NON attivo"
+  if [[ "$(config_cli get MAIL_PROVIDER)" == "smtp" ]]; then
+    local alert_timer
+    alert_timer="$(systemctl is-enabled mifp-alert-check.timer 2>/dev/null || true)"
+    say "Notifications:      ${alert_timer:-disabled}"
+  else
+    say "Notifications:      mail disabled"
+  fi
   config_cli check || true
 }
 
@@ -2047,14 +2081,23 @@ do_security_check() {
   if [[ "$mail_provider" != "disabled" && "$mail_provider" != "console" && -n "$smtp_host" ]]; then
     mail_provider="smtp"
   fi
-  if [[ "$events_backend" == "local-vps" && "$mail_provider" == "smtp" ]]; then
-    local events_php_gid
-    events_php_gid="$(id -g "$EVENTS_PHP_USER" 2>/dev/null || true)"
-    [[ -n "$events_php_gid" ]] \
-      && security_file "Event SMTP relay secret" "$MAIL_RELAY_CONFIG" 640 "$SECURITY_ROOT_UID" "$events_php_gid" \
-      || security_error "cannot resolve group for event PHP user: $EVENTS_PHP_USER"
+  if [[ "$mail_provider" == "smtp" ]]; then
+    if [[ "$events_backend" == "local-vps" ]]; then
+      local events_php_gid
+      events_php_gid="$(id -g "$EVENTS_PHP_USER" 2>/dev/null || true)"
+      [[ -n "$events_php_gid" ]] \
+        && security_file "Host SMTP relay secret" "$MAIL_RELAY_CONFIG" 640 "$SECURITY_ROOT_UID" "$events_php_gid" \
+        || security_error "cannot resolve group for event PHP user: $EVENTS_PHP_USER"
+    else
+      security_file "Host SMTP relay secret" "$MAIL_RELAY_CONFIG" 600 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID"
+    fi
+    local alert_timer_enabled
+    alert_timer_enabled="$(systemctl is-enabled mifp-alert-check.timer 2>/dev/null || true)"
+    [[ "$alert_timer_enabled" == "enabled" ]] \
+      && security_ok "Independent notification monitor enabled" \
+      || security_error "SMTP is configured but mifp-alert-check.timer is not enabled"
   elif [[ -e "$MAIL_RELAY_CONFIG" ]]; then
-    security_error "stale event SMTP relay config exists while it is not required: $MAIL_RELAY_CONFIG"
+    security_error "stale host SMTP relay config exists while mail is disabled: $MAIL_RELAY_CONFIG"
   fi
   security_file "Docker credentials" "$DOCKER_CONFIG_FILE" 600 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID" true
 
@@ -2325,7 +2368,7 @@ do_config_set() {
   [[ $# -eq 2 ]] || die "Uso: mifpctl config-set KEY VALUE"
   config_cli set "$1" "$2"
   case "${1^^}" in
-    DOMAIN|WWW_DOMAIN|ENVIRONMENT|EVENTS_PUBLISH_BACKEND|EVENTS_PUBLIC_BASE_URL|EVENTS_LOCAL_ROOT|EVENTS_REMOTE_PROTOCOL|EVENTS_REMOTE_HOST|EVENTS_REMOTE_PORT|EVENTS_REMOTE_USER|EVENTS_REMOTE_ROOT|EVENTS_REMOTE_TIMEOUT|MAIL_PROVIDER|SMTP_HOST|SMTP_PORT|SMTP_SECURITY|SMTP_USERNAME|SMTP_FROM_ADDRESS|SMTP_FROM_NAME)
+    DOMAIN|WWW_DOMAIN|ENVIRONMENT|EVENTS_PUBLISH_BACKEND|EVENTS_PUBLIC_BASE_URL|EVENTS_LOCAL_ROOT|EVENTS_REMOTE_PROTOCOL|EVENTS_REMOTE_HOST|EVENTS_REMOTE_PORT|EVENTS_REMOTE_USER|EVENTS_REMOTE_ROOT|EVENTS_REMOTE_TIMEOUT|MAIL_PROVIDER|SMTP_HOST|SMTP_PORT|SMTP_SECURITY|SMTP_USERNAME|SMTP_FROM_ADDRESS|SMTP_FROM_NAME|MAIL_TO)
       apply_host_configuration
       current="$(current_image || true)"; [[ -n "$current" ]] && service_running "$current" && do_restart || true ;;
     BACKUP_ENABLED) sync_backup_timer || die "Valore salvato, ma lo stato del timer backup non è stato applicato." ;;
@@ -2337,7 +2380,7 @@ do_config_unset() {
   [[ $# -eq 1 ]] || die "Uso: mifpctl config-unset KEY"
   config_cli unset "$1"
   case "${1^^}" in
-    DOMAIN|WWW_DOMAIN|ENVIRONMENT|EVENTS_PUBLISH_BACKEND|EVENTS_PUBLIC_BASE_URL|EVENTS_LOCAL_ROOT|EVENTS_REMOTE_PROTOCOL|EVENTS_REMOTE_HOST|EVENTS_REMOTE_PORT|EVENTS_REMOTE_USER|EVENTS_REMOTE_ROOT|EVENTS_REMOTE_TIMEOUT|MAIL_PROVIDER|SMTP_HOST|SMTP_PORT|SMTP_SECURITY|SMTP_USERNAME|SMTP_FROM_ADDRESS|SMTP_FROM_NAME|SMTP_PASSWORD)
+    DOMAIN|WWW_DOMAIN|ENVIRONMENT|EVENTS_PUBLISH_BACKEND|EVENTS_PUBLIC_BASE_URL|EVENTS_LOCAL_ROOT|EVENTS_REMOTE_PROTOCOL|EVENTS_REMOTE_HOST|EVENTS_REMOTE_PORT|EVENTS_REMOTE_USER|EVENTS_REMOTE_ROOT|EVENTS_REMOTE_TIMEOUT|MAIL_PROVIDER|SMTP_HOST|SMTP_PORT|SMTP_SECURITY|SMTP_USERNAME|SMTP_FROM_ADDRESS|SMTP_FROM_NAME|MAIL_TO|SMTP_PASSWORD)
       apply_host_configuration
       current="$(current_image || true)"; [[ -n "$current" ]] && service_running "$current" && do_restart || true ;;
     BACKUP_ENABLED) sync_backup_timer || die "Valore salvato, ma lo stato del timer backup non è stato applicato." ;;

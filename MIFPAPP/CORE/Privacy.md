@@ -105,7 +105,7 @@ Some of the historical and imported records described in §2 may relate to peopl
 We do not sell, rent or share personal data for marketing or advertising purposes. Personal data may be processed by:
 
 - **Hosting provider** — the infrastructure on which this website runs;
-- **E-mail/SMTP provider** — used to deliver the notification that a membership application has been received;
+- **E-mail/SMTP provider** — used to deliver administrator notifications for membership applications and security/operational incidents. Security alerts may contain the minimum technical information needed to investigate an event (for example the source IP address of a failed or successful administrator login); passwords, session tokens and application secrets are never included;
 - **Backup/storage provider** — where an off-site backup destination is configured;
 - **Public authorities** — where we are legally required to disclose information.
 

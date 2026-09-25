@@ -206,6 +206,7 @@ def create_app():
         security_event,
         setup_logging,
     )
+    from .services.notifications import notify
     from .utils.security import get_client_ip, ip_rate_allowed
 
     Config.resolve_paths()
@@ -690,6 +691,29 @@ def create_app():
         logging.getLogger('mifp.flask').error(
             f'Unhandled Flask error: {type(exc).__name__}: {exc}',
             exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        error_key = hashlib.sha256(
+            f"{type(exc).__name__}:{request.endpoint or request.path}".encode("utf-8", "replace")
+        ).hexdigest()[:20]
+        notify(
+            app,
+            event="application_error",
+            category="error",
+            severity="error",
+            subject="[MIFP][ERROR] Repeated application error",
+            body=(
+                "MIFP recorded an unhandled application error.\n\n"
+                f"Failure type: {type(exc).__name__}\n"
+                f"Route: {request.path}\n"
+                f"Request ID: {rid}\n\n"
+                "The exception text is intentionally omitted from email. Review the server logs for details.\n"
+            ),
+            dedup_key=f"application_error:{error_key}",
+            metadata={
+                "error_type": type(exc).__name__,
+                "path": request.path,
+                "request_id": rid,
+            },
         )
         if wants_json_response():
             return jsonify({'error': 'internal_error', 'request_id': rid}), 500

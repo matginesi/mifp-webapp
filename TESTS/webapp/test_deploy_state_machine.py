@@ -82,6 +82,9 @@ def _env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     hosts_file.write_text("127.0.0.1 localhost\n", encoding="utf-8")
     caddy_dir = tmp_path / "caddy"
     caddy_dir.mkdir()
+    systemd_dir = tmp_path / "systemd"
+    systemd_dir.mkdir()
+    shutil.copy2(ROOT / "deploy" / "mifp-alert-check.timer", systemd_dir / "mifp-alert-check.timer")
     (caddy_dir / "Caddyfile").write_text("example.invalid { respond 200 }\n", encoding="utf-8")
     (caddy_dir / "mifp-events-php.caddy").write_text("# empty\n", encoding="utf-8")
     php_state = home / "events-php-enabled.txt"
@@ -334,6 +337,7 @@ exit 0
             "MIFP_EVENTS_PHP_SOCKET": str(tmp_path / "mifp-events.sock"),
             "MIFP_EVENTS_PRIVATE_DIR": str(tmp_path / "events-private"),
             "MIFP_MAIL_RELAY_CONFIG": str(tmp_path / "msmtprc"),
+            "MIFP_SYSTEMD_DIR": str(systemd_dir),
             "MIFP_CADDY_CONFIG": str(caddy_dir / "Caddyfile"),
             "MIFP_CONFIG_DIR": str(config_dir),
             "MIFP_DOCKER_CONFIG_FILE": str(docker_config),
@@ -550,7 +554,7 @@ def test_local_vps_mail_change_regenerates_relay_and_secret_removal_fails_closed
     assert removed.returncode != 0
     assert not relay.exists()
     assert secret not in removed.stdout + removed.stderr
-    assert "relay eventi disabilitato" in removed.stderr
+    assert "relay host disabilitato" in removed.stderr
 
 
 def _release(home: Path) -> dict[str, str]:

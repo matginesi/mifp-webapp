@@ -6,6 +6,7 @@ import time
 from functools import wraps
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 
+from ..services.notifications import notify
 from ..utils.http import is_safe_relative_url, wants_json_response
 from ..utils.logger import audit_log, security_event
 from ..utils.security import admin_password_matches, get_client_ip, ip_rate_allowed
@@ -13,12 +14,61 @@ from ..utils.security import admin_password_matches, get_client_ip, ip_rate_allo
 bp = Blueprint("auth", __name__)
 
 
+def _auth_dedup(kind: str, ip: str) -> str:
+    digest = hashlib.sha256(str(ip or "unknown").encode("utf-8", "replace")).hexdigest()[:20]
+    return f"auth:{kind}:{digest}"
+
+
+def _notify_auth(
+    *,
+    event: str,
+    category: str,
+    severity: str,
+    subject: str,
+    body: str,
+    dedup_kind: str,
+    threshold: int | None = None,
+) -> None:
+    # Authentication must never depend on the notification channel. The
+    # notification service itself is fail-safe, and this wrapper keeps the
+    # security boundary explicit if that implementation changes later.
+    ip = get_client_ip()
+    try:
+        notify(
+            current_app,
+            event=event,
+            category=category,
+            severity=severity,
+            subject=subject,
+            body=body,
+            dedup_key=_auth_dedup(dedup_kind, ip),
+            threshold=threshold,
+            metadata={"path": request.path},
+        )
+    except Exception:
+        current_app.logger.exception("authentication notification failed safely")
+
+
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
         if not session.get("admin_logged_in"):
+            source_ip = get_client_ip()
             audit_log("auth.access_denied", "access denied to dashboard", category="auth", outcome="denied",
-                      ip=get_client_ip(), path=request.path)
+                      ip=source_ip, path=request.path)
+            _notify_auth(
+                event="dashboard_access_denied",
+                category="auth_failed",
+                severity="security",
+                subject="[MIFP][SECURITY] Repeated unauthenticated dashboard access",
+                body=(
+                    "MIFP recorded repeated access attempts to an authenticated dashboard route.\n\n"
+                    f"Source IP: {source_ip}\n"
+                    f"Route: {request.path}\n\n"
+                    "No authenticated session was present. Review Dashboard → Security and Logs if this activity is unexpected.\n"
+                ),
+                dedup_kind="dashboard_access",
+            )
             if wants_json_response():
                 return jsonify({"error": "login_required"}), 401
             return redirect(url_for("auth.login", next=request.path))
@@ -99,12 +149,27 @@ def login_post():
         else url_for("auth.login", next=request.args.get("next", ""))
     )
     if not _check_rate_limit():
+        source_ip = get_client_ip()
         security_event(
             "auth.login_rate_limited",
             "login rate limit exceeded",
             severity="warning",
             username=request.form.get("login_username", "").strip(),
-            ip=get_client_ip(),
+            ip=source_ip,
+        )
+        _notify_auth(
+            event="login_rate_limited",
+            category="auth_failed",
+            severity="security",
+            subject="[MIFP][SECURITY] Login rate limit activated",
+            body=(
+                "MIFP blocked additional administrator login attempts from a source that exceeded the configured IP rate limit.\n\n"
+                f"Source IP: {source_ip}\n"
+                f"Lockout window: {int(current_app.config.get('LOGIN_LOCKOUT_SECONDS', 60))} seconds\n\n"
+                "No password, submitted credential or session token is included in this message.\n"
+            ),
+            dedup_kind="login_rate_limit",
+            threshold=1,
         )
         flash(f"Too many attempts. Please try again in {int(current_app.config.get('LOGIN_LOCKOUT_SECONDS', 60))} seconds.", "error")
         return redirect(failure_url)
@@ -125,15 +190,42 @@ def login_post():
         session["admin_username"] = username
         session["admin_login_at"] = time.time()
         session["_csrf_token"] = secrets.token_urlsafe(32)
-        audit_log("auth.login_success", "admin login", category="auth", outcome="success", username=username, ip=get_client_ip())
+        source_ip = get_client_ip()
+        audit_log("auth.login_success", "admin login", category="auth", outcome="success", username=username, ip=source_ip)
+        _notify_auth(
+            event="login_success",
+            category="auth_success",
+            severity="security",
+            subject="[MIFP][SECURITY] Administrator login",
+            body=(
+                "An administrator successfully signed in to the MIFP dashboard.\n\n"
+                f"Account: {username}\n"
+                f"Source IP: {source_ip}\n\n"
+                "If this login was not expected, rotate the administrator password and inspect the security log immediately.\n"
+            ),
+            dedup_kind="login_success",
+        )
         flash("Login successful.", "success")
         next_url = request.args.get("next") or ""
         if not is_safe_relative_url(next_url):
             next_url = url_for("dashboard.index")
         return redirect(next_url)
 
-    # Always log failed attempts and use generic message (don't reveal if user exists)
-    security_event("auth.login_failed", "failed admin login", username=username, ip=get_client_ip())
+    # Always log failed attempts and use generic message (don't reveal if user exists).
+    source_ip = get_client_ip()
+    security_event("auth.login_failed", "failed admin login", username=username, ip=source_ip)
+    _notify_auth(
+        event="login_failed",
+        category="auth_failed",
+        severity="security",
+        subject="[MIFP][SECURITY] Repeated failed administrator login",
+        body=(
+            "MIFP recorded failed administrator login attempts.\n\n"
+            f"Source IP: {source_ip}\n\n"
+            "Submitted usernames, passwords and session values are intentionally omitted. The alert is aggregated to avoid email flooding.\n"
+        ),
+        dedup_kind="login_failed",
+    )
     if not _account_failure_allowed(username):
         # Same wording as the IP limiter and the same password-first ordering,
         # so this reveals nothing about the account and cannot lock out the
@@ -143,7 +235,21 @@ def login_post():
             "login account rate limit exceeded",
             severity="warning",
             username=username,
-            ip=get_client_ip(),
+            ip=source_ip,
+        )
+        _notify_auth(
+            event="account_rate_limited",
+            category="auth_failed",
+            severity="security",
+            subject="[MIFP][SECURITY] Account login throttle activated",
+            body=(
+                "MIFP activated the per-account guessing throttle after repeated failed authentication attempts.\n\n"
+                f"Source IP: {source_ip}\n"
+                f"Throttle window: {int(current_app.config.get('LOGIN_ACCOUNT_LOCKOUT_SECONDS', 900))} seconds\n\n"
+                "The submitted account name is intentionally omitted from email.\n"
+            ),
+            dedup_kind="account_rate_limit",
+            threshold=1,
         )
         flash(
             f"Too many attempts. Please try again in "
