@@ -12,6 +12,9 @@ from html import escape
 from pathlib import Path
 from typing import Any, Mapping
 
+import bleach
+import markdown as markdown_lib
+
 from ..db.connection import connect_readonly
 from ..utils.logger import get_logger, log_event
 from .mailer import send_mail
@@ -77,6 +80,11 @@ DEFAULT_EMAIL_TITLE = "MIFP VPS Notification"
 MAX_MANUAL_MAIL_SUBJECT = 160
 MAX_MANUAL_MAIL_TITLE = 80
 MAX_MANUAL_MAIL_BODY = 10000
+
+_EMAIL_MARKDOWN_TAGS = frozenset({
+    "p", "br", "strong", "em", "a", "ul", "ol", "li", "h2", "h3", "blockquote"
+})
+_EMAIL_MARKDOWN_ATTRS = {"a": ["href", "title"]}
 
 _SEVERITY_THEME = {
     "critical": ("#a72b31", "#faeeee", "CRITICAL"),
@@ -209,6 +217,19 @@ def smtp_status(app) -> dict[str, Any]:
     }
 
 
+def _display_subject(subject: str) -> str:
+    """Remove machine-oriented leading [tags] from the in-message heading.
+
+    The SMTP Subject header can retain operational prefixes for filtering, while
+    the visible HTML card stays readable and institutional.
+    """
+    value = " ".join(str(subject or "").replace("\r", " ").replace("\n", " ").split())
+    while value.startswith("[") and "]" in value:
+        _tag, remainder = value.split("]", 1)
+        value = remainder.lstrip()
+    return value or DEFAULT_EMAIL_TITLE
+
+
 def _html_body(body: str) -> str:
     paragraphs: list[str] = []
     for paragraph in str(body or "").strip().split("\n\n"):
@@ -228,6 +249,33 @@ def _html_body(body: str) -> str:
     return "".join(paragraphs)
 
 
+def _manual_markdown_html(body: str) -> str:
+    """Render the bounded dashboard editor syntax for outgoing HTML mail.
+
+    Raw HTML is escaped *before* Markdown parsing, then the generated markup is
+    sanitized again with a deliberately small tag/attribute/protocol allowlist.
+    This keeps the editor useful without turning the dashboard into an arbitrary
+    HTML mail sender.
+    """
+    source = escape(str(body or ""))
+    rendered = markdown_lib.markdown(source, extensions=["nl2br", "sane_lists"])
+    safe = bleach.clean(
+        rendered,
+        tags=_EMAIL_MARKDOWN_TAGS,
+        attributes=_EMAIL_MARKDOWN_ATTRS,
+        protocols={"http", "https", "mailto"},
+        strip=True,
+        strip_comments=True,
+    )
+    # Email clients vary widely in stylesheet support. Keep the structural
+    # Markdown semantic and give its container the canonical body typography;
+    # links/lists/headings still remain readable even when client CSS is sparse.
+    return (
+        f'<div style="color:{_EMAIL_THEME["text"]};font-size:14px;line-height:1.6;">'
+        f"{safe}</div>"
+    )
+
+
 def _render_mifp_html(
     *,
     title: str,
@@ -237,6 +285,8 @@ def _render_mifp_html(
     event: str | None = None,
     badge_label: str | None = None,
     footer: str,
+    body_html: str | None = None,
+    strip_subject_tags: bool = True,
 ) -> str:
     """Render a self-contained email-safe MIFP card.
 
@@ -248,9 +298,11 @@ def _render_mifp_html(
     label = escape(str(badge_label or default_label)[:24])
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     safe_title = escape(str(title or DEFAULT_EMAIL_TITLE)[:MAX_MANUAL_MAIL_TITLE])
-    safe_subject = escape(str(subject or DEFAULT_EMAIL_TITLE)[:180])
+    display_subject = _display_subject(subject) if strip_subject_tags else str(subject or DEFAULT_EMAIL_TITLE)
+    safe_subject = escape(display_subject[:180])
     safe_event = escape(str(event or ""))
     safe_footer = escape(str(footer or ""))
+    rendered_body = body_html if body_html is not None else _html_body(body)
     event_line = (
         f'<b style="color:{_EMAIL_THEME["text"]};">Event</b> &nbsp; {safe_event}<br>'
         if safe_event else ""
@@ -266,7 +318,7 @@ def _render_mifp_html(
 <tr><td style="padding:22px;">
   <div style="display:inline-block;padding:5px 8px;border-radius:999px;background:{subtle};color:{color};font-size:11px;font-weight:800;letter-spacing:.08em;">{label}</div>
   <h1 style="margin:13px 0 16px;font-size:21px;line-height:1.35;color:{_EMAIL_THEME['text']};font-weight:750;">{safe_subject}</h1>
-  <div style="border-left:3px solid {color};padding:2px 0 2px 15px;">{_html_body(body)}</div>
+  <div style="border-left:3px solid {color};padding:2px 0 2px 15px;">{rendered_body}</div>
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:20px;background:#f8f9fa;border:1px solid #e2e5e9;border-radius:4px;">
     <tr><td style="padding:10px 12px;color:{_EMAIL_THEME['muted']};font-size:12px;line-height:1.5;">{event_line}<b style="color:{_EMAIL_THEME['text']};">Generated</b> &nbsp; {generated}</td></tr>
   </table>
@@ -304,6 +356,8 @@ def render_manual_email_html(*, title: str, subject: str, body: str) -> str:
         severity="info",
         badge_label="MIFP",
         event=None,
+        body_html=_manual_markdown_html(body),
+        strip_subject_tags=False,
         footer=(
             "Message sent by an authenticated MIFP administrator from the MIFP dashboard. "
             "No SMTP credentials or session data are included."

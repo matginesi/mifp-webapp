@@ -19,7 +19,22 @@ def test_dashboard_uses_bounded_page_specific_modules_without_build_step():
     }
     assert all(path.is_file() and path.stat().st_size > 1000 for path in expected)
     modules = sorted((APP / "static/js/dashboard").glob("*.js"))
-    assert 6 <= len(modules) <= 12
+    expected_modules = {
+        "api.js",
+        "archive-import.js",
+        "conferences.js",
+        "content.js",
+        "core.js",
+        "data-portability.js",
+        "data-quality.js",
+        "event-import.js",
+        "login.js",
+        "notifications.js",
+        "safety-operations.js",
+        "site-copy.js",
+        "stats.js",
+    }
+    assert {path.name for path in modules} == expected_modules
     assert all(path.stat().st_size > 300 for path in modules)
     assert not (APP / "static/js/dashboard.js").exists()
     assert not (APP / "static/css/dashboard").exists()

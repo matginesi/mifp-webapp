@@ -5118,3 +5118,68 @@ textarea:focus-visible { outline: 0; }.dash-empty-state,.empty-state{
   .picker-create-intro { grid-column: auto; }
   .picker-create-actions .btn { width: 100%; }
 }
+
+/* Sidebar attention count: compact and still visible when the shell collapses. */
+.sidebar-link.has-count { padding-right: 2.3rem; }
+.sidebar-count-badge {
+  position: absolute;
+  top: 50%;
+  right: .48rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.2rem;
+  height: 1.2rem;
+  padding: 0 .3rem;
+  color: var(--accent);
+  background: var(--accent-subtle);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: var(--radius-full);
+  font-size: .57rem;
+  font-weight: 900;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  transform: translateY(-50%);
+}
+.sidebar-link.is-active .sidebar-count-badge {
+  color: var(--accent);
+  background: #fff;
+  border-color: rgba(255, 255, 255, .78);
+}
+.dashboard-document.is-collapsed .sidebar-count-badge {
+  top: .2rem;
+  right: .2rem;
+  min-width: 1rem;
+  height: 1rem;
+  padding-inline: .2rem;
+  font-size: .52rem;
+  transform: none;
+}
+
+/* Notifications composer reuses the shared Markdown editor at a mail-friendly size. */
+.notification-mail-editor .markdown-editor-source textarea,
+.notification-mail-preview { min-height: 12rem; }
+.notification-mail-editor .markdown-editor-source textarea { font-family: var(--font-family-sans); }
+.notification-mail-editor.is-plain-text .notification-mail-editor-grid { grid-template-columns: 1fr; }
+.notification-mail-guardrail { color: var(--text-3); font-size: .6rem; line-height: 1.4; }
+.notification-html-title-field[hidden],
+.notification-mail-editor [hidden] { display: none !important; }
+
+@media (max-width: 1050px) {
+  .notification-primary-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 768px) {
+  .sidebar-link.has-count { padding-right: 2.5rem; }
+  .dashboard-document.is-collapsed .sidebar-count-badge {
+    top: 50%;
+    right: .48rem;
+    min-width: 1.2rem;
+    height: 1.2rem;
+    padding-inline: .3rem;
+    font-size: .57rem;
+    transform: translateY(-50%);
+  }
+  .notification-mail-editor .markdown-editor-source textarea,
+  .notification-mail-preview { min-height: 10rem; }
+}

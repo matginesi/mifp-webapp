@@ -33,6 +33,7 @@ def test_notification_html_uses_dashboard_palette_and_escapes_untrusted_text() -
     assert "#eef1f4" in rendered
     assert "SECURITY" in rendered
     assert "&lt;unsafe&gt;" in rendered
+    assert "[MIFP]" not in rendered
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered
     assert "<script>alert(1)</script>" not in rendered
 
@@ -229,6 +230,8 @@ def test_notification_dashboard_is_authenticated_and_never_renders_secret(notifi
     assert "SMTP status" in body
     assert "Failed access attempts" in body
     assert "Successful administrator logins" in body
+    assert "data-notification-mail-editor" in body
+    assert "sudo mifpctl configure --section mail" not in body
     assert "secret-that-must-never-render" not in body
     assert "smtp-user-that-must-never-render" not in body
 
@@ -306,6 +309,7 @@ def test_host_notification_monitor_is_independent_and_packaged() -> None:
     assert "mifp-alert-check.service" in bootstrap
     assert "ExecStart=/opt/mifp/mifp-alert-check.sh" in service
     assert "MIFP VPS Notification" in script
+    assert "display_subject" in script
 
 
 
@@ -329,6 +333,8 @@ def test_notification_test_route_supports_predefined_message_types(notification_
     assert response.status_code == 302
     assert captured[-1]["event"] == "test_security"
     assert captured[-1]["severity"] == "security"
+    assert captured[-1]["subject"] == "Test — Authentication activity"
+    assert "[MIFP]" not in captured[-1]["subject"]
     assert captured[-1]["force"] is True
     assert "password" in captured[-1]["body"].lower()
 
@@ -365,6 +371,72 @@ def test_manual_dashboard_email_uses_fixed_transport_and_escaped_mifp_layout(not
     assert "MIFP &lt;Research Update&gt;" in message["html_body"]
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in message["html_body"]
     assert "<script>alert(1)</script>" not in message["html_body"]
+
+
+def test_manual_dashboard_email_renders_bounded_markdown_without_accepting_raw_html(notification_app, monkeypatch) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    notification_app.config.update(MAIL_PROVIDER="console", ENV="test")
+    delivered = []
+    monkeypatch.setattr(
+        dashboard_notifications,
+        "send_mail",
+        lambda _app, **kwargs: delivered.append(kwargs) or True,
+    )
+    client = _logged_in_client(notification_app)
+    response = client.post(
+        "/dashboard/notifications/send",
+        data={
+            "recipient": "researcher@example.org",
+            "subject": "Formatted update",
+            "mail_title": "Research update",
+            "message": (
+                "## Highlights\n\n**Ready** for review.\n\n"
+                "- First item\n- Second item\n\n"
+                "[MIFP](https://mifp.eu)\n\n<script>alert(1)</script>"
+            ),
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    html = delivered[-1]["html_body"]
+    assert "<h2>Highlights</h2>" in html
+    assert "<strong>Ready</strong>" in html
+    assert "<ul>" in html and "<li>First item</li>" in html
+    assert 'href="https://mifp.eu"' in html
+    assert "<script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_join_request_sidebar_badge_counts_only_pending(notification_app) -> None:
+    with sqlite3.connect(notification_app.config["DATABASE_PATH"]) as conn:
+        conn.execute(
+            "INSERT INTO join_requests(first_name,last_name,email,status) VALUES(?,?,?,?)",
+            ("Pending", "Researcher", "pending@example.org", "pending"),
+        )
+        conn.execute(
+            "INSERT INTO join_requests(first_name,last_name,email,status) VALUES(?,?,?,?)",
+            ("Reviewed", "Researcher", "reviewed@example.org", "in_review"),
+        )
+        conn.commit()
+
+    response = _logged_in_client(notification_app).get("/dashboard/notifications")
+    body = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert 'class="sidebar-count-badge"' in body
+    assert 'aria-label="1 pending join requests"' in body
+
+
+def test_public_wrapped_inputs_have_one_focus_indicator() -> None:
+    root = Path(__file__).resolve().parents[2]
+    css = (root / "MIFPAPP" / "CORE" / "mifp_app" / "static" / "css" / "homepage.css").read_text(encoding="utf-8")
+
+    assert ".public-site .join-input-wrap input:focus-visible" in css
+    assert ".public-site .login-input:focus-visible" in css
+    assert ".public-site .filter-search input:focus-visible" in css
+    assert ".join-input-wrap:focus-within" in css
 
 
 def test_manual_dashboard_email_can_send_plain_text_only(notification_app, monkeypatch) -> None:

@@ -30,7 +30,7 @@
         <div><dt>Recipient</dt><dd>{{ transport.recipient_masked }}</dd></div>
         <div><dt>Credentials</dt><dd>{{ 'Configured' if transport.password_configured and transport.username_configured else 'Not configured' }}</dd></div>
       </dl>
-      <div class="control-note notification-compact-note"><i class="bi bi-shield-lock"></i><div><b>Host-managed credentials</b><span>Configure or rotate SMTP only with <code>sudo mifpctl configure --section mail</code>. Passwords are never stored in dashboard settings.</span></div></div>
+      <div class="control-note notification-compact-note"><i class="bi bi-shield-lock"></i><div><b>Host-managed credentials</b><span>SMTP credentials are managed securely on the server and are never stored in dashboard settings.</span></div></div>
     </div>
   </section>
 
@@ -87,13 +87,33 @@
       </label>
       <label class="notification-format-toggle">
         <span><b>Plain text only</b><small>Disable the MIFP HTML layout and send only the text body.</small></span>
-        <input type="checkbox" name="plain_text_only" value="1" aria-label="Send plain text only">
+        <input type="checkbox" name="plain_text_only" value="1" aria-label="Send plain text only" data-notification-plain-toggle>
       </label>
-      <label class="field notification-message-field">
+      <div class="field notification-message-field">
         <span>Message</span>
-        <textarea class="form-control" name="message" rows="8" maxlength="{{ max_mail_body }}" placeholder="Write the message here. HTML is not accepted; formatted emails safely escape this text." required></textarea>
-        <small>Maximum {{ max_mail_body }} characters. No arbitrary HTML, attachments, CC or BCC.</small>
-      </label>
+        <div class="markdown-editor-shell notification-mail-editor" data-notification-mail-editor data-markdown-escape-html>
+          <div class="markdown-editor-toolbar" data-notification-format-tools>
+            <span>Formatting</span>
+            <button type="button" title="Bold" aria-label="Bold" data-md-before="**" data-md-after="**"><b>B</b></button>
+            <button type="button" title="Italic" aria-label="Italic" data-md-before="*" data-md-after="*"><i>I</i></button>
+            <button type="button" title="Link" aria-label="Link" data-md-before="[" data-md-after="](https://)"><i class="bi bi-link-45deg" aria-hidden="true"></i> Link</button>
+            <button type="button" title="Section heading" aria-label="Section heading" data-md-before="\n## " data-md-after="\n">H2</button>
+            <button type="button" title="Bullet list" aria-label="Bullet list" data-md-before="\n- " data-md-after=""><i class="bi bi-list-ul" aria-hidden="true"></i></button>
+            <button type="button" title="Numbered list" aria-label="Numbered list" data-md-before="\n1. " data-md-after=""><i class="bi bi-list-ol" aria-hidden="true"></i></button>
+          </div>
+          <div class="markdown-editor-grid notification-mail-editor-grid">
+            <div class="markdown-editor-source">
+              <textarea id="notification_message" class="form-control markdown-source-input" name="message" rows="10" maxlength="{{ max_mail_body }}" placeholder="Write the message here…" required></textarea>
+              <small>Simple Markdown only. Raw HTML is escaped. Maximum {{ max_mail_body }} characters.</small>
+            </div>
+            <div class="markdown-preview notification-mail-preview" data-notification-format-preview>
+              <div class="markdown-preview-label">Preview</div>
+              <div class="markdown-preview-body" data-md-preview="mail"></div>
+            </div>
+          </div>
+        </div>
+        <small class="notification-mail-guardrail">No arbitrary HTML, attachments, CC or BCC. Plain-text mode sends the message without the MIFP HTML layout.</small>
+      </div>
     </div>
     <div class="notification-compose-footer">
       <div class="control-note notification-compose-safety"><i class="bi bi-shield-check"></i><div><b>Bounded manual sender</b><span>Admin session and CSRF protection are required. Messages are rate-limited, audited with masked recipients, and use the fixed SMTP sender configured on the VPS.</span></div></div>
@@ -162,4 +182,12 @@
 </section>
 
 <div class="control-note"><i class="bi bi-info-circle"></i><div><b>What is monitored</b><span>Application errors, new member requests and authentication activity are detected inside MIFP. Downtime, public reachability, readiness/storage degradation and failed backup service checks are monitored independently by the VPS timer, so a dead web container cannot silence the alert path.</span></div></div>
+{% endblock %}
+
+
+{% block extra_js %}
+{{ super() }}
+<script src="{{ url_for('static', filename='js/vendor/marked.min.js', v=static_version) }}" defer></script>
+<script src="{{ url_for('static', filename='js/markdown-editor.js', v=static_version) }}" defer></script>
+<script src="{{ url_for('static', filename='js/dashboard/notifications.js', v=static_version) }}" defer></script>
 {% endblock %}

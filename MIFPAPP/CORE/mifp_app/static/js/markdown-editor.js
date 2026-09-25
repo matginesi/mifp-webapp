@@ -49,7 +49,14 @@
       return;
     }
     try {
-      preview.replaceChildren(sanitizeMarkdown(window.marked.parse(textarea.value || '')));
+      var source = textarea.value || '';
+      if (shell.hasAttribute('data-markdown-escape-html')) {
+        source = source
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+      }
+      preview.replaceChildren(sanitizeMarkdown(window.marked.parse(source)));
     } catch (error) {
       preview.textContent = textarea.value || '';
       window.MIFPLog?.error('markdown.preview_failed', { error: error });

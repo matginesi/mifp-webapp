@@ -31,7 +31,7 @@ _NOTIFICATION_TEST_TYPES = {
     "info": {
         "label": "Information",
         "severity": "info",
-        "subject": "[MIFP][TEST] Information notification",
+        "subject": "Test — Information notification",
         "event": "test_info",
         "body": (
             "This is an informational MIFP VPS notification preview.\n\n"
@@ -41,7 +41,7 @@ _NOTIFICATION_TEST_TYPES = {
     "warning": {
         "label": "Operational warning",
         "severity": "warning",
-        "subject": "[MIFP][TEST][WARNING] Operational problem",
+        "subject": "Test — Operational warning",
         "event": "test_warning",
         "body": (
             "This is a simulated operational warning.\n\n"
@@ -51,7 +51,7 @@ _NOTIFICATION_TEST_TYPES = {
     "critical": {
         "label": "Critical / down",
         "severity": "critical",
-        "subject": "[MIFP][TEST][CRITICAL] Production unavailable",
+        "subject": "Test — Production unavailable",
         "event": "test_critical",
         "body": (
             "This is a simulated production-down notification.\n\n"
@@ -61,7 +61,7 @@ _NOTIFICATION_TEST_TYPES = {
     "recovery": {
         "label": "Recovery",
         "severity": "recovery",
-        "subject": "[MIFP][TEST][RECOVERED] Production recovered",
+        "subject": "Test — Production recovered",
         "event": "test_recovery",
         "body": (
             "This is a simulated recovery message.\n\n"
@@ -71,7 +71,7 @@ _NOTIFICATION_TEST_TYPES = {
     "security": {
         "label": "Security / login",
         "severity": "security",
-        "subject": "[MIFP][TEST][SECURITY] Authentication activity",
+        "subject": "Test — Authentication activity",
         "event": "test_security",
         "body": (
             "This is a simulated authentication security notification.\n\n"
@@ -81,7 +81,7 @@ _NOTIFICATION_TEST_TYPES = {
     "join": {
         "label": "Join member request",
         "severity": "info",
-        "subject": "[MIFP][TEST] New member request",
+        "subject": "Test — New member request",
         "event": "test_join",
         "body": (
             "This is a simulated MIFP membership request notification.\n\n"
@@ -92,7 +92,7 @@ _NOTIFICATION_TEST_TYPES = {
     "error": {
         "label": "Application error",
         "severity": "error",
-        "subject": "[MIFP][TEST][ERROR] Application error",
+        "subject": "Test — Application error",
         "event": "test_error",
         "body": (
             "This is a simulated application error notification.\n\n"
@@ -199,8 +199,7 @@ def notifications_test():
         flash(f"{sample['label']} test email sent.", "success")
     elif result.reason == "transport_unavailable":
         flash(
-            "SMTP is not configured yet. Configure it on the VPS with "
-            "sudo mifpctl configure --section mail, then retry.",
+            "SMTP is not configured yet. Configure the server mail transport, then retry.",
             "warning",
         )
     else:

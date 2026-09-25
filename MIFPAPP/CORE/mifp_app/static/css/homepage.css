@@ -3625,3 +3625,18 @@
   .event-people-list { grid-template-columns: 1fr; }
   .event-person:nth-child(odd) { border-right: 0; }
 }
+
+/* Wrapped form controls draw focus on their component shell. Suppress the
+   generic descendant outline there so keyboard focus stays clear but never
+   appears as two competing highlight layers. */
+.public-site .filter-search input:focus-visible,
+.public-site .join-input-wrap input:focus-visible,
+.public-site .join-input-wrap textarea:focus-visible,
+.public-site .join-input-wrap select:focus-visible,
+.public-site .login-input:focus-visible {
+  outline: 0;
+}
+.join-input-wrap:focus-within {
+  border-color: var(--mifp-red);
+  box-shadow: 0 0 0 2px rgba(180, 35, 24, .16);
+}

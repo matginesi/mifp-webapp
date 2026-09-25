@@ -301,11 +301,27 @@ def create_app():
         # deployment that never saved banner settings; database site copy and then
         # the banner settings file override them.
         site_settings = {**Config.DEFAULT_BANNER_SETTINGS, **Config.SITE_DEFAULTS}
+        pending_join_requests = 0
         if not getattr(g, "maintenance_active", False):
             try:
                 with connect_readonly(app.config["DATABASE_PATH"]) as conn:
                     rows = conn.execute("SELECT key, value FROM settings").fetchall()
                     site_settings.update({r["key"]: r["value"] for r in rows})
+                    # Reuse the already-open read-only connection and only count
+                    # pending requests for authenticated dashboard renders.
+                    # This keeps the sidebar badge current without adding work to
+                    # public pages or opening a second database connection.
+                    if (
+                        session.get("admin_logged_in")
+                        and str(request.endpoint or "").startswith("dashboard.")
+                    ):
+                        try:
+                            pending_row = conn.execute(
+                                "SELECT COUNT(*) AS total FROM join_requests WHERE status='pending'"
+                            ).fetchone()
+                            pending_join_requests = int(pending_row["total"] or 0) if pending_row else 0
+                        except Exception:
+                            pending_join_requests = 0
             except Exception as exc:
                 log_event_throttled(
                     get_logger("runtime"),
@@ -344,6 +360,7 @@ def create_app():
             "seo_canonical_url": canonical_url(site_settings),
             "seo_robots": robots_directive(site_settings),
             "seo_absolute_url": lambda path: absolute_url(path, site_settings),
+            "pending_join_requests": pending_join_requests,
         }
 
     @app.before_request
