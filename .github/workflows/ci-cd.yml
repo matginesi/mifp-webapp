@@ -139,7 +139,6 @@ jobs:
           cache: pip
           cache-dependency-path: |
             MIFPAPP/CORE/requirements.lock
-            SCRAPERS/requirements.txt
             MIFPAPP/DATABASE/requirements.txt
             .github/requirements-test.txt
       - name: Install webapp test dependencies
@@ -152,7 +151,6 @@ jobs:
         if: matrix.suite == 'data'
         run: |
           timeout --foreground 10m python -m pip install --prefer-binary \
-            -r SCRAPERS/requirements.txt \
             -r MIFPAPP/DATABASE/requirements.txt \
             -r .github/requirements-test.txt
       - name: Run webapp tests in isolated workers
@@ -162,12 +160,11 @@ jobs:
         run: |
           timeout --foreground 20m bash test_all.sh --suite webapp -- \
             -n 2 --dist=loadfile --durations=20
-      - name: Run scraper, database and repository-tool tests
+      - name: Run database and repository-tool tests
         if: matrix.suite == 'data'
         env:
           MIFP_TEST_AUTO_INSTALL: "0"
         run: |
-          timeout --foreground 8m bash test_all.sh --suite scraper -- --durations=10
           timeout --foreground 8m bash test_all.sh --suite database -- --durations=10
           timeout --foreground 4m bash test_all.sh --suite tools -- --durations=10
 
@@ -183,15 +180,12 @@ jobs:
           cache: pip
           cache-dependency-path: |
             MIFPAPP/CORE/requirements.lock
-            SCRAPERS/requirements.txt
             MIFPAPP/DATABASE/requirements.txt
             .github/requirements-test.txt
       - name: Install pinned audit tool
         run: timeout --foreground 5m python -m pip install --disable-pip-version-check "pip-audit==2.10.1"
       - name: Audit runtime dependencies
         run: timeout --foreground 5m python -m pip_audit -r MIFPAPP/CORE/requirements.lock
-      - name: Audit scraper dependencies
-        run: timeout --foreground 5m python -m pip_audit -r SCRAPERS/requirements.txt
       - name: Audit database pipeline dependencies
         run: timeout --foreground 5m python -m pip_audit -r MIFPAPP/DATABASE/requirements.txt
 

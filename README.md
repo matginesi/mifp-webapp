@@ -125,15 +125,15 @@ Vedi [schema e lifecycle](docs/database-schema.md) e
 ```bash
 ./test_all.sh --suite quick
 ./test_all.sh --suite all
-./test_all.sh --suite scraper
 ./test_all.sh --suite database
 ```
 
 I test sono autosufficienti: **non richiedono il database di produzione**. Ogni
 suite crea il proprio DB temporaneo/in-memory dallo schema versionato, quindi in
 CI girano con database assente (il DB dell'istanza non è mai versionato). La CI
-usa lo stesso `requirements.lock` dell'immagine ed esegue le suite non-browser
-sui push a `main` (o su avvio manuale). Il repository non usa Dependabot per
+usa lo stesso `requirements.lock` dell'immagine ed esegue le suite repository non-browser
+(webapp, database e tooling) sui push a `main` o su avvio manuale. Gli scraper e i
+relativi test sono locali, ignorati da Git e non vengono installati, testati o auditati dalla CI. Il repository non usa Dependabot per
 aprire PR/branch automatici: gli aggiornamenti delle dipendenze sono espliciti e
 passano dalla stessa CI.
 

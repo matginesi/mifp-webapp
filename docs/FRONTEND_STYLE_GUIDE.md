@@ -356,7 +356,7 @@ git diff --check
 python3 tools/check_repo_hygiene.py
 ```
 
-(The full `bash test_all.sh --suite quick` also runs the scraper and database
+(The full `bash test_all.sh --suite quick` also runs the database and repository-tool
 suites; run it before handing the change over.)
 
 `test_revamp_contract.py` pins the visual identity (tokens, gradient counts,

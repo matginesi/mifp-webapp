@@ -320,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
             print("pip-audit not available. Dependency scan skipped.")
             return 0
         result = 0
-        for requirements in ("MIFPAPP/CORE/requirements.lock", "SCRAPERS/requirements.txt", "MIFPAPP/DATABASE/requirements.txt"):
+        for requirements in ("MIFPAPP/CORE/requirements.lock", "MIFPAPP/DATABASE/requirements.txt"):
             result = max(result, _run_optional([sys.executable, "-m", "pip_audit", "-r", requirements], "pip-audit not available. Dependency scan skipped."))
         return result
     if args.command == "image":

@@ -17,6 +17,13 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 MAX_TRACKED_FILE_BYTES = 5 * 1024 * 1024
 
+# Scraper implementation and its tests are local-only. They may exist in a
+# developer workspace, but must never be tracked by the GitHub repository.
+FORBIDDEN_TRACKED_PREFIXES = (
+    "SCRAPERS/",
+    "TESTS/scraper/",
+)
+
 # These paths are application state or generated import/scraper material.  The
 # source code that manages them remains versioned elsewhere.
 FORBIDDEN_PREFIXES = (
@@ -146,6 +153,10 @@ def main() -> int:
         full = ROOT / text
 
         if text in ALLOWED_PLACEHOLDERS:
+            continue
+
+        if tracked is not None and any(text.startswith(prefix) for prefix in FORBIDDEN_TRACKED_PREFIXES):
+            violations.append(f"local-only scraper path tracked by Git: {text}")
             continue
 
         if any(text.startswith(prefix) for prefix in FORBIDDEN_PREFIXES):

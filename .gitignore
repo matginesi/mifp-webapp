@@ -20,8 +20,8 @@ credentials.*.json
 !MIFPAPP/CORE/.env.example
 !deploy/.env.production.example
 
-# Generated scraper/import data. SCRAPERS/ itself is source code.
-SCRAPERS/OUTPUTS/
+# Local-only scraper workspace and generated import data.
+# SCRAPERS/ is intentionally never versioned or used by GitHub CI.
 SCRAPERS/
 scrapers_/
 IMPORT_DATA/
@@ -119,3 +119,6 @@ MIFPAPP/DATABASE/uploads/
 
 MIFPAPP/DATABASE/events/
 MIFPAPP/DATABASE/events-php-enabled.txt
+
+
+error.txt

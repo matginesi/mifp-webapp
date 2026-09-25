@@ -45,21 +45,6 @@ def test_launcher_is_local_only_and_has_no_production_commands() -> None:
     assert "start_production" not in launcher
 
 
-def test_scraper_command_is_forwarded(tmp_path: Path) -> None:
-    _prepare_launcher_tree(tmp_path)
-    stub = tmp_path / "SCRAPERS" / "run_all.sh"
-    stub.write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n", encoding="utf-8")
-    result = subprocess.run(
-        ["bash", "mifp", "scrape", "remote", "--threads", "4"],
-        cwd=tmp_path,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "--scrapers remote --threads 4" in result.stdout
-
-
 def test_database_command_is_forwarded(tmp_path: Path) -> None:
     _prepare_launcher_tree(tmp_path)
     stub = tmp_path / "MIFPAPP" / "DATABASE" / "build.sh"
@@ -80,44 +65,14 @@ def test_test_suite_is_forwarded(tmp_path: Path) -> None:
     stub = tmp_path / "test_all.sh"
     stub.write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n", encoding="utf-8")
     result = subprocess.run(
-        ["bash", "mifp", "test", "scraper", "--", "-x", "-vv"],
+        ["bash", "mifp", "test", "database", "--", "-x", "-vv"],
         cwd=tmp_path,
         text=True,
         capture_output=True,
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "--suite scraper -- -x -vv" in result.stdout
-
-
-def test_scraper_local_uses_configured_default_path(tmp_path: Path) -> None:
-    _prepare_launcher_tree(tmp_path)
-    stub = tmp_path / "SCRAPERS" / "run_all.sh"
-    stub.write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n", encoding="utf-8")
-    result = subprocess.run(
-        ["bash", "mifp", "scrape", "local"],
-        cwd=tmp_path,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "--local-root /run/media/matteo/ARCHDISK/srv/http/mifp.eu" in result.stdout
-
-
-def test_scraper_remote_uses_default_threads(tmp_path: Path) -> None:
-    _prepare_launcher_tree(tmp_path)
-    stub = tmp_path / "SCRAPERS" / "run_all.sh"
-    stub.write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n", encoding="utf-8")
-    result = subprocess.run(
-        ["bash", "mifp", "scrape", "remote"],
-        cwd=tmp_path,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "--threads 16" in result.stdout
+    assert "--suite database -- -x -vv" in result.stdout
 
 
 def test_admin_username_is_forwarded_without_password_generation_flags(tmp_path: Path) -> None:
@@ -162,7 +117,6 @@ def test_clean_dry_run_never_targets_import_data(tmp_path: Path) -> None:
     protected = tmp_path / "IMPORT_DATA" / "protected.jsonl"
     protected.write_text("{}\n", encoding="utf-8")
     (tmp_path / "SCRAPERS" / "OUTPUTS").mkdir()
-    (tmp_path / "SCRAPERS" / "OUTPUTS" / "records.jsonl").write_text("{}\n", encoding="utf-8")
     result = subprocess.run(
         ["bash", "mifp", "clean", "all", "--dry-run"],
         cwd=tmp_path,
@@ -257,7 +211,6 @@ def test_zip_it_includes_source_and_excludes_generated_data(tmp_path: Path) -> N
     shutil.copy2(repo_root / "zip_it.sh", tmp_path / "zip_it.sh")
     (tmp_path / "MIFPAPP" / "CORE").mkdir(parents=True)
     (tmp_path / "MIFPAPP" / "DATABASE" / "assets").mkdir(parents=True)
-    (tmp_path / "SCRAPERS" / "OUTPUTS").mkdir(parents=True)
     (tmp_path / "TESTS").mkdir()
     (tmp_path / "IMPORT_DATA").mkdir()
 
@@ -265,8 +218,6 @@ def test_zip_it_includes_source_and_excludes_generated_data(tmp_path: Path) -> N
     (tmp_path / "MIFPAPP" / "DATABASE" / "build.sh").write_text("#!/bin/sh\n", encoding="utf-8")
     (tmp_path / "MIFPAPP" / "DATABASE" / "mifp.db").write_bytes(b"database")
     (tmp_path / "MIFPAPP" / "DATABASE" / "assets" / "download.jpg").write_bytes(b"asset")
-    (tmp_path / "SCRAPERS" / "scrape.py").write_text("print('scrape')\n", encoding="utf-8")
-    (tmp_path / "SCRAPERS" / "OUTPUTS" / "records.jsonl").write_text("{}\n", encoding="utf-8")
     (tmp_path / "TESTS" / "test_app.py").write_text("def test_ok(): pass\n", encoding="utf-8")
     (tmp_path / "IMPORT_DATA" / "private.jsonl").write_text("{}\n", encoding="utf-8")
 
@@ -288,11 +239,9 @@ def test_zip_it_includes_source_and_excludes_generated_data(tmp_path: Path) -> N
 
     assert "MIFPAPP/CORE/app.py" in names
     assert "MIFPAPP/DATABASE/build.sh" in names
-    assert "SCRAPERS/scrape.py" in names
     assert "TESTS/test_app.py" in names
     assert "MIFPAPP/DATABASE/mifp.db" not in names
     assert "MIFPAPP/DATABASE/assets/download.jpg" not in names
-    assert "SCRAPERS/OUTPUTS/records.jsonl" not in names
     assert "IMPORT_DATA/private.jsonl" not in names
 
 

@@ -12,7 +12,7 @@
 ./mifp db-init [PATH]
 ./mifp db-check [PATH]
 ./mifp db-upgrade-copy OLD NEW
-./mifp test [quick|webapp|scraper|database|browser|all]
+./mifp test [quick|webapp|database|tools|browser|all]
 ./mifp admin
 ./mifp doctor
 ./mifp security status

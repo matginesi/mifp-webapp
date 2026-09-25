@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import subprocess
 from pathlib import Path
 
@@ -150,7 +151,8 @@ def test_ci_workflow_runs_the_complete_non_browser_repository_suite_in_parallel(
     assert "test_all.sh" in text
     assert "suite: [webapp, data]" in text
     assert "--suite webapp" in text
-    assert "--suite scraper" in text
+    assert "--suite scraper" not in text
+    assert "SCRAPERS/requirements.txt" not in text
     assert "--suite database" in text
     assert "--suite tools" in text
     test_requirements = _read(".github", "requirements-test.txt")
@@ -227,7 +229,8 @@ def test_github_actions_are_bounded_and_cancel_stale_runs() -> None:
     ci_text = ci_path.read_text(encoding="utf-8")
     assert "--connect-timeout 10 --max-time 120 --retry 3" in ci_text
     assert "timeout --foreground 20m bash test_all.sh --suite webapp" in ci_text
-    assert "timeout --foreground 8m bash test_all.sh --suite scraper" in ci_text
+    assert "--suite scraper" not in ci_text
+    assert "SCRAPERS/requirements.txt" not in ci_text
     assert "timeout --foreground 8m bash test_all.sh --suite database" in ci_text
     assert "timeout --foreground 4m bash test_all.sh --suite tools" in ci_text
     assert "timeout --foreground 12m ./trivy image" in ci_text
@@ -441,6 +444,37 @@ def test_events_domain_checks_are_backend_aware() -> None:
     assert '"$DOMAIN" "$WWW_DOMAIN" "$EVENTS_DOMAIN"' not in bootstrap
 
 
+def test_repository_tests_do_not_import_local_only_scraper_modules() -> None:
+    root = _repo_root()
+    local_only_modules = {
+        "_remote_aruba",
+        "_remote_events",
+        "artifact_normalizer",
+        "import_artifacts",
+        "scrape_local",
+        "scrape_remote",
+        "validate_artifacts",
+        "validate_import_data",
+    }
+    offenders: list[str] = []
+
+    for test_file in sorted((root / "TESTS").rglob("*.py")):
+        tree = ast.parse(test_file.read_text(encoding="utf-8"), filename=str(test_file))
+        imported_modules: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_modules.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported_modules.add(node.module)
+
+        for module in imported_modules:
+            root_module = module.split(".", 1)[0]
+            if root_module == "SCRAPERS" or root_module in local_only_modules:
+                offenders.append(f"{test_file.relative_to(root)} imports {module}")
+
+    assert not offenders, "local-only scraper imports found in repository tests: " + "; ".join(offenders)
+
+
 def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
     root = _repo_root()
     gitignore = _read(".gitignore")
@@ -449,7 +483,7 @@ def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
     checker = root / "tools" / "check_repo_hygiene.py"
 
     assert checker.is_file()
-    assert "SCRAPERS/OUTPUTS/" in gitignore
+    assert "SCRAPERS/" in {line.strip() for line in gitignore.splitlines()}
     for relative in (
         "assets",
         "backups",
@@ -478,12 +512,13 @@ def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
     assert "secrets:" in workflow
     assert "gitleaks git ." in workflow
 
-    assert '"SCRAPERS/OUTPUTS"' in packager
     assert '"MIFPAPP/DATABASE/uploads"' in packager
     assert '"MIFPAPP/DATABASE/events"' in packager
     assert '"MIFPAPP/DATABASE/events-php-enabled.txt"' in packager
     checker_text = checker.read_text(encoding="utf-8")
     assert '"MIFPAPP/DATABASE/events/"' in checker_text
+    assert '"SCRAPERS/"' in checker_text
+    assert '"TESTS/scraper/"' in checker_text
     assert '"MIFPAPP/DATABASE/events-php-enabled.txt"' in checker_text
     gitignore_lines = {line.strip() for line in gitignore.splitlines()}
     assert "MIFPAPP/DATABASE/events/" in gitignore_lines

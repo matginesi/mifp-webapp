@@ -38,7 +38,7 @@ export AUTO_SYNC_CONFERENCES_ON_STARTUP=0
 
 # Data-only suites must not need TESTS/conftest.py (which imports Flask), but
 # they still need the repository source directories on sys.path.
-export PYTHONPATH="$ROOT_DIR/MIFPAPP/CORE:$ROOT_DIR/SCRAPERS:$ROOT_DIR/MIFPAPP/DATABASE/tools${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$ROOT_DIR/MIFPAPP/CORE:$ROOT_DIR/MIFPAPP/DATABASE/tools${PYTHONPATH:+:$PYTHONPATH}"
 
 SUITE=quick
 BASE_URL="${MIFP_TEST_BASE_URL:-http://127.0.0.1:8000}"
@@ -54,10 +54,9 @@ usage() {
 Usage: bash test_all.sh [options] [-- pytest-args]
 
 Suites:
-  --suite quick       Webapp + scraper + database + repository-tool tests (default)
+  --suite quick       Webapp + database + repository-tool tests (default)
   --suite all         Quick suite + real-browser tests
   --suite webapp      Flask/core tests only
-  --suite scraper     Scraper tests only
   --suite database    Database/import tests only
   --suite tools       Repository maintenance/tooling tests only
   --suite browser     Playwright browser tests only
@@ -97,7 +96,6 @@ normalise_suite() {
     quick) printf 'quick\n' ;;
     all) printf 'all\n' ;;
     webapp|core) printf 'webapp\n' ;;
-    scraper|scrapers) printf 'scraper\n' ;;
     database|db) printf 'database\n' ;;
     tools|tooling) printf 'tools\n' ;;
     browser) printf 'browser\n' ;;
@@ -221,7 +219,6 @@ run_pytest_paths() {
 
 run_quick() {
   run_webapp
-  run_scraper
   run_database
   run_tools
 }
@@ -230,9 +227,6 @@ run_webapp() {
   run_pytest_paths "webapp tests" webapp TESTS/webapp
 }
 
-run_scraper() {
-  run_pytest_paths "scraper tests" data --confcutdir=TESTS/scraper TESTS/scraper
-}
 
 run_database() {
   run_pytest_paths "database tests" data --confcutdir=TESTS/database TESTS/database
@@ -279,7 +273,6 @@ case "$SUITE" in
   quick) run_quick ;;
   all) run_quick; run_browser ;;
   webapp) run_webapp ;;
-  scraper) run_scraper ;;
   database) run_database ;;
   tools) run_tools ;;
   browser) run_browser ;;

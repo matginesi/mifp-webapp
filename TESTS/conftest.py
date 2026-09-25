@@ -32,7 +32,7 @@ os.environ["EVENTS_PUBLIC_BASE_URL"] = "https://events.test"
 os.environ["RUNTIME_CONFIG_DIR"] = str(_TEST_RUNTIME / "config")
 os.environ["TMPDIR"] = str(_TEST_RUNTIME / "tmp")
 
-for pkg in ("MIFPAPP/CORE", "SCRAPERS", "MIFPAPP/DATABASE/tools"):
+for pkg in ("MIFPAPP/CORE", "MIFPAPP/DATABASE/tools"):
     path = os.path.join(ROOT, pkg)
     if path not in sys.path:
         sys.path.insert(0, path)

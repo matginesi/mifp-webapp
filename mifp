@@ -49,7 +49,7 @@ Pipeline dati:
   ./mifp refresh [remote|local|all] [opzioni scraper]
 
 Test e gestione:
-  ./mifp test [quick|webapp|scraper|database|tools|browser|all] [-- pytest args]
+  ./mifp test [quick|webapp|database|tools|browser|all] [-- pytest args]
   ./mifp admin [--username NOME]   Imposta password locale in modo interattivo (solo hash salvato)
   ./mifp hash                      Stampa un hash Werkzeug compatibile per la rotazione admin in produzione
   ./mifp status
@@ -129,22 +129,28 @@ install_local_dependencies() {
     "$VENV_DIR/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || \
       die "pip non è disponibile nel virtualenv. Installa il pacchetto python3-venv della tua distribuzione."
   fi
+  local requirements=(
+    -r "$CORE_DIR/requirements.lock"
+    -r "$DATABASE_DIR/requirements.txt"
+  )
+  if [[ -f "$SCRAPERS_DIR/requirements.txt" ]]; then
+    requirements+=( -r "$SCRAPERS_DIR/requirements.txt" )
+  fi
   "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --prefer-binary \
-    -r "$CORE_DIR/requirements.lock" \
-    -r "$SCRAPERS_DIR/requirements.txt" \
-    -r "$DATABASE_DIR/requirements.txt" \
-    pytest || \
+    "${requirements[@]}" pytest || \
     die "Installazione delle dipendenze fallita. Controlla rete/PyPI e riprova con: ./mifp setup"
 }
 
 local_dependencies_hash() {
-  python3 - "$CORE_DIR/requirements.lock" "$SCRAPERS_DIR/requirements.txt" "$DATABASE_DIR/requirements.txt" <<'PYHASH'
+  python3 - "$CORE_DIR/requirements.lock" "$DATABASE_DIR/requirements.txt" "$SCRAPERS_DIR/requirements.txt" <<'PYHASH'
 from pathlib import Path
 import hashlib, sys
 h = hashlib.sha256()
 for name in sys.argv[1:]:
     path = Path(name)
-    h.update(path.name.encode())
+    if not path.is_file():
+        continue
+    h.update(path.as_posix().encode())
     h.update(b"\0")
     h.update(path.read_bytes())
     h.update(b"\0")
@@ -448,15 +454,11 @@ refresh_data() {
 run_tests() {
   local suite="${1:-quick}"
   case "$suite" in
-    quick|all|webapp|core|scraper|scrapers|database|db|tools|tooling|browser|smoke) shift || true ;;
+    quick|all|webapp|core|database|db|tools|tooling|browser|smoke) shift || true ;;
     *) suite=quick ;;
   esac
   if [[ "${1:-}" == "--" ]]; then shift; fi
   [[ -f "$ROOT_DIR/test_all.sh" ]] || die "test_all.sh non trovato."
-  if [[ "$suite" == quick && ! -d "$ROOT_DIR/TESTS/scraper" ]]; then
-    say "Copia GitHub webapp-only: eseguo la suite webapp."
-    suite=webapp
-  fi
   run bash "$ROOT_DIR/test_all.sh" --suite "$suite" -- "$@"
 }
 
@@ -882,7 +884,7 @@ doctor() {
     "$ROOT_DIR/deploy/Caddyfile" "$ROOT_DIR/deploy/deploy.sh" \
     "$ROOT_DIR/deploy/bootstrap-vps.sh" "$ROOT_DIR/deploy/.env.production.example" \
     "$ROOT_DIR/.github/workflows/ci-cd.yml" \
-    "$SCRAPERS_DIR/run_all.sh" "$DATABASE_DIR/build.sh" "$ROOT_DIR/test_all.sh" "$ROOT_DIR/zip_it.sh"; do
+    "$DATABASE_DIR/build.sh" "$ROOT_DIR/test_all.sh" "$ROOT_DIR/zip_it.sh"; do
     if [[ -e "$item" ]]; then say "ok: ${item#$ROOT_DIR/}"; else say "manca: ${item#$ROOT_DIR/}"; failed=1; fi
   done
   ensure_env
