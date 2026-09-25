@@ -70,12 +70,35 @@ def test_production_compose_has_no_build_and_uses_registry_image() -> None:
         "mifp_events_remote_password",
     }
     assert set(compose["secrets"]) == set(web["secrets"])
+    expected_sources = {
+        "mifp_secret_key": "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_secret_key",
+        "mifp_admin_password_hash": "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_admin_password_hash",
+        "mifp_smtp_password": "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_smtp_password",
+        "mifp_events_remote_password": "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_events_remote_password",
+    }
+    for name, source in expected_sources.items():
+        assert compose["secrets"][name] == {"file": source}
+        assert "environment" not in compose["secrets"][name]
     assert "127.0.0.1:8000:8000" in web["ports"]
     assert web["cap_drop"] == ["ALL"]
     assert web["security_opt"] == ["no-new-privileges:true"]
     assert web["read_only"] is True
     assert all("docker.sock" not in str(volume) for volume in web.get("volumes", []))
     assert "healthcheck" in web
+
+
+def test_deploy_materializes_file_backed_secrets_without_exporting_secret_values() -> None:
+    root = _repo_root()
+    deploy = (root / "deploy/deploy.sh").read_text(encoding="utf-8")
+    block = deploy.split("compose_with_image() {", 1)[1].split("\n}", 1)[0]
+
+    assert "prepare_compose_secrets" in block
+    assert 'MIFP_SECRETS_DIR="$SECRET_MATERIAL_DIR"' in block
+    assert 'source "$SECRETS_FILE"' not in block
+    assert "export SECRET_KEY" not in block
+    assert "export ADMIN_PASSWORD_HASH" not in block
+    assert "export SMTP_PASSWORD" not in block
+    assert "export EVENTS_REMOTE_PASSWORD" not in block
 
 
 def test_production_compose_never_builds_an_image() -> None:

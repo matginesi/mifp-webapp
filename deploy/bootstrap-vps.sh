@@ -227,6 +227,12 @@ CONFIG_ARGS=(
 )
 [[ -z "$DOMAIN" ]] || CONFIG_ARGS+=(--domain "$DOMAIN")
 python3 "$MIFP_HOME/vps_config.py" "${CONFIG_ARGS[@]}"
+python3 "$MIFP_HOME/vps_config.py" \
+  --config-file /etc/mifp/config.env \
+  --secrets-file /etc/mifp/secrets.env \
+  --runtime-env "$MIFP_HOME/.env" \
+  materialize-secrets --output-dir /etc/mifp/secrets \
+  --uid "$MIFP_UID" --gid "$MIFP_GID" --mode 0400
 DOMAIN="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get DOMAIN)"
 WWW_DOMAIN="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get WWW_DOMAIN)"
 EVENTS_BACKEND="$(python3 "$MIFP_HOME/vps_config.py" --config-file /etc/mifp/config.env --secrets-file /etc/mifp/secrets.env --runtime-env "$MIFP_HOME/.env" get EVENTS_PUBLISH_BACKEND)"

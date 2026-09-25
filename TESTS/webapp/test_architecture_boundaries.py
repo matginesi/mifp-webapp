@@ -516,10 +516,19 @@ def test_production_container_receives_application_credentials_as_docker_secrets
     assert "SMTP_PASSWORD" not in environment
 
     secrets = compose["secrets"]
-    assert secrets["mifp_smtp_password"]["environment"] == "SMTP_PASSWORD"
-    assert secrets["mifp_secret_key"]["environment"] == "SECRET_KEY"
+    expected_secret_files = {
+        "mifp_secret_key": "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_secret_key",
+        "mifp_admin_password_hash": "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_admin_password_hash",
+        "mifp_smtp_password": "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_smtp_password",
+        "mifp_events_remote_password": "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_events_remote_password",
+    }
+    for secret_name, expected_file in expected_secret_files.items():
+        assert secrets[secret_name] == {"file": expected_file}
 
     deploy = _read("deploy", "deploy.sh")
+    prepare_fn = deploy.split("prepare_compose_secrets() {", 1)[1].split("\n}", 1)[0]
     compose_fn = deploy.split("compose_with_image() {", 1)[1].split("\n}", 1)[0]
-    assert 'source "$SECRETS_FILE"' in compose_fn
-    assert "export SECRET_KEY ADMIN_PASSWORD_HASH SMTP_PASSWORD EVENTS_REMOTE_PASSWORD" in compose_fn
+    assert "materialize-secrets" in prepare_fn
+    assert 'MIFP_SECRETS_DIR="$SECRET_MATERIAL_DIR"' in compose_fn
+    assert 'source "$SECRETS_FILE"' not in compose_fn
+    assert "export SECRET_KEY ADMIN_PASSWORD_HASH SMTP_PASSWORD EVENTS_REMOTE_PASSWORD" not in compose_fn

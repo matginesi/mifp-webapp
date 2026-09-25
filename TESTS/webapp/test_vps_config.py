@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 import importlib.util
 import json
+import os
 import stat
 import subprocess
 from pathlib import Path
@@ -635,3 +636,65 @@ def test_dashboard_safe_settings_never_include_smtp_credentials() -> None:
     assert secret not in rendered
     assert "mailer@example.net" not in rendered
     assert "should-not-be-read-from-db" not in rendered
+
+
+def test_materialize_web_secrets_creates_root_only_regular_files_for_optional_empty_values(tmp_path: Path) -> None:
+    module = _module()
+    output = tmp_path / "secrets"
+    values = {
+        "SECRET_KEY": "required-secret",
+        "ADMIN_PASSWORD_HASH": "admin-hash",
+        "SMTP_PASSWORD": "",
+        "EVENTS_REMOTE_PASSWORD": "",
+    }
+
+    module.materialize_web_secrets(
+        values, output, uid=os.getuid(), gid=os.getgid(), mode=0o400
+    )
+
+    assert stat.S_IMODE(output.stat().st_mode) == 0o700
+    expected = {
+        "mifp_secret_key": "required-secret",
+        "mifp_admin_password_hash": "admin-hash",
+        "mifp_smtp_password": "",
+        "mifp_events_remote_password": "",
+    }
+    for filename, value in expected.items():
+        path = output / filename
+        assert path.is_file() and not path.is_symlink()
+        assert stat.S_IMODE(path.stat().st_mode) == 0o400
+        assert path.stat().st_uid == os.getuid()
+        assert path.stat().st_gid == os.getgid()
+        assert path.read_text(encoding="utf-8") == value
+    assert module.audit_web_secret_material(values, output) == []
+
+
+def test_materialize_web_secrets_rejects_symlink_target_without_leaking_value(tmp_path: Path) -> None:
+    module = _module()
+    output = tmp_path / "secrets"
+    output.mkdir()
+    external = tmp_path / "external"
+    external.write_text("unchanged", encoding="utf-8")
+    (output / "mifp_secret_key").symlink_to(external)
+    secret = "must-never-appear-in-error"
+
+    with pytest.raises(RuntimeError) as excinfo:
+        module.materialize_web_secrets({"SECRET_KEY": secret}, output)
+
+    assert secret not in str(excinfo.value)
+    assert external.read_text(encoding="utf-8") == "unchanged"
+
+
+def test_audit_web_secret_material_reports_key_only_on_mismatch(tmp_path: Path) -> None:
+    module = _module()
+    output = tmp_path / "secrets"
+    canonical = {"SECRET_KEY": "canonical-secret"}
+    module.materialize_web_secrets(canonical, output)
+    (output / "mifp_secret_key").write_text("wrong-secret", encoding="utf-8")
+
+    errors = module.audit_web_secret_material(canonical, output)
+    rendered = "\n".join(errors)
+
+    assert "SECRET_KEY" in rendered
+    assert "canonical-secret" not in rendered
+    assert "wrong-secret" not in rendered

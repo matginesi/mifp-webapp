@@ -11,6 +11,7 @@ VPS_CONFIG_HELPER="$MIFP_HOME/vps_config.py"
 CONFIG_DIR="${MIFP_CONFIG_DIR:-/etc/mifp}"
 PUBLIC_CONFIG_FILE="$CONFIG_DIR/config.env"
 SECRETS_FILE="$CONFIG_DIR/secrets.env"
+SECRET_MATERIAL_DIR="${MIFP_SECRET_MATERIAL_DIR:-$CONFIG_DIR/secrets}"
 DOCKER_CONFIG_FILE="${MIFP_DOCKER_CONFIG_FILE:-/root/.docker/config.json}"
 COMPOSE_FILE="$MIFP_HOME/compose.yaml"
 RELEASE_FILE="$MIFP_HOME/release.env"
@@ -341,22 +342,23 @@ validate_release_image() {
     || die "Usa sha-<commit> o un digest OCI @sha256:... valido; tag mutabili come :latest non sono ammessi."
 }
 
+prepare_compose_secrets() {
+  # /etc/mifp/secrets.env remains the canonical root-only store. Compose cannot
+  # use environment-backed secrets with a read-only service root filesystem, so
+  # materialize derived root-only regular files immediately before every Compose
+  # operation. Optional SMTP/publisher credentials intentionally become empty
+  # regular files, keeping the *_FILE contract stable without exposing values in
+  # the container environment or host process environment.
+  config_cli materialize-secrets --output-dir "$SECRET_MATERIAL_DIR" \
+    --uid "$RUNTIME_UID" --gid "$RUNTIME_GID" --mode 0400 \
+    >/dev/null || die "Impossibile materializzare i Docker secrets in $SECRET_MATERIAL_DIR."
+}
+
 compose_with_image() {
   local image="$1"; shift
-  # Compose secrets use the canonical root-only secrets.env as their source,
-  # but the values are never injected into the service environment. Ensure all
-  # names exist so optional SMTP/remote-publisher secrets become empty mounted
-  # files instead of breaking `docker compose config`.
-  local SECRET_KEY="" ADMIN_PASSWORD_HASH="" SMTP_PASSWORD="" EVENTS_REMOTE_PASSWORD=""
-  if [[ -f "$SECRETS_FILE" && ! -L "$SECRETS_FILE" ]]; then
-    set -a
-    # Root-managed file written by vps_config.py.
-    # shellcheck disable=SC1090
-    source "$SECRETS_FILE"
-    set +a
-  fi
-  export SECRET_KEY ADMIN_PASSWORD_HASH SMTP_PASSWORD EVENTS_REMOTE_PASSWORD
-  MIFP_IMAGE="$image" MIFP_DATA_DIR="$DATA_DIR" "${COMPOSE_BASE[@]}" "$@"
+  prepare_compose_secrets
+  MIFP_IMAGE="$image" MIFP_DATA_DIR="$DATA_DIR" MIFP_SECRETS_DIR="$SECRET_MATERIAL_DIR" \
+    "${COMPOSE_BASE[@]}" "$@"
 }
 
 ensure_tools() {
@@ -574,10 +576,18 @@ preflight_image_db() {
 wait_ready() {
   local attempts="${MIFP_READY_ATTEMPTS:-${1:-60}}" i
   [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || die "MIFP_READY_ATTEMPTS non valido: $attempts"
+  say "Attendo readiness applicativa (max $((attempts * 2))s)..." >&2
   for ((i=1; i<=attempts; i++)); do
-    curl -fsS --max-time 2 http://127.0.0.1:8000/ready >/dev/null 2>&1 && return 0
+    if curl -fsS --max-time 2 http://127.0.0.1:8000/ready >/dev/null 2>&1; then
+      say "Application readiness: OK (tentativo $i/$attempts)" >&2
+      return 0
+    fi
+    if (( i == 1 || i % 5 == 0 )); then
+      say "Readiness in attesa: tentativo $i/$attempts" >&2
+    fi
     sleep 2
   done
+  say "Application readiness: TIMEOUT dopo $attempts tentativi" >&2
   return 1
 }
 
@@ -595,9 +605,11 @@ stop_release_for_db_swap() {
 
 activate_release() {
   local image="$1" fallback="${2:-}"
-  if compose_with_image "$image" up -d --remove-orphans; then
-    wait_ready 60 && return 0
+  if ! compose_with_image "$image" up -d --remove-orphans; then
+    show_release_logs "$image"
+    die "Compose non ha avviato la release $image. Errore host/Compose: rollback immagine automatico non tentato perché usa la stessa configurazione host."
   fi
+  wait_ready 60 && return 0
   show_release_logs "$image"
   if [[ -n "$fallback" ]]; then
     step "Release non pronta: ripristino $fallback"
@@ -1523,6 +1535,22 @@ do_security_check() {
     fi
   }
 
+  security_dir() {
+    local label="$1" path="$2" expected_mode="$3" expected_uid="$4" expected_gid="$5" details
+    if [[ -L "$path" || ! -d "$path" ]]; then
+      security_error "$label is not a safe directory: $path"
+      return
+    fi
+    details="$(stat -c '%a|%u|%g' "$path" 2>/dev/null || true)"
+    if [[ "$details" == "$expected_mode|$expected_uid|$expected_gid" ]]; then
+      security_ok "$label permissions and ownership"
+    else
+      local mode dir_uid dir_gid
+      IFS='|' read -r mode dir_uid dir_gid <<<"$details"
+      security_error "$label must be uid ${expected_uid}, gid ${expected_gid}, mode 0${expected_mode} (found uid ${dir_uid:-unknown}, gid ${dir_gid:-unknown}, mode ${mode:-unknown})"
+    fi
+  }
+
   security_state_file() {
     local path="$1" label="$2" allowed="$3"
     [[ -e "$path" || -L "$path" ]] || return 0
@@ -1649,6 +1677,25 @@ do_security_check() {
   security_file "Runtime environment" "$ENV_FILE" 600 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID"
   security_file "Secrets file" "$SECRETS_FILE" 600 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID"
   security_file "Public config" "$PUBLIC_CONFIG_FILE" 640 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID"
+  security_dir "Docker secret material directory" "$SECRET_MATERIAL_DIR" 700 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID"
+  local material_name
+  for material_name in mifp_secret_key mifp_admin_password_hash mifp_smtp_password mifp_events_remote_password; do
+    security_file "Docker secret material $material_name" "$SECRET_MATERIAL_DIR/$material_name" 400 "$RUNTIME_UID" "$RUNTIME_GID"
+  done
+  local material_audit=""
+  if material_audit="$(config_cli audit-secret-material --output-dir "$SECRET_MATERIAL_DIR" 2>&1)"; then
+    security_ok "Docker secret material matches canonical state"
+  else
+    local material_line material_reported=0
+    while IFS= read -r material_line; do
+      if [[ "$material_line" == ERROR:* ]]; then
+        say "$material_line"
+        material_reported=1
+      fi
+    done <<<"$material_audit"
+    (( material_reported )) || security_error "unable to verify Docker secret material"
+    failed=1
+  fi
   security_state_file "$RELEASE_FILE" "Release state" 'CURRENT_IMAGE|PREVIOUS_IMAGE'
   security_state_file "$UPGRADE_FILE" "Upgrade state" 'UPGRADED_IMAGE|PREVIOUS_IMAGE|PREVIOUS_DB'
 

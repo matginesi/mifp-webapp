@@ -141,9 +141,14 @@ sudo mifpctl config-show
 ```
 
 I non-segreti sono in `/etc/mifp/config.env` (`root:root`, `0640`); hash e
-password in `/etc/mifp/secrets.env` (`0600`). `config-set` rifiuta i segreti in
-command line: usa `configure --section mail|backup`. Il PAT GHCR rimane soltanto
-nel credential store Docker di root.
+password in `/etc/mifp/secrets.env` (`0600`). Questo file resta la fonte
+canonica: `mifpctl` materializza in `/etc/mifp/secrets/` (`0700`) quattro file
+Docker root-only (`0600`) per `SECRET_KEY`, hash admin, SMTP e publisher remoto.
+I secret opzionali non configurati diventano file regolari vuoti, così il
+contratto `*_FILE` rimane valido anche con root filesystem del container
+read-only. `config-set` rifiuta i segreti in command line: usa
+`configure --section mail|backup`. Il PAT GHCR rimane soltanto nel credential
+store Docker di root.
 
 La CI esegue in parallelo hygiene, secret scan, test e audit delle dipendenze; la
 build/publish GHCR parte solo se tutti i gate sono verdi. Il workflow automatico
@@ -222,7 +227,10 @@ sudo mifpctl security-check
 `refresh-host-tools.sh` è riservato a un host già inizializzato. Verifica che il
 bundle sia completo, rifiuta symlink/file modificabili da gruppo o altri,
 controlla la sintassi shell/Python e valida Compose prima di installare i file
-con sostituzioni atomiche. Aggiorna il wrapper, `deploy.sh`, helper, backup,
+con sostituzioni atomiche. Rifiuta inoltre il vecchio schema di Docker secrets
+`environment:` incompatibile con `read_only: true` e rigenera i file derivati
+root-only in `/etc/mifp/secrets/` senza modificare `secrets.env`. Aggiorna il
+wrapper, `deploy.sh`, helper, backup,
 template, Compose e unit systemd; esegue `daemon-reload` soltanto se le unit sono
 cambiate. Non esegue apt, non modifica firewall/SSH/repository Docker, non
 tocca il Caddyfile live, non riavvia container o servizi e conserva
@@ -451,9 +459,11 @@ sudo mifpctl configure --section backup
 ```
 
 La sezione `mail` è l'unico punto operativo per le credenziali SMTP. La password
-viene letta con input nascosto e salvata esclusivamente in `/etc/mifp/secrets.env`
-(`0600`). In produzione Compose la legge dal file root-only e la consegna al solo
-servizio web come secret file in `/run/secrets`; non viene inserita nell'immagine,
+viene letta con input nascosto e salvata esclusivamente come valore canonico in
+`/etc/mifp/secrets.env` (`0600`). `mifpctl` ne genera una copia derivata
+root-only in `/etc/mifp/secrets/mifp_smtp_password`; Compose usa esclusivamente
+la sorgente file-backed e la consegna al solo servizio web come
+`/run/secrets/mifp_smtp_password`. Non viene inserita nell'immagine,
 nel file runtime `.env` né nell'environment del container. La dashboard non rende
 host, username o password SMTP. In `local-vps`, la stessa configurazione alimenta
 anche il relay
@@ -497,7 +507,8 @@ Prima di considerare una VPS pronta:
     /var/run/reboot-required assente
 [ ] Caddyfile valido e backend Flask solo su 127.0.0.1:8000
 [ ] container non-root, rootfs read-only, no-new-privileges, niente docker.sock
-[ ] /etc/mifp/secrets.env è 0600; Docker config root è 0600 se presente
+[ ] /etc/mifp/secrets.env è 0600; /etc/mifp/secrets è 0700 e i file derivati sono 0400 con owner UID/GID runtime
+[ ] Docker config root è 0600 se presente
 [ ] /etc/mifp è custodito fuori dalla VPS (escrow dei segreti)
 [ ] Caddy gestisce soltanto mifp.eu e www.mifp.eu; nessun vhost/ACME per events
 [ ] backup locale riuscito e restore provato almeno una volta

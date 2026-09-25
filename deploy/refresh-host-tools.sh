@@ -8,8 +8,11 @@ umask 077
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 MIFP_HOME="${MIFP_HOME:-/opt/mifp}"
 CONFIG_DIR="${MIFP_CONFIG_DIR:-/etc/mifp}"
+SECRET_MATERIAL_DIR="${MIFP_SECRET_MATERIAL_DIR:-$CONFIG_DIR/secrets}"
 SYSTEMD_DIR="${MIFP_SYSTEMD_DIR:-/etc/systemd/system}"
 MIFPCTL_TARGET="${MIFPCTL_TARGET:-/usr/local/sbin/mifpctl}"
+RUNTIME_UID="${MIFP_RUNTIME_UID:-10001}"
+RUNTIME_GID="${MIFP_RUNTIME_GID:-10001}"
 LOCK_FILE="${MIFP_REFRESH_LOCK_FILE:-/run/lock/mifp-host-tools-refresh.lock}"
 
 say() { printf '%s\n' "$*"; }
@@ -41,6 +44,9 @@ for helper in configure.py vps_config.py; do
 done
 docker compose -f "$SCRIPT_DIR/compose.production.yaml" config --no-interpolate -q >/dev/null \
   || die "Definizione Compose non valida."
+if grep -Eq '^[[:space:]]+environment:[[:space:]]*(SECRET_KEY|ADMIN_PASSWORD_HASH|SMTP_PASSWORD|EVENTS_REMOTE_PASSWORD)[[:space:]]*$' "$SCRIPT_DIR/compose.production.yaml"; then
+  die "Compose usa ancora secret environment-backed incompatibili con read_only; sono ammessi solo secret file-backed."
+fi
 
 # This path is intentionally for existing hosts only. Refuse to turn a partial
 # installation into something that merely looks provisioned.
@@ -51,6 +57,15 @@ for path in "$MIFP_HOME/.env" "$CONFIG_DIR/config.env" "$CONFIG_DIR/secrets.env"
 done
 [[ -d "$MIFP_HOME/data" && ! -L "$MIFP_HOME/data" ]] \
   || die "Host non inizializzato: directory dati mancante o non sicura."
+[[ "$SECRET_MATERIAL_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] \
+  || die "Percorso Docker secrets non sicuro: $SECRET_MATERIAL_DIR"
+python3 "$SCRIPT_DIR/vps_config.py" \
+  --config-file "$CONFIG_DIR/config.env" \
+  --secrets-file "$CONFIG_DIR/secrets.env" \
+  --runtime-env "$MIFP_HOME/.env" \
+  materialize-secrets --output-dir "$SECRET_MATERIAL_DIR" \
+  --uid "$RUNTIME_UID" --gid "$RUNTIME_GID" --mode 0400 \
+  || die "Impossibile materializzare i Docker secrets dal file canonico."
 
 install -d -o root -g root -m 0755 "$MIFP_HOME" "$(dirname "$MIFPCTL_TARGET")" "$SYSTEMD_DIR" "$(dirname "$LOCK_FILE")"
 exec 9>"$LOCK_FILE"
@@ -112,6 +127,7 @@ trap - EXIT
 
 say "Host deploy tooling refreshed from the local bundle."
 say "Preserved: $CONFIG_DIR/config.env, $CONFIG_DIR/secrets.env, $MIFP_HOME/.env, release state, data and backups."
+say "Derived Docker secret files refreshed in $SECRET_MATERIAL_DIR (root-only; canonical values remain in secrets.env)."
 say "No packages, firewall, SSH policy, Docker repositories, live Caddy configuration, containers or services were changed."
 say "Next: run 'sudo mifpctl config-check' and 'sudo mifpctl security-check'."
 if (( caddy_template_changed )); then

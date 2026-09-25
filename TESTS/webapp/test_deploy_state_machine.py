@@ -64,6 +64,17 @@ def _env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     )
     (config_dir / "config.env").chmod(0o640)
     (config_dir / "secrets.env").chmod(0o600)
+    secret_material = config_dir / "secrets"
+    secret_material.mkdir(mode=0o700)
+    for name, value in {
+        "mifp_secret_key": "0123456789abcdef0123456789abcdef",
+        "mifp_admin_password_hash": "pbkdf2:sha256:600000$abcd$abcd",
+        "mifp_smtp_password": "",
+        "mifp_events_remote_password": "",
+    }.items():
+        target = secret_material / name
+        target.write_text(value, encoding="utf-8")
+        target.chmod(0o400)
     docker_config = tmp_path / "docker-config.json"
     docker_config.write_text('{}\n', encoding="utf-8")
     docker_config.chmod(0o600)
@@ -274,7 +285,7 @@ if [ "${1:-}" = compose ]; then
       exit 0 ;;
     *' down '*) [ "${FAIL_COMPOSE_DOWN:-0}" = 1 ] && exit 41 || exit 0 ;;
     *' ps '*'-q web'*) echo fake-container; exit 0 ;;
-    *' up '*) count="$(cat "$state/compose-up-count" 2>/dev/null || printf 0)"; printf '%s\n' "$((count + 1))" > "$state/compose-up-count"; printf '%s\n' "${MIFP_IMAGE:?}" > "$state/active-image"; exit 0 ;;
+    *' up '*) [ "${FAIL_COMPOSE_UP:-0}" = 1 ] && { echo 'compose create failed' >&2; exit 42; }; count="$(cat "$state/compose-up-count" 2>/dev/null || printf 0)"; printf '%s\n' "$((count + 1))" > "$state/compose-up-count"; printf '%s\n' "${MIFP_IMAGE:?}" > "$state/active-image"; exit 0 ;;
     *) exit 0 ;;
   esac
 fi
@@ -564,6 +575,20 @@ def test_first_deploy_then_second_release_and_offline_rollback(tmp_path: Path) -
     rolled = _release(home)
     assert rolled["CURRENT_IMAGE"] == first["CURRENT_IMAGE"]
     assert rolled["PREVIOUS_IMAGE"] == second["CURRENT_IMAGE"]
+
+
+def test_compose_failure_is_reported_as_host_error_without_image_rollback(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+
+    result = _run(dict(env, FAIL_COMPOSE_UP="1"), "deploy", "sha-b", check=False)
+
+    assert result.returncode != 0
+    assert "Errore host/Compose" in result.stderr
+    assert "rollback immagine automatico non tentato" in result.stderr
+    assert "Release non pronta: ripristino" not in result.stdout
+    assert _release(home) == before
 
 
 def test_security_check_passes_on_hardened_preinit_host(tmp_path: Path) -> None:
@@ -1470,8 +1495,8 @@ def _refresh_env(tmp_path: Path, bundle: Path) -> tuple[dict[str, str], Path, Pa
     backup = tmp_path / "installed" / "backups"
     backup.mkdir()
     (backup / "marker").write_text("backup-preserved\n", encoding="utf-8")
-    (config / "config.env").write_text("config-preserved\n", encoding="utf-8")
-    (config / "secrets.env").write_text("secrets-preserved\n", encoding="utf-8")
+    (config / "config.env").write_text("ENVIRONMENT=production\nDOMAIN=mifp.eu\nWWW_DOMAIN=www.mifp.eu\nIMAGE_REPOSITORY=ghcr.io/example/mifp\nADMIN_USERNAME=admin\n", encoding="utf-8")
+    (config / "secrets.env").write_text("SECRET_KEY=0123456789abcdef0123456789abcdef\nADMIN_PASSWORD_HASH=pbkdf2:sha256:600000$abcd$abcd\n", encoding="utf-8")
 
     bin_dir = tmp_path / "refresh-bin"
     bin_dir.mkdir()
@@ -1505,6 +1530,8 @@ def _refresh_env(tmp_path: Path, bundle: Path) -> tuple[dict[str, str], Path, Pa
         MIFP_SYSTEMD_DIR=str(systemd),
         MIFPCTL_TARGET=str(sbin / "mifpctl"),
         MIFP_REFRESH_LOCK_FILE=str(tmp_path / "refresh.lock"),
+        MIFP_RUNTIME_UID=str(os.getuid()),
+        MIFP_RUNTIME_GID=str(os.getgid()),
         REFRESH_COMMAND_LOG=str(tmp_path / "refresh-commands.log"),
     )
     return env, home, config
@@ -1549,6 +1576,14 @@ def test_host_tool_refresh_preserves_state_and_avoids_provisioning(tmp_path: Pat
     assert stat.S_IMODE((home / "backup.sh").stat().st_mode) == 0o750
     assert stat.S_IMODE((home / "Caddyfile.example").stat().st_mode) == 0o644
     assert stat.S_IMODE(Path(env["MIFPCTL_TARGET"]).stat().st_mode) == 0o755
+    secret_material = config / "secrets"
+    assert stat.S_IMODE(secret_material.stat().st_mode) == 0o700
+    assert (secret_material / "mifp_secret_key").read_text(encoding="utf-8") == "0123456789abcdef0123456789abcdef"
+    assert (secret_material / "mifp_admin_password_hash").read_text(encoding="utf-8") == "pbkdf2:sha256:600000$abcd$abcd"
+    assert (secret_material / "mifp_smtp_password").read_text(encoding="utf-8") == ""
+    assert (secret_material / "mifp_events_remote_password").read_text(encoding="utf-8") == ""
+    assert all(stat.S_IMODE(path.stat().st_mode) == 0o400 for path in secret_material.iterdir())
+    assert all(path.stat().st_uid == os.getuid() and path.stat().st_gid == os.getgid() for path in secret_material.iterdir())
     log = Path(env["REFRESH_COMMAND_LOG"]).read_text(encoding="utf-8")
     assert "apt-get invoked" not in log
     assert "ufw invoked" not in log
@@ -1558,6 +1593,31 @@ def test_host_tool_refresh_preserves_state_and_avoids_provisioning(tmp_path: Pat
     assert "Application images remain unchanged" in result.stdout
     assert "Caddy template changed but the live Caddyfile did not" in result.stdout
     assert "Compose definition changed" in result.stdout
+
+
+def test_host_tool_refresh_rejects_environment_backed_compose_secrets(tmp_path: Path) -> None:
+    bundle = tmp_path / "deploy-bundle"
+    shutil.copytree(ROOT / "deploy", bundle)
+    env, home, _config = _refresh_env(tmp_path, bundle)
+    compose = bundle / "compose.production.yaml"
+    text = compose.read_text(encoding="utf-8").replace(
+        'file: "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_secret_key"',
+        "environment: SECRET_KEY",
+        1,
+    )
+    compose.write_text(text, encoding="utf-8")
+
+    result = subprocess.run(
+        ["bash", str(bundle / "refresh-host-tools.sh")],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "secret environment-backed incompatibili con read_only" in result.stderr
+    assert not (home / "deploy.sh").exists()
 
 
 @pytest.mark.parametrize("failure", ["incomplete", "invalid-shell"])

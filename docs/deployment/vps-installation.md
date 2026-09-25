@@ -117,7 +117,8 @@ admin e segreti esistenti. Dopo la migrazione, i file autorevoli sono:
 
 ```text
 /etc/mifp/config.env    root:root 0640   valori non sensibili
-/etc/mifp/secrets.env   root:root 0600   segreti e hash admin
+/etc/mifp/secrets.env   root:root 0600   fonte canonica segreti e hash admin
+/etc/mifp/secrets/      root:root 0700   file Docker derivati (0400, owner UID/GID runtime; anche vuoti se opzionali)
 /opt/mifp/.env          root:root 0600   compatibilità runtime, senza segreti
 ```
 
@@ -460,7 +461,9 @@ sudo mifpctl security-check
 ```
 
 Il refresh valida completezza e sintassi del bundle, installa atomicamente dove
-possibile e ricarica systemd solo se cambiano le unit. Non installa pacchetti,
+possibile, rifiuta secret Compose `environment:` incompatibili con il rootfs
+read-only, rigenera `/etc/mifp/secrets/` dalla fonte canonica `secrets.env` e
+ricarica systemd solo se cambiano le unit. Non installa pacchetti,
 non modifica UFW o SSH, non riconfigura i repository Docker, non sostituisce il
 Caddyfile live e non riavvia l'app. Conserva configurazione, segreti, `.env`,
 stato release/upgrade, DB, dati e backup. Anche su host creati col workflow
@@ -485,8 +488,13 @@ sudo mifpctl doctor
 ```
 
 `update-check` non scarica immagini e non riavvia servizi. `update` risolve
-`:latest` nel digest OCI immutabile e riusa la normale pipeline di deploy. Se
-il digest è già attivo termina con `Already up to date` senza restart.
+`:latest` nel digest OCI immutabile e riusa la normale pipeline di deploy. Prima
+di ogni operazione Compose materializza i Docker secrets file-backed; durante
+l'avvio mostra inoltre l'avanzamento del readiness check invece di restare
+silenzioso. Se Compose fallisce prima del readiness, l'errore viene classificato
+come problema host/Compose e non viene tentato un rollback immagine destinato a
+fallire con la stessa configurazione host. Se il digest è già attivo termina con
+`Already up to date` senza restart.
 
 Per installare esplicitamente un commit pubblicato dalla CI:
 

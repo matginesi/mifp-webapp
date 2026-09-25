@@ -29,6 +29,12 @@ PUBLIC_KEYS = (
     "ADMIN_USERNAME",
 )
 SECRET_KEYS = ("SECRET_KEY", "ADMIN_PASSWORD_HASH", "SMTP_PASSWORD", "RESTIC_PASSWORD", "EVENTS_REMOTE_PASSWORD")
+WEB_SECRET_FILES = {
+    "SECRET_KEY": "mifp_secret_key",
+    "ADMIN_PASSWORD_HASH": "mifp_admin_password_hash",
+    "SMTP_PASSWORD": "mifp_smtp_password",
+    "EVENTS_REMOTE_PASSWORD": "mifp_events_remote_password",
+}
 ALL_KEYS = frozenset(PUBLIC_KEYS + SECRET_KEYS)
 SECRET_INPUT_KEYS = frozenset({"SMTP_PASSWORD", "RESTIC_PASSWORD", "SECRET_KEY", "ADMIN_PASSWORD_HASH", "EVENTS_REMOTE_PASSWORD"})
 REQUIRED_KEYS = (
@@ -168,6 +174,61 @@ def atomic_write_text(path: Path, text: str, mode: int) -> None:
         except FileNotFoundError:
             pass
         raise
+
+
+def materialize_web_secrets(
+    values: dict[str, str],
+    output_dir: Path,
+    *,
+    uid: int = 0,
+    gid: int = 0,
+    mode: int = 0o600,
+) -> None:
+    """Materialize Docker Compose file-backed secrets without exposing values.
+
+    ``secrets.env`` remains the canonical store.  These root-only files are a
+    derived deployment format required by Compose when the web service uses a
+    read-only root filesystem.  Optional secrets are represented by empty
+    regular files so ``*_FILE`` remains stable and the application reads an
+    empty value instead of failing during boot.
+    """
+    if output_dir.exists() or output_dir.is_symlink():
+        if output_dir.is_symlink() or not output_dir.is_dir():
+            raise RuntimeError(f"Secret material path is not a safe directory: {output_dir}")
+    else:
+        output_dir.mkdir(parents=True, mode=0o700)
+    os.chmod(output_dir, 0o700)
+    if os.geteuid() == 0:
+        os.chown(output_dir, 0, 0)
+
+    for key, filename in WEB_SECRET_FILES.items():
+        target = output_dir / filename
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            raise RuntimeError(f"Secret material target is not a safe regular file: {target}")
+        atomic_write_text(target, values.get(key, ""), mode)
+        if os.geteuid() == 0:
+            os.chown(target, uid, gid)
+        os.chmod(target, mode)
+
+
+def audit_web_secret_material(values: dict[str, str], output_dir: Path) -> list[str]:
+    """Return key/path-only findings; never include secret values."""
+    errors: list[str] = []
+    if output_dir.is_symlink() or not output_dir.is_dir():
+        return [f"secret material directory is missing or unsafe: {output_dir}"]
+    for key, filename in WEB_SECRET_FILES.items():
+        target = output_dir / filename
+        if target.is_symlink() or not target.is_file():
+            errors.append(f"{key} material file is missing or unsafe: {target}")
+            continue
+        try:
+            actual = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            errors.append(f"{key} material file cannot be read safely: {target}")
+            continue
+        if actual != values.get(key, ""):
+            errors.append(f"{key} material file does not match canonical secret state: {target}")
+    return errors
 
 
 def _msmtp_quote(value: str) -> str:
@@ -652,6 +713,13 @@ def parser() -> argparse.ArgumentParser:
     subs.add_parser("check")
     subs.add_parser("validate", help=argparse.SUPPRESS)
     subs.add_parser("audit-layout", help=argparse.SUPPRESS)
+    materialize = subs.add_parser("materialize-secrets", help=argparse.SUPPRESS)
+    materialize.add_argument("--output-dir", type=Path, required=True)
+    materialize.add_argument("--uid", type=int, default=0)
+    materialize.add_argument("--gid", type=int, default=0)
+    materialize.add_argument("--mode", default="0600")
+    audit_material = subs.add_parser("audit-secret-material", help=argparse.SUPPRESS)
+    audit_material.add_argument("--output-dir", type=Path, required=True)
     subs.add_parser("import-admin", help=argparse.SUPPRESS)
     get_cmd = subs.add_parser("get")
     get_cmd.add_argument("key")
@@ -682,7 +750,7 @@ def main() -> int:
     if args.command == "set" and key in SECRET_INPUT_KEYS:
         raise SystemExit("Refusing secret on command line; use: sudo mifpctl configure")
     # show/check/get are intentionally read-only: no migration, defaults or chmod.
-    if args.command in {"show", "check", "validate", "audit-layout", "get"}:
+    if args.command in {"show", "check", "validate", "audit-layout", "audit-secret-material", "materialize-secrets", "get"}:
         values = store.values()
     elif args.command == "import-admin":
         values = store.values()
@@ -733,6 +801,24 @@ def main() -> int:
             return 1
     elif args.command == "audit-layout":
         errors = audit_file_content(store.config, store.secrets_path, store.runtime)
+        for error in errors:
+            print(f"ERROR: {error}")
+        return 1 if errors else 0
+    elif args.command == "materialize-secrets":
+        try:
+            mode = int(args.mode, 8)
+        except ValueError as exc:
+            raise SystemExit("Secret material mode must be octal (for example 0400)") from exc
+        if args.uid < 0 or args.gid < 0 or mode not in {0o400, 0o600}:
+            raise SystemExit("Secret material requires non-negative uid/gid and mode 0400 or 0600")
+        try:
+            materialize_web_secrets(
+                values, args.output_dir, uid=args.uid, gid=args.gid, mode=mode
+            )
+        except (OSError, RuntimeError) as exc:
+            raise SystemExit(str(exc)) from exc
+    elif args.command == "audit-secret-material":
+        errors = audit_web_secret_material(values, args.output_dir)
         for error in errors:
             print(f"ERROR: {error}")
         return 1 if errors else 0

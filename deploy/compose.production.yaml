@@ -114,11 +114,14 @@ services:
         max-file: "3"
 
 secrets:
+  # File-backed sources are required with a read-only service rootfs.
+  # /etc/mifp/secrets.env remains canonical; mifpctl materializes these
+  # root-only derived files before any Compose operation.
   mifp_secret_key:
-    environment: SECRET_KEY
+    file: "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_secret_key"
   mifp_admin_password_hash:
-    environment: ADMIN_PASSWORD_HASH
+    file: "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_admin_password_hash"
   mifp_smtp_password:
-    environment: SMTP_PASSWORD
+    file: "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_smtp_password"
   mifp_events_remote_password:
-    environment: EVENTS_REMOTE_PASSWORD
+    file: "${MIFP_SECRETS_DIR:-/etc/mifp/secrets}/mifp_events_remote_password"
