@@ -188,10 +188,10 @@ jobs:
           cache-to: type=gha,mode=max,scope=mifp
 
   verify-image:
-    name: Verify published production image
+    name: Verify and scan published production image
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: read
@@ -273,48 +273,34 @@ jobs:
         run: |
           docker rm --force mifp-image-verify 2>/dev/null || true
           docker volume rm --force mifp-image-verify-data 2>/dev/null || true
-
-  image-scan:
-    name: Scan production image for fixable HIGH/CRITICAL CVEs
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Install pinned Trivy with checksum verification
         env:
           TRIVY_VERSION: "0.74.0"
           TRIVY_SHA256: "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
         run: |
-          # Infrastructure failure (download/checksum) fails this step, which is
-          # distinguishable in the UI from the scan step reporting findings.
+          # Reuse the image already pulled by this job. Keeping the runtime
+          # verification and image scan on one runner avoids downloading the
+          # same immutable image a second time in a separate job.
           curl --fail --silent --show-error --location \
             --connect-timeout 10 --max-time 120 --retry 3 --retry-delay 2 --retry-all-errors \
             -o trivy.tgz \
             "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_SHA256}  trivy.tgz" | sha256sum -c -
           tar xzf trivy.tgz trivy
-      - name: Scan the immutable image by digest
+      - name: Scan the already-pulled immutable image by digest
         env:
           IMAGE: ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}
         run: |
           # `--ignore-unfixed` keeps the gate actionable: Debian base packages
           # with no available patch would otherwise fail every run forever.
-          # Unfixed findings are reviewed in docs/audit, not silenced silently.
-          timeout --foreground 5m docker pull "$IMAGE"
+          # Secret scanning remains enabled as defense in depth for the final
+          # built image, in addition to the repository/history gitleaks job.
           timeout --foreground 12m ./trivy image --no-progress --severity HIGH,CRITICAL --ignore-unfixed \
             --exit-code 1 "$IMAGE"
 
   promote-latest:
     name: Promote verified image to latest
-    needs: [build, verify-image, image-scan]
+    needs: [build, verify-image]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
