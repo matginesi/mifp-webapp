@@ -123,19 +123,32 @@ Vedi [schema e lifecycle](docs/database-schema.md) e
 ## Test
 
 ```bash
-./test_all.sh --suite quick
-./test_all.sh --suite all
-./test_all.sh --suite database
+# Ciclo locale normale: non-browser, parallelo e scraper-free.
+pytest -x -vv
+# Stesso contratto tramite launcher.
+./mifp test quick -- -x -vv
+# Verifica completa esplicita, inclusi i test Playwright.
+./mifp test all -- -x -vv
 ```
+
+`pytest` usa di default `pytest-xdist` con work stealing e copre webapp, database
+e tooling; i test browser restano una suite esplicita perché avviano Chromium e
+il server reale e sono quindi molto più costosi. `./mifp setup` installa le
+dipendenze test condivise in `TESTS/requirements.txt`. Per debug seriale si può
+usare `pytest -n 0 ...`.
 
 I test sono autosufficienti: **non richiedono il database di produzione**. Ogni
 suite crea il proprio DB temporaneo/in-memory dallo schema versionato, quindi in
 CI girano con database assente (il DB dell'istanza non è mai versionato). La CI
-usa lo stesso `requirements.lock` dell'immagine ed esegue le suite repository non-browser
-(webapp, database e tooling) sui push a `main` o su avvio manuale. Gli scraper e i
-relativi test sono locali, ignorati da Git e non vengono installati, testati o auditati dalla CI. Il repository non usa Dependabot per
-aprire PR/branch automatici: gli aggiornamenti delle dipendenze sono espliciti e
-passano dalla stessa CI.
+usa lo stesso `requirements.lock` dell'immagine; la webapp è suddivisa in due
+shard deterministici, ognuno eseguito con due worker `xdist` e
+`--dist=worksteal`, mentre database e tooling restano separati perché sono
+piccoli. L'unione dei due shard contiene l'intera suite webapp e ogni test
+appartiene a uno solo shard: non viene saltata copertura per ottenere il guadagno
+di tempo. Gli scraper e i relativi test sono locali, ignorati da Git e non
+vengono installati, testati o auditati dalla CI. Il repository non usa
+Dependabot per aprire PR/branch automatici: gli aggiornamenti delle dipendenze
+sono espliciti e passano dalla stessa CI.
 
 ## Security operations
 

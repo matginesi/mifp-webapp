@@ -149,21 +149,41 @@ def test_ci_cd_workflow_tests_builds_only() -> None:
 def test_ci_workflow_runs_the_complete_non_browser_repository_suite_in_parallel() -> None:
     text = _read(".github", "workflows", "ci-cd.yml")
     assert "test_all.sh" in text
-    assert "suite: [webapp, data]" in text
+    assert "label: webapp 1/2" in text
+    assert "label: webapp 2/2" in text
+    assert "label: data" in text
+    assert "MIFP_TEST_SHARD_INDEX" in text
+    assert "MIFP_TEST_SHARD_TOTAL" in text
     assert "--suite webapp" in text
     assert "--suite scraper" not in text
     assert "SCRAPERS/requirements.txt" not in text
     assert "--suite database" in text
     assert "--suite tools" in text
-    test_requirements = _read(".github", "requirements-test.txt")
+    test_requirements = _read("TESTS", "requirements.txt")
     assert "pytest==9.1.1" in test_requirements
     assert "pytest-xdist==3.8.0" in test_requirements
-    assert ".github/requirements-test.txt" in text
-    assert "-n 2 --dist=loadfile --durations=20" in text
+    assert "TESTS/requirements.txt" in text
+    assert "-n 2 --dist=worksteal --durations=20" in text
+    assert "--dist=loadfile" not in text
     assert "cache: pip" in text
     assert "cache-dependency-path:" in text
     assert "requirements.lock" in text
     assert "pip-audit" in text
+
+
+def test_default_pytest_is_parallel_non_browser_and_full_browser_remains_explicit() -> None:
+    pytest_ini = _read("pytest.ini")
+    runner = _read("test_all.sh")
+    assert "addopts = -n auto --dist=worksteal" in pytest_ini
+    assert "TESTS/webapp" in pytest_ini
+    assert "TESTS/database" in pytest_ini
+    assert "TESTS/tools" in pytest_ini
+    assert "TESTS/browser" not in pytest_ini
+    assert 'run_webapp()' in runner
+    assert '-n auto --dist=worksteal TESTS/webapp' in runner
+    assert '-n 0 TESTS/browser' in runner
+    assert 'run_quick; run_browser' in runner
+    assert "SCRAPERS" not in runner
 
 
 

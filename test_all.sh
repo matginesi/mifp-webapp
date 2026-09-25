@@ -74,6 +74,7 @@ External server/browser options:
 Environment:
   MIFP_TEST_AUTO_INSTALL=0|1
   MIFP_TEST_LOAD_DOTENV=0|1   (default: 0, isolates tests from CORE/.env)
+  MIFP_TEST_WORKERS=N          Local xdist workers when -n auto is used (default: max 4)
   MIFP_TEST_BASE_URL=http://127.0.0.1:8000
   MIFP_BROWSER_ADMIN_USER=admin
   MIFP_BROWSER_ADMIN_PASSWORD=<plain test password>
@@ -155,8 +156,8 @@ ensure_test_environment() {
   local check_code
   case "$profile" in
     data) check_code='import pypdf, pytest, requests, tqdm' ;;
-    webapp) check_code='import flask, pytest' ;;
-    full) check_code='import flask, pypdf, pytest, requests, tqdm' ;;
+    webapp) check_code='import flask, pytest, xdist' ;;
+    full) check_code='import flask, pypdf, pytest, requests, tqdm, xdist' ;;
     *) die "unknown dependency profile: $profile" ;;
   esac
 
@@ -180,9 +181,27 @@ ensure_test_environment() {
     return 1
   fi
 
-  # Only install when no available interpreter satisfies the selected suite.
-  "$ROOT_DIR/mifp" setup
-  PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+  # Test bootstrap is deliberately scraper-free. Do not call `./mifp setup`
+  # here: a developer may have local-only scraper dependencies beside the
+  # checkout, but tests must never depend on or install them.
+  local venv_python="$ROOT_DIR/.venv/bin/python"
+  if [[ ! -x "$venv_python" ]]; then
+    python3 -m venv "$ROOT_DIR/.venv"
+  fi
+  local requirements=( -r "$ROOT_DIR/TESTS/requirements.txt" )
+  case "$profile" in
+    data) requirements+=( -r "$ROOT_DIR/MIFPAPP/DATABASE/requirements.txt" ) ;;
+    webapp) requirements+=( -r "$ROOT_DIR/MIFPAPP/CORE/requirements.lock" ) ;;
+    full)
+      requirements+=(
+        -r "$ROOT_DIR/MIFPAPP/CORE/requirements.lock"
+        -r "$ROOT_DIR/MIFPAPP/DATABASE/requirements.txt"
+      )
+      ;;
+  esac
+  "$venv_python" -m pip install --disable-pip-version-check --prefer-binary \
+    "${requirements[@]}"
+  PYTHON_BIN="$venv_python"
   "$PYTHON_BIN" -c "$check_code" >/dev/null 2>&1 || {
     printf 'The local environment is still missing dependencies for profile: %s\n' "$profile" >&2
     return 1
@@ -224,16 +243,16 @@ run_quick() {
 }
 
 run_webapp() {
-  run_pytest_paths "webapp tests" webapp TESTS/webapp
+  run_pytest_paths "webapp tests" webapp -n auto --dist=worksteal TESTS/webapp
 }
 
 
 run_database() {
-  run_pytest_paths "database tests" data --confcutdir=TESTS/database TESTS/database
+  run_pytest_paths "database tests" data -n 0 --confcutdir=TESTS/database TESTS/database
 }
 
 run_tools() {
-  run_pytest_paths "repository tooling tests" data --confcutdir=TESTS/tools TESTS/tools
+  run_pytest_paths "repository tooling tests" data -n 0 --confcutdir=TESTS/tools TESTS/tools
 }
 
 run_browser() {
@@ -246,9 +265,9 @@ run_browser() {
     MIFP_TEST_BASE_URL="$BASE_URL" \
     MIFP_BROWSER_ADMIN_USER="$ADMIN_USER" \
     MIFP_BROWSER_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-      "$PYTHON_BIN" -m pytest TESTS/browser "${PYTEST_ARGS[@]}"
+      "$PYTHON_BIN" -m pytest -n 0 TESTS/browser "${PYTEST_ARGS[@]}"
   else
-    "$PYTHON_BIN" -m pytest TESTS/browser "${PYTEST_ARGS[@]}"
+    "$PYTHON_BIN" -m pytest -n 0 TESTS/browser "${PYTEST_ARGS[@]}"
   fi
 }
 

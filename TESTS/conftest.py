@@ -82,3 +82,56 @@ def reset_rate_limits():
             module.reset_rate_limits(db_path=database_path)
         except Exception:
             continue
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_auto_num_workers(config) -> int:
+    """Keep local parallelism useful without saturating developer machines."""
+    override = os.getenv("MIFP_TEST_WORKERS", "").strip()
+    if override:
+        try:
+            workers = int(override)
+        except ValueError as exc:
+            raise pytest.UsageError("MIFP_TEST_WORKERS must be an integer") from exc
+        if workers < 1:
+            raise pytest.UsageError("MIFP_TEST_WORKERS must be >= 1")
+        return workers
+    return min(4, os.cpu_count() or 1)
+
+
+def _ci_shard_config() -> tuple[int, int] | None:
+    index_raw = os.getenv("MIFP_TEST_SHARD_INDEX", "").strip()
+    total_raw = os.getenv("MIFP_TEST_SHARD_TOTAL", "").strip()
+    if not index_raw and not total_raw:
+        return None
+    if not index_raw or not total_raw:
+        raise pytest.UsageError(
+            "MIFP_TEST_SHARD_INDEX and MIFP_TEST_SHARD_TOTAL must be set together"
+        )
+    try:
+        index = int(index_raw)
+        total = int(total_raw)
+    except ValueError as exc:
+        raise pytest.UsageError("test shard values must be integers") from exc
+    if total < 1 or index < 0 or index >= total:
+        raise pytest.UsageError(
+            f"invalid test shard {index}/{total}; expected 0 <= index < total"
+        )
+    return index, total
+
+
+def pytest_collection_modifyitems(config, items):
+    """Select one deterministic CI shard without changing the test inventory."""
+    shard = _ci_shard_config()
+    if shard is None:
+        return
+    from TESTS.sharding import shard_index
+
+    index, total = shard
+    selected = []
+    deselected = []
+    for item in items:
+        target = selected if shard_index(item.nodeid, total) == index else deselected
+        target.append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = selected

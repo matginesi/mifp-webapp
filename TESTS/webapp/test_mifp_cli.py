@@ -186,8 +186,9 @@ def test_browser_tests_use_standard_pytest_progress_output() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     runner = (repo_root / "test_all.sh").read_text(encoding="utf-8")
 
-    assert 'pytest TESTS/browser -q' not in runner
-    assert 'pytest TESTS/browser "${PYTEST_ARGS[@]}"' in runner
+    assert 'TESTS/browser -q' not in runner
+    assert 'TESTS/browser "${PYTEST_ARGS[@]}"' in runner
+    assert '-n 0 TESTS/browser' in runner
 
 
 def test_test_runner_isolates_persistent_paths_before_pytest() -> None:

@@ -4,6 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_DIR="$ROOT_DIR/MIFPAPP/CORE"
 DATABASE_DIR="$ROOT_DIR/MIFPAPP/DATABASE"
+TEST_REQUIREMENTS="$ROOT_DIR/TESTS/requirements.txt"
 SCRAPERS_DIR="$ROOT_DIR/SCRAPERS"
 ENV_FILE="$CORE_DIR/.env"
 ENV_EXAMPLE="$CORE_DIR/.env.example"
@@ -132,6 +133,7 @@ install_local_dependencies() {
   local requirements=(
     -r "$CORE_DIR/requirements.lock"
     -r "$DATABASE_DIR/requirements.txt"
+    -r "$TEST_REQUIREMENTS"
   )
   if [[ -f "$SCRAPERS_DIR/requirements.txt" ]]; then
     requirements+=( -r "$SCRAPERS_DIR/requirements.txt" )
@@ -142,7 +144,7 @@ install_local_dependencies() {
 }
 
 local_dependencies_hash() {
-  python3 - "$CORE_DIR/requirements.lock" "$DATABASE_DIR/requirements.txt" "$SCRAPERS_DIR/requirements.txt" <<'PYHASH'
+  python3 - "$CORE_DIR/requirements.lock" "$DATABASE_DIR/requirements.txt" "$TEST_REQUIREMENTS" "$SCRAPERS_DIR/requirements.txt" <<'PYHASH'
 from pathlib import Path
 import hashlib, sys
 h = hashlib.sha256()
@@ -154,7 +156,6 @@ for name in sys.argv[1:]:
     h.update(b"\0")
     h.update(path.read_bytes())
     h.update(b"\0")
-h.update(b"pytest")
 print(h.hexdigest())
 PYHASH
 }
@@ -171,6 +172,7 @@ import markdown
 import openpyxl
 import pypdf
 import pytest
+import xdist
 import requests
 import reportlab
 import tqdm

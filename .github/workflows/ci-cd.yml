@@ -124,13 +124,23 @@ jobs:
         run: timeout --foreground 4m ./gitleaks dir . --no-banner --redact --config .gitleaks.toml
 
   test:
-    name: Test ${{ matrix.suite }}
+    name: Test ${{ matrix.label }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        suite: [webapp, data]
+        include:
+          - suite: webapp
+            label: webapp 1/2
+            shard_index: "0"
+            shard_total: "2"
+          - suite: webapp
+            label: webapp 2/2
+            shard_index: "1"
+            shard_total: "2"
+          - suite: data
+            label: data
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -140,26 +150,28 @@ jobs:
           cache-dependency-path: |
             MIFPAPP/CORE/requirements.lock
             MIFPAPP/DATABASE/requirements.txt
-            .github/requirements-test.txt
+            TESTS/requirements.txt
       - name: Install webapp test dependencies
         if: matrix.suite == 'webapp'
         run: |
           timeout --foreground 10m python -m pip install --prefer-binary \
             -r MIFPAPP/CORE/requirements.lock \
-            -r .github/requirements-test.txt
+            -r TESTS/requirements.txt
       - name: Install data-pipeline test dependencies
         if: matrix.suite == 'data'
         run: |
           timeout --foreground 10m python -m pip install --prefer-binary \
             -r MIFPAPP/DATABASE/requirements.txt \
-            -r .github/requirements-test.txt
-      - name: Run webapp tests in isolated workers
+            -r TESTS/requirements.txt
+      - name: Run webapp test shard in isolated workers
         if: matrix.suite == 'webapp'
         env:
           MIFP_TEST_AUTO_INSTALL: "0"
+          MIFP_TEST_SHARD_INDEX: ${{ matrix.shard_index }}
+          MIFP_TEST_SHARD_TOTAL: ${{ matrix.shard_total }}
         run: |
           timeout --foreground 20m bash test_all.sh --suite webapp -- \
-            -n 2 --dist=loadfile --durations=20
+            -n 2 --dist=worksteal --durations=20
       - name: Run database and repository-tool tests
         if: matrix.suite == 'data'
         env:
@@ -181,7 +193,7 @@ jobs:
           cache-dependency-path: |
             MIFPAPP/CORE/requirements.lock
             MIFPAPP/DATABASE/requirements.txt
-            .github/requirements-test.txt
+            TESTS/requirements.txt
       - name: Install pinned audit tool
         run: timeout --foreground 5m python -m pip install --disable-pip-version-check "pip-audit==2.10.1"
       - name: Audit runtime dependencies

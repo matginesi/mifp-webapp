@@ -121,4 +121,4 @@ MIFPAPP/DATABASE/events/
 MIFPAPP/DATABASE/events-php-enabled.txt
 
 
-error.txt
+error*.txt

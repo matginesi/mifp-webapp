@@ -27,6 +27,16 @@
 
 `./mifp` è solo locale. Produzione non usa virtualenv o sorgenti checkout.
 
+### Test locali
+
+`./mifp test quick` esegue webapp, database e tooling senza browser e senza
+scraper. La parte webapp usa `pytest-xdist` con worker automatici e
+`--dist=worksteal`; database e tooling restano seriali perché sono suite piccole
+e l'overhead di nuovi worker sarebbe maggiore del beneficio. `./mifp test all`
+aggiunge la suite browser reale, che viene mantenuta seriale per riusare un solo
+server/Chromium. Il comando diretto `pytest` usa lo stesso default non-browser e
+parallelo; `pytest -n 0` forza l'esecuzione seriale per il debug.
+
 ### Diagnostica di sicurezza locale
 
 `security status` e `security audit` verificano configurazione Flask, header,
