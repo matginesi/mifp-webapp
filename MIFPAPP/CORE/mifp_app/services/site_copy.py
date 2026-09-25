@@ -90,7 +90,7 @@ FIELDS = (
               "Footer navigation label.", 40),
     CopyField("nav_admin", "Admin area", "Admin", "navigation",
               "Footer administration link.", 40),
-    CopyField("privacy_contact_email", "Privacy contact", "privacy@mifp.eu", "navigation",
+    CopyField("privacy_contact_email", "Privacy contact", "secretary@mifp.eu", "navigation",
               "Contact address used by privacy information.", 160,
               setting_key="privacy_contact_email"),
 

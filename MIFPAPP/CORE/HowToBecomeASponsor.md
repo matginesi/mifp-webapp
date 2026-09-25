@@ -10,6 +10,6 @@ Sponsoring MIFP provides visibility within the international physics community, 
 
 We offer a range of sponsorship packages that can be tailored to your organization's goals and budget.
 
-For inquiries about current opportunities and customized packages, please contact us at [info@mifp.eu](mailto:info@mifp.eu).
+For inquiries about current opportunities and customized packages, please contact us at [secretary@mifp.eu](mailto:secretary@mifp.eu).
 
 *This page is editable from the dashboard. Content shown here is the default fallback.*

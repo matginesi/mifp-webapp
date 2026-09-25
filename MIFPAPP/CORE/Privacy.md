@@ -11,8 +11,8 @@ The Mediterranean Institute of Fundamental Physics (MIFP), with registered offic
 
 For any question about this policy or about the processing of your personal data:
 
-- **General inquiries:** [info@mifp.eu](mailto:info@mifp.eu)
-- **Privacy inquiries:** [privacy@mifp.eu](mailto:privacy@mifp.eu)
+- **General inquiries:** [secretary@mifp.eu](mailto:secretary@mifp.eu)
+- **Privacy inquiries:** [secretary@mifp.eu](mailto:secretary@mifp.eu)
 
 ## 2. Where the Data Comes From
 
@@ -96,7 +96,7 @@ You may request deletion of your personal data at any time using the contact add
 - **Objection** — object to processing based on legitimate interest
 - **Complaint** — lodge a complaint with the Italian Data Protection Authority (Garante per la protezione dei dati personali)
 
-These rights apply subject to the conditions and exceptions in the GDPR. To exercise them, contact [privacy@mifp.eu](mailto:privacy@mifp.eu). MIFP may need to verify your identity before acting on a request and will respond within the time limits established by applicable law.
+These rights apply subject to the conditions and exceptions in the GDPR. To exercise them, contact [secretary@mifp.eu](mailto:secretary@mifp.eu). MIFP may need to verify your identity before acting on a request and will respond within the time limits established by applicable law.
 
 Some of the historical and imported records described in §2 may relate to people we have no direct contact details for. Because the archive is the institutional record of past MIFP activities, such records may be restricted rather than deleted where erasure would destroy the scientific record; requests will be assessed individually.
 
@@ -145,7 +145,7 @@ Any change to this Privacy Policy will be posted on this page, and the revision 
 
 - **Mediterranean Institute of Fundamental Physics (MIFP)**
 - **Address:** Via Appia Nuova 31, 00047 Marino (Roma), Italy
-- **Email (general):** [info@mifp.eu](mailto:info@mifp.eu)
-- **Email (privacy):** [privacy@mifp.eu](mailto:privacy@mifp.eu)
+- **Email (general):** [secretary@mifp.eu](mailto:secretary@mifp.eu)
+- **Email (privacy):** [secretary@mifp.eu](mailto:secretary@mifp.eu)
 
 You also have the right to lodge a complaint with the Italian Data Protection Authority (Garante per la protezione dei dati personali) at [www.garanteprivacy.it](https://www.garanteprivacy.it).

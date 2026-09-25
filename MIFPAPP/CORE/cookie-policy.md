@@ -155,5 +155,5 @@ If you have any questions about this cookie policy, please contact us at:
 
 - **Organization:** Mediterranean Institute of Fundamental Physics (MIFP)
 - **Address:** Via Appia Nuova 31, 00047 Marino (Roma), Italy
-- **Privacy:** [privacy@mifp.eu](mailto:privacy@mifp.eu)
-- **General inquiries:** [info@mifp.eu](mailto:info@mifp.eu)
+- **Privacy:** [secretary@mifp.eu](mailto:secretary@mifp.eu)
+- **General inquiries:** [secretary@mifp.eu](mailto:secretary@mifp.eu)

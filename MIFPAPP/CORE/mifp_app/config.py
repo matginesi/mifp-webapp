@@ -124,7 +124,7 @@ class Config:
     MAIL_PROVIDER = os.getenv('MAIL_PROVIDER', 'disabled').strip().lower()
     MAIL_FROM = os.getenv('MAIL_FROM', 'no-reply@mifp.eu')
     MAIL_FROM_NAME = os.getenv('MAIL_FROM_NAME', '')
-    MAIL_TO = os.getenv('MAIL_TO', 'info@mifp.eu')
+    MAIL_TO = os.getenv('MAIL_TO', 'secretary@mifp.eu')
     SMTP_HOST = os.getenv('SMTP_HOST', '')
     SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
     SMTP_USERNAME = os.getenv('SMTP_USERNAME', '')
