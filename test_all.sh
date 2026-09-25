@@ -154,9 +154,9 @@ ensure_test_environment() {
   local profile="${1:-full}"
   local check_code
   case "$profile" in
-    data) check_code='import bs4, pypdf, pytest, requests, yaml' ;;
+    data) check_code='import pypdf, pytest, requests, tqdm' ;;
     webapp) check_code='import flask, pytest' ;;
-    full) check_code='import bs4, flask, pypdf, pytest, requests, yaml' ;;
+    full) check_code='import flask, pypdf, pytest, requests, tqdm' ;;
     *) die "unknown dependency profile: $profile" ;;
   esac
 
