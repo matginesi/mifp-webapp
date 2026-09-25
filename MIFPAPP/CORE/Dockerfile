@@ -17,10 +17,13 @@ RUN pip install --requirement requirements.lock \
 
 FROM ${PYTHON_IMAGE} AS runtime
 
+LABEL org.mifp.deploy-contract="2"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONFAULTHANDLER=1 \
     PIP_NO_CACHE_DIR=1 \
+    MIFP_DEPLOY_CONTRACT_REQUIRED=2 \
     HOME=/tmp \
     XDG_CACHE_HOME=/tmp/.cache \
     PATH="/opt/venv/bin:$PATH"

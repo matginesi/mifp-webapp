@@ -481,13 +481,15 @@ Dopo un push su `main`, attendi che GitHub Actions sia verde e usa il canale
 `latest` soltanto per scoprire la release verificata più recente:
 
 ```bash
-sudo mifpctl update-check
+sudo mifpctl check
 sudo mifpctl update
 sudo mifpctl status
 sudo mifpctl doctor
 ```
 
-`update-check` non scarica immagini e non riavvia servizi. `update` risolve
+`check` è il preflight completo consigliato: può scaricare/cacheare la candidate
+ma non cambia la release attiva o lo stato release. `update-check` resta il
+controllo leggero del manifest remoto, senza pull o restart. `update` risolve
 `:latest` nel digest OCI immutabile e riusa la normale pipeline di deploy. Prima
 di ogni operazione Compose materializza i Docker secrets file-backed; durante
 l'avvio mostra inoltre l'avanzamento del readiness check invece di restare

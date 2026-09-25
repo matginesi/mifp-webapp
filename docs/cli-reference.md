@@ -75,8 +75,10 @@ sudo mifpctl registry-check
 sudo mifpctl admin-reset-password [--username NAME]
 sudo mifpctl registry-login
 sudo mifpctl init
-sudo mifpctl update-check
+sudo mifpctl check
 sudo mifpctl update
+sudo mifpctl update-check
+sudo mifpctl version
 sudo mifpctl deploy sha-<commit>
 sudo mifpctl status
 sudo mifpctl logs
@@ -85,6 +87,12 @@ sudo mifpctl backup
 sudo mifpctl doctor
 sudo mifpctl security-check
 ```
+
+Per gli aggiornamenti ordinari il flusso consigliato è `check -> update -> status`.
+`check` esegue il preflight completo (candidate image, deploy contract, DB,
+Compose e secrets) senza cambiare release; `update-check` resta il controllo
+leggero del solo canale registry. `update` mostra sempre le fasi operative e
+termina dichiarando esplicitamente lo stato della produzione.
 
 Prima installazione:
 

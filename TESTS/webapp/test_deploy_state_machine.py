@@ -220,7 +220,8 @@ if [ "${1:-}" = pull ]; then
   if [ "${FAIL_PULL:-0}" = 1 ]; then echo 'unauthorized: authentication required' >&2; exit 1; fi
   echo "Pulling from example/mifp"
   echo "Digest: sha256:verbose-progress-must-not-be-returned"
-  d="$(digest_for "$2")"; touch "$state/$(printf '%s' "$d" | tr '/:@' '___')"; exit 0
+  for image_ref in "$@"; do :; done
+  d="$(digest_for "$image_ref")"; touch "$state/$(printf '%s' "$d" | tr '/:@' '___')"; exit 0
 fi
 if [ "${1:-}" = login ]; then
   token=''; IFS= read -r token
@@ -233,6 +234,15 @@ if [ "${1:-}" = login ]; then
 fi
 if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
   if [ "${3:-}" = --format ]; then
+    case "${4:-}" in
+      *org.mifp.deploy-contract*)
+        if [ "${FAKE_LEGACY_DIGEST_ONE:-0}" = 1 ] && printf '%s' "${5:-}" | grep -q 'sha256:0*1$'; then
+          printf '<no value>\n'
+        else
+          printf '%s\n' "${FAKE_DEPLOY_CONTRACT:-2}"
+        fi
+        exit 0 ;;
+    esac
     d="$(digest_for "$5")"; key="$(printf '%s' "$d" | tr '/:@' '___')"; [ -f "$state/$key" ] || exit 1; printf '%s\n' "$d"; exit 0
   fi
   d="$(digest_for "$3")"; key="$(printf '%s' "$d" | tr '/:@' '___')"; [ -f "$state/$key" ]
@@ -240,6 +250,7 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
 fi
 if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
   case "$3" in
+    *State.Status*) printf '%s|%s|%s\n' "${FAKE_CONTAINER_STATUS:-restarting}" "${FAKE_CONTAINER_EXIT_CODE:-3}" "${FAKE_CONTAINER_ERROR:-}" ;;
     *Config.User*) printf '10001|false|default|true|["no-new-privileges:true"]|[]\n' ;;
     *Config.Env*)
       printf 'FLASK_DEBUG=0\nFLASK_ENV=production\n'
@@ -270,6 +281,7 @@ if [ "${1:-}" = run ]; then
     *'mifp_app.db.manage init '*)
       localdir="${mount%%:*}"; mkdir -p "$localdir"; printf 'fake-db' > "$localdir/mifp.db" ;;
     *'mifp_app.db.runtime_check'*)
+      [ "${FAIL_DB_PREFLIGHT:-0}" = 1 ] && { echo 'database contract mismatch' >&2; exit 96; }
       localfile="${mount%%:*}"
       perm="$(stat -c %a "$localfile")"
       [ "$perm" = 440 ] || [ "$perm" = 640 ] || { echo "unsafe preflight mode: $perm" >&2; exit 97; } ;;
@@ -279,13 +291,23 @@ fi
 if [ "${1:-}" = compose ]; then
   case " $* " in
     *' version '*) exit 0 ;;
+    *' config -q '*) [ "${FAIL_COMPOSE_CONFIG:-0}" = 1 ] && { echo 'compose config invalid' >&2; exit 43; } || exit 0 ;;
     *' config --format json '*)
       host_ip="${FAKE_COMPOSE_HOST_IP:-127.0.0.1}"
       printf '{"services":{"web":{"ports":[{"host_ip":"%s","target":8000,"published":"8000","protocol":"tcp"}],"volumes":[{"type":"bind","source":"%s","target":"/app/data"}],"tmpfs":["/tmp:size=256m"],"security_opt":["no-new-privileges:true"],"healthcheck":{"test":["CMD","true"]}}}}\n' "$host_ip" "${MIFP_DATA_DIR:?}"
       exit 0 ;;
     *' down '*) [ "${FAIL_COMPOSE_DOWN:-0}" = 1 ] && exit 41 || exit 0 ;;
     *' ps '*'-q web'*) echo fake-container; exit 0 ;;
-    *' up '*) [ "${FAIL_COMPOSE_UP:-0}" = 1 ] && { echo 'compose create failed' >&2; exit 42; }; count="$(cat "$state/compose-up-count" 2>/dev/null || printf 0)"; printf '%s\n' "$((count + 1))" > "$state/compose-up-count"; printf '%s\n' "${MIFP_IMAGE:?}" > "$state/active-image"; exit 0 ;;
+    *' up '*)
+      [ "${FAIL_COMPOSE_UP:-0}" = 1 ] && { echo 'compose create failed' >&2; exit 42; }
+      if [ "${FAIL_HOST_COMPOSE_UP:-0}" = 1 ] && printf '%s' "${MIFP_IMAGE:?}" | grep -q 'sha256:0*2$'; then
+        echo 'cannot create secret "mifp_mifp_secret_key" in read-only service web: `file` is the sole supported option' >&2
+        exit 42
+      fi
+      if [ "${FAIL_CANDIDATE_COMPOSE_UP:-0}" = 1 ] && printf '%s' "${MIFP_IMAGE:?}" | grep -q 'sha256:0*2$'; then
+        echo 'candidate create failed' >&2; exit 42
+      fi
+      count="$(cat "$state/compose-up-count" 2>/dev/null || printf 0)"; printf '%s\n' "$((count + 1))" > "$state/compose-up-count"; printf '%s\n' "${MIFP_IMAGE:?}" > "$state/active-image"; exit 0 ;;
     *) exit 0 ;;
   esac
 fi
@@ -581,6 +603,9 @@ def test_compose_failure_is_reported_as_host_error_without_image_rollback(tmp_pa
     env, home = _env(tmp_path)
     _run(env, "first-deploy", "sha-a")
     before = _release(home)
+    runtime_env = home / ".env"
+    runtime_mode = runtime_env.stat().st_mode
+    runtime_mtime = runtime_env.stat().st_mtime_ns
 
     result = _run(dict(env, FAIL_COMPOSE_UP="1"), "deploy", "sha-b", check=False)
 
@@ -589,6 +614,8 @@ def test_compose_failure_is_reported_as_host_error_without_image_rollback(tmp_pa
     assert "rollback immagine automatico non tentato" in result.stderr
     assert "Release non pronta: ripristino" not in result.stdout
     assert _release(home) == before
+    assert runtime_env.stat().st_mode == runtime_mode
+    assert runtime_env.stat().st_mtime_ns == runtime_mtime
 
 
 def test_security_check_passes_on_hardened_preinit_host(tmp_path: Path) -> None:
@@ -858,6 +885,177 @@ def test_update_check_reports_already_current_digest(tmp_path: Path) -> None:
     assert _release(home) == before
 
 
+def test_check_runs_full_verbose_preflight_without_switching_release(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+    state = Path(env["FAKE_DOCKER_STATE"])
+    starts_before = int((state / "compose-up-count").read_text(encoding="utf-8").strip())
+
+    result = _run(dict(env, LATEST_DIGEST_NUM="2"), "check")
+
+    assert "MIFP update preflight" in result.stdout
+    for phase_name in (
+        "Configuration",
+        "Current release",
+        "Resolve update channel",
+        "Candidate image",
+        "Deploy contract",
+        "Database compatibility",
+        "Compose + secrets",
+    ):
+        assert phase_name in result.stdout
+    assert "READY TO UPDATE" in result.stdout
+    assert "Production state: UNCHANGED" in result.stdout
+    assert "Run: sudo mifpctl update" in result.stdout
+    assert _release(home) == before
+    assert int((state / "compose-up-count").read_text(encoding="utf-8").strip()) == starts_before
+    assert int((state / "pull-count").read_text(encoding="utf-8").strip()) >= 2
+
+
+def test_check_reports_up_to_date_without_pulling_or_switching(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "init")
+    before = _release(home)
+    state = Path(env["FAKE_DOCKER_STATE"])
+    pulls_before = (state / "pull-count").read_text(encoding="utf-8")
+    starts_before = (state / "compose-up-count").read_text(encoding="utf-8")
+
+    result = _run(env, "check")
+
+    assert "System is already up to date." in result.stdout
+    assert "Production state: UNCHANGED" in result.stdout
+    assert (state / "pull-count").read_text(encoding="utf-8") == pulls_before
+    assert (state / "compose-up-count").read_text(encoding="utf-8") == starts_before
+    assert _release(home) == before
+
+
+def test_check_classifies_configuration_failure_and_preserves_production(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+    config = Path(env["MIFP_CONFIG_DIR"]) / "config.env"
+    config.write_text("ENVIRONMENT=production\nIMAGE_REPOSITORY=ghcr.io/example/mifp\n", encoding="utf-8")
+
+    result = _run(env, "check", check=False)
+
+    assert result.returncode != 0
+    assert "BLOCKED" in result.stdout
+    assert "Failure class: HOST/CONFIGURATION" in result.stdout
+    assert result.stdout.rstrip().endswith("Production state: UNCHANGED")
+    assert _release(home) == before
+
+
+def test_check_classifies_database_incompatibility_without_switch(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+    state = Path(env["FAKE_DOCKER_STATE"])
+    starts_before = (state / "compose-up-count").read_text(encoding="utf-8")
+
+    result = _run(dict(env, LATEST_DIGEST_NUM="2", FAIL_DB_PREFLIGHT="1"), "check", check=False)
+
+    assert result.returncode != 0
+    assert "Failure class: DATABASE" in result.stdout
+    assert result.stdout.rstrip().endswith("Production state: UNCHANGED")
+    assert (state / "compose-up-count").read_text(encoding="utf-8") == starts_before
+    assert _release(home) == before
+
+
+def test_check_classifies_compose_secret_preflight_failure_without_switch(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+    state = Path(env["FAKE_DOCKER_STATE"])
+    starts_before = (state / "compose-up-count").read_text(encoding="utf-8")
+
+    result = _run(dict(env, LATEST_DIGEST_NUM="2", FAIL_COMPOSE_CONFIG="1"), "check", check=False)
+
+    assert result.returncode != 0
+    assert "Failure class: HOST/CONFIGURATION" in result.stdout
+    assert "file-backed secret preparation" in result.stdout
+    assert result.stdout.rstrip().endswith("Production state: UNCHANGED")
+    assert (state / "compose-up-count").read_text(encoding="utf-8") == starts_before
+    assert _release(home) == before
+
+
+def test_check_rejects_newer_deploy_contract_before_switch(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+    state = Path(env["FAKE_DOCKER_STATE"])
+    starts_before = int((state / "compose-up-count").read_text(encoding="utf-8").strip())
+
+    result = _run(
+        dict(env, LATEST_DIGEST_NUM="2", FAKE_DEPLOY_CONTRACT="3"),
+        "check",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "Deploy contract incompatibile" in result.stderr
+    assert "Failure class: HOST/CONFIGURATION" in result.stdout
+    assert result.stdout.rstrip().endswith("Production state: UNCHANGED")
+    assert _release(home) == before
+    assert int((state / "compose-up-count").read_text(encoding="utf-8").strip()) == starts_before
+
+
+def test_update_is_always_verbose_and_reports_final_production_state(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+
+    result = _run(dict(env, LATEST_DIGEST_NUM="2"), "update")
+
+    assert "MIFP safe update" in result.stdout
+    for phase_name in (
+        "Configuration",
+        "Current release",
+        "Resolve update channel",
+        "Candidate image",
+        "Deploy contract",
+        "Database compatibility",
+        "Compose + secrets",
+        "Start candidate",
+        "Application readiness",
+    ):
+        assert phase_name in result.stdout
+    assert "UPDATE COMPLETED" in result.stdout
+    assert "Production state: UPDATED" in result.stdout
+    assert "Rollback:         sudo mifpctl rollback" in result.stdout
+    assert _release(home)["CURRENT_IMAGE"].endswith("@sha256:" + "0" * 63 + "2")
+
+
+def test_update_rejects_newer_deploy_contract_before_compose_up(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+    state = Path(env["FAKE_DOCKER_STATE"])
+    starts_before = int((state / "compose-up-count").read_text(encoding="utf-8").strip())
+
+    result = _run(
+        dict(env, LATEST_DIGEST_NUM="2", FAKE_DEPLOY_CONTRACT="3"),
+        "update",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "Deploy contract incompatibile" in result.stderr
+    assert "Failure class: HOST/CONFIGURATION" in result.stdout
+    assert result.stdout.rstrip().endswith("Production state: UNCHANGED")
+    assert _release(home) == before
+    assert int((state / "compose-up-count").read_text(encoding="utf-8").strip()) == starts_before
+
+
+def test_version_reports_host_tools_and_contract(tmp_path: Path) -> None:
+    env, _home = _env(tmp_path)
+
+    result = _run(env, "version")
+
+    assert "MIFP host tools" in result.stdout
+    assert "Version:         2026.09.25.1" in result.stdout
+    assert "Deploy contract: 2 (legacy default: 1)" in result.stdout
+
+
 def test_update_resolves_latest_then_reuses_immutable_deploy(tmp_path: Path) -> None:
     env, home = _env(tmp_path)
     _run(env, "first-deploy", "sha-a")
@@ -904,9 +1102,117 @@ def test_update_health_failure_preserves_release_and_restores_running_image(tmp_
     )
 
     assert result.returncode != 0
+    assert "Failure class: READINESS" in result.stdout
+    assert "Container: restarting" in result.stdout
+    assert "Exit code: 3" in result.stdout
+    assert result.stdout.rstrip().endswith("Production state: ROLLED BACK SUCCESSFULLY")
     assert _release(home) == before
     active = (Path(env["FAKE_DOCKER_STATE"]) / "active-image").read_text(encoding="utf-8").strip()
     assert active == before["CURRENT_IMAGE"]
+
+
+def test_update_readiness_and_rollback_failure_requires_manual_attention(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+
+    result = _run(
+        dict(env, LATEST_DIGEST_NUM="2", FAIL_READY="1", MIFP_READY_ATTEMPTS="1"),
+        "update",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "Failure class: READINESS" in result.stdout
+    assert result.stdout.rstrip().endswith("Production state: MANUAL ATTENTION REQUIRED")
+    assert _release(home) == before
+
+
+def test_update_runtime_host_compose_failure_does_not_attempt_image_rollback(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+    state = Path(env["FAKE_DOCKER_STATE"])
+    starts_before = (state / "compose-up-count").read_text(encoding="utf-8")
+
+    result = _run(
+        dict(env, LATEST_DIGEST_NUM="2", FAIL_HOST_COMPOSE_UP="1", MIFP_READY_ATTEMPTS="1"),
+        "update",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "cannot create secret" in result.stdout
+    assert "Failure class: HOST/CONFIGURATION" in result.stdout
+    assert "Automatic image rollback was not attempted" in result.stdout
+    assert result.stdout.rstrip().endswith("Production state: MANUAL ATTENTION REQUIRED")
+    assert (state / "compose-up-count").read_text(encoding="utf-8") == starts_before
+    assert _release(home) == before
+
+
+def test_update_startup_failure_rolls_back_previous_release(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+
+    result = _run(
+        dict(env, LATEST_DIGEST_NUM="2", FAIL_CANDIDATE_COMPOSE_UP="1", MIFP_READY_ATTEMPTS="1"),
+        "update",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "Failure class: IMAGE/STARTUP" in result.stdout
+    assert result.stdout.rstrip().endswith("Production state: ROLLED BACK SUCCESSFULLY")
+    assert _release(home) == before
+    active = (Path(env["FAKE_DOCKER_STATE"]) / "active-image").read_text(encoding="utf-8").strip()
+    assert active == before["CURRENT_IMAGE"]
+
+
+def test_update_host_compose_failure_does_not_attempt_image_rollback(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+    state = Path(env["FAKE_DOCKER_STATE"])
+    starts_before = (state / "compose-up-count").read_text(encoding="utf-8")
+
+    result = _run(dict(env, LATEST_DIGEST_NUM="2", FAIL_COMPOSE_CONFIG="1"), "update", check=False)
+
+    assert result.returncode != 0
+    assert "Failure class: HOST/CONFIGURATION" in result.stdout
+    assert "rollback was not attempted" in result.stdout
+    assert result.stdout.rstrip().endswith("Production state: UNCHANGED")
+    assert (state / "compose-up-count").read_text(encoding="utf-8") == starts_before
+    assert _release(home) == before
+
+
+def test_update_registry_failure_is_classified_and_unchanged(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    before = _release(home)
+
+    result = _run(dict(env, FAIL_IMAGETOOLS_OTHER="1"), "update", check=False)
+
+    assert result.returncode != 0
+    assert "Failure class: NETWORK/REGISTRY" in result.stdout
+    assert result.stdout.rstrip().endswith("Production state: UNCHANGED")
+    assert _release(home) == before
+
+
+def test_legacy_contract_image_can_remain_previous_and_be_rolled_back(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    legacy_env = dict(env, FAKE_LEGACY_DIGEST_ONE="1")
+    _run(legacy_env, "first-deploy", "sha-a")
+    legacy = _release(home)["CURRENT_IMAGE"]
+
+    _run(dict(legacy_env, LATEST_DIGEST_NUM="2"), "update")
+    updated = _release(home)
+    assert updated["PREVIOUS_IMAGE"] == legacy
+
+    result = _run(legacy_env, "rollback")
+
+    assert result.returncode == 0
+    assert _release(home)["CURRENT_IMAGE"] == legacy
 
 
 def test_update_check_falls_back_to_optional_registry_credentials(tmp_path: Path) -> None:

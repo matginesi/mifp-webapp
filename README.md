@@ -210,12 +210,15 @@ sicura di `deploy`, persistendo sempre e solo `@sha256:...`.
 Uso normale dopo un push su `main` e CI verde:
 
 ```bash
-sudo mifpctl update-check
+sudo mifpctl check
 sudo mifpctl update
 sudo mifpctl status
-sudo mifpctl logs
-sudo mifpctl rollback
 ```
+
+`mifpctl check` è il preflight completo consigliato e lascia la produzione
+invariata. `mifpctl update-check` resta disponibile come controllo leggero del
+registry; `mifpctl version`, `logs` e `rollback` restano comandi diagnostici o
+di recovery.
 
 Per una release specifica resta disponibile `sudo mifpctl deploy sha-<commit>`.
 

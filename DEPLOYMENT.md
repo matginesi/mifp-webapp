@@ -554,3 +554,37 @@ Version & Release** without receiving Docker or host-control privileges.
 Changing the application version means changing `VERSION` in source control and
 shipping a new image. Runtime deployment remains an explicit host operation via
 `mifpctl update`, `deploy`, or `rollback`.
+
+
+## Simple update workflow
+
+For normal operations use only:
+
+```bash
+sudo mifpctl check
+sudo mifpctl update
+sudo mifpctl status
+```
+
+`mifpctl check` is the full update preflight: it may pull/cache the candidate
+image, validates the host/image deploy contract, database compatibility, Compose
+and secret wiring, but never replaces the running release or changes release
+state. Output is always verbose enough to show every phase and ends with an
+explicit `Production state: UNCHANGED`.
+
+`mifpctl update` repeats the safety checks, starts the pinned candidate digest,
+waits visibly for readiness and records the new release only after health succeeds.
+Every failure reports its class and one of `UNCHANGED`, `ROLLED BACK SUCCESSFULLY`
+or `MANUAL ATTENTION REQUIRED`. There is no separate quiet/default mode. Known
+host/Compose creation failures (for example secret, mount, permission or port
+configuration errors) are classified before an image rollback is attempted;
+those failures reuse the same host configuration and therefore require host
+repair rather than a pointless image switch.
+
+`mifpctl update-check` remains available as a lightweight compatibility command
+for registry-only discovery and does not pull the candidate.
+
+Images and host tools use an explicit deploy contract. Current host tools support
+legacy contract v1 and current contract v2. A candidate requiring a newer contract
+is rejected before Compose changes the running application; refresh `deploy/` on
+the VPS first, then rerun `mifpctl check`.

@@ -34,6 +34,10 @@ SSHD_DROPIN="${MIFP_SSHD_DROPIN:-/etc/ssh/sshd_config.d/99-mifp-hardening.conf}"
 SSHD_ROLLBACK="${MIFP_SSHD_ROLLBACK:-/root/.mifp-sshd-rollback.conf}"
 RUNTIME_UID="${MIFP_RUNTIME_UID:-10001}"
 RUNTIME_GID="${MIFP_RUNTIME_GID:-10001}"
+MIFPCTL_VERSION="2026.09.25.1"
+DEPLOY_CONTRACT_VERSION="2"
+DEPLOY_CONTRACT_MIN_VERSION="1"
+DEPLOY_CONTRACT_LABEL="org.mifp.deploy-contract"
 SECURITY_ROOT_UID="${MIFP_SECURITY_ROOT_UID:-0}"
 SECURITY_ROOT_GID="${MIFP_SECURITY_ROOT_GID:-0}"
 COMPOSE_BASE=(docker compose --project-name mifp --project-directory "$MIFP_HOME" --env-file "$ENV_FILE" --env-file "$PUBLIC_CONFIG_FILE" -f "$COMPOSE_FILE")
@@ -55,10 +59,14 @@ Uso normale:
   sudo mifpctl config-check               readiness read-only (exit 0/1)
   sudo mifpctl registry-check             verifica accesso al manifest GHCR
   sudo mifpctl init                       primo avvio da :latest, fissato subito a digest
-  sudo mifpctl update-check               controlla se :latest punta a un digest nuovo
-  sudo mifpctl update                     aggiorna in sicurezza al digest corrente di :latest
-  sudo mifpctl deploy sha-<commit>        deploy esplicito; il DB non viene modificato
+  sudo mifpctl check                      preflight completo update; non cambia la release attiva
+  sudo mifpctl update                     update sicuro con output operativo completo
   sudo mifpctl status
+  sudo mifpctl version                    versione tool + deploy contract host
+
+Compatibilità / diagnostica:
+  sudo mifpctl update-check               controllo leggero legacy (registry only; non fa pull)
+  sudo mifpctl deploy sha-<commit>        deploy esplicito; il DB non viene modificato
   sudo mifpctl logs
   sudo mifpctl rollback                   torna alla release precedente (anche offline se locale)
   sudo mifpctl backup                     snapshot point-in-time DB + dati privati
@@ -84,7 +92,7 @@ Manutenzione rara:
   sudo mifpctl admin [--username NAME]
   sudo mifpctl admin-reset-password [--username NAME]
 
-`:latest` è solo un canale di discovery: init, update-check e update possono
+`:latest` è solo un canale di discovery: init, check, update-check e update possono
 consultarlo, ma lo stato persistente contiene sempre un digest OCI immutabile.
 `deploy` continua ad accettare soltanto sha-<commit> o @sha256:... espliciti.
 EOF
@@ -358,6 +366,7 @@ compose_with_image() {
   local image="$1"; shift
   prepare_compose_secrets
   MIFP_IMAGE="$image" MIFP_DATA_DIR="$DATA_DIR" MIFP_SECRETS_DIR="$SECRET_MATERIAL_DIR" \
+    MIFP_DEPLOY_CONTRACT="$DEPLOY_CONTRACT_VERSION" \
     "${COMPOSE_BASE[@]}" "$@"
 }
 
@@ -445,6 +454,170 @@ show_update_state() {
   say "Update available: $available"
 }
 
+short_image() {
+  local image="$1"
+  if [[ "$image" =~ @sha256:([0-9a-f]{12})[0-9a-f]*$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  else
+    printf '%s' "$image"
+  fi
+}
+
+phase() {
+  local index="$1" total="$2" label="$3"
+  printf '[%s/%s] %s\n' "$index" "$total" "$label"
+}
+
+phase_ok() { printf '      OK%s\n' "${1:+ · $1}"; }
+phase_note() { printf '      %s\n' "$1"; }
+
+report_check_blocked() {
+  local class="$1" reason="$2"
+  say ""
+  say "BLOCKED"
+  say "Failure class: $class"
+  say "Reason:"
+  say "  $reason"
+  say ""
+  say "Production state: UNCHANGED"
+  return 1
+}
+
+report_update_failure() {
+  local class="$1" reason="$2" state="$3"
+  say ""
+  say "UPDATE FAILED"
+  say "Failure class: $class"
+  say "Reason:"
+  say "  $reason"
+  say ""
+  say "Production state: $state"
+  return 1
+}
+
+compose_failure_is_host_configuration() {
+  local output="${1:-}"
+  # `docker compose up` can fail before the application ever starts because of
+  # host/Compose problems. Retrying a previous image with the same broken host
+  # configuration is pointless and, worse, can obscure the actual failure.
+  # Keep the patterns deliberately narrow: unknown failures still use the
+  # existing image/startup rollback path.
+  grep -Eqi \
+    'cannot create secret|sole supported option|invalid mount config|bind source path does not exist|error while creating mount source path|read-only file system|permission denied|port is already allocated|failed to create network|invalid compose project|required variable .* is missing a value' \
+    <<<"$output"
+}
+
+image_deploy_contract() {
+  local image="$1" value
+  value="$(docker image inspect --format '{{ index .Config.Labels "org.mifp.deploy-contract" }}' "$image" 2>/dev/null || true)"
+  # Images created before the explicit contract existed are legacy contract v1.
+  [[ -n "$value" && "$value" != '<no value>' ]] || value="1"
+  printf '%s' "$value"
+}
+
+validate_image_deploy_contract() {
+  local image="$1" contract
+  contract="$(image_deploy_contract "$image")"
+  [[ "$contract" =~ ^[0-9]+$ ]] \
+    || die "Deploy contract immagine non valido per $image: $contract"
+  (( contract >= DEPLOY_CONTRACT_MIN_VERSION && contract <= DEPLOY_CONTRACT_VERSION )) \
+    || die "Deploy contract incompatibile: host v$DEPLOY_CONTRACT_VERSION supporta v$DEPLOY_CONTRACT_MIN_VERSION..v$DEPLOY_CONTRACT_VERSION, immagine richiede v$contract. Aggiorna prima i tool host con refresh-host-tools.sh. Produzione invariata."
+  printf '%s' "$contract"
+}
+
+validate_candidate_compose() {
+  local image="$1"
+  compose_with_image "$image" config -q >/dev/null \
+    || die "Compose preflight fallito per $image. Produzione invariata."
+}
+
+current_release_preflight() {
+  local current="$1"
+  validate_release_image "$current"
+  docker image inspect "$current" >/dev/null 2>&1 \
+    || die "L'immagine della release corrente non è disponibile localmente: $current"
+}
+
+do_check() {
+  local repo current candidate image contract total=7
+  say "MIFP update preflight"
+  say ""
+
+  phase 1 "$total" "Configuration"
+  if ! config_cli validate >/dev/null || ! (ensure_tools) >/dev/null 2>&1; then
+    phase_note "FAILED"
+    report_check_blocked "HOST/CONFIGURATION" "Host configuration or required deployment tools are not ready. Run: sudo mifpctl config-check"
+    return 1
+  fi
+  phase_ok
+
+  phase 2 "$total" "Current release"
+  current="$(current_image || true)"
+  if [[ -z "$current" ]] || ! (current_release_preflight "$current"); then
+    phase_note "FAILED"
+    report_check_blocked "HOST/CONFIGURATION" "The current release state is missing, invalid, or its rollback image is not local."
+    return 1
+  fi
+  phase_ok "$(short_image "$current")"
+
+  phase 3 "$total" "Resolve update channel"
+  repo="$(image_repository)"
+  if ! candidate="$(latest_available_image)"; then
+    phase_note "FAILED"
+    report_check_blocked "NETWORK/REGISTRY" "The update channel could not be resolved. Check network and registry access."
+    return 1
+  fi
+  if [[ "$candidate" == "$current" ]]; then
+    phase_note "UP TO DATE"
+    say ""
+    say "Current:          $(short_image "$current")"
+    say "Host contract:    v$DEPLOY_CONTRACT_VERSION"
+    say "Production state: UNCHANGED"
+    say "System is already up to date."
+    return 0
+  fi
+  phase_note "AVAILABLE · $(short_image "$candidate")"
+
+  phase 4 "$total" "Candidate image"
+  if ! image="$(pull_and_pin "$candidate" 0 1)" || [[ "$image" != "$candidate" ]]; then
+    phase_note "FAILED"
+    report_check_blocked "NETWORK/REGISTRY" "The pinned candidate image could not be pulled and verified."
+    return 1
+  fi
+  phase_ok "cached locally"
+
+  phase 5 "$total" "Deploy contract"
+  if ! contract="$(validate_image_deploy_contract "$image")"; then
+    phase_note "FAILED"
+    report_check_blocked "HOST/CONFIGURATION" "Host deploy contract v$DEPLOY_CONTRACT_VERSION cannot run this candidate. Copy the updated deploy/ bundle and run: sudo bash /tmp/mifp-deploy/refresh-host-tools.sh"
+    return 1
+  fi
+  phase_ok "host v$DEPLOY_CONTRACT_VERSION / image v$contract"
+
+  phase 6 "$total" "Database compatibility"
+  if ! (validate_database_host && preflight_image_db "$image"); then
+    phase_note "FAILED"
+    report_check_blocked "DATABASE" "The candidate is not compatible with the current production database."
+    return 1
+  fi
+  phase_ok
+
+  phase 7 "$total" "Compose + secrets"
+  if ! (validate_candidate_compose "$image"); then
+    phase_note "FAILED"
+    report_check_blocked "HOST/CONFIGURATION" "Compose validation or file-backed secret preparation failed. Automatic image rollback was not attempted because production was not changed."
+    return 1
+  fi
+  phase_ok
+
+  say ""
+  say "READY TO UPDATE"
+  say "Current:          $(short_image "$current")"
+  say "Target:           $(short_image "$candidate")"
+  say "Production state: UNCHANGED"
+  say "Run: sudo mifpctl update"
+}
+
 do_update_check() {
   local repo current candidate
   config_cli validate || die "Configurazione non valida. Esegui: sudo mifpctl configure"
@@ -463,24 +636,143 @@ do_update_check() {
 }
 
 do_update() {
-  local repo current candidate
-  validate_production_env; ensure_tools
-  repo="$(image_repository)"
+  local repo current candidate image contract old_previous total=9
+  say "MIFP safe update"
+  say ""
+
+  phase 1 "$total" "Configuration"
+  if ! (validate_production_env && ensure_tools); then
+    phase_note "FAILED"
+    report_update_failure "HOST/CONFIGURATION" "Host configuration or required deployment tools are not ready. Run: sudo mifpctl config-check" "UNCHANGED"
+    return 1
+  fi
+  phase_ok
+
+  phase 2 "$total" "Current release"
   current="$(current_image || true)"
-  [[ -n "$current" ]] || die "Nessuna release corrente registrata. Usa prima: sudo mifpctl init"
-  validate_release_image "$current"
-  candidate="$(latest_available_image)"
+  if [[ -z "$current" ]] || ! (current_release_preflight "$current"); then
+    phase_note "FAILED"
+    report_update_failure "HOST/CONFIGURATION" "The current release state is missing, invalid, or its rollback image is not local." "UNCHANGED"
+    return 1
+  fi
+  old_previous="$(previous_image || true)"
+  phase_ok "$(short_image "$current")"
+
+  phase 3 "$total" "Resolve update channel"
+  repo="$(image_repository)"
+  if ! candidate="$(latest_available_image)"; then
+    phase_note "FAILED"
+    report_update_failure "NETWORK/REGISTRY" "The update channel could not be resolved. Check network and registry access." "UNCHANGED"
+    return 1
+  fi
   if [[ "$candidate" == "$current" ]]; then
-    show_update_state "$repo" "$current" "$candidate" "NO"
+    phase_note "UP TO DATE"
+    say "      Current release:  $current"
+    say "      Latest available: $candidate"
+    say "      Update available: NO"
+    say ""
+    say "Production state: UNCHANGED"
     say "Already up to date."
     return 0
   fi
-  show_update_state "$repo" "$current" "$candidate" "YES"
-  do_deploy "$candidate"
+  phase_note "AVAILABLE · $(short_image "$candidate")"
+  say "      Current release:  $current"
+  say "      Latest available: $candidate"
+  say "      Update available: YES"
+
+  phase 4 "$total" "Candidate image"
+  if ! image="$(pull_and_pin "$candidate" 0 1)" || [[ "$image" != "$candidate" ]]; then
+    phase_note "FAILED"
+    report_update_failure "NETWORK/REGISTRY" "The pinned candidate image could not be pulled and verified." "UNCHANGED"
+    return 1
+  fi
+  phase_ok "$(short_image "$image")"
+
+  phase 5 "$total" "Deploy contract"
+  if ! contract="$(validate_image_deploy_contract "$image")"; then
+    phase_note "FAILED"
+    report_update_failure "HOST/CONFIGURATION" "Host deploy contract v$DEPLOY_CONTRACT_VERSION cannot run this candidate. Copy the updated deploy/ bundle and run: sudo bash /tmp/mifp-deploy/refresh-host-tools.sh" "UNCHANGED"
+    return 1
+  fi
+  phase_ok "host v$DEPLOY_CONTRACT_VERSION / image v$contract"
+
+  phase 6 "$total" "Database compatibility"
+  if ! (prepare_runtime_storage && validate_database_host && preflight_image_db "$image"); then
+    phase_note "FAILED"
+    report_update_failure "DATABASE" "The candidate is not compatible with the current production database." "UNCHANGED"
+    return 1
+  fi
+  phase_ok
+
+  phase 7 "$total" "Compose + secrets"
+  if ! (validate_candidate_compose "$image"); then
+    phase_note "FAILED"
+    report_update_failure "HOST/CONFIGURATION" "Compose validation or file-backed secret preparation failed. Automatic image rollback was not attempted because the failure is in host deployment configuration." "UNCHANGED"
+    return 1
+  fi
+  phase_ok
+
+  phase 8 "$total" "Start candidate"
+  local start_output start_log
+  start_log="$(mktemp)"
+  if compose_with_image "$image" up -d --remove-orphans 2>&1 | tee "$start_log"; then
+    rm -f -- "$start_log"
+    phase_ok
+  else
+    start_output="$(cat "$start_log")"
+    rm -f -- "$start_log"
+    phase_note "FAILED"
+    show_release_diagnostic "$image"
+    if compose_failure_is_host_configuration "$start_output"; then
+      report_update_failure \
+        "HOST/CONFIGURATION" \
+        "Docker Compose could not create/start the candidate because of host deployment configuration. Automatic image rollback was not attempted because it would reuse the same host configuration." \
+        "MANUAL ATTENTION REQUIRED"
+      return 1
+    fi
+    step "Automatic rollback -> $current"
+    if compose_with_image "$current" up -d --remove-orphans >/dev/null 2>&1 && wait_ready 30; then
+      report_update_failure "IMAGE/STARTUP" "The candidate could not be started; the previous release was restored." "ROLLED BACK SUCCESSFULLY"
+      return 1
+    fi
+    show_release_diagnostic "$current"
+    report_update_failure "IMAGE/STARTUP" "The candidate failed to start and the previous release could not be restored automatically." "MANUAL ATTENTION REQUIRED"
+    return 1
+  fi
+
+  phase 9 "$total" "Application readiness"
+  if wait_ready 60; then
+    phase_ok "healthy"
+  else
+    phase_note "FAILED"
+    show_release_diagnostic "$image"
+    step "Automatic rollback -> $current"
+    if compose_with_image "$current" up -d --remove-orphans >/dev/null 2>&1 && wait_ready 30; then
+      report_update_failure "READINESS" "The candidate did not become ready; the previous release was restored." "ROLLED BACK SUCCESSFULLY"
+      return 1
+    fi
+    show_release_diagnostic "$current"
+    report_update_failure "READINESS" "The candidate did not become ready and the previous release could not be restored automatically." "MANUAL ATTENTION REQUIRED"
+    return 1
+  fi
+
+  if [[ "$image" == "$current" ]]; then
+    write_release_state "$image" "$old_previous"
+  else
+    write_release_state "$image" "$current"
+  fi
+  cleanup_old_release_images "$image" "$(previous_image || true)"
+
+  say ""
+  say "UPDATE COMPLETED"
+  say "Current:          $(short_image "$image")"
+  say "Previous:         $(short_image "$current")"
+  say "Production state: UPDATED"
+  say "Rollback:         sudo mifpctl rollback"
 }
 
 pull_and_pin() {
-  local reference="$1" allow_latest="${2:-0}" image repo digest pull_output
+  local reference="$1" allow_latest="${2:-0}" quiet="${3:-0}" image repo digest pull_output
   image="$(resolve_image "$reference")"
   repo="$(image_repository)"
   if [[ "$allow_latest" == 1 && "$image" == "$repo:latest" ]]; then
@@ -489,7 +781,17 @@ pull_and_pin() {
     validate_release_image "$image"
   fi
   check_free_space
-  if pull_output="$(docker pull "$image" 2>&1)"; then
+  if [[ "$quiet" == 1 ]]; then
+    if pull_output="$(docker pull --quiet "$image" 2>&1)"; then
+      :
+    else
+      [[ -z "$pull_output" ]] || printf '%s\n' "$pull_output" >&2
+      if grep -Eqi 'denied|unauthorized|authentication required' <<<"$pull_output"; then
+        registry_auth_error
+      fi
+      die "Pull immagine fallito: $image"
+    fi
+  elif pull_output="$(docker pull "$image" 2>&1)"; then
     [[ -z "$pull_output" ]] || printf '%s\n' "$pull_output" >&2
   else
     [[ -z "$pull_output" ]] || printf '%s\n' "$pull_output" >&2
@@ -592,6 +894,25 @@ wait_ready() {
 }
 
 show_release_logs() { local image="$1"; compose_with_image "$image" ps >&2 || true; compose_with_image "$image" logs --tail 300 web >&2 || true; }
+
+show_release_diagnostic() {
+  local image="$1" cid state status exit_code docker_error
+  cid="$(compose_with_image "$image" ps -a -q web 2>/dev/null || true)"
+  if [[ -z "$cid" ]]; then
+    say "Container: not created"
+    say "Recent application error: unavailable; run sudo mifpctl logs if a container exists."
+    return 0
+  fi
+  state="$(docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}|{{.State.Error}}' "$cid" 2>/dev/null || true)"
+  IFS='|' read -r status exit_code docker_error <<<"$state"
+  say "Container: ${status:-unknown}"
+  say "Exit code: ${exit_code:-unknown}"
+  if [[ -n "$docker_error" ]]; then
+    say "Docker error: ${docker_error:0:300}"
+  else
+    say "Recent application error: not exposed automatically; use sudo mifpctl logs for reviewed diagnostics."
+  fi
+}
 service_running() { local image="$1"; [[ -n "$(compose_with_image "$image" ps --status running -q web 2>/dev/null || true)" ]]; }
 
 stop_release_for_db_swap() {
@@ -777,6 +1098,7 @@ do_init() {
   [[ ! -e "$db" ]] || die "$db esiste già senza una release registrata; init non lo sovrascrive."
   selector="$(image_repository):latest"
   image="$(pull_and_pin "$selector" 1)"
+  validate_image_deploy_contract "$image" >/dev/null
   init_db_with_image "$image"
   validate_database_host
   preflight_image_db "$image"
@@ -811,7 +1133,9 @@ do_deploy() {
   validate_production_env; ensure_tools; prepare_runtime_storage; validate_database_host
   old_current="$(current_image || true)"; old_previous="$(previous_image || true)"
   image="$(pull_and_pin "$reference")"
+  validate_image_deploy_contract "$image" >/dev/null
   preflight_image_db "$image"
+  validate_candidate_compose "$image"
   step "Deploy $image"
   activate_release "$image" "$old_current" || die "Deploy fallito; la release precedente è stata mantenuta/ripristinata."
   if [[ "$image" == "$old_current" ]]; then write_release_state "$image" "$old_previous"; else write_release_state "$image" "$old_current"; fi
@@ -826,6 +1150,7 @@ do_first_deploy() {
   validate_production_env; ensure_tools; prepare_runtime_storage
   old_current="$(current_image || true)"; old_previous="$(previous_image || true)"
   image="$(pull_and_pin "$reference")"
+  validate_image_deploy_contract "$image" >/dev/null
   [[ -e "$DATA_DIR/mifp.db" ]] || init_db_with_image "$image"
   validate_database_host
   preflight_image_db "$image"
@@ -1353,6 +1678,7 @@ do_status() {
   local current previous repo
   current="$(current_image || true)"; previous="$(previous_image || true)"
   repo="$(env_value MIFP_IMAGE_REPOSITORY || true)"
+  say "Host tools:         $MIFPCTL_VERSION (deploy contract v$DEPLOY_CONTRACT_VERSION)"
   say "Current release:    ${current:-none}"
   say "Previous release:   ${previous:-none}"
   [[ -z "$repo" ]] || say "Configured channel: $repo:latest"
@@ -2020,15 +2346,17 @@ do_config_unset() {
 
 command="${1:-status}"
 case "$command" in
-  init|update|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|events-republish-all|events-php-enable|events-php-disable|rollback-upgrade|rollback|--rollback|restart|stop|admin|admin-reset-password|configure|config-set|config-unset|fix-permissions|security-check|ssh-harden|ssh-rollback)
+  init|check|update|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|events-republish-all|events-php-enable|events-php-disable|rollback-upgrade|rollback|--rollback|restart|stop|admin|admin-reset-password|configure|config-set|config-unset|fix-permissions|security-check|ssh-harden|ssh-rollback)
     mkdir -p "$(dirname "$LOCK_FILE")"; exec 9>"$LOCK_FILE"; flock -n 9 || die "Un'altra operazione MIFP è già in corso." ;;
 esac
 case "$command" in
   registry-login) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl registry-login"; do_registry_login ;;
   registry-check) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl registry-check"; do_registry_check ;;
   init) shift; do_init "$@" ;;
+  check) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl check"; do_check ;;
   update-check) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl update-check"; do_update_check ;;
   update) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl update"; do_update ;;
+  version) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl version"; say "MIFP host tools"; say "Version:         $MIFPCTL_VERSION"; say "Deploy contract: $DEPLOY_CONTRACT_VERSION (legacy default: 1)" ;;
   first-deploy) shift; do_first_deploy "$@" ;;
   deploy) shift; do_deploy "$@" ;;
   init-db) shift; do_init_db "$@" ;;

@@ -532,3 +532,13 @@ def test_production_container_receives_application_credentials_as_docker_secrets
     assert 'MIFP_SECRETS_DIR="$SECRET_MATERIAL_DIR"' in compose_fn
     assert 'source "$SECRETS_FILE"' not in compose_fn
     assert "export SECRET_KEY ADMIN_PASSWORD_HASH SMTP_PASSWORD EVENTS_REMOTE_PASSWORD" not in compose_fn
+    assert 'MIFP_DEPLOY_CONTRACT="$DEPLOY_CONTRACT_VERSION"' in compose_fn
+
+    dockerfile = _read("MIFPAPP/CORE/Dockerfile")
+    assert 'LABEL org.mifp.deploy-contract="2"' in dockerfile
+    assert 'MIFP_DEPLOY_CONTRACT_REQUIRED=2' in dockerfile
+    assert web["environment"]["MIFP_DEPLOY_CONTRACT"].startswith("${MIFP_DEPLOY_CONTRACT:")
+
+    entrypoint = _read("MIFPAPP/CORE/docker-entrypoint.sh")
+    assert "MIFP_DEPLOY_CONTRACT_REQUIRED" in entrypoint
+    assert "MIFP deploy contract mismatch" in entrypoint

@@ -396,14 +396,16 @@ sudo mifpctl doctor
 immutable `@sha256:…` digest. For routine maintenance after a green CI run:
 
 ```bash
-sudo mifpctl update-check
+sudo mifpctl check
 sudo mifpctl update
 sudo mifpctl status
 ```
 
-`update-check` reads the remote manifest without pulling or restarting anything.
-`update` resolves `:latest` to its immutable digest and feeds that digest into
-the same deployment engine. To select an exact CI release, use:
+`check` is the recommended full preflight: it may cache the candidate image but
+never changes release state or replaces the running release. `update-check`
+remains available as the lightweight remote-manifest check without pulling or
+restarting anything. `update` resolves `:latest` to its immutable digest and
+feeds that digest into the same deployment engine. To select an exact CI release, use:
 
 ```bash
 sudo mifpctl deploy sha-<commit>
@@ -446,7 +448,7 @@ effect only on a later explicit application deploy/restart.
 To update the application afterwards, run the normal explicit image workflow:
 
 ```bash
-sudo mifpctl update-check
+sudo mifpctl check
 sudo mifpctl update
 sudo mifpctl status
 sudo mifpctl doctor
