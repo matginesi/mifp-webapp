@@ -223,7 +223,7 @@ jobs:
             --cap-drop ALL \
             --security-opt no-new-privileges:true \
             --pids-limit 256 \
-            --publish 127.0.0.1::8000 \
+            --publish 127.0.0.1:18080:8000 \
             --volume mifp-image-verify-data:/app/data \
             --env MIFP_LOAD_DOTENV=0 \
             --env FLASK_ENV=production \
@@ -244,8 +244,7 @@ jobs:
             --env GUNICORN_BIND=0.0.0.0:8000 \
             "$IMAGE"
 
-          port="$(docker port mifp-image-verify 8000/tcp | sed -n 's/.*://p' | head -n 1)"
-          test -n "$port"
+          port=18080
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error --max-time 3 "http://127.0.0.1:${port}/ready" >/dev/null; then
               curl --fail --silent --show-error --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null
