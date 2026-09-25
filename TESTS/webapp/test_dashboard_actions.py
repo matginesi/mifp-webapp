@@ -1665,6 +1665,7 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.logs_cleanup",
     "dashboard.notifications_save",
     "dashboard.notifications_test",
+    "dashboard.notifications_send",
     "dashboard.seo_save",
     "dashboard.server_db_dump",
     "dashboard.server_db_restore",

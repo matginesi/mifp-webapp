@@ -161,7 +161,7 @@ def test_repeated_notification_is_thresholded_and_cooled_down(tmp_path: Path, mo
     assert len(delivered) == 1
     assert "Aggregated occurrences: 3" in delivered[0]["body"]
     assert "text/html" not in delivered[0]["html_body"]  # raw HTML body, not MIME wrapper
-    assert "MIFP notification" in delivered[0]["html_body"]
+    assert "MIFP VPS Notification" in delivered[0]["html_body"]
 
 
 @pytest.fixture
@@ -305,3 +305,162 @@ def test_host_notification_monitor_is_independent_and_packaged() -> None:
     assert "mifp-alert-check.timer" in refresh
     assert "mifp-alert-check.service" in bootstrap
     assert "ExecStart=/opt/mifp/mifp-alert-check.sh" in service
+    assert "MIFP VPS Notification" in script
+
+
+
+def test_notification_test_route_supports_predefined_message_types(notification_app, monkeypatch) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    captured = []
+
+    def fake_notify(_app, **kwargs):
+        captured.append(kwargs)
+        return SimpleNamespace(sent=True, reason="sent")
+
+    monkeypatch.setattr(dashboard_notifications, "notify", fake_notify)
+    client = _logged_in_client(notification_app)
+    response = client.post(
+        "/dashboard/notifications/test",
+        data={"test_type": "security"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert captured[-1]["event"] == "test_security"
+    assert captured[-1]["severity"] == "security"
+    assert captured[-1]["force"] is True
+    assert "password" in captured[-1]["body"].lower()
+
+
+def test_manual_dashboard_email_uses_fixed_transport_and_escaped_mifp_layout(notification_app, monkeypatch) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    notification_app.config.update(MAIL_PROVIDER="console", ENV="test")
+    delivered = []
+
+    def fake_send_mail(_app, **kwargs):
+        delivered.append(kwargs)
+        return True
+
+    monkeypatch.setattr(dashboard_notifications, "send_mail", fake_send_mail)
+    client = _logged_in_client(notification_app)
+    response = client.post(
+        "/dashboard/notifications/send",
+        data={
+            "recipient": "researcher@example.org",
+            "subject": "Project update\nignored-header",
+            "mail_title": "MIFP <Research Update>",
+            "message": "Hello <script>alert(1)</script>\n\nThe project is ready.",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert len(delivered) == 1
+    message = delivered[0]
+    assert message["to"] == "researcher@example.org"
+    assert message["subject"] == "Project update ignored-header"
+    assert message["automated"] is False
+    assert "MIFP &lt;Research Update&gt;" in message["html_body"]
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in message["html_body"]
+    assert "<script>alert(1)</script>" not in message["html_body"]
+
+
+def test_manual_dashboard_email_can_send_plain_text_only(notification_app, monkeypatch) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    notification_app.config.update(MAIL_PROVIDER="console", ENV="test")
+    delivered = []
+
+    monkeypatch.setattr(
+        dashboard_notifications,
+        "send_mail",
+        lambda _app, **kwargs: delivered.append(kwargs) or True,
+    )
+    client = _logged_in_client(notification_app)
+    response = client.post(
+        "/dashboard/notifications/send",
+        data={
+            "recipient": "researcher@example.org",
+            "subject": "Plain message",
+            "mail_title": "",
+            "message": "Plain text only.",
+            "plain_text_only": "1",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert delivered[-1]["html_body"] is None
+    assert delivered[-1]["body"] == "Plain text only."
+    assert delivered[-1]["automated"] is False
+
+
+def test_manual_dashboard_email_rejects_recipient_lists(notification_app, monkeypatch) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    notification_app.config.update(MAIL_PROVIDER="console", ENV="test")
+    delivered = []
+    monkeypatch.setattr(
+        dashboard_notifications,
+        "send_mail",
+        lambda _app, **kwargs: delivered.append(kwargs) or True,
+    )
+    client = _logged_in_client(notification_app)
+    response = client.post(
+        "/dashboard/notifications/send",
+        data={
+            "recipient": "one@example.org,two@example.org",
+            "subject": "Should fail",
+            "mail_title": "MIFP",
+            "message": "No recipient lists are allowed.",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert delivered == []
+
+
+def test_manual_mailer_omits_auto_submitted_for_human_authored_mail(monkeypatch) -> None:
+    from mifp_app.services import mailer
+
+    sent = []
+
+    class FakeSSL:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def login(self, *_args):
+            return None
+
+        def send_message(self, message):
+            sent.append(message)
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP_SSL", FakeSSL)
+    app = SimpleNamespace(config={
+        "MAIL_PROVIDER": "smtp",
+        "MAIL_FROM": "secretary@mifp.eu",
+        "MAIL_FROM_NAME": "MIFP",
+        "SMTP_HOST": "smtp.example.net",
+        "SMTP_PORT": 465,
+        "SMTP_SECURITY": "tls",
+        "SMTP_USERNAME": "secretary@mifp.eu",
+        "SMTP_PASSWORD": "not-a-real-secret",
+    })
+
+    assert mailer.send_mail(
+        app,
+        to="researcher@example.org",
+        subject="Human-authored message",
+        body="Hello",
+        automated=False,
+    ) is True
+    assert sent[0].get("Auto-Submitted") is None

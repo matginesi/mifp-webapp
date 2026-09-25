@@ -73,6 +73,11 @@ _EMAIL_THEME = {
     "accent": "#a72b31",
     "accent_subtle": "#faeeee",
 }
+DEFAULT_EMAIL_TITLE = "MIFP VPS Notification"
+MAX_MANUAL_MAIL_SUBJECT = 160
+MAX_MANUAL_MAIL_TITLE = 80
+MAX_MANUAL_MAIL_BODY = 10000
+
 _SEVERITY_THEME = {
     "critical": ("#a72b31", "#faeeee", "CRITICAL"),
     "error": ("#a72b31", "#faeeee", "ERROR"),
@@ -110,6 +115,15 @@ def _recipient(value: Any) -> str:
     if not address or "@" not in address or address != raw or any(ch in raw for ch in "\r\n"):
         return ""
     return address
+
+
+def normalize_email_address(value: Any) -> str:
+    """Return one canonical mailbox or an empty string.
+
+    Dashboard mail intentionally supports exactly one recipient per send. This
+    rejects display-name forms, comma-separated lists and header injection.
+    """
+    return _recipient(value)
 
 
 def mask_email(value: str) -> str:
@@ -214,35 +228,87 @@ def _html_body(body: str) -> str:
     return "".join(paragraphs)
 
 
-def render_notification_html(*, subject: str, body: str, severity: str, event: str) -> str:
-    """Render a self-contained, email-safe version of the dashboard visual language."""
+def _render_mifp_html(
+    *,
+    title: str,
+    subject: str,
+    body: str,
+    severity: str = "info",
+    event: str | None = None,
+    badge_label: str | None = None,
+    footer: str,
+) -> str:
+    """Render a self-contained email-safe MIFP card.
+
+    All caller-controlled text is escaped here. The dashboard never accepts
+    arbitrary HTML for outgoing mail.
+    """
     level = str(severity or "info").strip().lower()
-    color, subtle, label = _SEVERITY_THEME.get(level, _SEVERITY_THEME["info"])
+    color, subtle, default_label = _SEVERITY_THEME.get(level, _SEVERITY_THEME["info"])
+    label = escape(str(badge_label or default_label)[:24])
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    safe_subject = escape(str(subject or "MIFP notification"))
-    safe_event = escape(str(event or "notification"))
+    safe_title = escape(str(title or DEFAULT_EMAIL_TITLE)[:MAX_MANUAL_MAIL_TITLE])
+    safe_subject = escape(str(subject or DEFAULT_EMAIL_TITLE)[:180])
+    safe_event = escape(str(event or ""))
+    safe_footer = escape(str(footer or ""))
+    event_line = (
+        f'<b style="color:{_EMAIL_THEME["text"]};">Event</b> &nbsp; {safe_event}<br>'
+        if safe_event else ""
+    )
     return f"""<!doctype html>
 <html><body style="margin:0;padding:0;background:{_EMAIL_THEME['page']};font-family:Inter,Segoe UI,Arial,sans-serif;color:{_EMAIL_THEME['text']};">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:{_EMAIL_THEME['page']};padding:28px 12px;"><tr><td align="center">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:{_EMAIL_THEME['surface']};border:1px solid {_EMAIL_THEME['border']};border-radius:6px;overflow:hidden;">
 <tr><td style="background:{_EMAIL_THEME['shell']};padding:18px 22px;border-left:5px solid {_EMAIL_THEME['accent']};">
   <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:{_EMAIL_THEME['shell_muted']};font-weight:700;">Mediterranean Institute of Fundamental Physics</div>
-  <div style="margin-top:5px;color:#ffffff;font-size:20px;line-height:1.3;font-weight:750;">MIFP notification</div>
+  <div style="margin-top:5px;color:#ffffff;font-size:20px;line-height:1.3;font-weight:750;">{safe_title}</div>
 </td></tr>
 <tr><td style="padding:22px;">
   <div style="display:inline-block;padding:5px 8px;border-radius:999px;background:{subtle};color:{color};font-size:11px;font-weight:800;letter-spacing:.08em;">{label}</div>
   <h1 style="margin:13px 0 16px;font-size:21px;line-height:1.35;color:{_EMAIL_THEME['text']};font-weight:750;">{safe_subject}</h1>
   <div style="border-left:3px solid {color};padding:2px 0 2px 15px;">{_html_body(body)}</div>
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:20px;background:#f8f9fa;border:1px solid #e2e5e9;border-radius:4px;">
-    <tr><td style="padding:10px 12px;color:{_EMAIL_THEME['muted']};font-size:12px;line-height:1.5;"><b style="color:{_EMAIL_THEME['text']};">Event</b> &nbsp; {safe_event}<br><b style="color:{_EMAIL_THEME['text']};">Generated</b> &nbsp; {generated}</td></tr>
+    <tr><td style="padding:10px 12px;color:{_EMAIL_THEME['muted']};font-size:12px;line-height:1.5;">{event_line}<b style="color:{_EMAIL_THEME['text']};">Generated</b> &nbsp; {generated}</td></tr>
   </table>
 </td></tr>
 <tr><td style="padding:15px 22px;background:#f8f9fa;border-top:1px solid #e2e5e9;color:{_EMAIL_THEME['muted']};font-size:11px;line-height:1.5;">
-Automated operational message from MIFP. Passwords, tokens and SMTP secrets are never included. Review Dashboard → Notifications and the server logs for additional details.
+{safe_footer}
 </td></tr>
 </table>
 </td></tr></table>
 </body></html>"""
+
+
+def render_notification_html(*, subject: str, body: str, severity: str, event: str) -> str:
+    """Render the operational notification template."""
+    return _render_mifp_html(
+        title=DEFAULT_EMAIL_TITLE,
+        subject=subject,
+        body=body,
+        severity=severity,
+        event=event,
+        footer=(
+            "Automated operational message from MIFP. Passwords, tokens and SMTP secrets "
+            "are never included. Review Dashboard → Notifications and the server logs for "
+            "additional details."
+        ),
+    )
+
+
+def render_manual_email_html(*, title: str, subject: str, body: str) -> str:
+    """Render one administrator-authored message in the MIFP visual language."""
+    return _render_mifp_html(
+        title=title,
+        subject=subject,
+        body=body,
+        severity="info",
+        badge_label="MIFP",
+        event=None,
+        footer=(
+            "Message sent by an authenticated MIFP administrator from the MIFP dashboard. "
+            "No SMTP credentials or session data are included."
+        ),
+    )
 
 
 def _state_paths(app) -> tuple[Path, Path]:

@@ -2172,9 +2172,88 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .status-danger { color: var(--red); background: var(--red-bg); }
 .status-info { color: var(--blue); background: var(--blue-bg); }
 
-/* Notification settings reuse the control-center language with only scoped
-   layout rules; no parallel component system is introduced. */
-.notification-snapshot { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+/* Notifications reuse the Control Center language. Keep these rules scoped:
+   the page is dense on desktop but collapses cleanly without horizontal UI. */
+.notification-snapshot { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.notification-snapshot > article:nth-child(3n) { border-right: 0; }
+.notification-snapshot > article:nth-child(-n+3) { border-bottom: 1px solid var(--border-soft); }
+.notification-primary-grid {
+  display: grid;
+  grid-template-columns: minmax(18rem, .9fr) minmax(22rem, 1.1fr);
+  gap: .75rem;
+  align-items: stretch;
+}
+.notification-primary-grid > .control-panel { min-width: 0; }
+.notification-panel-body,
+.notification-test-form,
+.notification-compose-form { padding: .75rem; }
+.notification-system-facts > div { grid-template-columns: 7.25rem minmax(0, 1fr); }
+.notification-system-facts dd { overflow-wrap: anywhere; }
+.notification-compact-note { margin: .65rem 0 0; }
+.notification-test-form { display: grid; gap: .7rem; }
+.notification-test-select small,
+.notification-compose-grid .field small,
+.notification-threshold-grid .field small { color: var(--text-3); font-size: .6rem; line-height: 1.4; }
+.notification-test-preview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: .2rem .55rem;
+  align-items: center;
+  padding: .65rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+.notification-test-preview .status-chip { grid-row: 1 / span 2; }
+.notification-test-preview b { color: var(--text-bright); font-size: .72rem; }
+.notification-test-preview small { color: var(--text-3); font-size: .62rem; line-height: 1.35; }
+.notification-form-actions { justify-content: flex-end; }
+.notification-compose-panel { scroll-margin-top: calc(var(--shell-topbar-height) + 1rem); }
+.notification-compose-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .7rem;
+}
+.notification-html-title-field { min-width: 0; }
+.notification-format-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+  min-width: 0;
+  padding: .55rem .65rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+.notification-format-toggle > span { display: grid; min-width: 0; text-transform: none; letter-spacing: 0; }
+.notification-format-toggle b { color: var(--text-bright); font-size: .72rem; }
+.notification-format-toggle small { color: var(--text-3); font-size: .6rem; line-height: 1.35; }
+.notification-format-toggle input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--accent);
+}
+.notification-message-field { grid-column: 1 / -1; }
+.notification-message-field textarea { min-height: 9.5rem; resize: vertical; }
+.notification-compose-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-top: .75rem;
+  padding-top: .75rem;
+  border-top: 1px solid var(--border-soft);
+}
+.notification-compose-safety { flex: 1 1 auto; margin: 0; }
+.notification-compose-footer > .btn { flex: 0 0 auto; }
+.notification-policy-grid {
+  display: grid;
+  grid-template-columns: minmax(19rem, 1.15fr) minmax(18rem, .85fr);
+  gap: .75rem;
+  align-items: start;
+}
 .notification-policy-list {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
@@ -2190,7 +2269,9 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: .55rem;
 }
-.notification-threshold-grid .field small { color: var(--text-3); font-size: .58rem; line-height: 1.35; }
+.notification-history-wrap { max-height: 28rem; overflow: auto; }
+.notification-history-table thead { position: sticky; top: 0; z-index: 1; }
+.notification-history-table td:first-child { white-space: nowrap; }
 
 .control-list { max-height: 31rem; overflow-y: auto; overscroll-behavior: contain; }
 .control-list:focus-visible { outline-color: var(--focus-ring); outline-offset: -2px; }
@@ -2336,7 +2417,12 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 
 @media (max-width: 900px) {
   .control-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .notification-snapshot { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .notification-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .notification-snapshot > article { border-right: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
+  .notification-snapshot > article:nth-child(2n) { border-right: 0; }
+  .notification-snapshot > article:nth-last-child(-n+2) { border-bottom: 0; }
+  .notification-primary-grid { grid-template-columns: 1fr; }
+  .notification-policy-grid { grid-template-columns: 1fr; }
   .control-snapshot > :nth-child(2) { border-right: 0; }
   .control-snapshot > :nth-child(-n+2) { border-bottom: 1px solid var(--border-soft); }
   .storage-row { grid-template-columns: 2rem minmax(0, 1fr) 7rem; }
@@ -2347,6 +2433,10 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   .control-tabs { margin-inline: -.1rem; }
   .control-two-column { grid-template-columns: 1fr; }
   .notification-threshold-grid { grid-template-columns: 1fr; }
+  .notification-compose-grid { grid-template-columns: 1fr; }
+  .notification-message-field { grid-column: auto; }
+  .notification-compose-footer { align-items: stretch; flex-direction: column; }
+  .notification-compose-footer > .btn { width: 100%; }
   .control-finding { grid-template-columns: .22rem minmax(0, 1fr) auto; }
   .finding-action { grid-column: 2 / -1; text-align: left; }
   .control-quality-workflow { grid-template-columns: 1fr; align-items: start; }
@@ -2368,6 +2458,13 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 @media (max-width: 420px) {
   .control-snapshot { grid-template-columns: 1fr; }
   .notification-snapshot { grid-template-columns: 1fr; }
+  .notification-snapshot > article { border-right: 0; border-bottom: 1px solid var(--border-soft); }
+  .notification-snapshot > article:last-child { border-bottom: 0; }
+  .notification-test-preview { grid-template-columns: 1fr; }
+  .notification-test-preview .status-chip { grid-row: auto; justify-self: start; }
+  .notification-format-toggle { align-items: flex-start; }
+  .notification-form-actions .btn { width: 100%; }
+  .notification-panel-body, .notification-test-form, .notification-compose-form { padding: .65rem; }
   .control-snapshot > a,
   .control-snapshot > article { border-right: 0; border-bottom: 1px solid var(--border-soft); }
   .control-snapshot > :last-child { border-bottom: 0; }

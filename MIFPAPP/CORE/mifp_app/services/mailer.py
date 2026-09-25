@@ -28,13 +28,15 @@ def send_mail(
     body: str,
     html_body: str | None = None,
     reply_to: str | None = None,
+    automated: bool = True,
 ) -> bool:
     """Send one message through the configured transport.
 
     The plain-text part is always present. ``html_body`` is an optional
-    alternative used by MIFP notifications; callers never need HTML for mail
-    delivery to work. SMTP credentials remain application configuration and are
-    never copied into the message or log fields.
+    alternative used by MIFP notifications and administrator-authored mail.
+    ``automated=False`` deliberately omits the Auto-Submitted header for a
+    human-authored dashboard message. SMTP credentials remain application
+    configuration and are never copied into the message or log fields.
     """
     provider = str(app.config.get("MAIL_PROVIDER", "disabled") or "disabled").lower()
     if provider == "disabled":
@@ -47,7 +49,8 @@ def send_mail(
     msg["From"] = formataddr((from_name, from_address)) if from_name else from_address
     msg["To"] = _valid_email(to)
     msg["Subject"] = _clean_header(subject)[:180]
-    msg["Auto-Submitted"] = "auto-generated"
+    if automated:
+        msg["Auto-Submitted"] = "auto-generated"
     if reply_to:
         msg["Reply-To"] = _valid_email(reply_to)
     msg.set_content(body or "", subtype="plain", charset="utf-8")

@@ -137,7 +137,7 @@ sender = os.environ["MIFP_ALERT_FROM"]
 recipient = os.environ["MIFP_ALERT_TO"]
 severity = os.environ.get("MIFP_ALERT_SEVERITY", "info").lower()
 event = os.environ.get("MIFP_ALERT_EVENT", "host_alert")
-subject = os.environ.get("MIFP_ALERT_SUBJECT", "MIFP notification").replace("\r", " ").replace("\n", " ")[:180]
+subject = os.environ.get("MIFP_ALERT_SUBJECT", "MIFP VPS Notification").replace("\r", " ").replace("\n", " ")[:180]
 body = os.environ.get("MIFP_ALERT_BODY", "")
 colors = {
     "critical": ("#a72b31", "#faeeee", "CRITICAL"),
@@ -160,7 +160,7 @@ generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 html = f'''<!doctype html><html><body style="margin:0;padding:0;background:#eef1f4;font-family:Inter,Segoe UI,Arial,sans-serif;color:#2c3036;">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eef1f4;padding:28px 12px;"><tr><td align="center">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid #cbd0d6;border-radius:6px;overflow:hidden;">
-<tr><td style="background:#181b20;padding:18px 22px;border-left:5px solid #a72b31;"><div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#aeb5bf;font-weight:700;">Mediterranean Institute of Fundamental Physics</div><div style="margin-top:5px;color:#ffffff;font-size:20px;font-weight:750;">MIFP host notification</div></td></tr>
+<tr><td style="background:#181b20;padding:18px 22px;border-left:5px solid #a72b31;"><div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#aeb5bf;font-weight:700;">Mediterranean Institute of Fundamental Physics</div><div style="margin-top:5px;color:#ffffff;font-size:20px;font-weight:750;">MIFP VPS Notification</div></td></tr>
 <tr><td style="padding:22px;"><div style="display:inline-block;padding:5px 8px;border-radius:999px;background:{subtle};color:{color};font-size:11px;font-weight:800;letter-spacing:.08em;">{label}</div><h1 style="margin:13px 0 16px;font-size:21px;line-height:1.35;color:#2c3036;">{escape(subject)}</h1><div style="border-left:3px solid {color};padding:2px 0 2px 15px;">{content}</div><div style="margin-top:20px;padding:10px 12px;background:#f8f9fa;border:1px solid #e2e5e9;border-radius:4px;color:#5f6670;font-size:12px;line-height:1.5;"><b style="color:#2c3036;">Event</b> &nbsp; {escape(event)}<br><b style="color:#2c3036;">Generated</b> &nbsp; {generated}</div></td></tr>
 <tr><td style="padding:15px 22px;background:#f8f9fa;border-top:1px solid #e2e5e9;color:#5f6670;font-size:11px;line-height:1.5;">Independent host-level MIFP monitor. SMTP credentials, application secrets and session data are never included.</td></tr>
 </table></td></tr></table></body></html>'''

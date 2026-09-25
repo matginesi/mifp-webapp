@@ -21,6 +21,7 @@ DASHBOARD_GET = [
     "/dashboard/join-requests",
     "/dashboard/assets",
     "/dashboard/logs",
+    "/dashboard/notifications",
     "/dashboard/data-quality",
     "/dashboard/conferences",
     "/dashboard/control",
@@ -80,6 +81,7 @@ class TestDashboardRoutes:
             ("data-quality", "/dashboard/data-quality", None),
             ("statistics", "/dashboard/stats", None),
             ("logs", "/dashboard/logs", None),
+            ("notifications", "/dashboard/notifications", None),
             ("security", "/dashboard/security", None),
             ("server", "/dashboard/server", None),
             ("cookie-banner", "/dashboard/institutional/cookie", None),
@@ -121,7 +123,7 @@ class TestDashboardRoutes:
         page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
         page.set_viewport_size({"width": width, "height": height})
         _login(page, live_server)
-        for route in ("/dashboard/", "/dashboard/events", "/dashboard/assets", "/dashboard/data-portability", "/dashboard/security"):
+        for route in ("/dashboard/", "/dashboard/events", "/dashboard/assets", "/dashboard/data-portability", "/dashboard/security", "/dashboard/notifications"):
             page.goto(f"{live_server}{route}")
             page.wait_for_load_state("networkidle")
             overflow = page.evaluate(
