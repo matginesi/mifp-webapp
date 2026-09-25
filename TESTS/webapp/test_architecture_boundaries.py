@@ -123,6 +123,9 @@ def test_ci_cd_workflow_tests_builds_only() -> None:
     assert 'mifp_app.db.manage init /app/data/mifp.db' in text
     assert 'http://127.0.0.1:${port}/ready' in text
     assert 'http://127.0.0.1:${port}/health' in text
+    assert 'org.mifp.deploy-contract' in text
+    assert 'docker image inspect "$IMAGE"' in text
+    assert '--env MIFP_DEPLOY_CONTRACT="$contract"' in text
     assert "promote-latest:" in text
     # `latest` is promoted only after BOTH the boot verification and the image
     # CVE scan have passed.

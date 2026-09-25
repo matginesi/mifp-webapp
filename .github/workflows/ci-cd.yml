@@ -217,6 +217,15 @@ jobs:
         env:
           IMAGE: ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}
         run: |
+          contract="$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.mifp.deploy-contract" }}')"
+          case "$contract" in
+            ''|*[!0-9]*)
+              echo "Invalid or missing org.mifp.deploy-contract label: $contract" >&2
+              exit 1
+              ;;
+          esac
+          echo "Verifying image with deploy contract v$contract"
+
           docker run --detach --name mifp-image-verify \
             --read-only \
             --tmpfs /tmp:size=64m,mode=1777,noexec,nosuid,nodev \
@@ -225,6 +234,7 @@ jobs:
             --pids-limit 256 \
             --publish 127.0.0.1:18080:8000 \
             --volume mifp-image-verify-data:/app/data \
+            --env MIFP_DEPLOY_CONTRACT="$contract" \
             --env MIFP_LOAD_DOTENV=0 \
             --env FLASK_ENV=production \
             --env FLASK_DEBUG=0 \
