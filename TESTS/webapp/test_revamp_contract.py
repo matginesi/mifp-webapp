@@ -112,6 +112,8 @@ def test_markdown_editor_preview_is_shared_and_sanitized():
     assert "ALLOWED_TAGS" in editor
     assert "replaceChildren(sanitizeMarkdown" in editor
     assert "preview.innerHTML" not in editor
+    assert "decodeEditorAffix" in editor
+    assert "replace(/\\\\n/g, '\\n')" in editor
     assert "js/markdown-editor.js" in institutional
     assert "js/markdown-editor.js" in privacy
 

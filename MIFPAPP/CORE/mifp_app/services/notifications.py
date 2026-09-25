@@ -9,11 +9,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parseaddr
 from html import escape
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Mapping
 
 import bleach
-import markdown as markdown_lib
 
 from ..db.connection import connect_readonly
 from ..utils.logger import get_logger, log_event
@@ -81,10 +81,11 @@ MAX_MANUAL_MAIL_SUBJECT = 160
 MAX_MANUAL_MAIL_TITLE = 80
 MAX_MANUAL_MAIL_BODY = 10000
 
-_EMAIL_MARKDOWN_TAGS = frozenset({
-    "p", "br", "strong", "em", "a", "ul", "ol", "li", "h2", "h3", "blockquote"
+_EMAIL_RICH_TAGS = frozenset({
+    "p", "div", "br", "strong", "b", "em", "i", "a", "ul", "ol", "li", "h2"
 })
-_EMAIL_MARKDOWN_ATTRS = {"a": ["href", "title"]}
+_EMAIL_RICH_ATTRS = {"a": ["href"]}
+MAX_MANUAL_MAIL_HTML = 40000
 
 _SEVERITY_THEME = {
     "critical": ("#a72b31", "#faeeee", "CRITICAL"),
@@ -249,31 +250,86 @@ def _html_body(body: str) -> str:
     return "".join(paragraphs)
 
 
-def _manual_markdown_html(body: str) -> str:
-    """Render the bounded dashboard editor syntax for outgoing HTML mail.
-
-    Raw HTML is escaped *before* Markdown parsing, then the generated markup is
-    sanitized again with a deliberately small tag/attribute/protocol allowlist.
-    This keeps the editor useful without turning the dashboard into an arbitrary
-    HTML mail sender.
-    """
-    source = escape(str(body or ""))
-    rendered = markdown_lib.markdown(source, extensions=["nl2br", "sane_lists"])
-    safe = bleach.clean(
-        rendered,
-        tags=_EMAIL_MARKDOWN_TAGS,
-        attributes=_EMAIL_MARKDOWN_ATTRS,
+def sanitize_manual_email_html(raw_html: str) -> str:
+    """Return the tiny HTML subset accepted from the dashboard visual editor."""
+    return bleach.clean(
+        str(raw_html or ""),
+        tags=_EMAIL_RICH_TAGS,
+        attributes=_EMAIL_RICH_ATTRS,
         protocols={"http", "https", "mailto"},
         strip=True,
         strip_comments=True,
     )
-    # Email clients vary widely in stylesheet support. Keep the structural
-    # Markdown semantic and give its container the canonical body typography;
-    # links/lists/headings still remain readable even when client CSS is sparse.
-    return (
-        f'<div style="color:{_EMAIL_THEME["text"]};font-size:14px;line-height:1.6;">'
-        f"{safe}</div>"
-    )
+
+
+class _ManualEmailTextExtractor(HTMLParser):
+    """Create a readable plain-text alternative from sanitized rich mail HTML."""
+
+    _BLOCKS = {"p", "div", "h2", "ul", "ol"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.list_stack: list[str] = []
+        self.ordered_index: list[int] = []
+
+    def _newline(self) -> None:
+        if self.parts and not self.parts[-1].endswith("\n"):
+            self.parts.append("\n")
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        tag = tag.lower()
+        if tag in self._BLOCKS:
+            self._newline()
+        if tag == "br":
+            self._newline()
+        elif tag == "ul":
+            self.list_stack.append("ul")
+            self.ordered_index.append(0)
+        elif tag == "ol":
+            self.list_stack.append("ol")
+            self.ordered_index.append(0)
+        elif tag == "li":
+            self._newline()
+            if self.list_stack and self.list_stack[-1] == "ol":
+                self.ordered_index[-1] += 1
+                self.parts.append(f"{self.ordered_index[-1]}. ")
+            else:
+                self.parts.append("- ")
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in {"p", "div", "h2", "li"}:
+            self._newline()
+        if tag in {"ul", "ol"} and self.list_stack:
+            self.list_stack.pop()
+            self.ordered_index.pop()
+            self._newline()
+
+    def handle_data(self, data: str) -> None:
+        if data:
+            self.parts.append(data)
+
+    def text(self) -> str:
+        lines = [line.rstrip() for line in "".join(self.parts).replace("\r", "").split("\n")]
+        compact: list[str] = []
+        for line in lines:
+            if not line and compact and not compact[-1]:
+                continue
+            compact.append(line)
+        return "\n".join(compact).strip()
+
+
+def manual_email_content(*, text: str, rich_html: str | None = None) -> tuple[str, str]:
+    """Normalize a manual message and return its plain and safe-HTML forms."""
+    fallback = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not rich_html:
+        return fallback, _html_body(fallback)
+    safe_html = sanitize_manual_email_html(rich_html)
+    extractor = _ManualEmailTextExtractor()
+    extractor.feed(safe_html)
+    plain = extractor.text() or fallback
+    return plain, safe_html
 
 
 def _render_mifp_html(
@@ -302,7 +358,7 @@ def _render_mifp_html(
     safe_subject = escape(display_subject[:180])
     safe_event = escape(str(event or ""))
     safe_footer = escape(str(footer or ""))
-    rendered_body = body_html if body_html is not None else _html_body(body)
+    rendered_body = sanitize_manual_email_html(body_html) if body_html is not None else _html_body(body)
     event_line = (
         f'<b style="color:{_EMAIL_THEME["text"]};">Event</b> &nbsp; {safe_event}<br>'
         if safe_event else ""
@@ -347,22 +403,31 @@ def render_notification_html(*, subject: str, body: str, severity: str, event: s
     )
 
 
-def render_manual_email_html(*, title: str, subject: str, body: str) -> str:
-    """Render one administrator-authored message in the MIFP visual language."""
-    return _render_mifp_html(
-        title=title,
-        subject=subject,
-        body=body,
-        severity="info",
-        badge_label="MIFP",
-        event=None,
-        body_html=_manual_markdown_html(body),
-        strip_subject_tags=False,
-        footer=(
-            "Message sent by an authenticated MIFP administrator from the MIFP dashboard. "
-            "No SMTP credentials or session data are included."
-        ),
-    )
+def render_manual_email_html(*, title: str, subject: str, body: str, body_html: str | None = None) -> str:
+    """Render an administrator-authored message with a calm institutional layout."""
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    safe_title = escape(str(title or "MIFP message")[:MAX_MANUAL_MAIL_TITLE])
+    rendered_body = sanitize_manual_email_html(body_html) if body_html is not None else _html_body(body)
+    # `subject` intentionally stays in the SMTP header only: repeating it inside
+    # the card made manual messages look like operational alerts.
+    return f"""<!doctype html>
+<html><body style="margin:0;padding:0;background:{_EMAIL_THEME['page']};font-family:Inter,Segoe UI,Arial,sans-serif;color:{_EMAIL_THEME['text']};">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:{_EMAIL_THEME['page']};padding:28px 12px;"><tr><td align="center">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:{_EMAIL_THEME['surface']};border:1px solid {_EMAIL_THEME['border']};border-radius:7px;overflow:hidden;">
+<tr><td style="background:{_EMAIL_THEME['shell']};padding:14px 24px;border-left:5px solid {_EMAIL_THEME['accent']};">
+  <div style="color:#ffffff;font-size:14px;line-height:1.3;font-weight:800;letter-spacing:.02em;">MIFP</div>
+  <div style="margin-top:2px;color:{_EMAIL_THEME['shell_muted']};font-size:10px;line-height:1.4;letter-spacing:.09em;text-transform:uppercase;">Mediterranean Institute of Fundamental Physics</div>
+</td></tr>
+<tr><td style="padding:30px 34px 32px;">
+  <h1 style="margin:0 0 24px;font-size:25px;line-height:1.28;color:{_EMAIL_THEME['text']};font-weight:750;">{safe_title}</h1>
+  <div style="color:{_EMAIL_THEME['text']};font-size:15px;line-height:1.7;">{rendered_body}</div>
+</td></tr>
+<tr><td style="padding:13px 24px;background:#f8f9fa;border-top:1px solid #e2e5e9;color:{_EMAIL_THEME['muted']};font-size:10px;line-height:1.5;">
+Sent from the MIFP administrative dashboard &middot; {generated}
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>"""
 
 
 def _state_paths(app) -> tuple[Path, Path]:

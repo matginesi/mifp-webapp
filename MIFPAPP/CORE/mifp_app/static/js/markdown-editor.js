@@ -86,6 +86,10 @@
     }
   }
 
+  function decodeEditorAffix(value) {
+    return String(value || '').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+  }
+
   function initEditor(shell) {
     var textarea = shell.querySelector('textarea');
     if (!textarea) return;
@@ -94,8 +98,8 @@
       toolbar.addEventListener('click', function (event) {
         var button = event.target.closest('[data-md-before]');
         if (!button || !toolbar.contains(button)) return;
-        var before = button.dataset.mdBefore || '';
-        var after = button.dataset.mdAfter || '';
+        var before = decodeEditorAffix(button.dataset.mdBefore);
+        var after = decodeEditorAffix(button.dataset.mdAfter);
         var start = textarea.selectionStart;
         var end = textarea.selectionEnd;
         var selected = textarea.value.substring(start, end);

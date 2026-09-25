@@ -373,7 +373,7 @@ def test_manual_dashboard_email_uses_fixed_transport_and_escaped_mifp_layout(not
     assert "<script>alert(1)</script>" not in message["html_body"]
 
 
-def test_manual_dashboard_email_renders_bounded_markdown_without_accepting_raw_html(notification_app, monkeypatch) -> None:
+def test_manual_dashboard_email_sanitizes_visual_editor_html_and_builds_plain_fallback(notification_app, monkeypatch) -> None:
     from mifp_app.routes import dashboard_notifications
 
     notification_app.config.update(MAIL_PROVIDER="console", ENV="test")
@@ -390,23 +390,64 @@ def test_manual_dashboard_email_renders_bounded_markdown_without_accepting_raw_h
             "recipient": "researcher@example.org",
             "subject": "Formatted update",
             "mail_title": "Research update",
-            "message": (
-                "## Highlights\n\n**Ready** for review.\n\n"
-                "- First item\n- Second item\n\n"
-                "[MIFP](https://mifp.eu)\n\n<script>alert(1)</script>"
+            "message": "Highlights\nReady for review.\nFirst item\nSecond item\nMIFP",
+            "message_html": (
+                '<h2>Highlights</h2><p><strong>Ready</strong> for review.</p>'
+                '<ul><li>First item</li><li>Second item</li></ul>'
+                '<p><a href="https://mifp.eu" style="color:red" onclick="evil()">MIFP</a></p>'
+                '<script>alert(1)</script><img src="https://tracker.invalid/x">'
             ),
         },
         follow_redirects=False,
     )
 
     assert response.status_code == 302
-    html = delivered[-1]["html_body"]
+    message = delivered[-1]
+    html = message["html_body"]
     assert "<h2>Highlights</h2>" in html
     assert "<strong>Ready</strong>" in html
     assert "<ul>" in html and "<li>First item</li>" in html
     assert 'href="https://mifp.eu"' in html
+    assert 'style="color:red"' not in html
+    assert "onclick=" not in html
     assert "<script>" not in html
-    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "<img" not in html
+    assert "First item" in message["body"]
+    assert "https://tracker.invalid" not in message["body"]
+
+
+
+def test_manual_email_layout_is_institutional_not_incident_style() -> None:
+    from mifp_app.services.notifications import render_manual_email_html
+
+    rendered = render_manual_email_html(
+        title="Research update",
+        subject="SMTP subject only",
+        body="Hello researchers.",
+        body_html="<p>Hello researchers.</p>",
+    )
+
+    assert "Mediterranean Institute of Fundamental Physics" in rendered
+    assert ">Research update</h1>" in rendered
+    assert "SMTP subject only" not in rendered
+    assert "Generated</b>" not in rendered
+    assert ">MIFP</div>" in rendered
+    assert "border-left:3px" not in rendered
+    assert "Sent from the MIFP administrative dashboard" in rendered
+
+
+def test_notification_composer_uses_visual_editor_not_markdown_source() -> None:
+    root = Path(__file__).resolve().parents[2]
+    template = (root / "MIFPAPP" / "CORE" / "mifp_app" / "templates" / "dashboard" / "notifications.html").read_text(encoding="utf-8")
+    script = (root / "MIFPAPP" / "CORE" / "mifp_app" / "static" / "js" / "dashboard" / "notifications.js").read_text(encoding="utf-8")
+
+    assert 'contenteditable="true"' in template
+    assert 'name="message_html"' in template
+    assert "Simple Markdown only" not in template
+    assert "markdown-editor.js" not in template
+    assert "data-rich-command" in template
+    assert "document.execCommand" in script
+    assert "clipboardData" in script
 
 
 def test_join_request_sidebar_badge_counts_only_pending(notification_app) -> None:

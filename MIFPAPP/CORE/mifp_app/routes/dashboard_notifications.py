@@ -8,8 +8,10 @@ from ..services.mailer import send_mail
 from ..services.notifications import (
     DEFAULT_NOTIFICATION_SETTINGS,
     MAX_MANUAL_MAIL_BODY,
+    MAX_MANUAL_MAIL_HTML,
     MAX_MANUAL_MAIL_SUBJECT,
     MAX_MANUAL_MAIL_TITLE,
+    manual_email_content,
     mask_email,
     normalize_email_address,
     notification_settings,
@@ -232,10 +234,17 @@ def notifications_send():
     title = _clean_single_line(
         request.form.get("mail_title", ""), max_length=MAX_MANUAL_MAIL_TITLE
     )
-    body = str(request.form.get("message") or "").strip()
+    submitted_body = str(request.form.get("message") or "").strip()
+    submitted_html = str(request.form.get("message_html") or "")
     plain_text_only = str(request.form.get("plain_text_only") or "").lower() in {
         "1", "true", "yes", "on"
     }
+
+    if plain_text_only:
+        body = submitted_body.replace("\r\n", "\n").replace("\r", "\n").strip()
+        safe_body_html = None
+    else:
+        body, safe_body_html = manual_email_content(text=submitted_body, rich_html=submitted_html)
 
     errors: list[str] = []
     if not recipient:
@@ -246,6 +255,8 @@ def notifications_send():
         errors.append("Message is required.")
     if len(body) > MAX_MANUAL_MAIL_BODY:
         errors.append(f"Message must be at most {MAX_MANUAL_MAIL_BODY} characters.")
+    if len(submitted_html) > MAX_MANUAL_MAIL_HTML:
+        errors.append("Formatted message payload is too large.")
     if not plain_text_only and not title:
         errors.append("Email title is required for the MIFP HTML layout.")
     if errors:
@@ -282,7 +293,9 @@ def notifications_send():
 
     html_body = None
     if not plain_text_only:
-        html_body = render_manual_email_html(title=title, subject=subject, body=body)
+        html_body = render_manual_email_html(
+            title=title, subject=subject, body=body, body_html=safe_body_html
+        )
 
     try:
         delivered = send_mail(

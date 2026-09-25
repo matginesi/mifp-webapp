@@ -91,28 +91,25 @@
       </label>
       <div class="field notification-message-field">
         <span>Message</span>
-        <div class="markdown-editor-shell notification-mail-editor" data-notification-mail-editor data-markdown-escape-html>
-          <div class="markdown-editor-toolbar" data-notification-format-tools>
-            <span>Formatting</span>
-            <button type="button" title="Bold" aria-label="Bold" data-md-before="**" data-md-after="**"><b>B</b></button>
-            <button type="button" title="Italic" aria-label="Italic" data-md-before="*" data-md-after="*"><i>I</i></button>
-            <button type="button" title="Link" aria-label="Link" data-md-before="[" data-md-after="](https://)"><i class="bi bi-link-45deg" aria-hidden="true"></i> Link</button>
-            <button type="button" title="Section heading" aria-label="Section heading" data-md-before="\n## " data-md-after="\n">H2</button>
-            <button type="button" title="Bullet list" aria-label="Bullet list" data-md-before="\n- " data-md-after=""><i class="bi bi-list-ul" aria-hidden="true"></i></button>
-            <button type="button" title="Numbered list" aria-label="Numbered list" data-md-before="\n1. " data-md-after=""><i class="bi bi-list-ol" aria-hidden="true"></i></button>
+        <div class="notification-rich-editor" data-notification-mail-editor>
+          <div class="notification-rich-toolbar" data-notification-format-tools aria-label="Message formatting">
+            <button type="button" title="Bold" aria-label="Bold" data-rich-command="bold"><b>B</b></button>
+            <button type="button" title="Italic" aria-label="Italic" data-rich-command="italic"><i>I</i></button>
+            <span class="notification-rich-divider" aria-hidden="true"></span>
+            <button type="button" title="Section heading" aria-label="Section heading" data-rich-command="formatBlock" data-rich-value="h2">H2</button>
+            <button type="button" title="Bullet list" aria-label="Bullet list" data-rich-command="insertUnorderedList"><i class="bi bi-list-ul" aria-hidden="true"></i></button>
+            <button type="button" title="Numbered list" aria-label="Numbered list" data-rich-command="insertOrderedList"><i class="bi bi-list-ol" aria-hidden="true"></i></button>
+            <button type="button" title="Insert link" aria-label="Insert link" data-rich-command="createLink"><i class="bi bi-link-45deg" aria-hidden="true"></i> Link</button>
           </div>
-          <div class="markdown-editor-grid notification-mail-editor-grid">
-            <div class="markdown-editor-source">
-              <textarea id="notification_message" class="form-control markdown-source-input" name="message" rows="10" maxlength="{{ max_mail_body }}" placeholder="Write the message here…" required></textarea>
-              <small>Simple Markdown only. Raw HTML is escaped. Maximum {{ max_mail_body }} characters.</small>
-            </div>
-            <div class="markdown-preview notification-mail-preview" data-notification-format-preview>
-              <div class="markdown-preview-label">Preview</div>
-              <div class="markdown-preview-body" data-md-preview="mail"></div>
-            </div>
+          <div class="notification-rich-surface" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Email message" data-notification-rich-input data-placeholder="Write your message…"></div>
+          <textarea class="form-control notification-plain-surface" rows="10" maxlength="{{ max_mail_body }}" placeholder="Write the plain-text message…" data-notification-plain-input hidden></textarea>
+          <input type="hidden" name="message" data-notification-message-text>
+          <input type="hidden" name="message_html" data-notification-message-html>
+          <div class="notification-editor-meta">
+            <small>Basic formatting and safe links are supported. Attachments, CC and BCC are disabled.</small>
+            <small><span data-notification-message-count>0</span> / {{ max_mail_body }}</small>
           </div>
         </div>
-        <small class="notification-mail-guardrail">No arbitrary HTML, attachments, CC or BCC. Plain-text mode sends the message without the MIFP HTML layout.</small>
       </div>
     </div>
     <div class="notification-compose-footer">
@@ -187,7 +184,5 @@
 
 {% block extra_js %}
 {{ super() }}
-<script src="{{ url_for('static', filename='js/vendor/marked.min.js', v=static_version) }}" defer></script>
-<script src="{{ url_for('static', filename='js/markdown-editor.js', v=static_version) }}" defer></script>
 <script src="{{ url_for('static', filename='js/dashboard/notifications.js', v=static_version) }}" defer></script>
 {% endblock %}
