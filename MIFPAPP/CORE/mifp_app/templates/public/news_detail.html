@@ -8,25 +8,37 @@
 <meta property="og:title" content="{{ article.title }}">
 <meta property="og:description" content="{{ article.summary[:200] if article.summary else 'MIFP News' }}">
 <meta property="og:type" content="article">
-<meta property="og:url" content="{{ request.url }}">
-{% if article.primary_image %}<meta property="og:image" content="{{ article.primary_image }}">{% else %}<meta property="og:image" content="{{ url_for('static', filename='img/background.png', v=static_version, _external=True) }}">{% endif %}
+<meta property="og:site_name" content="Mediterranean Institute of Fundamental Physics">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="{{ seo_canonical_url }}">
+{% if article.primary_image %}<meta property="og:image" content="{{ seo_absolute_url(article.primary_image) }}">{% else %}<meta property="og:image" content="{{ seo_origin }}{{ url_for('static', filename='img/background.png', v=static_version) }}">{% endif %}
+<meta property="og:image:alt" content="{{ article.title }}">
 {% endblock %}
 
 {% block json_ld %}
 <script type="application/ld+json" nonce="{{ csp_nonce }}">
 {
   "@context": "https://schema.org",
-  "@type": "Article",
+  "@type": "NewsArticle",
   "headline": {{ article.title|tojson }},
   {% if article.date %}"datePublished": "{{ article.date[:10] }}",{% endif %}
   {% if article.updated_at %}"dateModified": "{{ article.updated_at[:10] }}",{% endif %}
   {% if article.summary %}"description": {{ article.summary|tojson }},{% endif %}
-  {% if article.primary_image %}"image": "{{ article.primary_image }}",{% endif %}
-  "url": "{{ request.url }}",
+  {% if article.primary_image %}"image": "{{ seo_absolute_url(article.primary_image) }}",{% endif %}
+  "mainEntityOfPage": {"@type": "WebPage", "@id": "{{ seo_canonical_url }}"},
+  "url": "{{ seo_canonical_url }}",
+  "author": {
+    "@type": "Organization",
+    "@id": "{{ seo_origin }}{{ url_for('public.home') }}#organization",
+    "name": "Mediterranean Institute of Fundamental Physics",
+    "url": "{{ seo_origin }}{{ url_for('public.home') }}"
+  },
   "publisher": {
     "@type": "Organization",
+    "@id": "{{ seo_origin }}{{ url_for('public.home') }}#organization",
     "name": "Mediterranean Institute of Fundamental Physics",
-    "url": "{{ url_for('public.home', _external=True) }}"
+    "url": "{{ seo_origin }}{{ url_for('public.home') }}",
+    "logo": {"@type": "ImageObject", "url": "{{ seo_origin }}{{ url_for('static', filename='img/logo-mifp.png') }}"}
   }
 }
 </script>

@@ -1,0 +1,3 @@
+# CI test runner dependencies. Keep pinned so cache keys and worker behavior are reproducible.
+pytest==9.1.1
+pytest-xdist==3.8.0

@@ -31,13 +31,13 @@ def test_cleanup_keeps_newest_versions_and_latest_even_if_old() -> None:
 
     deleted = choose_versions_to_delete(
         versions,
-        min_versions_to_keep=5,
+        min_versions_to_keep=3,
         max_deletions=100,
     )
 
-    assert [version.id for version in deleted] == [2, 3, 4, 5]
-    assert 1 not in {version.id for version in deleted}
-    assert not ({6, 7, 8, 9, 10} & {version.id for version in deleted})
+    assert [version.id for version in deleted] == [2, 3, 4, 5, 6, 7, 8]
+    retained = {version.id for version in versions} - {version.id for version in deleted}
+    assert retained == {1, 9, 10}
 
 
 def test_cleanup_deletes_oldest_first_and_respects_cap() -> None:
@@ -45,7 +45,7 @@ def test_cleanup_deletes_oldest_first_and_respects_cap() -> None:
 
     deleted = choose_versions_to_delete(
         versions,
-        min_versions_to_keep=5,
+        min_versions_to_keep=3,
         max_deletions=2,
     )
 

@@ -1663,6 +1663,7 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.join_reject",
     "dashboard.join_update",
     "dashboard.logs_cleanup",
+    "dashboard.seo_save",
     "dashboard.server_db_dump",
     "dashboard.server_db_restore",
     "dashboard.server_integrity_check",

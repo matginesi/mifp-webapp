@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import date
 from pathlib import Path
@@ -39,9 +40,9 @@ from ..services.public_repository import (
     list_public_research,
     sanitize_html,
     event_public_destination,
-    sitemap_dynamic_entries,
 )
 from ..services.search import run_search
+from ..services.seo import build_sitemap_entries, preferred_origin, settings_from_conn
 from ..utils.logger import audit_log, security_event
 from ..utils.security import get_client_ip, ip_rate_allowed
 
@@ -176,14 +177,6 @@ def favicon():
     return send_from_directory(str(icon_path.parent), icon_path.name, mimetype="image/png")
 
 
-def _canonical_url() -> str:
-    """Return the canonical URL without 'www.' prefix."""
-    host = request.host_url.rstrip('/')
-    if host.startswith('www.'):
-        return host[4:]
-    return host
-
-
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
@@ -197,14 +190,18 @@ def events():
     return render_template("public/events.html", upcoming=upcoming, past=past, search=search)
 
 
-@bp.get("/events/<slug>")
 @bp.get("/events/<slug>/")
+def event_detail_slash(slug: str):
+    return redirect(url_for("public.event_detail", slug=slug), code=308)
+
+
+@bp.get("/events/<slug>")
 def event_detail(slug: str):
     db_path = current_app.config["DATABASE_PATH"]
     with connect_readonly(db_path) as conn:
         if target := _alias_target(conn, "event", slug):
             return redirect(url_for("public.event_detail", slug=target), code=308)
-        event = get_public_event(conn, slug, lambda filename: url_for("public.media", filename=filename, _external=True))
+        event = get_public_event(conn, slug, lambda filename: url_for("public.media", filename=filename))
         if not event:
             abort(404)
         endpoint, values = event_public_destination(event)
@@ -234,7 +231,7 @@ def archive_detail(category: str, year: int, slug: str):
     with connect_readonly(current_app.config["DATABASE_PATH"]) as conn:
         event = get_archive_entry(
             conn, category, year, slug,
-            lambda filename: url_for("public.media", filename=filename, _external=True),
+            lambda filename: url_for("public.media", filename=filename),
         )
     if not event:
         abort(404)
@@ -315,7 +312,7 @@ def news_detail(slug: str):
     with connect_readonly(db_path) as conn:
         if target := _alias_target(conn, "news", slug):
             return redirect(url_for("public.news_detail", slug=target), code=308)
-        article = get_public_news(conn, slug, lambda filename: url_for("public.media", filename=filename, _external=True))
+        article = get_public_news(conn, slug, lambda filename: url_for("public.media", filename=filename))
         if not article:
             abort(404)
     return render_template("public/news_detail.html", article=article)
@@ -660,34 +657,32 @@ def join():
 
 @bp.get("/robots.txt")
 def robots_txt():
-    txt = (
-        "User-agent: *\n"
-        "Allow: /\n"
-        f"Sitemap: {url_for('public.sitemap_xml', _external=True)}\n"
-    )
-    resp = make_response(txt, 200)
+    with connect_readonly(current_app.config["DATABASE_PATH"]) as conn:
+        settings = settings_from_conn(conn)
+    origin = preferred_origin(settings)
+    lines = [
+        "User-agent: *",
+        "Allow: /",
+        f"Sitemap: {origin}{url_for('public.sitemap_xml')}",
+    ]
+    if settings.get("seo_indexing_enabled", "1") != "1":
+        lines.insert(2, "# Public pages currently emit noindex,nofollow; crawling stays allowed so crawlers can observe it.")
+    resp = make_response("\n".join(lines) + "\n", 200)
     resp.headers["Content-Type"] = "text/plain; charset=utf-8"
+    resp.headers["Cache-Control"] = "public, max-age=300"
     return resp
 
 
 @bp.get("/sitemap.xml")
 def sitemap_xml():
     db_path = current_app.config["DATABASE_PATH"]
-    today = date.today().isoformat()
-    urls = []
-    for endpoint in ("public.home", "public.events", "public.archive", "public.news", "public.publications", "public.research", "public.about", "public.privacy", "public.cookie_policy", "public.manifesto", "public.members", "public.code_of_conduct", "public.sponsors", "public.sponsor_how_to"):
-        urls.append({"loc": url_for(endpoint, _external=True), "lastmod": today, "changefreq": "weekly", "priority": "0.8"})
     with connect_readonly(db_path) as conn:
-        for row in sitemap_dynamic_entries(conn):
-            if row["kind"] == "event":
-                if row.get("archive_category"):
-                    loc = url_for("public.archive_detail", category=row["archive_category"], year=row["archive_year"], slug=row["slug"], _external=True)
-                else:
-                    loc = url_for("public.event_detail", slug=row["slug"], _external=True)
-            else:
-                loc = url_for("public.news_detail", slug=row["slug"], _external=True)
-            urls.append({"loc": loc, "lastmod": row["lastmod"] or today, "changefreq": "monthly", "priority": "0.6"})
+        settings = settings_from_conn(conn)
+        origin = preferred_origin(settings)
+        urls = build_sitemap_entries(conn, origin)
     xml = render_template("public/sitemap.xml", urls=urls)
     resp = make_response(xml, 200)
     resp.headers["Content-Type"] = "application/xml; charset=utf-8"
-    return resp
+    resp.headers["Cache-Control"] = "public, max-age=300"
+    resp.set_etag(hashlib.sha256(xml.encode("utf-8")).hexdigest())
+    return resp.make_conditional(request)

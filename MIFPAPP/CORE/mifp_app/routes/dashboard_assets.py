@@ -80,6 +80,32 @@ def _safe_asset_filename(filename: str) -> str | None:
     return filename
 
 
+_ENTITY_TABLES = {entity_type: table for table, entity_type in ENTITY_TYPES.items()}
+_TOUCHABLE_CONTENT_TABLES = frozenset((*SECTION_TABLES.values(), "pages"))
+
+
+def _touch_content_record(conn, table: str, record_id: int) -> None:
+    """Mark a public content record changed after related assets/links mutate."""
+    if table not in _TOUCHABLE_CONTENT_TABLES:
+        return
+    conn.execute(
+        f'UPDATE "{table}" SET updated_at=CURRENT_TIMESTAMP WHERE id=?',
+        (record_id,),
+    )
+
+
+def _touch_asset_parents(conn, asset_id: int) -> None:
+    """Propagate asset metadata changes to every linked public content record."""
+    rows = conn.execute(
+        "SELECT DISTINCT entity_type,entity_id FROM asset_links WHERE asset_id=?",
+        (asset_id,),
+    ).fetchall()
+    for row in rows:
+        table = _ENTITY_TABLES.get(str(row["entity_type"]))
+        if table in _TOUCHABLE_CONTENT_TABLES:
+            _touch_content_record(conn, table, int(row["entity_id"]))
+
+
 def _delete_db_asset(conn, asset_id: int) -> bool:
     row = conn.execute("SELECT path FROM assets WHERE id=?", (asset_id,)).fetchone()
     if not row:
@@ -247,6 +273,7 @@ def assets_page():
                         """,
                         (values["alt_text"], values["caption"], values["kind"], values["source_url"], asset_id),
                     )
+                    _touch_asset_parents(conn, asset_id)
                     conn.commit()
                     audit_log("asset.update", "asset metadata update", asset_id=asset_id)
                     flash("Asset updated.", "success")
@@ -808,6 +835,7 @@ def content_asset_upload(section, record_id):
 
         # Set primary asset field if this is the first asset of that role
         _set_primary_if_first(conn, table, record_id, role, asset_id)
+        _touch_content_record(conn, table, record_id)
 
         conn.commit()
 
@@ -897,6 +925,7 @@ def content_asset_link(section, record_id):
             # Set primary field if appropriate
             _set_primary_if_first(conn, table, record_id, role, asset_id)
 
+        _touch_content_record(conn, table, record_id)
         conn.commit()
 
     audit_log(
@@ -947,6 +976,7 @@ def content_external_link_add(section, record_id):
                 """,
                 (entity_type, record_id, url, label, role, 0 if has_primary else 1, max_sort + 1),
             )
+            _touch_content_record(conn, table, record_id)
             conn.commit()
         except sqlite3.IntegrityError:
             return jsonify({"error": "Link already exists for this record"}), 409
@@ -974,6 +1004,7 @@ def content_external_link_delete(section, record_id):
             "DELETE FROM entity_links WHERE id=? AND entity_type=? AND entity_id=?",
             (link_id, entity_type, record_id),
         )
+        _touch_content_record(conn, table, record_id)
         conn.commit()
 
     audit_log("content.link_delete", "external link deleted", category="content", section=section, record_id=record_id, link_id=link_id)
@@ -1021,6 +1052,7 @@ def content_asset_unlink(section, record_id):
 
             # Clear primary field if it points to this asset
             _clear_primary_if_matching(conn, table, record_id, role, asset_id)
+            _touch_content_record(conn, table, record_id)
 
             conn.commit()
     except Exception:

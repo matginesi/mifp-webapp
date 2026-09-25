@@ -1218,20 +1218,3 @@ def list_public_publications(conn, media_url: MediaUrl, search: str | None = Non
             pub["download_url"] = None
             pub["download_label"] = None
     return rows
-
-
-def sitemap_dynamic_entries(conn) -> list[dict[str, Any]]:
-    events = [
-        {"kind": "event", "slug": row["slug"], "lastmod": row["updated_at"],
-         "archive_category": row["archive_category"], "archive_year": row["archive_year"]}
-        for row in conn.execute(
-            "SELECT e.slug,e.updated_at,a.category AS archive_category,a.archive_year "
-            "FROM events e LEFT JOIN event_archive_entries a ON a.event_id=e.id "
-            "WHERE COALESCE(e.review_status,'draft')='published'"
-        ).fetchall()
-    ]
-    news = [
-        {"kind": "news", "slug": row["slug"], "lastmod": row["date"] or row["updated_at"]}
-        for row in conn.execute(f"SELECT slug, date, updated_at FROM news WHERE {PUBLIC_REVIEW_FILTER}").fetchall()
-    ]
-    return events + news

@@ -4,7 +4,7 @@
 {% block meta_description %}{{ event.description[:160] if event.description else event.title }}{% endblock %}
 {% block og_title %}{{ event.title }}{% endblock %}
 {% block og_description %}{{ event.description[:200] if event.description else 'MIFP Event' }}{% endblock %}
-{% block og_image %}{{ event.cover_url or url_for('static', filename='img/background.png', v=static_version, _external=True) }}{% endblock %}
+{% block og_image %}{{ seo_absolute_url(event.cover_url) if event.cover_url else (seo_origin ~ url_for('static', filename='img/background.png', v=static_version)) }}{% endblock %}
 
 {% block json_ld %}
 <script type="application/ld+json" nonce="{{ csp_nonce }}">
@@ -12,16 +12,17 @@
   "@context": "https://schema.org",
   "@type": "Event",
   "name": {{ event.title|tojson }},
-  {% if event.start_date %}"startDate": "{{ event.start_date[:10] }}",{% endif %}
-  {% if event.end_date %}"endDate": "{{ event.end_date[:10] }}",{% endif %}
+  {% if event.start_date %}"startDate": {{ event.start_date|tojson }},{% endif %}
+  {% if event.end_date %}"endDate": {{ event.end_date|tojson }},{% endif %}
   {% if event.location %}"location": {"@type": "Place", "name": {{ event.location|tojson }}},{% endif %}
   {% if event.description %}"description": {{ event.description|tojson }},{% endif %}
-  {% if event.cover_url %}"image": "{{ event.cover_url }}",{% endif %}
-  "url": "{{ request.url }}",
+  {% if event.cover_url %}"image": "{{ seo_absolute_url(event.cover_url) }}",{% endif %}
+  "url": "{{ seo_canonical_url }}",
   "organizer": {
     "@type": "Organization",
+    "@id": "{{ seo_origin }}{{ url_for('public.home') }}#organization",
     "name": "Mediterranean Institute of Fundamental Physics",
-    "url": "{{ url_for('public.home', _external=True) }}"
+    "url": "{{ seo_origin }}{{ url_for('public.home') }}"
   }
 }
 </script>

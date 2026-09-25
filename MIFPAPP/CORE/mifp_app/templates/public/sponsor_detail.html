@@ -2,6 +2,24 @@
 {% block title %}{{ sponsor.name }} — Sponsor — MIFP{% endblock %}
 {% block meta_description %}{{ sponsor.description|striptags|truncate(160) if sponsor.description else sponsor.name }} — MIFP Sponsor.{% endblock %}
 
+{% block og_title %}{{ sponsor.name }} — MIFP Sponsor{% endblock %}
+{% block og_description %}{{ sponsor.description|striptags|truncate(200) if sponsor.description else sponsor.name }}{% endblock %}
+{% block og_image %}{{ seo_absolute_url(sponsor.logo_url) if sponsor.logo_url else (seo_origin ~ url_for('static', filename='img/background.png', v=static_version)) }}{% endblock %}
+
+{% block json_ld %}
+<script type="application/ld+json" nonce="{{ csp_nonce }}">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": {{ sponsor.name|tojson }},
+  {% if sponsor.description %}"description": {{ sponsor.description|striptags|tojson }},{% endif %}
+  {% if sponsor.logo_url %}"logo": {{ seo_absolute_url(sponsor.logo_url)|tojson }},{% endif %}
+  {% if sponsor.website_url %}"sameAs": [{{ sponsor.website_url|tojson }}],{% endif %}
+  "url": "{{ seo_canonical_url }}"
+}
+</script>
+{% endblock %}
+
 {% block content %}
 <section class="page-hero">
   <div class="container-wide">

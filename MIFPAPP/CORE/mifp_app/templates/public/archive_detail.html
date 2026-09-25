@@ -1,8 +1,11 @@
 {% extends "public/base.html" %}
 {% block title %}{{ event.title }} — MIFP Archive{% endblock %}
 {% block meta_description %}{{ (event.summary or event.description or event.title)[:160] }}{% endblock %}
+{% block og_title %}{{ event.title }} — MIFP Archive{% endblock %}
+{% block og_description %}{{ (event.summary or event.description or event.title)[:200] }}{% endblock %}
+{% block og_image %}{{ seo_absolute_url(event.cover_url) if event.cover_url else (seo_origin ~ url_for('static', filename='img/background.png', v=static_version)) }}{% endblock %}
 {% block extra_css %}<link href="{{ url_for('static', filename='css/archive.css', v=static_version) }}" rel="stylesheet">{% endblock %}
-{% block json_ld %}<script type="application/ld+json" nonce="{{ csp_nonce }}">{{ {"@context":"https://schema.org","@type":"Event","name":event.title,"startDate":event.start_date,"endDate":event.end_date,"description":event.summary or event.description,"url":request.base_url,"location":{"@type":"Place","name":event.location} if event.location else none}|tojson }}</script>{% endblock %}
+{% block json_ld %}<script type="application/ld+json" nonce="{{ csp_nonce }}">{{ {"@context":"https://schema.org","@type":"Event","name":event.title,"startDate":event.start_date,"endDate":event.end_date,"description":event.summary or event.description,"url":seo_canonical_url,"location":{"@type":"Place","name":event.location} if event.location else none,"organizer":{"@type":"Organization","@id":seo_origin ~ url_for('public.home') ~ '#organization',"name":"Mediterranean Institute of Fundamental Physics","url":seo_origin ~ url_for('public.home')}}|tojson }}</script>{% endblock %}
 
 {% block content %}
 <section class="page-hero">

@@ -49,7 +49,7 @@ Pipeline dati:
   ./mifp refresh [remote|local|all] [opzioni scraper]
 
 Test e gestione:
-  ./mifp test [quick|webapp|scraper|database|browser|all] [-- pytest args]
+  ./mifp test [quick|webapp|scraper|database|tools|browser|all] [-- pytest args]
   ./mifp admin [--username NOME]   Imposta password locale in modo interattivo (solo hash salvato)
   ./mifp hash                      Stampa un hash Werkzeug compatibile per la rotazione admin in produzione
   ./mifp status
@@ -448,7 +448,7 @@ refresh_data() {
 run_tests() {
   local suite="${1:-quick}"
   case "$suite" in
-    quick|all|webapp|core|scraper|scrapers|database|db|browser|smoke) shift || true ;;
+    quick|all|webapp|core|scraper|scrapers|database|db|tools|tooling|browser|smoke) shift || true ;;
     *) suite=quick ;;
   esac
   if [[ "${1:-}" == "--" ]]; then shift; fi

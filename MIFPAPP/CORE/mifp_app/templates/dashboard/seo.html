@@ -1,0 +1,92 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}SEO &amp; Indexing{% endblock %}
+{% block content %}
+{% call page_header('Operations', 'SEO & indexing', 'Automatic sitemap, canonical URLs, crawler controls and content diagnostics driven by the live database.') %}
+  <a class="btn btn-outline btn-sm" href="{{ url_for('public.robots_txt') }}" target="_blank" rel="noopener"><i class="bi bi-robot"></i> robots.txt</a>
+  <a class="btn btn-outline btn-sm" href="{{ url_for('public.sitemap_xml') }}" target="_blank" rel="noopener"><i class="bi bi-diagram-3"></i> sitemap.xml</a>
+  <a class="btn btn-outline btn-sm" href="https://search.google.com/search-console" target="_blank" rel="noopener noreferrer"><i class="bi bi-google"></i> Search Console</a>
+{% endcall %}
+
+<div class="control-snapshot control-snapshot-inline">
+  <article><span>Indexable URLs</span><b>{{ snapshot.url_count }}</b><small>Generated from current published content</small></article>
+  <article><span>Newest change</span><b>{{ snapshot.latest_lastmod or '—' }}</b><small>Real content timestamp used by sitemap</small></article>
+  <article><span>Indexing</span><b>{{ 'On' if snapshot.indexing_enabled else 'Off' }}</b><small>{{ 'Public pages may be indexed' if snapshot.indexing_enabled else 'Public pages emit noindex' }}</small></article>
+  <article><span>Diagnostics</span><b>{{ snapshot.issues|length }}</b><small>Configuration or content items to review</small></article>
+</div>
+
+<div class="control-two-column">
+  <section class="control-panel">
+    <div class="panel-head"><div><h2>Indexing configuration</h2><p>These values are database-backed and take effect without rebuilding the application.</p></div></div>
+    <form method="post" action="{{ url_for('dashboard.seo_save') }}" class="control-maintenance-form">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <label class="port-check">
+        <input type="checkbox" name="seo_indexing_enabled" value="1" {{ 'checked' if seo_settings.get('seo_indexing_enabled', '1') == '1' }}>
+        <span>Allow public search-engine indexing</span>
+      </label>
+      <label class="field">
+        <span>Canonical origin</span>
+        <input class="form-control" name="seo_canonical_origin" type="url" inputmode="url" maxlength="255" placeholder="https://mifp.eu" value="{{ seo_settings.get('seo_canonical_origin', '') }}">
+        <small>Origin only, without a path. Effective origin: <code>{{ snapshot.canonical_origin }}</code>.</small>
+      </label>
+      <label class="field">
+        <span>Google Search Console verification token</span>
+        <input class="form-control" name="seo_google_site_verification" type="text" maxlength="256" autocomplete="off" spellcheck="false" placeholder="Token from the HTML tag verification method" value="{{ seo_settings.get('seo_google_site_verification', '') }}">
+        <small>Paste only the <code>content</code> value, not the whole meta tag.</small>
+      </label>
+      <label class="field">
+        <span>Default meta description</span>
+        <textarea class="form-control" name="seo_default_description" rows="4" maxlength="320">{{ seo_settings.get('seo_default_description', seo_defaults.get('seo_default_description', '')) }}</textarea>
+        <small>Used when a page has no more specific description.</small>
+      </label>
+      <div class="dash-row-actions">
+        <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-check2"></i> Save SEO settings</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="control-panel">
+    <div class="panel-head"><div><h2>How updates work</h2><p>No manual sitemap rebuild and no scheduled Google ping are required.</p></div><span class="status-chip status-success">automatic</span></div>
+    <div class="control-list">
+      <div class="control-list-row"><span><b>Published content</b><small>News, events and sponsors are discovered directly from SQLite.</small></span><span class="status-chip status-success">live</span></div>
+      <div class="control-list-row"><span><b>Meaningful edits</b><small>Record timestamps feed <code>&lt;lastmod&gt;</code>; asset/link changes also touch the parent record.</small></span><span class="status-chip status-success">tracked</span></div>
+      <div class="control-list-row"><span><b>Filtered/search URLs</b><small>Query-string variants emit <code>noindex,follow</code> and canonicalize to the clean route.</small></span><span class="status-chip status-info">deduplicated</span></div>
+      <div class="control-list-row"><span><b>Dashboard and errors</b><small>Private/system responses emit an <code>X-Robots-Tag</code> noindex policy.</small></span><span class="status-chip status-success">protected</span></div>
+      <div class="control-list-row"><span><b>Google discovery</b><small>Submit the sitemap once in Search Console; subsequent changes are published at the same URL.</small></span><span class="status-chip status-info">sitemap</span></div>
+    </div>
+  </section>
+</div>
+
+<section class="control-panel">
+  <div class="panel-head"><div><h2>Diagnostics</h2><p>Checks only published/public records; drafts do not need SEO metadata.</p></div><span>{{ snapshot.issues|length }}</span></div>
+  <div class="control-list">
+    {% for issue in snapshot.issues %}
+    <div class="control-list-row">
+      <span><b>{{ issue.label }}</b><small>{{ issue.detail }}</small></span>
+      <span>
+        <span class="status-chip status-{{ 'danger' if issue.severity == 'error' else ('warning' if issue.severity == 'warning' else 'info') }}">{{ issue.severity }}</span>
+        {% if issue.action_url %}<a class="btn btn-outline btn-sm" href="{{ issue.action_url }}">Review</a>{% endif %}
+      </span>
+    </div>
+    {% else %}
+    <div class="empty">No SEO configuration or published-content issues detected.</div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="control-panel">
+  <div class="panel-head"><div><h2>Sitemap preview</h2><p>The sitemap contains no artificial priority/change frequency values and only emits a last-modified date when one is known.</p></div><span>{{ snapshot.entries|length }}</span></div>
+  <div class="control-table-wrap" role="region" tabindex="0" aria-label="Sitemap URL preview">
+    <table class="control-table">
+      <thead><tr><th>Type</th><th>Canonical URL</th><th>Last modified</th></tr></thead>
+      <tbody>
+      {% for item in snapshot.entries[:40] %}
+      <tr><td><span class="status-chip status-info">{{ item.kind }}</span></td><td><code>{{ item.loc }}</code></td><td>{{ item.lastmod or '—' }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="control-note"><i class="bi bi-google"></i><div><b>Search Console remains external</b><span>The dashboard manages what MIFP publishes to crawlers. Verification, sitemap submission, coverage reports and URL inspection remain in Google Search Console.</span></div></div>
+{% endblock %}

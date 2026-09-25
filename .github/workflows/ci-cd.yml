@@ -6,7 +6,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Keep stale runs bounded, but never let a manual verification cancel an
+  # in-flight main-branch release (or vice versa).
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 # Default workflow token is read-only. Only the GHCR publish job opts into
@@ -122,23 +124,52 @@ jobs:
         run: timeout --foreground 4m ./gitleaks dir . --no-banner --redact --config .gitleaks.toml
 
   test:
-    name: Test runtime + data pipeline
+    name: Test ${{ matrix.suite }}
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [webapp, data]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
-      - name: Install tested dependencies
+          cache: pip
+          cache-dependency-path: |
+            MIFPAPP/CORE/requirements.lock
+            SCRAPERS/requirements.txt
+            MIFPAPP/DATABASE/requirements.txt
+            .github/requirements-test.txt
+      - name: Install webapp test dependencies
+        if: matrix.suite == 'webapp'
         run: |
-          timeout --foreground 3m python -m pip install --upgrade pip
-          timeout --foreground 10m python -m pip install -r MIFPAPP/CORE/requirements.lock
-          timeout --foreground 10m python -m pip install -r SCRAPERS/requirements.txt -r MIFPAPP/DATABASE/requirements.txt pytest
-      - name: Run non-browser repository tests
+          timeout --foreground 10m python -m pip install --prefer-binary \
+            -r MIFPAPP/CORE/requirements.lock \
+            -r .github/requirements-test.txt
+      - name: Install data-pipeline test dependencies
+        if: matrix.suite == 'data'
+        run: |
+          timeout --foreground 10m python -m pip install --prefer-binary \
+            -r SCRAPERS/requirements.txt \
+            -r MIFPAPP/DATABASE/requirements.txt \
+            -r .github/requirements-test.txt
+      - name: Run webapp tests in isolated workers
+        if: matrix.suite == 'webapp'
         env:
           MIFP_TEST_AUTO_INSTALL: "0"
-        run: timeout --foreground 20m bash test_all.sh --suite quick
+        run: |
+          timeout --foreground 20m bash test_all.sh --suite webapp -- \
+            -n 2 --dist=loadfile --durations=20
+      - name: Run scraper, database and repository-tool tests
+        if: matrix.suite == 'data'
+        env:
+          MIFP_TEST_AUTO_INSTALL: "0"
+        run: |
+          timeout --foreground 8m bash test_all.sh --suite scraper -- --durations=10
+          timeout --foreground 8m bash test_all.sh --suite database -- --durations=10
+          timeout --foreground 4m bash test_all.sh --suite tools -- --durations=10
 
   audit:
     name: Audit Python dependencies
@@ -149,6 +180,12 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            MIFPAPP/CORE/requirements.lock
+            SCRAPERS/requirements.txt
+            MIFPAPP/DATABASE/requirements.txt
+            .github/requirements-test.txt
       - name: Install pinned audit tool
         run: timeout --foreground 5m python -m pip install --disable-pip-version-check "pip-audit==2.10.1"
       - name: Audit runtime dependencies
@@ -158,73 +195,50 @@ jobs:
       - name: Audit database pipeline dependencies
         run: timeout --foreground 5m python -m pip_audit -r MIFPAPP/DATABASE/requirements.txt
 
-  build:
-    name: Build and publish GHCR image
+  release:
+    name: Build, verify, scan, and publish production image
     needs: [hygiene, test, audit, secrets]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
-    outputs:
-      digest: ${{ steps.build-image.outputs.digest }}
+    env:
+      LOCAL_IMAGE: mifp-ci:sha-${{ github.sha }}
+      SHA_IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+      LATEST_IMAGE: ghcr.io/${{ github.repository }}:latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push
-        id: build-image
+
+      - name: Build production image locally
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: MIFPAPP/CORE
-          push: true
-          tags: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          load: true
+          push: false
+          tags: ${{ env.LOCAL_IMAGE }}
           cache-from: type=gha,scope=mifp
           cache-to: type=gha,mode=max,scope=mifp
 
-  verify-image:
-    name: Verify and scan published production image
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Pull immutable image
-        env:
-          IMAGE: ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}
-        run: timeout --foreground 5m docker pull "$IMAGE"
       - name: Provision schema-only test database
-        env:
-          IMAGE: ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}
         run: |
           docker volume create mifp-image-verify-data
           timeout --foreground 2m docker run --rm --network none --entrypoint python \
             --volume mifp-image-verify-data:/app/data \
-            "$IMAGE" -m mifp_app.db.manage init /app/data/mifp.db
-      - name: Start image and verify health endpoints
-        env:
-          IMAGE: ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}
+            "$LOCAL_IMAGE" -m mifp_app.db.manage init /app/data/mifp.db
+
+      - name: Start local image and verify health endpoints
         run: |
-          contract="$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.mifp.deploy-contract" }}')"
+          contract="$(docker image inspect "$LOCAL_IMAGE" --format '{{ index .Config.Labels "org.mifp.deploy-contract" }}')"
           case "$contract" in
             ''|*[!0-9]*)
               echo "Invalid or missing org.mifp.deploy-contract label: $contract" >&2
               exit 1
               ;;
           esac
-          echo "Verifying image with deploy contract v$contract"
+          echo "Verifying local image with deploy contract v$contract"
 
           docker run --detach --name mifp-image-verify \
             --read-only \
@@ -252,7 +266,7 @@ jobs:
             --env STORAGE_MIN_FREE_MB=0 \
             --env LOG_OUTPUT=stdout \
             --env GUNICORN_BIND=0.0.0.0:8000 \
-            "$IMAGE"
+            "$LOCAL_IMAGE"
 
           port=18080
           for attempt in $(seq 1 30); do
@@ -268,53 +282,45 @@ jobs:
           done
           docker logs mifp-image-verify
           exit 1
+
       - name: Clean up verification container
         if: always()
         run: |
           docker rm --force mifp-image-verify 2>/dev/null || true
           docker volume rm --force mifp-image-verify-data 2>/dev/null || true
+
       - name: Install pinned Trivy with checksum verification
         env:
           TRIVY_VERSION: "0.74.0"
           TRIVY_SHA256: "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
         run: |
-          # Reuse the image already pulled by this job. Keeping the runtime
-          # verification and image scan on one runner avoids downloading the
-          # same immutable image a second time in a separate job.
           curl --fail --silent --show-error --location \
             --connect-timeout 10 --max-time 120 --retry 3 --retry-delay 2 --retry-all-errors \
             -o trivy.tgz \
             "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_SHA256}  trivy.tgz" | sha256sum -c -
           tar xzf trivy.tgz trivy
-      - name: Scan the already-pulled immutable image by digest
-        env:
-          IMAGE: ghcr.io/${{ github.repository }}@${{ needs.build.outputs.digest }}
-        run: |
-          # `--ignore-unfixed` keeps the gate actionable: Debian base packages
-          # with no available patch would otherwise fail every run forever.
-          # Secret scanning remains enabled as defense in depth for the final
-          # built image, in addition to the repository/history gitleaks job.
-          timeout --foreground 12m ./trivy image --no-progress --severity HIGH,CRITICAL --ignore-unfixed \
-            --exit-code 1 "$IMAGE"
 
-  promote-latest:
-    name: Promote verified image to latest
-    needs: [build, verify-image]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Scan verified local image
+        run: |
+          # No application image has been published to GHCR at this point.
+          timeout --foreground 12m ./trivy image --no-progress --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 "$LOCAL_IMAGE"
+
+      # Registry credentials are deliberately materialized only after build,
+      # boot/readiness verification, and the image vulnerability/secret scan.
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Point latest at the verified digest
-        env:
-          REPOSITORY: ghcr.io/${{ github.repository }}
-          DIGEST: ${{ needs.build.outputs.digest }}
-        run: timeout --foreground 5m docker buildx imagetools create --tag "$REPOSITORY:latest" "$REPOSITORY@$DIGEST"
+
+      - name: Publish verified immutable SHA tag
+        run: |
+          docker tag "$LOCAL_IMAGE" "$SHA_IMAGE"
+          timeout --foreground 10m docker push "$SHA_IMAGE"
+
+      - name: Promote the same verified image to latest
+        run: |
+          docker tag "$LOCAL_IMAGE" "$LATEST_IMAGE"
+          timeout --foreground 10m docker push "$LATEST_IMAGE"

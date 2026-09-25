@@ -189,9 +189,9 @@ def normalize_canonical_url(value: object) -> str:
         parts = urlsplit(raw)
     except ValueError:
         return ""
-    host = (parts.hostname or "").casefold().replace("old.mifp.eu", "www.mifp.eu").replace("events.mifp.eu", "www.mifp.eu")
-    if host == "mifp.eu" and not has_scheme:
-        host = "www.mifp.eu"
+    host = (parts.hostname or "").casefold()
+    if host in {"www.mifp.eu", "old.mifp.eu"}:
+        host = "mifp.eu"
     path = re.sub(r"/+", "/", parts.path or "/")
     path = re.sub(r"/media/[^/]+/v1/", "/media/", path)
     path = path.replace("/www.mifp.eu/", "/")

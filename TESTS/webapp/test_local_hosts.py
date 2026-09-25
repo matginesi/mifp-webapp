@@ -79,13 +79,19 @@ def test_local_tls_is_strictly_conditional_in_bootstrap() -> None:
     assert "__MIFP_TLS__" in caddyfile
     assert "tls internal" not in caddyfile
 
-    local_rendered = caddyfile.replace("__MIFP_DOMAIN__", "vpsbox.home.arpa").replace(
-        "__MIFP_TLS__", "tls internal"
+    local_rendered = (
+        caddyfile.replace("__MIFP_DOMAIN__", "vpsbox.home.arpa")
+        .replace("__MIFP_WWW_DOMAIN__", "www.vpsbox.home.arpa")
+        .replace("__MIFP_TLS__", "tls internal")
     )
-    public_rendered = caddyfile.replace("__MIFP_DOMAIN__", "mifp.eu").replace(
-        "__MIFP_TLS__", ""
+    public_rendered = (
+        caddyfile.replace("__MIFP_DOMAIN__", "mifp.eu")
+        .replace("__MIFP_WWW_DOMAIN__", "www.mifp.eu")
+        .replace("__MIFP_TLS__", "")
     )
-    assert local_rendered.count("tls internal") == 1
-    assert "vpsbox.home.arpa" in local_rendered
+    assert local_rendered.count("tls internal") == 2
+    assert "redir https://vpsbox.home.arpa{uri} permanent" in local_rendered
+    assert "www.vpsbox.home.arpa" in local_rendered
     assert "tls internal" not in public_rendered
-    assert "mifp.eu" in public_rendered
+    assert "redir https://mifp.eu{uri} permanent" in public_rendered
+    assert "www.mifp.eu" in public_rendered

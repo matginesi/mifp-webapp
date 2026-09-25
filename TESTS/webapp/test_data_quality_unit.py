@@ -73,11 +73,12 @@ class TestNormalizeCanonicalUrl:
         assert result == "https://example.com/page?id=123"
 
     def test_adds_https(self):
-        assert normalize_canonical_url("mifp.eu") == "https://www.mifp.eu/"
+        assert normalize_canonical_url("mifp.eu") == "https://mifp.eu/"
 
     def test_normalizes_mifp_host(self):
-        assert normalize_canonical_url("https://old.mifp.eu/page") == "https://www.mifp.eu/page"
-        assert normalize_canonical_url("https://events.mifp.eu/page") == "https://www.mifp.eu/page"
+        assert normalize_canonical_url("https://www.mifp.eu/page") == "https://mifp.eu/page"
+        assert normalize_canonical_url("https://old.mifp.eu/page") == "https://mifp.eu/page"
+        assert normalize_canonical_url("https://events.mifp.eu/page") == "https://events.mifp.eu/page"
 
     def test_empty_returns_empty(self):
         assert normalize_canonical_url("") == ""

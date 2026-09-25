@@ -663,5 +663,6 @@ from . import (  # noqa: E402,F401
     dashboard_logs,
     dashboard_portability,
     dashboard_security,
+    dashboard_seo,
     dashboard_join,
 )

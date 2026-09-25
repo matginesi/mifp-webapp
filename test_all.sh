@@ -54,11 +54,12 @@ usage() {
 Usage: bash test_all.sh [options] [-- pytest-args]
 
 Suites:
-  --suite quick       Webapp + scraper + database tests (default)
+  --suite quick       Webapp + scraper + database + repository-tool tests (default)
   --suite all         Quick suite + real-browser tests
   --suite webapp      Flask/core tests only
   --suite scraper     Scraper tests only
   --suite database    Database/import tests only
+  --suite tools       Repository maintenance/tooling tests only
   --suite browser     Playwright browser tests only
   --suite smoke       HTTP health/readiness/public-page checks against --base-url
 
@@ -98,6 +99,7 @@ normalise_suite() {
     webapp|core) printf 'webapp\n' ;;
     scraper|scrapers) printf 'scraper\n' ;;
     database|db) printf 'database\n' ;;
+    tools|tooling) printf 'tools\n' ;;
     browser) printf 'browser\n' ;;
     smoke) printf 'smoke\n' ;;
     *) die "unknown test suite: $1" ;;
@@ -221,6 +223,7 @@ run_quick() {
   run_webapp
   run_scraper
   run_database
+  run_tools
 }
 
 run_webapp() {
@@ -233,6 +236,10 @@ run_scraper() {
 
 run_database() {
   run_pytest_paths "database tests" data --confcutdir=TESTS/database TESTS/database
+}
+
+run_tools() {
+  run_pytest_paths "repository tooling tests" data --confcutdir=TESTS/tools TESTS/tools
 }
 
 run_browser() {
@@ -274,6 +281,7 @@ case "$SUITE" in
   webapp) run_webapp ;;
   scraper) run_scraper ;;
   database) run_database ;;
+  tools) run_tools ;;
   browser) run_browser ;;
   smoke) run_smoke ;;
 esac

@@ -17,8 +17,8 @@ La produzione si rilascia esclusivamente via CI/CD.
   news, membri, pubblicazioni, aree di ricerca, pagine e sponsor; la dashboard
   cerca anche asset e record delle conferenze.
 - **Dashboard amministrativa** — gestione contenuti e asset, conferenze,
-  import/export portabile, data quality, safety operations, log, incidenti e
-  una vista Security read-only sui controlli applicativi.
+  import/export portabile, data quality, SEO/indexing, safety operations, log,
+  incidenti e una vista Security read-only sui controlli applicativi.
 - **Archivio storico eventi** — import una tantum di package versionati con
   metadata ricchi, persone e documenti, serviti internamente sotto `/archive/`.
 - **Scraper** — pipeline locale/remota che produce artefatti JSONL + un unico

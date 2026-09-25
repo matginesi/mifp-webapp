@@ -2,7 +2,13 @@
 # append a direct static events site only when EVENTS_PUBLISH_BACKEND=local-vps.
 # Remote/disabled mode leaves that host entirely outside VPS Caddy and ACME.
 
-__MIFP_DOMAIN__, __MIFP_WWW_DOMAIN__ {
+# One canonical public host: avoid serving duplicate www/apex URL surfaces.
+__MIFP_WWW_DOMAIN__ {
+    __MIFP_TLS__
+    redir https://__MIFP_DOMAIN__{uri} permanent
+}
+
+__MIFP_DOMAIN__ {
     __MIFP_TLS__
     encode zstd gzip
     header -Server

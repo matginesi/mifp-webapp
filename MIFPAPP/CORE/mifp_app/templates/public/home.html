@@ -10,8 +10,9 @@
   "@type": "Organization",
   "name": "Mediterranean Institute of Fundamental Physics",
   "alternateName": "MIFP",
-  "url": "{{ url_for('public.home', _external=True) }}",
-  "logo": "{{ url_for('static', filename='img/logo-mifp.png', v=static_version, _external=True) }}",
+  "@id": "{{ seo_origin }}{{ url_for('public.home') }}#organization",
+  "url": "{{ seo_origin }}{{ url_for('public.home') }}",
+  "logo": "{{ seo_origin }}{{ url_for('static', filename='img/logo-mifp.png') }}",
   "description": "Promoting scientific research and international collaboration across the Mediterranean region.",
   "foundingDate": "2010",
   "address": {
@@ -24,12 +25,7 @@
     "@type": "ContactPoint",
     "email": "info@mifp.eu",
     "contactType": "general"
-  },
-  "sameAs": [
-    "https://www.mifp.eu",
-    "https://events.mifp.eu",
-    "https://old.mifp.eu"
-  ]
+  }
 }
 </script>
 {% endblock %}

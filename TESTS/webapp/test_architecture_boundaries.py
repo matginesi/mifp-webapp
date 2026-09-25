@@ -62,6 +62,8 @@ def test_deploy_caddyfile_proxies_to_localhost() -> None:
     caddyfile = _read("deploy", "Caddyfile")
     assert "__MIFP_DOMAIN__" in caddyfile
     assert "reverse_proxy 127.0.0.1:8000" in caddyfile
+    assert "__MIFP_WWW_DOMAIN__" in caddyfile
+    assert "redir https://__MIFP_DOMAIN__{uri} permanent" in caddyfile
     assert "@ready path /ready" in caddyfile
     assert "respond @ready 404" in caddyfile
     assert "__MIFP_EVENTS_DOMAIN__" not in caddyfile
@@ -117,32 +119,47 @@ def test_ci_cd_workflow_tests_builds_only() -> None:
     assert "docker/build-push-action" in text
     assert "pull_request:" not in text
     assert "build-pr:" not in text
-    assert "verify-image:" in text
-    assert "needs: build" in text
-    assert "needs.build.outputs.digest" in text
+    assert "release:" in text
+    assert "needs: [hygiene, test, audit, secrets]" in text
+    assert "load: true" in text
+    assert "push: false" in text
+    assert "push: true" not in text
     assert 'mifp_app.db.manage init /app/data/mifp.db' in text
     assert 'http://127.0.0.1:${port}/ready' in text
     assert 'http://127.0.0.1:${port}/health' in text
     assert 'org.mifp.deploy-contract' in text
-    assert 'docker image inspect "$IMAGE"' in text
+    assert 'docker image inspect "$LOCAL_IMAGE"' in text
     assert '--env MIFP_DEPLOY_CONTRACT="$contract"' in text
-    assert "promote-latest:" in text
-    # `latest` is promoted only after BOTH the boot verification and the image
-    # CVE scan have passed.
-    assert "needs: [build, verify-image, image-scan]" in text
     assert "trivy image" in text
     assert "--ignore-unfixed" in text
-    assert 'imagetools create --tag "$REPOSITORY:latest" "$REPOSITORY@$DIGEST"' in text
+    assert 'docker push "$SHA_IMAGE"' in text
+    assert 'docker push "$LATEST_IMAGE"' in text
+    # No application image reaches GHCR until the local runtime and Trivy
+    # verification steps have succeeded.
+    assert text.index("Scan verified local image") < text.index("docker/login-action")
+    assert text.index("docker/login-action") < text.index('docker push "$SHA_IMAGE"')
+    assert text.index('docker push "$SHA_IMAGE"') < text.index('docker push "$LATEST_IMAGE"')
     # Deployment to VPS has been removed - users deploy manually
     assert "ssh-action" not in text
     assert "appleboy" not in text
     assert "ssh_deploy" not in text
 
 
-def test_ci_workflow_runs_the_non_browser_repository_suite() -> None:
+def test_ci_workflow_runs_the_complete_non_browser_repository_suite_in_parallel() -> None:
     text = _read(".github", "workflows", "ci-cd.yml")
     assert "test_all.sh" in text
-    assert "--suite quick" in text
+    assert "suite: [webapp, data]" in text
+    assert "--suite webapp" in text
+    assert "--suite scraper" in text
+    assert "--suite database" in text
+    assert "--suite tools" in text
+    test_requirements = _read(".github", "requirements-test.txt")
+    assert "pytest==9.1.1" in test_requirements
+    assert "pytest-xdist==3.8.0" in test_requirements
+    assert ".github/requirements-test.txt" in text
+    assert "-n 2 --dist=loadfile --durations=20" in text
+    assert "cache: pip" in text
+    assert "cache-dependency-path:" in text
     assert "requirements.lock" in text
     assert "pip-audit" in text
 
@@ -165,9 +182,17 @@ def test_github_automation_is_main_only_and_has_no_branch_bots() -> None:
     assert "pull_request_target:" not in ci_text
     assert "workflow_dispatch:" in ci_text
 
-    # Registry pruning is operator-triggered maintenance, never a cron bot.
+    # Retention maintenance is both operator-triggered and scheduled, but it
+    # only deletes old Actions history / package versions; it never mutates
+    # source branches, issues or pull requests.
     assert "workflow_dispatch:" in cleanup_text
-    assert "schedule:" not in cleanup_text
+    assert "workflow_run:" in cleanup_text
+    assert 'workflows: ["CI/CD"]' in cleanup_text
+    assert "schedule:" in cleanup_text
+    assert "prune_ghcr_versions.py" in cleanup_text
+    assert "prune_actions_runs.py" in cleanup_text
+    assert "actions: write" in cleanup_text
+    assert "packages: write" in cleanup_text
 
     # No workflow may mutate repository contents, issues or pull requests.
     all_workflows = "\n".join(
@@ -196,17 +221,24 @@ def test_github_actions_are_bounded_and_cancel_stale_runs() -> None:
             assert isinstance(timeout, int) and 1 <= timeout <= 60, (path, name, timeout)
 
     assert ci["concurrency"]["cancel-in-progress"] is True
+    assert "${{ github.event_name }}" in ci["concurrency"]["group"]
     assert cleanup["concurrency"]["cancel-in-progress"] is True
 
     ci_text = ci_path.read_text(encoding="utf-8")
     assert "--connect-timeout 10 --max-time 120 --retry 3" in ci_text
-    assert "timeout --foreground 20m bash test_all.sh --suite quick" in ci_text
+    assert "timeout --foreground 20m bash test_all.sh --suite webapp" in ci_text
+    assert "timeout --foreground 8m bash test_all.sh --suite scraper" in ci_text
+    assert "timeout --foreground 8m bash test_all.sh --suite database" in ci_text
+    assert "timeout --foreground 4m bash test_all.sh --suite tools" in ci_text
     assert "timeout --foreground 12m ./trivy image" in ci_text
     assert "workflow_dispatch:" in ci_text
 
     cleanup_text = cleanup_path.read_text(encoding="utf-8")
     assert "actions/delete-package-versions" not in cleanup_text
     assert ".github/scripts/prune_ghcr_versions.py" in cleanup_text
+    assert ".github/scripts/prune_actions_runs.py" in cleanup_text
+    assert '--min-versions-to-keep "$IMAGE_KEEP"' in cleanup_text
+    assert 'default: "3"' in cleanup_text
     assert "timeout --foreground 10m python3" in cleanup_text
 
 
@@ -433,11 +465,16 @@ def test_repository_hygiene_is_enforced_by_git_ci_and_packaging() -> None:
 
     assert "hygiene:" in workflow
     assert "python tools/check_repo_hygiene.py" in workflow
-    # The single main-branch publish path is gated on the secret scan as
-    # well as the test/audit jobs, and `latest` is promoted only after the
-    # image scan passes.
+    # The single main-branch release path is gated on secret scan, tests and
+    # dependency audit. The image is built and verified locally before any
+    # registry login or push occurs.
     assert workflow.count("needs: [hygiene, test, audit, secrets]") == 1
-    assert "needs: [build, verify-image, image-scan]" in workflow
+    assert "release:" in workflow
+    assert "load: true" in workflow
+    assert "push: false" in workflow
+    assert "push: true" not in workflow
+    assert workflow.index("Scan verified local image") < workflow.index("docker/login-action")
+    assert workflow.index("docker/login-action") < workflow.index('docker push "$SHA_IMAGE"')
     assert "secrets:" in workflow
     assert "gitleaks git ." in workflow
 

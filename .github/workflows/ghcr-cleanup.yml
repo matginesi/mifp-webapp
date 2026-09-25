@@ -1,62 +1,86 @@
-name: Prune GHCR image versions
+name: Repository maintenance
 
-# Every CI run publishes an immutable sha-<commit> image. Keep a bounded history
-# without depending on a third-party JavaScript cleanup action/runtime.
-# The repository-owned Python tool always protects `latest`, keeps the newest N
-# versions, caps API pagination/deletions, and has bounded HTTP retries/timeouts.
-
+# Keep release storage and Actions history bounded without adding work to the
+# critical CI/CD path. The maintenance job is also dispatchable on demand.
 on:
+  workflow_run:
+    workflows: ["CI/CD"]
+    types: [completed]
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
-      min_versions_to_keep:
-        description: "Most-recent image versions to keep (minimum 5)"
+      image_versions_to_keep:
+        description: "Most-recent GHCR image versions to keep (minimum 2)"
         required: false
-        default: "30"
+        default: "3"
+      workflow_runs_to_keep:
+        description: "Recent completed runs to keep per workflow (minimum 3)"
+        required: false
+        default: "10"
+      workflow_run_min_age_days:
+        description: "Never delete workflow runs newer than this many days (minimum 7)"
+        required: false
+        default: "14"
 
-# Maintenance is deliberately manual: this workflow never runs on a schedule,
-# never creates a branch/PR and receives package-write permission only while the
-# prune job is executing.
 permissions:
   contents: read
 
 concurrency:
-  group: ghcr-cleanup-${{ github.repository }}
+  group: repository-maintenance-${{ github.repository }}
   cancel-in-progress: true
 
 jobs:
   prune:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
       packages: write
+      actions: write
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Validate retention window
+      - name: Validate retention policy
         env:
-          MIN_TO_KEEP: ${{ github.event.inputs.min_versions_to_keep || '30' }}
+          IMAGE_KEEP: ${{ github.event.inputs.image_versions_to_keep || '3' }}
+          RUN_KEEP: ${{ github.event.inputs.workflow_runs_to_keep || '10' }}
+          RUN_AGE: ${{ github.event.inputs.workflow_run_min_age_days || '14' }}
         run: |
-          case "$MIN_TO_KEEP" in
-            ''|*[!0-9]*)
-              echo "min_versions_to_keep must be a non-negative integer" >&2
-              exit 1
-              ;;
-          esac
-          if [ "$MIN_TO_KEEP" -lt 5 ]; then
-            echo "Refusing to keep fewer than 5 image versions." >&2
-            exit 1
-          fi
+          for value in "$IMAGE_KEEP" "$RUN_KEEP" "$RUN_AGE"; do
+            case "$value" in
+              ''|*[!0-9]*)
+                echo "Retention values must be non-negative integers." >&2
+                exit 1
+                ;;
+            esac
+          done
+          [ "$IMAGE_KEEP" -ge 2 ] || { echo "Refusing to keep fewer than 2 image versions." >&2; exit 1; }
+          [ "$RUN_KEEP" -ge 3 ] || { echo "Refusing to keep fewer than 3 workflow runs per workflow." >&2; exit 1; }
+          [ "$RUN_AGE" -ge 7 ] || { echo "Refusing to delete workflow runs newer than 7 days." >&2; exit 1; }
 
-      - name: Delete old container image versions
+      - name: Prune old GHCR image versions
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MIN_TO_KEEP: ${{ github.event.inputs.min_versions_to_keep || '30' }}
+          IMAGE_KEEP: ${{ github.event.inputs.image_versions_to_keep || '3' }}
         run: |
           PACKAGE_NAME="${GITHUB_REPOSITORY#*/}"
           timeout --foreground 10m python3 .github/scripts/prune_ghcr_versions.py \
             --repository "$GITHUB_REPOSITORY" \
             --package-name "$PACKAGE_NAME" \
-            --min-versions-to-keep "$MIN_TO_KEEP" \
+            --min-versions-to-keep "$IMAGE_KEEP" \
+            --max-deletions 100
+
+      - name: Prune old completed Actions runs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_KEEP: ${{ github.event.inputs.workflow_runs_to_keep || '10' }}
+          RUN_AGE: ${{ github.event.inputs.workflow_run_min_age_days || '14' }}
+        run: |
+          timeout --foreground 10m python3 .github/scripts/prune_actions_runs.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --keep-per-workflow "$RUN_KEEP" \
+            --min-age-days "$RUN_AGE" \
             --max-deletions 100

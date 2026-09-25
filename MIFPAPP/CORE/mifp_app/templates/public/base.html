@@ -4,19 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}MIFP — Mediterranean Institute of Fundamental Physics{% endblock %}</title>
-  <meta name="description" content="{% block meta_description %}Mediterranean Institute of Fundamental Physics — Promoting scientific research and collaboration across the Mediterranean.{% endblock %}">
-  <meta name="author" content="Matteo Ginesi">
+  <meta name="description" content="{% block meta_description %}{{ site_settings.get('seo_default_description', 'Mediterranean Institute of Fundamental Physics — Promoting scientific research and international collaboration across the Mediterranean.') }}{% endblock %}">
+  <meta name="robots" content="{{ seo_robots }}">
   <meta name="theme-color" content="#0a0e1a">
   <meta name="color-scheme" content="dark">
+  {% if site_settings.get('seo_google_site_verification') %}<meta name="google-site-verification" content="{{ site_settings.get('seo_google_site_verification') }}">{% endif %}
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/logo-mifp.png', v=static_version) }}">
-  <link rel="canonical" href="{{ request.base_url.replace('://www.', '://', 1) }}">
+  <link rel="canonical" href="{{ seo_canonical_url }}">
   {% block og_tags %}
-  <meta property="og:title" content="{% block og_title %}MIFP{% endblock %}">
-  <meta property="og:description" content="{% block og_description %}Mediterranean Institute of Fundamental Physics{% endblock %}">
+  <meta property="og:site_name" content="Mediterranean Institute of Fundamental Physics">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:title" content="{% block og_title %}{{ self.title()|striptags }}{% endblock %}">
+  <meta property="og:description" content="{% block og_description %}{{ self.meta_description()|striptags }}{% endblock %}">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="{{ request.host_url.replace('www.', '', 1) }}">
-  <meta property="og:image" content="{% block og_image %}{{ url_for('static', filename='img/background.png', v=static_version, _external=True) }}{% endblock %}">
+  <meta property="og:url" content="{{ seo_canonical_url }}">
+  <meta property="og:image" content="{% block og_image %}{{ seo_origin }}{{ url_for('static', filename='img/background.png', v=static_version) }}{% endblock %}">
+  <meta property="og:image:alt" content="Mediterranean Institute of Fundamental Physics">
   {% endblock %}
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ self.title()|striptags }}">
+  <meta name="twitter:description" content="{{ self.meta_description()|striptags }}">
 
   {# Self-hosted Inter; headings use a system serif stack. #}
   <link href="{{ url_for('static', filename='css/homepage.css', v=static_version) }}" rel="stylesheet">
@@ -26,13 +33,17 @@
   {
     "@context": "https://schema.org",
     "@type": "WebSite",
+    "@id": "{{ seo_origin }}{{ url_for('public.home') }}#website",
     "name": "Mediterranean Institute of Fundamental Physics",
-    "url": "{{ url_for('public.home', _external=True) }}",
-    "description": "Promoting scientific research and international collaboration across the Mediterranean region.",
-    "creator": {
-      "@type": "Person",
-      "name": "Matteo Ginesi",
-      "url": "https://github.com/matginesi"
+    "alternateName": "MIFP",
+    "url": "{{ seo_origin }}{{ url_for('public.home') }}",
+    "description": {{ site_settings.get('seo_default_description', 'Promoting scientific research and international collaboration across the Mediterranean region.')|tojson }},
+    "publisher": {
+      "@type": "Organization",
+      "@id": "{{ seo_origin }}{{ url_for('public.home') }}#organization",
+      "name": "Mediterranean Institute of Fundamental Physics",
+      "url": "{{ seo_origin }}{{ url_for('public.home') }}",
+      "logo": "{{ seo_origin }}{{ url_for('static', filename='img/logo-mifp.png') }}"
     }
   }
   </script>

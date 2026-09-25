@@ -3,9 +3,7 @@
 {% for u in urls %}
   <url>
     <loc>{{ u.loc }}</loc>
-    <lastmod>{{ u.lastmod }}</lastmod>
-    <changefreq>{{ u.changefreq }}</changefreq>
-    <priority>{{ u.priority }}</priority>
-  </url>
+{% if u.lastmod %}    <lastmod>{{ u.lastmod }}</lastmod>
+{% endif %}  </url>
 {% endfor %}
 </urlset>

@@ -3,8 +3,9 @@
 
 The script deliberately uses only the Python standard library so the scheduled
 GitHub Actions cleanup does not depend on another JavaScript action/runtime.
-It keeps the newest N versions, always protects every version tagged ``latest``,
-and limits both pagination and deletions per run.
+It keeps at most N retained versions in the normal case, always protects every
+version tagged ``latest``, fills the remaining retention slots with the newest
+versions, and limits both pagination and deletions per run.
 """
 
 from __future__ import annotations
@@ -81,8 +82,14 @@ def choose_versions_to_delete(
         key=lambda version: (_parse_created_at(version.created_at), version.id),
         reverse=True,
     )
-    protected_ids = {version.id for version in ordered[:min_versions_to_keep]}
-    protected_ids.update(version.id for version in ordered if version.protects_latest)
+    # ``latest`` is non-negotiable. Count it inside the retention target rather
+    # than keeping N additional versions, otherwise an old/stale latest tag
+    # could silently make a "keep 3" policy retain four package versions.
+    protected_ids = {version.id for version in ordered if version.protects_latest}
+    for version in ordered:
+        if len(protected_ids) >= min_versions_to_keep:
+            break
+        protected_ids.add(version.id)
 
     candidates = [version for version in ordered if version.id not in protected_ids]
     # Delete the oldest candidates first. This makes partial/bounded runs useful.
@@ -190,7 +197,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Container package name (default: repository name)",
     )
-    parser.add_argument("--min-versions-to-keep", type=int, default=30)
+    parser.add_argument("--min-versions-to-keep", type=int, default=3)
     parser.add_argument("--max-deletions", type=int, default=100)
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -204,8 +211,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    if args.min_versions_to_keep < 5:
-        print("ERROR: min-versions-to-keep must be at least 5", file=sys.stderr)
+    if args.min_versions_to_keep < 2:
+        print("ERROR: min-versions-to-keep must be at least 2", file=sys.stderr)
         return 2
     if not 1 <= args.max_deletions <= 500:
         print("ERROR: max-deletions must be between 1 and 500", file=sys.stderr)

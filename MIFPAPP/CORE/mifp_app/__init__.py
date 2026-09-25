@@ -291,6 +291,7 @@ def create_app():
     def inject_security_context():
         from datetime import datetime
 
+        from .services.seo import SEO_SETTING_DEFAULTS, absolute_url, canonical_url, preferred_origin, robots_directive
         from .services.site_copy import copy_values
         from .services.versioning import application_version
         # Lazy on purpose: minting here would set `mifp_csrf` on every public page.
@@ -301,7 +302,7 @@ def create_app():
         site_settings = {**Config.DEFAULT_BANNER_SETTINGS, **Config.SITE_DEFAULTS}
         if not getattr(g, "maintenance_active", False):
             try:
-                with connect_readonly(Config.DATABASE_PATH) as conn:
+                with connect_readonly(app.config["DATABASE_PATH"]) as conn:
                     rows = conn.execute("SELECT key, value FROM settings").fetchall()
                     site_settings.update({r["key"]: r["value"] for r in rows})
             except Exception as exc:
@@ -312,6 +313,9 @@ def create_app():
                     interval_seconds=60,
                     error_type=type(exc).__name__,
                 )
+        for key, value in SEO_SETTING_DEFAULTS.items():
+            site_settings.setdefault(key, value)
+
         try:
             _banner_path = Path(app.config["BANNER_SETTINGS_PATH"])
             if _banner_path.exists():
@@ -328,12 +332,17 @@ def create_app():
                 interval_seconds=60,
                 error_type=type(exc).__name__,
             )
+        seo_origin = preferred_origin(site_settings)
         return {
             "csrf_token": token, "csp_nonce": getattr(g, "csp_nonce", ""),
             "now": datetime.now(), "site_settings": site_settings,
             "site_copy": copy_values(site_settings),
             "static_version": _static_ver,
             "app_version": application_version(),
+            "seo_origin": seo_origin,
+            "seo_canonical_url": canonical_url(site_settings),
+            "seo_robots": robots_directive(site_settings),
+            "seo_absolute_url": lambda path: absolute_url(path, site_settings),
         }
 
     @app.before_request
@@ -445,6 +454,13 @@ def create_app():
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("X-Frame-Options", "DENY")
+        is_private_or_non_indexable = (
+            getattr(g, "maintenance_active", False)
+            or response.status_code >= 400
+            or request.path.startswith(("/dashboard", "/login", "/logout", "/health", "/ready", "/pdf/"))
+        )
+        if is_private_or_non_indexable:
+            response.headers.setdefault("X-Robots-Tag", "noindex, nofollow")
         if (
             getattr(g, "maintenance_active", False)
             or response.status_code >= 400

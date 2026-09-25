@@ -150,15 +150,38 @@ read-only. `config-set` rifiuta i segreti in command line: usa
 `configure --section mail|backup`. Il PAT GHCR rimane soltanto nel credential
 store Docker di root.
 
-La CI esegue in parallelo hygiene, secret scan, test e audit delle dipendenze; la
-build/publish GHCR parte solo se tutti i gate sono verdi. Il workflow automatico
-reagisce **solo ai push su `main`**; `workflow_dispatch` resta disponibile per un
-controllo manuale. Il repository non contiene Dependabot e nessun workflow crea
-branch, PR, issue o commit. Il cleanup GHCR è manuale, non schedulato. Ogni job
+La CI esegue in parallelo hygiene, secret scan, test e audit delle dipendenze.
+I test non-browser mantengono la copertura completa ma sono divisi in due job di
+matrice (`webapp` e `data`): la suite webapp usa due worker pytest-xdist con
+distribuzione per file, mentre scraper, database e tooling restano separati e
+deterministici. `actions/setup-python` usa la cache pip indicizzata dai file di
+dipendenze; questo evita download ripetuti senza cambiare le versioni testate. I
+run stampano inoltre le durate dei test più lenti per rendere visibili future
+regressioni di performance.
+
+Solo dopo questi gate parte il job di release: l'immagine di produzione viene
+costruita **localmente sul runner** (`load: true`, `push: false`), avviata con gli
+stessi vincoli di sicurezza usati in produzione, verificata tramite `/ready` e
+`/health`, quindi scansionata localmente con Trivy. Fino a quel momento non
+esiste alcuna immagine applicativa MIFP pubblicata su GHCR e il login al registry
+non viene nemmeno eseguito. Solo dopo tutti i controlli verdi lo stesso identico
+image object locale viene taggato e pubblicato prima come `sha-<commit>` e poi
+come `latest`. Non avviene alcun rebuild tra verifica e pubblicazione.
+
+Il workflow automatico reagisce **solo ai push su `main`**; `workflow_dispatch`
+resta disponibile per un controllo manuale. Il repository non contiene
+Dependabot e nessun workflow crea branch, PR, issue o commit. Un workflow di
+manutenzione separato parte dopo una CI/CD conclusa con successo e ha anche un
+fallback giornaliero/manuale: mantiene un target di tre versioni GHCR totali,
+contando `latest` nel target e proteggendola sempre, e ripulisce soltanto i
+workflow run completati vecchi,
+conservando almeno gli ultimi 10 per workflow e tutto ciò che ha meno di 14
+giorni. La manutenzione non appartiene al critical path della release. Ogni job
 ha un `timeout-minutes` esplicito, i comandi di rete più delicati hanno retry +
-timeout e la concurrency cancella i run obsoleti sullo stesso ref: un runner
-bloccato non può restare appeso indefinitamente. Dopo che GitHub Actions ha
-pubblicato una release:
+timeout e la concurrency cancella i run obsoleti dello stesso tipo sullo stesso
+ref; i controlli manuali non cancellano una release da push (e viceversa). Un
+runner bloccato non può restare appeso indefinitamente.
+Dopo che GitHub Actions ha pubblicato una release:
 
 ```bash
 sudo mifpctl config-check
