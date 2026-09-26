@@ -513,6 +513,56 @@ def _state_paths(app) -> tuple[Path, Path]:
     return directory / "notification_state.json", directory / ".notification_state.lock"
 
 
+def _manual_history_paths(app) -> tuple[Path, Path]:
+    directory = Path(app.config["RUNTIME_CONFIG_DIR"])
+    return directory / "manual_email_history.json", directory / ".manual_email_history.lock"
+
+
+def _read_manual_history(path: Path) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return []
+    deliveries = payload.get("deliveries") if isinstance(payload, dict) else None
+    if not isinstance(deliveries, list):
+        return []
+    return [row for row in deliveries if isinstance(row, dict)]
+
+
+def manual_email_history(app, *, limit: int = 40) -> list[dict[str, Any]]:
+    """Return the bounded, privacy-safe manual delivery history."""
+    history_path, lock_path = _manual_history_paths(app)
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        try:
+            os.chmod(lock_path, 0o600)
+        except OSError:
+            pass
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_SH)
+        return _read_manual_history(history_path)[:max(0, limit)]
+
+
+def record_manual_email_delivery(app, *, delivery_id: str, details: Mapping[str, Any]) -> None:
+    """Persist one successful manual delivery without message bodies or raw addresses."""
+    history_path, lock_path = _manual_history_paths(app)
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        "when": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "event": "notification.delivered",
+        "message": "Manual dashboard email delivered",
+        "details": {"delivery_id": str(delivery_id), **dict(details)},
+    }
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        try:
+            os.chmod(lock_path, 0o600)
+        except OSError:
+            pass
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        deliveries = _read_manual_history(history_path)
+        deliveries.insert(0, row)
+        _write_state(history_path, {"deliveries": deliveries[:100]})
+
+
 def _read_state(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))

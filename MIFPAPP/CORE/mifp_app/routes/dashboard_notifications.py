@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -18,11 +19,13 @@ from ..services.notifications import (
     MAX_MANUAL_MAIL_SUBJECT,
     MAX_MANUAL_MAIL_TITLE,
     manual_email_content,
+    manual_email_history,
     mask_email,
     normalize_email_addresses,
     notification_settings,
     notify,
     render_manual_email_html,
+    record_manual_email_delivery,
     smtp_status,
     validate_notification_settings,
 )
@@ -219,7 +222,21 @@ def notifications():
         level="ALL",
         limit=120,
     )
-    sent_history = [row for row in history if row.get("event") == "notification.delivered"][:40]
+    stored_sent_history = manual_email_history(current_app, limit=40)
+    stored_delivery_ids = {
+        str(row.get("details", {}).get("delivery_id") or "")
+        for row in stored_sent_history
+    }
+    logged_sent_history = [
+        row for row in history
+        if row.get("event") == "notification.delivered"
+        and str(row.get("details", {}).get("delivery_id") or "") not in stored_delivery_ids
+    ]
+    sent_history = sorted(
+        [*stored_sent_history, *logged_sent_history],
+        key=lambda row: str(row.get("when") or ""),
+        reverse=True,
+    )[:40]
     return render_template(
         "dashboard/notifications.html",
         notification_settings=settings,
@@ -474,21 +491,46 @@ def notifications_send():
         message_length=len(body),
         plain_text_only=plain_text_only,
     )
+    delivery_id = uuid.uuid4().hex
+    delivery_details = {
+        "notification_event": "manual_email",
+        "category": "manual",
+        "severity": "info",
+        "recipients_masked": _masked_recipient_summary(recipients, cc, bcc),
+        "to_count": len(recipients),
+        "cc_count": len(cc),
+        "bcc_count": len(bcc),
+        "subject": subject,
+        "attachment_count": len(attachments),
+        "attachment_names": [attachment.filename for attachment in attachments],
+        "mail_format": "plain" if plain_text_only else "html",
+    }
+    history_recorded = True
+    try:
+        record_manual_email_delivery(
+            current_app,
+            delivery_id=delivery_id,
+            details=delivery_details,
+        )
+    except OSError as exc:
+        history_recorded = False
+        log_event(
+            log,
+            "notification.history_failed",
+            "manual email history could not be persisted",
+            level="WARNING",
+            error_type=type(exc).__name__,
+        )
+
     log_event(
         log,
         "notification.delivered",
         "Manual dashboard email delivered",
-        notification_event="manual_email",
-        category="manual",
-        severity="info",
-        recipients_masked=_masked_recipient_summary(recipients, cc, bcc),
-        to_count=len(recipients),
-        cc_count=len(cc),
-        bcc_count=len(bcc),
-        subject=subject,
-        attachment_count=len(attachments),
-        attachment_names=[attachment.filename for attachment in attachments],
-        mail_format="plain" if plain_text_only else "html",
+        delivery_id=delivery_id,
+        **delivery_details,
     )
-    flash(f"Email sent to {len(all_addresses)} recipient{'s' if len(all_addresses) != 1 else ''}.", "success")
+    if history_recorded:
+        flash(f"Email sent to {len(all_addresses)} recipient{'s' if len(all_addresses) != 1 else ''}.", "success")
+    else:
+        flash("Email sent, but its delivery history could not be saved.", "warning")
     return redirect(url_for("dashboard.notifications") + "#compose-email")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import sqlite3
+import stat
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -615,6 +616,35 @@ def test_manual_dashboard_email_supports_to_cc_bcc_and_safe_attachments(notifica
     assert delivered[-1]["bcc"] == ["hidden@example.org"]
     assert delivered[-1]["attachments"][0].filename == "review.pdf"
     assert delivered[-1]["attachments"][0].content_type == "application/pdf"
+
+
+def test_successful_manual_email_appears_in_sent_history_immediately(notification_app, monkeypatch) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    notification_app.config.update(MAIL_PROVIDER="console", ENV="test")
+    monkeypatch.setattr(dashboard_notifications, "send_mail", lambda _app, **_kwargs: True)
+    client = _logged_in_client(notification_app)
+    response = client.post(
+        "/dashboard/notifications/send",
+        data={
+            "recipients": "researcher@example.org",
+            "subject": "Immediate history entry",
+            "mail_title": "Research update",
+            "message": "The message was delivered.",
+        },
+        follow_redirects=True,
+    )
+
+    body = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "Immediate history entry" in body
+    assert "No email has been delivered yet." not in body
+
+    history_path = Path(notification_app.config["RUNTIME_CONFIG_DIR"]) / "manual_email_history.json"
+    stored = history_path.read_text(encoding="utf-8")
+    assert "researcher@example.org" not in stored
+    assert "r********@example.org" in stored
+    assert stat.S_IMODE(history_path.stat().st_mode) == 0o600
 
 
 def test_manual_dashboard_email_rejects_spoofed_attachment_content(notification_app, monkeypatch) -> None:
