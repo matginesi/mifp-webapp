@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import tempfile
 import time
 from dataclasses import dataclass
@@ -81,10 +82,12 @@ MAX_MANUAL_MAIL_SUBJECT = 160
 MAX_MANUAL_MAIL_TITLE = 80
 MAX_MANUAL_MAIL_BODY = 10000
 
+MAX_MANUAL_MAIL_RECIPIENTS = 30
+
 _EMAIL_RICH_TAGS = frozenset({
-    "p", "div", "br", "strong", "b", "em", "i", "a", "ul", "ol", "li", "h2"
+    "p", "div", "br", "strong", "b", "em", "i", "u", "a", "ul", "ol", "li", "h2",
+    "blockquote", "hr", "img", "table", "thead", "tbody", "tr", "th", "td",
 })
-_EMAIL_RICH_ATTRS = {"a": ["href"]}
 MAX_MANUAL_MAIL_HTML = 40000
 
 _SEVERITY_THEME = {
@@ -133,6 +136,26 @@ def normalize_email_address(value: Any) -> str:
     rejects display-name forms, comma-separated lists and header injection.
     """
     return _recipient(value)
+
+
+def normalize_email_addresses(value: Any, *, limit: int = MAX_MANUAL_MAIL_RECIPIENTS) -> list[str]:
+    """Return a de-duplicated list of bare mailboxes from a UI recipient field."""
+    parts = re.split(r"[,;\n]+", str(value or ""))
+    addresses: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        if not part.strip():
+            continue
+        address = _recipient(part.strip())
+        if not address:
+            return []
+        key = address.casefold()
+        if key not in seen:
+            seen.add(key)
+            addresses.append(address)
+        if len(addresses) > limit:
+            return []
+    return addresses
 
 
 def mask_email(value: str) -> str:
@@ -252,20 +275,32 @@ def _html_body(body: str) -> str:
 
 def sanitize_manual_email_html(raw_html: str) -> str:
     """Return the tiny HTML subset accepted from the dashboard visual editor."""
-    return bleach.clean(
+    def allowed_attribute(tag: str, name: str, value: str) -> bool:
+        if tag == "a" and name == "href":
+            return value.lower().startswith(("https://", "http://", "mailto:"))
+        if tag == "img" and name in {"src", "alt", "width", "height"}:
+            return name != "src" or value.lower().startswith("https://")
+        if tag in {"table", "th", "td"} and name in {"width", "colspan", "rowspan"}:
+            return value.isdigit() and 1 <= int(value) <= 1000
+        return False
+
+    cleaned = bleach.clean(
         str(raw_html or ""),
         tags=_EMAIL_RICH_TAGS,
-        attributes=_EMAIL_RICH_ATTRS,
+        attributes=allowed_attribute,
         protocols={"http", "https", "mailto"},
         strip=True,
         strip_comments=True,
     )
+    # Bleach removes unsafe attributes but intentionally preserves the tag.
+    # An image without its validated HTTPS source has no useful mail behavior.
+    return re.sub(r'<img(?![^>]*\ssrc="https://)[^>]*>', "", cleaned, flags=re.IGNORECASE)
 
 
 class _ManualEmailTextExtractor(HTMLParser):
     """Create a readable plain-text alternative from sanitized rich mail HTML."""
 
-    _BLOCKS = {"p", "div", "h2", "ul", "ol"}
+    _BLOCKS = {"p", "div", "h2", "blockquote", "ul", "ol", "table", "tr"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -296,10 +331,16 @@ class _ManualEmailTextExtractor(HTMLParser):
                 self.parts.append(f"{self.ordered_index[-1]}. ")
             else:
                 self.parts.append("- ")
+        elif tag in {"td", "th"} and self.parts and not self.parts[-1].endswith(("\n", "\t")):
+            self.parts.append("\t")
+        elif tag == "img":
+            alt = dict(attrs).get("alt", "")
+            if alt:
+                self.parts.append(f"[{alt}]")
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
-        if tag in {"p", "div", "h2", "li"}:
+        if tag in {"p", "div", "h2", "blockquote", "li", "tr"}:
             self._newline()
         if tag in {"ul", "ol"} and self.list_stack:
             self.list_stack.pop()
@@ -332,6 +373,35 @@ def manual_email_content(*, text: str, rich_html: str | None = None) -> tuple[st
     return plain, safe_html
 
 
+def _style_manual_email_content(safe_html: str) -> str:
+    """Add fixed email-client-friendly styles after untrusted markup is sanitized."""
+    styled = re.sub(
+        r"<table(?P<attrs>[^>]*)>",
+        r'<table\g<attrs> cellspacing="0" cellpadding="0" '
+        r'style="width:100%;margin:16px 0;border-collapse:collapse;">',
+        safe_html,
+        flags=re.IGNORECASE,
+    )
+    styled = re.sub(
+        r"<th(?P<attrs>[^>]*)>",
+        r'<th\g<attrs> style="padding:8px 10px;background:#f1f3f5;border:1px solid #cbd0d6;text-align:left;">',
+        styled,
+        flags=re.IGNORECASE,
+    )
+    styled = re.sub(
+        r"<td(?P<attrs>[^>]*)>",
+        r'<td\g<attrs> style="padding:8px 10px;border:1px solid #cbd0d6;text-align:left;">',
+        styled,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(
+        r"<img(?P<attrs>[^>]*)>",
+        r'<img\g<attrs> style="display:block;max-width:100%;height:auto;margin:16px 0;">',
+        styled,
+        flags=re.IGNORECASE,
+    )
+
+
 def _render_mifp_html(
     *,
     title: str,
@@ -358,7 +428,11 @@ def _render_mifp_html(
     safe_subject = escape(display_subject[:180])
     safe_event = escape(str(event or ""))
     safe_footer = escape(str(footer or ""))
-    rendered_body = sanitize_manual_email_html(body_html) if body_html is not None else _html_body(body)
+    rendered_body = (
+        _style_manual_email_content(sanitize_manual_email_html(body_html))
+        if body_html is not None
+        else _html_body(body)
+    )
     event_line = (
         f'<b style="color:{_EMAIL_THEME["text"]};">Event</b> &nbsp; {safe_event}<br>'
         if safe_event else ""
@@ -407,7 +481,11 @@ def render_manual_email_html(*, title: str, subject: str, body: str, body_html: 
     """Render an administrator-authored message with a calm institutional layout."""
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     safe_title = escape(str(title or "MIFP message")[:MAX_MANUAL_MAIL_TITLE])
-    rendered_body = sanitize_manual_email_html(body_html) if body_html is not None else _html_body(body)
+    rendered_body = (
+        _style_manual_email_content(sanitize_manual_email_html(body_html))
+        if body_html is not None
+        else _html_body(body)
+    )
     # `subject` intentionally stays in the SMTP header only: repeating it inside
     # the card made manual messages look like operational alerts.
     return f"""<!doctype html>

@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import io
+import zipfile
+from pathlib import Path
+
 from flask import current_app, flash, redirect, render_template, request, session, url_for
+from werkzeug.utils import secure_filename
 
 from ..db.connection import connect
 from ..services.dashboard_repository import search_logs
-from ..services.mailer import send_mail
+from ..services.mailer import MailAttachment, send_mail
 from ..services.notifications import (
     DEFAULT_NOTIFICATION_SETTINGS,
     MAX_MANUAL_MAIL_BODY,
     MAX_MANUAL_MAIL_HTML,
+    MAX_MANUAL_MAIL_RECIPIENTS,
     MAX_MANUAL_MAIL_SUBJECT,
     MAX_MANUAL_MAIL_TITLE,
     manual_email_content,
     mask_email,
-    normalize_email_address,
+    normalize_email_addresses,
     notification_settings,
     notify,
     render_manual_email_html,
@@ -27,6 +33,21 @@ from .dashboard import bp
 
 
 log = get_logger("notification")
+
+MAX_MANUAL_MAIL_ATTACHMENTS = 5
+MAX_MANUAL_MAIL_ATTACHMENT_BYTES = 5 * 1024 * 1024
+MAX_MANUAL_MAIL_ATTACHMENTS_TOTAL_BYTES = 10 * 1024 * 1024
+MAX_MANUAL_MAIL_REQUEST_BYTES = MAX_MANUAL_MAIL_ATTACHMENTS_TOTAL_BYTES + 512 * 1024
+_ATTACHMENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".txt": "text/plain",
+    ".csv": "text/csv",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
 
 
 _NOTIFICATION_TEST_TYPES = {
@@ -108,6 +129,85 @@ def _clean_single_line(value: str, *, max_length: int) -> str:
     return " ".join(str(value or "").replace("\r", " ").replace("\n", " ").split())[:max_length]
 
 
+def _valid_office_archive(data: bytes, extension: str) -> bool:
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            members = archive.infolist()
+            names = {member.filename for member in members}
+            if len(members) > 1000 or "[Content_Types].xml" not in names:
+                return False
+            if sum(member.file_size for member in members) > 50 * 1024 * 1024:
+                return False
+            root = "word/" if extension == ".docx" else "xl/"
+            return any(name.startswith(root) for name in names)
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
+def _attachment_matches_type(data: bytes, extension: str) -> bool:
+    if extension == ".pdf":
+        return data.startswith(b"%PDF-")
+    if extension == ".png":
+        return data.startswith(b"\x89PNG\r\n\x1a\n")
+    if extension in {".jpg", ".jpeg"}:
+        return data.startswith(b"\xff\xd8\xff")
+    if extension in {".txt", ".csv"}:
+        if b"\x00" in data:
+            return False
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+        return True
+    if extension in {".docx", ".xlsx"}:
+        return data.startswith(b"PK\x03\x04") and _valid_office_archive(data, extension)
+    return False
+
+
+def _manual_mail_attachments() -> tuple[list[MailAttachment], list[str]]:
+    uploads = [item for item in request.files.getlist("attachments") if item and item.filename]
+    if len(uploads) > MAX_MANUAL_MAIL_ATTACHMENTS:
+        return [], [f"Add at most {MAX_MANUAL_MAIL_ATTACHMENTS} attachments."]
+
+    attachments: list[MailAttachment] = []
+    errors: list[str] = []
+    total_bytes = 0
+    seen_names: set[str] = set()
+    for upload in uploads:
+        filename = secure_filename(Path(upload.filename or "").name)[:120]
+        extension = Path(filename).suffix.lower()
+        if not filename or extension not in _ATTACHMENT_TYPES:
+            errors.append(f"{upload.filename or 'Attachment'}: file type is not allowed.")
+            continue
+        if filename.casefold() in seen_names:
+            errors.append(f"{filename}: duplicate attachment name.")
+            continue
+        data = upload.stream.read(MAX_MANUAL_MAIL_ATTACHMENT_BYTES + 1)
+        if not data:
+            errors.append(f"{filename}: file is empty.")
+            continue
+        if len(data) > MAX_MANUAL_MAIL_ATTACHMENT_BYTES:
+            errors.append(f"{filename}: file exceeds the 5 MB limit.")
+            continue
+        total_bytes += len(data)
+        if total_bytes > MAX_MANUAL_MAIL_ATTACHMENTS_TOTAL_BYTES:
+            errors.append("Attachments exceed the 10 MB total limit.")
+            break
+        if not _attachment_matches_type(data, extension):
+            errors.append(f"{filename}: content does not match the file type.")
+            continue
+        seen_names.add(filename.casefold())
+        attachments.append(MailAttachment(filename, _ATTACHMENT_TYPES[extension], data))
+    return attachments, errors
+
+
+def _masked_recipient_summary(to: list[str], cc: list[str], bcc: list[str]) -> str:
+    visible = [mask_email(address) for address in [*to, *cc]]
+    if bcc:
+        visible.append(f"{len(bcc)} BCC")
+    return ", ".join(visible)
+
+
 @bp.get("/notifications")
 @login_required
 def notifications():
@@ -117,18 +217,22 @@ def notifications():
         current_app.config["LOG_DIR"],
         event="notification.",
         level="ALL",
-        limit=60,
+        limit=120,
     )
+    sent_history = [row for row in history if row.get("event") == "notification.delivered"][:40]
     return render_template(
         "dashboard/notifications.html",
         notification_settings=settings,
         defaults=DEFAULT_NOTIFICATION_SETTINGS,
         transport=transport,
         history=history,
+        sent_history=sent_history,
         test_types=_NOTIFICATION_TEST_TYPES,
         max_mail_subject=MAX_MANUAL_MAIL_SUBJECT,
         max_mail_title=MAX_MANUAL_MAIL_TITLE,
         max_mail_body=MAX_MANUAL_MAIL_BODY,
+        max_mail_recipients=MAX_MANUAL_MAIL_RECIPIENTS,
+        max_mail_attachments=MAX_MANUAL_MAIL_ATTACHMENTS,
     )
 
 
@@ -213,6 +317,7 @@ def notifications_test():
 @login_required
 def notifications_send():
     """Send one bounded administrator-authored email through the existing relay."""
+    request.max_content_length = MAX_MANUAL_MAIL_REQUEST_BYTES
     transport = smtp_status(current_app)
     if not transport["ready"]:
         log_event(
@@ -227,7 +332,9 @@ def notifications_send():
         flash("SMTP is not configured. Manual email was not sent.", "warning")
         return redirect(url_for("dashboard.notifications"))
 
-    recipient = normalize_email_address(request.form.get("recipient"))
+    recipients = normalize_email_addresses(request.form.get("recipients") or request.form.get("recipient"))
+    cc = normalize_email_addresses(request.form.get("cc"))
+    bcc = normalize_email_addresses(request.form.get("bcc"))
     subject = _clean_single_line(
         request.form.get("subject", ""), max_length=MAX_MANUAL_MAIL_SUBJECT
     )
@@ -246,9 +353,19 @@ def notifications_send():
     else:
         body, safe_body_html = manual_email_content(text=submitted_body, rich_html=submitted_html)
 
-    errors: list[str] = []
-    if not recipient:
-        errors.append("Enter one valid recipient email address.")
+    attachments, attachment_errors = _manual_mail_attachments()
+    errors: list[str] = list(attachment_errors)
+    if not recipients:
+        errors.append("Enter at least one valid recipient email address.")
+    if request.form.get("cc", "").strip() and not cc:
+        errors.append("Check the CC recipient list.")
+    if request.form.get("bcc", "").strip() and not bcc:
+        errors.append("Check the BCC recipient list.")
+    all_addresses = [*recipients, *cc, *bcc]
+    if len({address.casefold() for address in all_addresses}) != len(all_addresses):
+        errors.append("Each recipient can appear only once across To, CC and BCC.")
+    if len(all_addresses) > MAX_MANUAL_MAIL_RECIPIENTS:
+        errors.append(f"Use at most {MAX_MANUAL_MAIL_RECIPIENTS} recipients per message.")
     if not subject:
         errors.append("Subject is required.")
     if not body:
@@ -276,7 +393,7 @@ def notifications_send():
             "notifications.manual_email_rate_limited",
             "manual email rate limit reached",
             category="security",
-            recipient=mask_email(recipient),
+            recipients=len(all_addresses),
         )
         log_event(
             log,
@@ -286,7 +403,7 @@ def notifications_send():
             notification_event="manual_email",
             category="manual",
             severity="security",
-            recipient=mask_email(recipient),
+            recipients=len(all_addresses),
         )
         flash("Manual email rate limit reached. Try again later.", "error")
         return redirect(url_for("dashboard.notifications") + "#compose-email")
@@ -300,10 +417,13 @@ def notifications_send():
     try:
         delivered = send_mail(
             current_app,
-            to=recipient,
+            to=recipients[0] if len(recipients) == 1 else recipients,
+            cc=cc,
+            bcc=bcc,
             subject=subject,
             body=body,
             html_body=html_body,
+            attachments=attachments,
             automated=False,
         )
     except Exception as exc:
@@ -312,7 +432,7 @@ def notifications_send():
             "notifications.manual_email_failed",
             "manual dashboard email failed",
             category="system",
-            recipient=mask_email(recipient),
+            recipients=len(all_addresses),
             error_type=type(exc).__name__,
             plain_text_only=plain_text_only,
         )
@@ -325,7 +445,7 @@ def notifications_send():
             notification_event="manual_email",
             category="manual",
             severity="error",
-            recipient=mask_email(recipient),
+            recipients=len(all_addresses),
             mail_format="plain" if plain_text_only else "html",
         )
         flash("Email could not be sent. Check the server log.", "error")
@@ -340,7 +460,7 @@ def notifications_send():
             notification_event="manual_email",
             category="manual",
             severity="info",
-            recipient=mask_email(recipient),
+            recipients=len(all_addresses),
         )
         flash("Mail transport is disabled. Email was not sent.", "warning")
         return redirect(url_for("dashboard.notifications") + "#compose-email")
@@ -349,7 +469,7 @@ def notifications_send():
         "notifications.manual_email_sent",
         "manual dashboard email sent",
         category="system",
-        recipient=mask_email(recipient),
+        recipients=len(all_addresses),
         subject_length=len(subject),
         message_length=len(body),
         plain_text_only=plain_text_only,
@@ -361,8 +481,14 @@ def notifications_send():
         notification_event="manual_email",
         category="manual",
         severity="info",
-        recipient=mask_email(recipient),
+        recipients_masked=_masked_recipient_summary(recipients, cc, bcc),
+        to_count=len(recipients),
+        cc_count=len(cc),
+        bcc_count=len(bcc),
+        subject=subject,
+        attachment_count=len(attachments),
+        attachment_names=[attachment.filename for attachment in attachments],
         mail_format="plain" if plain_text_only else "html",
     )
-    flash(f"Email sent to {mask_email(recipient)}.", "success")
+    flash(f"Email sent to {len(all_addresses)} recipient{'s' if len(all_addresses) != 1 else ''}.", "success")
     return redirect(url_for("dashboard.notifications") + "#compose-email")

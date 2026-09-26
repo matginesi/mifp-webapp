@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import sqlite3
 import time
 from pathlib import Path
@@ -87,6 +88,51 @@ def test_mailer_builds_plain_text_and_html_alternatives(monkeypatch) -> None:
     assert [part.get_content_type() for part in parts] == ["text/plain", "text/html"]
     assert "Plain fallback" in parts[0].get_content()
     assert "Formatted" in parts[1].get_content()
+
+
+def test_mailer_keeps_bcc_out_of_message_headers(monkeypatch) -> None:
+    from mifp_app.services import mailer
+
+    captured = []
+
+    class FakeSSL:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send_message(self, message, **kwargs):
+            captured.append((message, kwargs))
+
+    monkeypatch.setattr(mailer.smtplib, "SMTP_SSL", FakeSSL)
+    app = SimpleNamespace(config={
+        "MAIL_PROVIDER": "smtp",
+        "MAIL_FROM": "alerts@mifp.eu",
+        "SMTP_HOST": "smtp.example.net",
+        "SMTP_PORT": 465,
+        "SMTP_SECURITY": "tls",
+    })
+
+    assert mailer.send_mail(
+        app,
+        to=["one@example.org", "two@example.org"],
+        cc=["copy@example.org"],
+        bcc=["hidden@example.org"],
+        subject="Recipients",
+        body="Hello",
+        automated=False,
+    ) is True
+    message, kwargs = captured[0]
+    assert message["To"] == "one@example.org, two@example.org"
+    assert message["Cc"] == "copy@example.org"
+    assert message.get("Bcc") is None
+    assert kwargs["to_addrs"] == [
+        "one@example.org", "two@example.org", "copy@example.org", "hidden@example.org",
+    ]
 
 
 def test_notification_without_credentials_is_fail_safe(tmp_path: Path) -> None:
@@ -411,7 +457,8 @@ def test_manual_dashboard_email_sanitizes_visual_editor_html_and_builds_plain_fa
     assert 'style="color:red"' not in html
     assert "onclick=" not in html
     assert "<script>" not in html
-    assert "<img" not in html
+    assert '<img src="https://tracker.invalid/x"' in html
+    assert "max-width:100%" in html
     assert "First item" in message["body"]
     assert "https://tracker.invalid" not in message["body"]
 
@@ -510,7 +557,7 @@ def test_manual_dashboard_email_can_send_plain_text_only(notification_app, monke
     assert delivered[-1]["automated"] is False
 
 
-def test_manual_dashboard_email_rejects_recipient_lists(notification_app, monkeypatch) -> None:
+def test_manual_dashboard_email_rejects_invalid_recipient_in_list(notification_app, monkeypatch) -> None:
     from mifp_app.routes import dashboard_notifications
 
     notification_app.config.update(MAIL_PROVIDER="console", ENV="test")
@@ -524,7 +571,7 @@ def test_manual_dashboard_email_rejects_recipient_lists(notification_app, monkey
     response = client.post(
         "/dashboard/notifications/send",
         data={
-            "recipient": "one@example.org,two@example.org",
+            "recipient": "one@example.org,not-an-address",
             "subject": "Should fail",
             "mail_title": "MIFP",
             "message": "No recipient lists are allowed.",
@@ -534,6 +581,84 @@ def test_manual_dashboard_email_rejects_recipient_lists(notification_app, monkey
 
     assert response.status_code == 302
     assert delivered == []
+
+
+def test_manual_dashboard_email_supports_to_cc_bcc_and_safe_attachments(notification_app, monkeypatch) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    notification_app.config.update(MAIL_PROVIDER="console", ENV="test")
+    delivered = []
+    monkeypatch.setattr(
+        dashboard_notifications,
+        "send_mail",
+        lambda _app, **kwargs: delivered.append(kwargs) or True,
+    )
+    client = _logged_in_client(notification_app)
+    response = client.post(
+        "/dashboard/notifications/send",
+        data={
+            "recipients": "one@example.org; two@example.org",
+            "cc": "copy@example.org",
+            "bcc": "hidden@example.org",
+            "subject": "Project files",
+            "mail_title": "Project update",
+            "message": "Please review the attached document.",
+            "attachments": (io.BytesIO(b"%PDF-1.7\n% safe test\n%%EOF"), "review.pdf"),
+        },
+        content_type="multipart/form-data",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert delivered[-1]["to"] == ["one@example.org", "two@example.org"]
+    assert delivered[-1]["cc"] == ["copy@example.org"]
+    assert delivered[-1]["bcc"] == ["hidden@example.org"]
+    assert delivered[-1]["attachments"][0].filename == "review.pdf"
+    assert delivered[-1]["attachments"][0].content_type == "application/pdf"
+
+
+def test_manual_dashboard_email_rejects_spoofed_attachment_content(notification_app, monkeypatch) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    notification_app.config.update(MAIL_PROVIDER="console", ENV="test")
+    delivered = []
+    monkeypatch.setattr(
+        dashboard_notifications,
+        "send_mail",
+        lambda _app, **kwargs: delivered.append(kwargs) or True,
+    )
+    client = _logged_in_client(notification_app)
+    response = client.post(
+        "/dashboard/notifications/send",
+        data={
+            "recipients": "one@example.org",
+            "subject": "Unsafe file",
+            "mail_title": "Project update",
+            "message": "This must not send.",
+            "attachments": (io.BytesIO(b"<script>alert(1)</script>"), "fake.pdf"),
+        },
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert delivered == []
+    assert "content does not match the file type" in response.get_data(as_text=True)
+
+
+def test_manual_email_rich_content_allows_safe_tables_and_https_images_only() -> None:
+    from mifp_app.services.notifications import sanitize_manual_email_html
+
+    rendered = sanitize_manual_email_html(
+        '<table><tr><th>Result</th></tr><tr><td>Ready</td></tr></table>'
+        '<img src="https://mifp.eu/chart.png" alt="Results chart" width="560">'
+        '<img src="http://tracker.invalid/pixel.png" onerror="evil()">'
+    )
+
+    assert "<table>" in rendered and "<th>Result</th>" in rendered
+    assert 'src="https://mifp.eu/chart.png"' in rendered
+    assert "tracker.invalid" not in rendered
+    assert "onerror" not in rendered
 
 
 def test_manual_mailer_omits_auto_submitted_for_human_authored_mail(monkeypatch) -> None:

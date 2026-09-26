@@ -67,15 +67,22 @@
     <div><span class="control-kicker">Administrator mail</span><h2>Compose email</h2><p>Send one controlled message through the same Aruba SMTP transport.</p></div>
     <span class="status-chip status-{{ 'success' if transport.ready else 'warning' }}">{{ 'available' if transport.ready else 'smtp required' }}</span>
   </div>
-  <form method="post" action="{{ url_for('dashboard.notifications_send') }}" class="notification-compose-form" data-confirm="Send this email now?" autocomplete="off">
+  <form method="post" action="{{ url_for('dashboard.notifications_send') }}" class="notification-compose-form" data-confirm="Send this email now?" autocomplete="off" enctype="multipart/form-data">
     <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
     <div class="notification-compose-grid">
-      <label class="field">
-        <span>Recipient</span>
-        <input class="form-control form-control-sm" type="email" name="recipient" maxlength="254" placeholder="name@example.org" required>
-        <small>Exactly one recipient per message. CC and BCC are intentionally unavailable.</small>
+      <label class="field notification-recipient-field">
+        <span>To</span>
+        <textarea class="form-control form-control-sm" name="recipients" rows="2" placeholder="name@example.org, colleague@example.org" required></textarea>
+        <small>Separate addresses with commas, semicolons or new lines. Up to {{ max_mail_recipients }} recipients across all fields.</small>
       </label>
-      <label class="field">
+      <details class="notification-copy-fields">
+        <summary><i class="bi bi-people" aria-hidden="true"></i> Add CC or BCC</summary>
+        <div>
+          <label class="field"><span>CC</span><textarea class="form-control form-control-sm" name="cc" rows="2" placeholder="Visible copy recipients"></textarea><small>Visible to everyone receiving the message.</small></label>
+          <label class="field"><span>BCC</span><textarea class="form-control form-control-sm" name="bcc" rows="2" placeholder="Hidden copy recipients"></textarea><small>Sent as envelope recipients and never added to the email headers.</small></label>
+        </div>
+      </details>
+      <label class="field notification-subject-field">
         <span>Subject</span>
         <input class="form-control form-control-sm" type="text" name="subject" maxlength="{{ max_mail_subject }}" placeholder="Message subject" required>
         <small>Used as the email subject line.</small>
@@ -93,23 +100,50 @@
         <span>Message</span>
         <div class="notification-rich-editor" data-notification-mail-editor>
           <div class="notification-rich-toolbar" data-notification-format-tools aria-label="Message formatting">
-            <button type="button" title="Bold" aria-label="Bold" data-rich-command="bold"><b>B</b></button>
-            <button type="button" title="Italic" aria-label="Italic" data-rich-command="italic"><i>I</i></button>
+            <div class="notification-tool-group" role="group" aria-label="History">
+              <button type="button" title="Undo" aria-label="Undo" data-rich-command="undo"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>
+              <button type="button" title="Redo" aria-label="Redo" data-rich-command="redo"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i></button>
+            </div>
             <span class="notification-rich-divider" aria-hidden="true"></span>
-            <button type="button" title="Section heading" aria-label="Section heading" data-rich-command="formatBlock" data-rich-value="h2">H2</button>
-            <button type="button" title="Bullet list" aria-label="Bullet list" data-rich-command="insertUnorderedList"><i class="bi bi-list-ul" aria-hidden="true"></i></button>
-            <button type="button" title="Numbered list" aria-label="Numbered list" data-rich-command="insertOrderedList"><i class="bi bi-list-ol" aria-hidden="true"></i></button>
-            <button type="button" title="Insert link" aria-label="Insert link" data-rich-command="createLink"><i class="bi bi-link-45deg" aria-hidden="true"></i> Link</button>
+            <div class="notification-tool-group" role="group" aria-label="Text style">
+              <button type="button" title="Bold" aria-label="Bold" data-rich-command="bold"><b>B</b></button>
+              <button type="button" title="Italic" aria-label="Italic" data-rich-command="italic"><i>I</i></button>
+              <button type="button" title="Underline" aria-label="Underline" data-rich-command="underline"><u>U</u></button>
+              <button type="button" title="Paragraph" aria-label="Paragraph" data-rich-command="formatBlock" data-rich-value="p">Text</button>
+              <button type="button" title="Section heading" aria-label="Section heading" data-rich-command="formatBlock" data-rich-value="h2">Heading</button>
+            </div>
+            <span class="notification-rich-divider" aria-hidden="true"></span>
+            <div class="notification-tool-group" role="group" aria-label="Structure">
+              <button type="button" title="Bullet list" aria-label="Bullet list" data-rich-command="insertUnorderedList"><i class="bi bi-list-ul" aria-hidden="true"></i></button>
+              <button type="button" title="Numbered list" aria-label="Numbered list" data-rich-command="insertOrderedList"><i class="bi bi-list-ol" aria-hidden="true"></i></button>
+              <button type="button" title="Insert table" aria-label="Insert table" data-rich-action="table"><i class="bi bi-table" aria-hidden="true"></i> Table</button>
+            </div>
+            <span class="notification-rich-divider" aria-hidden="true"></span>
+            <div class="notification-tool-group" role="group" aria-label="Insert">
+              <button type="button" title="Insert link" aria-label="Insert link" data-rich-command="createLink"><i class="bi bi-link-45deg" aria-hidden="true"></i> Link</button>
+              <button type="button" title="Insert image from a secure public URL" aria-label="Insert image" data-rich-action="image"><i class="bi bi-image" aria-hidden="true"></i> Image</button>
+              <button type="button" title="Remove formatting" aria-label="Remove formatting" data-rich-command="removeFormat"><i class="bi bi-eraser" aria-hidden="true"></i></button>
+            </div>
           </div>
           <div class="notification-rich-surface" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Email message" data-notification-rich-input data-placeholder="Write your message…"></div>
           <textarea class="form-control notification-plain-surface" rows="10" maxlength="{{ max_mail_body }}" placeholder="Write the plain-text message…" data-notification-plain-input hidden></textarea>
           <input type="hidden" name="message" data-notification-message-text>
           <input type="hidden" name="message_html" data-notification-message-html>
           <div class="notification-editor-meta">
-            <small>Basic formatting and safe links are supported. Attachments, CC and BCC are disabled.</small>
+            <small>Formatting, HTTPS images and simple tables are sanitized again by the server.</small>
             <small><span data-notification-message-count>0</span> / {{ max_mail_body }}</small>
           </div>
         </div>
+      </div>
+      <div class="field notification-attachment-field">
+        <span>Attachments</span>
+        <label class="notification-attachment-picker">
+          <input type="file" name="attachments" multiple accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.docx,.xlsx" data-notification-attachments>
+          <i class="bi bi-paperclip" aria-hidden="true"></i>
+          <span><b>Add files</b><small>PDF, PNG, JPG, TXT, CSV, DOCX or XLSX · max 5 MB each, 10 MB total</small></span>
+        </label>
+        <ul class="notification-attachment-list" data-notification-attachment-list aria-live="polite"><li>No files selected.</li></ul>
+        <small>Files are validated in memory, attached to this message and never stored in the public site.</small>
       </div>
     </div>
     <div class="notification-compose-footer">
@@ -117,6 +151,29 @@
       <button class="btn btn-primary btn-sm" type="submit" {{ 'disabled' if not transport.ready }}><i class="bi bi-envelope-arrow-up"></i> Send email</button>
     </div>
   </form>
+</section>
+
+<section class="control-panel notification-sent-panel">
+  <div class="panel-head"><div><span class="control-kicker">Outgoing mail</span><h2>Sent emails</h2><p>Recent successful deliveries. Recipient addresses remain masked and BCC addresses stay hidden.</p></div><span>{{ sent_history|length }}</span></div>
+  <div class="control-table-wrap notification-history-wrap" role="region" tabindex="0" aria-label="Sent email history">
+    <table class="control-table notification-history-table">
+      <thead><tr><th>Time</th><th>Subject / event</th><th>Recipients</th><th>Format</th><th>Files</th></tr></thead>
+      <tbody>
+      {% for row in sent_history %}
+        {% set details = row.details %}
+        <tr>
+          <td>{{ row.when[:19] or '—' }}</td>
+          <td><b>{{ details.get('subject') or details.get('notification_event') or 'Notification' }}</b><span class="table-subline">{{ 'Manual email' if details.get('category') == 'manual' else details.get('category') or 'system' }}</span></td>
+          <td>{{ details.get('recipients_masked') or transport.recipient_masked }}{% if details.get('to_count') %}<span class="table-subline">{{ details.get('to_count') }} To · {{ details.get('cc_count', 0) }} CC · {{ details.get('bcc_count', 0) }} BCC</span>{% endif %}</td>
+          <td>{{ details.get('mail_format') or 'HTML + text' }}</td>
+          <td>{{ details.get('attachment_count', 0) }}{% if details.get('attachment_names') %}<span class="table-subline">{{ details.get('attachment_names')|join(', ') }}</span>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5"><div class="empty">No email has been delivered yet.</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
 
 <section class="control-panel">
