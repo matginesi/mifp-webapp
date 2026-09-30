@@ -12,6 +12,7 @@ from mifp_app.services.download_jobs import (
     prune,
     submit_download_job,
 )
+import mifp_app.services.download_jobs as download_jobs
 
 
 @pytest.fixture
@@ -61,7 +62,6 @@ def _build(path: Path) -> dict:
 
 
 def test_submit_and_download_roundtrip(app, tmp_path):
-    from mifp_app.services.job_manager import reset_job_manager, get_job_manager
     import time
     with app.app_context():
         job_id, token = submit_download_job(
@@ -86,7 +86,6 @@ def test_submit_and_download_roundtrip(app, tmp_path):
 
 
 def test_claim_rejects_wrong_owner_and_session(app, tmp_path):
-    from mifp_app.services.job_manager import reset_job_manager
     with app.app_context():
         job_id, token = submit_download_job(
             name="test-job",
@@ -102,7 +101,6 @@ def test_claim_rejects_wrong_owner_and_session(app, tmp_path):
 
 
 def test_failed_build_reports_failure(app, tmp_path):
-    from mifp_app.services.job_manager import reset_job_manager
     with app.app_context():
         def failing_build(path, progress):
             raise RuntimeError("build failed")
@@ -118,3 +116,44 @@ def test_failed_build_reports_failure(app, tmp_path):
         status = get_download_job_status(job_id)
         assert status["status"] == "failed"
         assert "build failed" in status["message"]
+
+
+def test_prune_caps_unclaimed_download_artifacts(app):
+    with app.app_context():
+        root = Path(app.config["EXPORT_DIR"])
+        now = time.time()
+        for index in range(download_jobs._DL_MAX_CACHED + 3):
+            stem = f"{download_jobs._DL_CACHE_PREFIX}{index}"
+            (root / f"{stem}.bin").write_bytes(b"x")
+            (root / f"{stem}.json").write_text(
+                json.dumps({"created_at": now + index}), encoding="utf-8"
+            )
+
+        removed = prune()
+
+        assert removed == 3
+        assert len(list(root.glob(f"{download_jobs._DL_CACHE_PREFIX}*.json"))) == download_jobs._DL_MAX_CACHED
+        assert len(list(root.glob(f"{download_jobs._DL_CACHE_PREFIX}*.bin"))) == download_jobs._DL_MAX_CACHED
+
+
+def test_control_download_removes_claimed_artifact_when_response_closes(app, monkeypatch):
+    artifact = Path(app.config["EXPORT_DIR"]) / "claimed.bin"
+    artifact.write_bytes(b"download")
+    monkeypatch.setattr(
+        "mifp_app.routes.dashboard_control.download_jobs.claim_download",
+        lambda **_kwargs: (
+            {"filename": "download.bin", "mimetype": "application/octet-stream"},
+            artifact,
+        ),
+    )
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["admin_logged_in"] = True
+        session["admin_username"] = "admin"
+
+    response = client.get("/dashboard/control/safety-operations/dl/token")
+    assert response.status_code == 200
+    assert response.data == b"download"
+    response.close()
+
+    assert not artifact.exists()

@@ -213,13 +213,17 @@ def _zip_entries(zf: zipfile.ZipFile) -> tuple[list[tuple[zipfile.ZipInfo, str]]
 def _load_zip(path: Path) -> tuple[zipfile.ZipFile, list[tuple[zipfile.ZipInfo, str]], int]:
     try:
         zf = zipfile.ZipFile(path)
+    except zipfile.BadZipFile as exc:
+        raise ValueError("Uploaded file is not a valid ZIP archive.") from exc
+    try:
         entries, unpacked = _zip_entries(zf)
         bad = zf.testzip()
         if bad:
             raise ValueError(f"ZIP integrity check failed at {bad}.")
         return zf, entries, unpacked
-    except zipfile.BadZipFile as exc:
-        raise ValueError("Uploaded file is not a valid ZIP archive.") from exc
+    except Exception:
+        zf.close()
+        raise
 
 
 def detect_package(path: Path) -> str:

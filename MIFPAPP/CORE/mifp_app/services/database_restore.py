@@ -4,6 +4,7 @@ import os
 import shutil
 import sqlite3
 import tempfile
+from contextlib import closing
 from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import quote
@@ -36,7 +37,7 @@ def _verify_database(path: Path) -> dict[str, int]:
             raise DatabaseRestoreError("The uploaded file is not a SQLite database.")
     try:
         validate_runtime_database(path)
-        with _readonly_connection(path) as source:
+        with closing(_readonly_connection(path)) as source:
             return {
                 table: int(source.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
                 for table in sorted(RUNTIME_REQUIRED_TABLES)

@@ -21,6 +21,7 @@ from ..utils.logger import audit_log
 from ..utils.security import admin_password_matches, get_client_ip, ip_rate_allowed
 from .auth import login_required
 from .dashboard import bp
+from ._shared import STREAM_EVENT_QUEUE_SIZE, bounded_event_put
 
 
 def _archive_rows(conn, q: str | None, category: str | None, year: str | None):
@@ -150,11 +151,11 @@ def archive_import():
             assets_dir = Path(current_app.config["ASSETS_DIR"])
             package_name = Path(upload.filename).name
             queued_path = staged
-            events: queue.Queue[dict | None] = queue.Queue()
+            events: queue.Queue[dict | None] = queue.Queue(maxsize=STREAM_EVENT_QUEUE_SIZE)
             app = current_app._get_current_object()
 
             def emit_progress(message: str, percent: int) -> None:
-                events.put({"event": "progress", "message": message, "percent": percent})
+                bounded_event_put(events, {"event": "progress", "message": message, "percent": percent})
 
             def run(cancelled: Callable[[], bool]) -> dict:
                 try:
@@ -172,7 +173,7 @@ def archive_import():
                             cancel_check=cancelled,
                             progress=emit_progress,
                         )
-                        events.put({"event": "result", "ok": True, "result": result})
+                        bounded_event_put(events, {"event": "result", "ok": True, "result": result})
                         audit_log(
                             "archive.validate" if dry_run else "archive.import",
                             "historical archive package processed",
@@ -182,11 +183,11 @@ def archive_import():
                         return result
                 except Exception as exc:
                     app.logger.exception("historical archive import failed")
-                    events.put({"event": "result", "ok": False, "message": str(exc)[:500]})
+                    bounded_event_put(events, {"event": "result", "ok": False, "message": str(exc)[:500]})
                     raise
                 finally:
                     queued_path.unlink(missing_ok=True)
-                    events.put(None)
+                    bounded_event_put(events, None)
 
             manager = get_job_manager(
                 current_app.config.get("JOB_MAX_WORKERS", 2),

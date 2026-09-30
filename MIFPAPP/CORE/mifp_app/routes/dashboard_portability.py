@@ -48,6 +48,7 @@ from ..utils.logger import audit_log
 from ..utils.security import admin_password_matches, get_client_ip, ip_rate_allowed
 from .auth import login_required
 from .dashboard import bp
+from ._shared import STREAM_EVENT_QUEUE_SIZE, bounded_event_put
 
 @bp.get("/data-portability")
 @login_required
@@ -497,11 +498,11 @@ def data_portability_export_post(fmt: str):
 
     from ..services.job_manager import JobQueueFull, get_job_manager
 
-    event_queue: queue.Queue[dict | None] = queue.Queue()
+    event_queue: queue.Queue[dict | None] = queue.Queue(maxsize=STREAM_EVENT_QUEUE_SIZE)
     app = current_app._get_current_object()
 
     def progress_cb(message: str, pct: int) -> None:
-        event_queue.put({"event": "phase", "phase": "bundle", "label": message, "percent": pct})
+        bounded_event_put(event_queue, {"event": "phase", "phase": "bundle", "label": message, "percent": pct})
 
     def run_export(cancelled: Callable[[], bool]) -> None:
         with app.app_context():
@@ -587,7 +588,7 @@ def data_portability_export_post(fmt: str):
                     title_text = "Export ready"
                     result_message = f"{fmt.upper()} export ({size_str}) ready for download."
                     icon_class, icon_modifier = "bi-check-lg", "is-success"
-                event_queue.put({
+                bounded_event_put(event_queue, {
                     "event": "result", "ok": True,
                     "title_text": title_text, "message": result_message,
                     "icon_class": icon_class, "icon_modifier": icon_modifier,
@@ -600,14 +601,14 @@ def data_portability_export_post(fmt: str):
                 app.logger.exception("data portability export failed format=%s scope=%s", fmt, "all")
                 audit_log("export.data_portability", "data portability export", category="admin", outcome="failure",
                           scope="all", format=fmt)
-                event_queue.put({
+                bounded_event_put(event_queue, {
                     "event": "error", "ok": False,
                     "title_text": "Export failed",
                     "message": "The export could not be generated. Check the server logs and try again.",
                     "icon_class": "bi-x-lg", "icon_modifier": "is-error",
                 })
             finally:
-                event_queue.put(None)
+                bounded_event_put(event_queue, None)
 
     manager = get_job_manager(
         int(current_app.config.get("BACKGROUND_JOB_WORKERS", 2)),
@@ -795,10 +796,10 @@ def data_portability_import():
 
         from ..services.job_manager import JobCancelled, JobQueueFull, get_job_manager
 
-        event_queue: queue.Queue[dict | None] = queue.Queue()
+        event_queue: queue.Queue[dict | None] = queue.Queue(maxsize=STREAM_EVENT_QUEUE_SIZE)
 
         def event_sink(data: dict) -> None:
-            event_queue.put(data)
+            bounded_event_put(event_queue, data)
 
         app = current_app._get_current_object()
 
@@ -846,7 +847,7 @@ def data_portability_import():
                     raise
                 finally:
                     shutil.rmtree(upload_dir, ignore_errors=True)
-                    event_queue.put(None)
+                    bounded_event_put(event_queue, None)
 
         manager = get_job_manager(
             int(current_app.config.get("BACKGROUND_JOB_WORKERS", 2)),

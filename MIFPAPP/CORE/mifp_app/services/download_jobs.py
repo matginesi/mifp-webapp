@@ -22,6 +22,7 @@ from typing import Any, Callable
 _DL_CACHE_PREFIX = ".mifp-dl-"
 _DL_TTL_SECONDS = 900
 _DL_MAX_CACHED = 8
+_DL_MAX_JOB_HISTORY = 100
 
 _lock = threading.RLock()
 _jobs: dict[str, dict[str, Any]] = {}
@@ -45,17 +46,41 @@ def prune() -> int:
     """Delete expired download entries and stale registry rows."""
     removed = 0
     now = time.time()
+    retained: list[tuple[float, Path, Path]] = []
     for meta_path in _cache_dir().glob(f"{_DL_CACHE_PREFIX}*.json"):
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             meta = {}
-        if now - float(meta.get("created_at") or 0) > _DL_TTL_SECONDS:
-            meta_path.with_suffix(".bin").unlink(missing_ok=True)
+        data_path = meta_path.with_suffix(".bin")
+        try:
+            created_at = float(meta.get("created_at") or 0)
+        except (TypeError, ValueError):
+            created_at = 0.0
+        if now - created_at > _DL_TTL_SECONDS or not data_path.is_file():
+            data_path.unlink(missing_ok=True)
             meta_path.unlink(missing_ok=True)
             removed += 1
+        else:
+            retained.append((created_at, meta_path, data_path))
+    # TTL bounds age; this cap also bounds disk use during a burst of successful
+    # but unclaimed exports. Keep the newest artifacts.
+    for _created_at, meta_path, data_path in sorted(retained, reverse=True)[_DL_MAX_CACHED:]:
+        data_path.unlink(missing_ok=True)
+        meta_path.unlink(missing_ok=True)
+        removed += 1
     with _lock:
         for job_id in [jid for jid, st in _jobs.items() if now - float(st.get("updated_at") or 0) > _DL_TTL_SECONDS]:
+            _jobs.pop(job_id, None)
+        finished = sorted(
+            (
+                (float(state.get("updated_at") or 0), job_id)
+                for job_id, state in _jobs.items()
+                if state.get("status") not in {"queued", "running"}
+            ),
+            reverse=True,
+        )
+        for _updated_at, job_id in finished[_DL_MAX_JOB_HISTORY:]:
             _jobs.pop(job_id, None)
     return removed
 
@@ -106,6 +131,7 @@ def submit_download_job(
     job_id = uuid.uuid4().hex
     token = secrets.token_urlsafe(32)
     temp_path = _cache_dir() / f"{_DL_CACHE_PREFIX}write-{job_id}.bin"
+    prune()
     _set_job(job_id, status="queued", percent=0, message="Waiting…")
 
     def progress(pct: int, message: str, records: int | None = None, assets: int | None = None, errors: int | None = None, counts: dict[str, int] | None = None, total_assets: int | None = None) -> None:
@@ -113,6 +139,7 @@ def submit_download_job(
 
     def run(cancel_event: Callable[[], bool]) -> None:
         with app.app_context():
+            data_path: Path | None = None
             try:
                 if cancel_event():
                     _set_job(job_id, status="cancelled", percent=0, message="Cancelled")
@@ -134,7 +161,10 @@ def submit_download_job(
                 _set_job(job_id, status="ready", percent=100, message="Ready", bytes=int(meta["bytes"]))
             except Exception as exc:
                 temp_path.unlink(missing_ok=True)
+                if data_path is not None:
+                    data_path.unlink(missing_ok=True)
                 _set_job(job_id, status="failed", message=str(exc))
+                prune()
 
     manager = get_job_manager(
         int(current_app.config.get("BACKGROUND_JOB_WORKERS", 2)),

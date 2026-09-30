@@ -443,10 +443,13 @@ def parse_people_upload(upload) -> list[dict[str, str]]:
         from openpyxl import load_workbook
 
         workbook = load_workbook(io.BytesIO(upload.read()), read_only=True, data_only=True)
-        sheet = workbook.active
-        values = sheet.iter_rows(values_only=True)
-        headers = [str(value or "").strip().lower().replace(" ", "_") for value in next(values, ())]
-        rows = [dict(zip(headers, values_row)) for values_row in values]
+        try:
+            sheet = workbook.active
+            values = sheet.iter_rows(values_only=True)
+            headers = [str(value or "").strip().lower().replace(" ", "_") for value in next(values, ())]
+            rows = [dict(zip(headers, values_row)) for values_row in values]
+        finally:
+            workbook.close()
     else:
         raise ValueError("Upload a CSV or Excel (.xlsx) file.")
 

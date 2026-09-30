@@ -9,20 +9,28 @@ class DummyResponse:
         self.content = content
         self.url = url
         self.headers = {"content-type": content_type}
+        self.closed = False
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise RuntimeError(f"HTTP {self.status_code}")
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class DummySession:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = 0
+        self.closed = False
 
     def get(self, *args, **kwargs):
         self.calls += 1
         return self.responses.pop(0)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_download_asset_does_not_retry_404(monkeypatch, caplog):
@@ -40,6 +48,7 @@ def test_download_asset_does_not_retry_404(monkeypatch, caplog):
 
     assert data is None
     assert session.calls == 1
+    assert session.closed is True
     assert "Unavailable asset" in caplog.text
 
 
@@ -58,4 +67,5 @@ def test_download_asset_does_not_retry_html_payload(monkeypatch, caplog):
 
     assert data is None
     assert session.calls == 1
+    assert session.closed is True
     assert "HTML response instead of asset" in caplog.text

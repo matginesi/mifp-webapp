@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -20,6 +21,62 @@ def test_setup_logging_does_not_duplicate_handlers():
     setup_logging(log_dir, "DEBUG")
     assert len(root.handlers) == handler_count
     shutdown_logging()
+
+
+def test_shutdown_logging_closes_file_handlers(tmp_path):
+    import mifp_app.utils.logger as logger_module
+
+    logger_module.setup_logging(tmp_path, "DEBUG")
+    handlers = tuple(logger_module._listener.handlers)
+    file_handlers = [handler for handler in handlers if hasattr(handler, "stream")]
+
+    logger_module.shutdown_logging()
+
+    assert file_handlers
+    assert all(handler.stream is None for handler in file_handlers)
+
+
+def test_metric_flusher_start_is_singleton_under_concurrency(monkeypatch):
+    import mifp_app.utils.logger as logger_module
+
+    original_thread = threading.Thread
+    started = []
+
+    class FakeThread:
+        def __init__(self, **kwargs):
+            del kwargs
+            self.alive = False
+
+        def start(self):
+            self.alive = True
+            started.append(self)
+
+        def is_alive(self):
+            return self.alive
+
+    monkeypatch.setattr(logger_module, "_metric_flusher_thread", None)
+    monkeypatch.setattr(logger_module.threading, "Thread", FakeThread)
+    callers = [original_thread(target=logger_module._ensure_metric_flusher) for _ in range(20)]
+    for caller in callers:
+        caller.start()
+    for caller in callers:
+        caller.join()
+
+    assert len(started) == 1
+
+
+def test_throttled_event_registry_is_bounded(monkeypatch):
+    import mifp_app.utils.logger as logger_module
+
+    monkeypatch.setattr(logger_module, "_throttled_events", {})
+    logger = logging.getLogger("bounded-throttle-test")
+    logger.addHandler(logging.NullHandler())
+    for index in range(logger_module._MAX_THROTTLED_EVENT_KEYS + 20):
+        logger_module.log_event_throttled(
+            logger, "bounded", "test", throttle_key=str(index), interval_seconds=0
+        )
+
+    assert len(logger_module._throttled_events) == logger_module._MAX_THROTTLED_EVENT_KEYS
 
 
 def test_audit_log_does_not_include_sensitive_keys(tmp_path):

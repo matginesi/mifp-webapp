@@ -649,12 +649,25 @@ def control_safety_operations_download(token: str):
     if claimed is None:
         return jsonify({"ok": False, "error": "claim_failed"}), 404
     meta, data_path = claimed
-    return send_file(
+    response = send_file(
         data_path,
         mimetype=meta.get("mimetype", "application/zip"),
         as_attachment=True,
         download_name=meta.get("filename", f"mifp-secure-export-{date.today().isoformat()}.zip"),
     )
+    file_iterator = response.response
+
+    def deliver_once():
+        try:
+            yield from file_iterator
+        finally:
+            close = getattr(file_iterator, "close", None)
+            if callable(close):
+                close()
+            data_path.unlink(missing_ok=True)
+
+    response.response = deliver_once()
+    return response
 
 
 @bp.get("/control/backups/verify")

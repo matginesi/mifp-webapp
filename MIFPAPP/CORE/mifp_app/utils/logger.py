@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 from collections.abc import Mapping, Sequence
+from contextlib import closing
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,9 +53,11 @@ _metric_buffer: dict[tuple[str, str, str, str], int] = {}
 _metric_buffer_lock = threading.Lock()
 _metric_db_path: str | None = None
 _metric_flusher_thread: threading.Thread | None = None
+_metric_flusher_lock = threading.Lock()
 _METRIC_FLUSH_INTERVAL_SECONDS = 5.0
 _throttled_events: dict[str, float] = {}
 _throttled_events_lock = threading.Lock()
+_MAX_THROTTLED_EVENT_KEYS = 1024
 
 
 def _metric_accumulate(db_path: str, scope: str, metric_name: str, metric_key: str) -> None:
@@ -70,15 +73,18 @@ def _metric_accumulate(db_path: str, scope: str, metric_name: str, metric_key: s
 
 def _ensure_metric_flusher() -> None:
     global _metric_flusher_thread
-    if _metric_flusher_thread is not None and _metric_flusher_thread.is_alive():
-        return
-    thread = threading.Thread(
-        target=_metric_flusher_loop,
-        name="mifp-metric-flusher",
-        daemon=True,
-    )
-    thread.start()
-    _metric_flusher_thread = thread
+    # Multiple request threads can record the first metric concurrently. Keep
+    # that race from creating multiple process-lifetime flusher threads.
+    with _metric_flusher_lock:
+        if _metric_flusher_thread is not None and _metric_flusher_thread.is_alive():
+            return
+        thread = threading.Thread(
+            target=_metric_flusher_loop,
+            name="mifp-metric-flusher",
+            daemon=True,
+        )
+        thread.start()
+        _metric_flusher_thread = thread
 
 
 def _metric_flusher_loop() -> None:
@@ -116,7 +122,7 @@ def flush_metric_buffer(db_path: str | None = None) -> int:
     if not path:
         return 0
     try:
-        with sqlite3.connect(path, timeout=0.5) as conn:
+        with closing(sqlite3.connect(path, timeout=0.5)) as conn:
             conn.execute("PRAGMA busy_timeout=500")
             exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='metrics_daily'"
@@ -483,7 +489,6 @@ def setup_logging(
     _logging_signature = signature
     _logging_pid = current_pid
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
-    atexit.register(shutdown_logging)
     return mifp_logger
 
 
@@ -524,6 +529,9 @@ def log_event_throttled(
         previous = _throttled_events.get(key, 0.0)
         if now - previous < max(0.0, float(interval_seconds)):
             return False
+        if key not in _throttled_events and len(_throttled_events) >= _MAX_THROTTLED_EVENT_KEYS:
+            oldest = min(_throttled_events, key=_throttled_events.get)
+            _throttled_events.pop(oldest, None)
         _throttled_events[key] = now
     log_event(logger, event, message, level=level, **fields)
     return True
@@ -569,9 +577,17 @@ def log_exception(logger: logging.Logger, event: str, message: str, **fields: An
 
 def shutdown_logging() -> None:
     global _listener, _queue_handler, _logging_signature, _logging_pid
-    if _listener is not None:
-        _listener.stop()
-        _listener = None
+    listener = _listener
+    _listener = None
+    if listener is not None:
+        try:
+            listener.stop()
+        finally:
+            # QueueListener.stop() joins its thread but deliberately does not
+            # close handlers. Reconfiguration would otherwise leak one file
+            # descriptor per configured log stream.
+            for handler in listener.handlers:
+                handler.close()
     logger = logging.getLogger("mifp")
     if _queue_handler in logger.handlers:
         logger.removeHandler(_queue_handler)
@@ -581,6 +597,9 @@ def shutdown_logging() -> None:
     package_logger.propagate = True
     _logging_signature = None
     _logging_pid = None
+
+
+atexit.register(shutdown_logging)
 
 
 def init_request_logging(app: Flask, db_path: str | None = None) -> None:
@@ -613,7 +632,7 @@ def init_request_logging(app: Flask, db_path: str | None = None) -> None:
             normalized = normalize_metric_path(path)
             if app.config.get("TESTING"):
                 # Keep tests deterministic: write synchronously exactly as before.
-                with sqlite3.connect(target_db, timeout=0.1) as conn:
+                with closing(sqlite3.connect(target_db, timeout=0.1)) as conn, conn:
                     conn.execute("PRAGMA busy_timeout=100")
                     increment_daily(conn, "public_site", f"http_{status_code}", normalized)
                     if status_code == 200:
@@ -738,15 +757,16 @@ def _cleanup_table(db_path: str, table: str, date_column: str, retention_days: i
     if retention_days <= 0:
         return 0
     try:
-        with sqlite3.connect(db_path) as conn:
-            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
-            if not exists:
-                return 0
-            cursor = conn.execute(
-                f"DELETE FROM {table} WHERE datetime({date_column}) < datetime('now', ?)",
-                (f"-{retention_days} days",),
-            )
-            return max(cursor.rowcount, 0)
+        with closing(sqlite3.connect(db_path)) as conn:
+            with conn:
+                exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+                if not exists:
+                    return 0
+                cursor = conn.execute(
+                    f"DELETE FROM {table} WHERE datetime({date_column}) < datetime('now', ?)",
+                    (f"-{retention_days} days",),
+                )
+                return max(cursor.rowcount, 0)
     except sqlite3.Error:
         return 0
 

@@ -851,6 +851,18 @@ def test_generic_new_content_forms_emit_safe_console_events():
     assert "content.create.submit" in javascript
 
 
+def test_log_auto_refresh_is_bounded_and_aborted_on_page_exit():
+    javascript = (
+        Path(__file__).resolve().parents[2]
+        / "MIFPAPP/CORE/mifp_app/static/js/dashboard/content.js"
+    ).read_text(encoding="utf-8")
+
+    assert "refreshInFlight" in javascript
+    assert "new AbortController()" in javascript
+    assert "refreshController?.abort()" in javascript
+    assert "window.clearInterval(refreshTimer)" in javascript
+
+
 @pytest.mark.parametrize("asset_role", ["cover", "logo"])
 def test_inline_event_edit_preserves_existing_cover_and_saves_changes(app, client, asset_role):
     with _db(app) as conn:

@@ -4,11 +4,23 @@ import hashlib
 import io
 import json
 import logging
+import queue
 import sqlite3
 import zipfile
 from pathlib import Path
 
 import pytest
+
+from mifp_app.routes._shared import bounded_event_put
+
+
+def test_stream_progress_queue_drops_oldest_event_instead_of_growing():
+    events = queue.Queue(maxsize=3)
+    for value in range(4):
+        bounded_event_put(events, value)
+
+    assert events.qsize() == 3
+    assert [events.get_nowait() for _ in range(3)] == [1, 2, 3]
 
 
 class _RecordCollector(logging.Handler):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 from urllib.parse import quote
 
@@ -42,7 +43,7 @@ def validate_runtime_database(path: Path) -> None:
         raise RuntimeError(f"database must be an existing regular file: {path}")
 
     try:
-        with _connect_readonly(path) as conn:
+        with closing(_connect_readonly(path)) as conn:
             tables = _names(conn, "table")
             missing_tables = sorted(RUNTIME_REQUIRED_TABLES - tables)
             if missing_tables:

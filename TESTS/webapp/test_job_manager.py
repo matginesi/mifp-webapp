@@ -1,4 +1,3 @@
-from concurrent.futures import Future
 from threading import Event
 
 import pytest
@@ -40,6 +39,16 @@ def test_job_manager_records_failure_without_exposing_unbounded_error():
     assert len(state["error"]) == 300
 
 
+def test_job_manager_bounds_finished_local_history_and_releases_cancel_events():
+    manager = JobManager(max_workers=1, max_pending=1)
+    for index in range(120):
+        _job_id, future = manager.submit(f"job-{index}", lambda: None)
+        future.result(timeout=2)
+
+    assert len(manager._jobs) == 100
+    assert not manager._cancel_events
+
+
 def test_global_job_manager_can_be_cleanly_recreated():
     first = get_job_manager(max_workers=1, max_pending=1)
 
@@ -48,6 +57,18 @@ def test_global_job_manager_can_be_cleanly_recreated():
 
     assert second is not first
     assert second.snapshot()["max_workers"] == 2
+
+
+def test_submit_after_shutdown_does_not_leak_capacity_or_queued_state():
+    manager = JobManager(max_workers=1, max_pending=1)
+    manager.shutdown()
+
+    with pytest.raises(RuntimeError):
+        manager.submit("too-late", lambda: None)
+
+    snapshot = manager.snapshot()
+    assert snapshot["active"] == 0
+    assert not snapshot["jobs"]
 
 
 def test_job_state_persists_across_manager_instances(tmp_path):

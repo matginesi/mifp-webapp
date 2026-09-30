@@ -16,16 +16,13 @@ from werkzeug.security import generate_password_hash
 from mifp_app.services.assets import resolve_db_asset_path
 from mifp_app.services.event_import import (
     apply_import,
+    detect_package,
     destination_url,
     inspect_packages,
     inspect_website,
     normalize_destination,
 )
-from mifp_app.services.event_site_publisher import (
-    DisabledEventSitePublisher,
-    LocalEventSitePublisher,
-    PublicationError,
-)
+from mifp_app.services.event_site_publisher import LocalEventSitePublisher, PublicationError
 from mifp_app.config import Config
 
 
@@ -95,6 +92,27 @@ def _info(*, slug: str = "plmcn-2027", uid: str = "event_plmcn_2027",
         if asset and not omit_asset:
             archive.writestr("assets/image/logo.svg", asset_bytes)
     return output.getvalue()
+
+
+def test_invalid_open_zip_is_closed_when_member_validation_fails(tmp_path, monkeypatch):
+    class UnsafeArchive:
+        closed = False
+
+        def infolist(self):
+            return [zipfile.ZipInfo("../escape")]
+
+        def close(self):
+            self.closed = True
+
+    archive = UnsafeArchive()
+    monkeypatch.setattr(
+        "mifp_app.services.event_import.zipfile.ZipFile", lambda _path: archive
+    )
+
+    with pytest.raises(ValueError, match="Unsafe ZIP member"):
+        detect_package(tmp_path / "unsafe.zip")
+
+    assert archive.closed is True
 
 
 @pytest.fixture

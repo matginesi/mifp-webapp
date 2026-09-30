@@ -7,9 +7,32 @@ still lives in ``mifp_app.domain``.
 
 from __future__ import annotations
 
+import queue
+
 from flask import g, jsonify
 
 from ..domain import TABLE_ENTITY_TYPES
+
+STREAM_EVENT_QUEUE_SIZE = 128
+
+
+def bounded_event_put(events: queue.Queue, item) -> None:
+    """Publish progress without retaining an unbounded disconnected stream."""
+    try:
+        events.put_nowait(item)
+        return
+    except queue.Full:
+        pass
+    try:
+        events.get_nowait()
+    except queue.Empty:
+        pass
+    try:
+        events.put_nowait(item)
+    except queue.Full:
+        # A consumer raced us and another producer filled the slot. Progress is
+        # best-effort; the durable job state remains authoritative.
+        pass
 
 
 def admin_error_payload(message: str, status: int = 500):

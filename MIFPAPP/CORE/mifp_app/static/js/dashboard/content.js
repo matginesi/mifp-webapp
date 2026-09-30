@@ -627,9 +627,17 @@ document.addEventListener('change', function (ev) {
   if (!seconds || seconds <= 0) return;
   var results = document.querySelector('.log-results');
   if (!results) return;
-  setInterval(function () {
-    if (document.visibilityState === 'hidden') return;
-    fetch(window.location.href, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+  var refreshInFlight = false;
+  var refreshController = null;
+  var refreshTimer = setInterval(function () {
+    if (document.visibilityState === 'hidden' || refreshInFlight) return;
+    refreshInFlight = true;
+    refreshController = new AbortController();
+    var requestTimeout = window.setTimeout(function () { refreshController.abort(); }, 30000);
+    fetch(window.location.href, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      signal: refreshController.signal
+    })
       .then(function (res) { return res.ok ? res.text() : Promise.reject(new Error('HTTP ' + res.status)); })
       .then(function (html) {
         var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -640,7 +648,16 @@ document.addEventListener('change', function (ev) {
         var currentStatus = document.querySelector('.log-status-strip');
         if (freshStatus && currentStatus) currentStatus.replaceWith(freshStatus);
       })
-      .catch(function () {});
+      .catch(function () {})
+      .finally(function () {
+        window.clearTimeout(requestTimeout);
+        refreshController = null;
+        refreshInFlight = false;
+      });
   }, seconds * 1000);
+  window.addEventListener('pagehide', function () {
+    window.clearInterval(refreshTimer);
+    refreshController?.abort();
+  }, { once: true });
 })();
 })();

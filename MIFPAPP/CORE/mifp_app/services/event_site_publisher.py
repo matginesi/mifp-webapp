@@ -7,7 +7,6 @@ publication path; they never derive credentials or remote paths from a URL.
 from __future__ import annotations
 
 import ftplib
-import os
 import shutil
 import ssl
 from dataclasses import dataclass
@@ -212,6 +211,7 @@ class FtpsEventSitePublisher(EventSitePublisher):
     def _connect(self) -> ftplib.FTP_TLS:
         if not self.status().available:
             raise PublicationError(self.status().message)
+        client: ftplib.FTP_TLS | None = None
         try:
             client = self.client_factory()
             client.connect(self.host, self.port, timeout=self.timeout)
@@ -220,6 +220,11 @@ class FtpsEventSitePublisher(EventSitePublisher):
             client.login(self.username, self.password)
             return client
         except Exception as exc:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
             raise PublicationError(
                 f"FTPS connection failed ({type(exc).__name__}); the previous website was not changed."
             ) from None

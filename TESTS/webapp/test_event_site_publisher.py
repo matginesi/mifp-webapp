@@ -146,3 +146,26 @@ def test_failed_connection_is_sanitized_and_disabled_backend_is_nonfatal(tmp_pat
     assert disabled.status().available is False
     with pytest.raises(PublicationError, match="not configured"):
         disabled.publish(tmp_path / "site", "Event-2027", replace=False, keep_rollback=False)
+
+
+def test_partially_open_ftps_connection_is_closed_on_login_failure(tmp_path):
+    class LoginFailure(FakeFtps):
+        closed = False
+
+        def login(self, username, password):
+            del username, password
+            raise OSError("login failed")
+
+        def close(self):
+            self.closed = True
+
+    fake = LoginFailure(tmp_path / "remote")
+    publisher = FtpsEventSitePublisher(
+        host="hosting.example", port=21, username="user", password="secret",
+        remote_root="/events", client_factory=lambda: fake,
+    )
+
+    with pytest.raises(PublicationError, match="connection failed"):
+        publisher.publish(_source(tmp_path / "site", "new"), "Event-2027", replace=False, keep_rollback=False)
+
+    assert fake.closed is True

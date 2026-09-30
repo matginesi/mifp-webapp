@@ -3,6 +3,7 @@
 
 import concurrent.futures
 import hashlib
+import itertools
 import json
 import logging
 import os
@@ -259,6 +260,8 @@ def _download_asset(url, headers=None, retries=1, delay=0.2):
         request_headers.update(headers)
     exc = None
     for attempt in range(1, retries + 1):
+        session = None
+        resp = None
         try:
             session = _get_session()
             resp = session.get(url, headers=request_headers, timeout=30, allow_redirects=True)
@@ -293,6 +296,13 @@ def _download_asset(url, headers=None, retries=1, delay=0.2):
                 wait = delay * (3 ** (attempt - 1)) + random.uniform(0, 2)
                 time.sleep(wait)
                 continue
+        finally:
+            response_close = getattr(resp, "close", None)
+            if callable(response_close):
+                response_close()
+            session_close = getattr(session, "close", None)
+            if callable(session_close):
+                session_close()
     if exc:
         log.error(f"Error downloading {url}: {exc}")
     return None
@@ -358,6 +368,36 @@ def add_asset(conn, url, asset_type, entity_type, entity_id, role=None, sort_ord
     return asset_id
 
 
+def _store_downloaded_asset(conn, asset_dir, url, data):
+    """Persist one validated download; return whether a new row was created."""
+    checksum = _sha256_bytes(data)
+    existing = conn.execute(
+        'SELECT id FROM assets WHERE checksum=?', (checksum,)
+    ).fetchone()
+    if existing:
+        return False
+    ext = _ext_from_url(url)
+    title = _extract_title_from_document(data, ext)
+    if title:
+        safe_title = _safe_stem(title[:30])
+        filename = f"{safe_title or checksum[:12]}-{checksum[:12]}.{ext}"
+    else:
+        filename = f"{checksum}.{ext}"
+    real_kind = _guess_kind_from_ext(ext)
+    db_kind = real_kind if real_kind in ('image', 'document', 'pdf', 'video', 'other') else 'other'
+    path, db_path = _asset_storage_path(asset_dir, db_kind, filename)
+    if not path.exists():
+        path.write_bytes(data)
+    conn.execute('''
+        INSERT INTO assets (filename, original_filename, path, mime_type, size, kind,
+                            alt_text, caption, source_url, storage_status, is_external,
+                            checksum, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ''', (filename, filename, db_path, _guess_mime_from_ext(url), len(data), db_kind,
+          '', '', url[:2000], 'local', 0, checksum))
+    return True
+
+
 def download_all_assets(conn, jsonl_dirs):
     """Download all unique assets with parallel workers + tqdm."""
     import threading
@@ -411,56 +451,33 @@ def download_all_assets(conn, jsonl_dirs):
                 total_pbar.update(1)
             return (url, None, str(e))
     
-    results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
-        futures = {pool.submit(_worker, url, i % 8): url for i, url in enumerate(url_list)}
-        for f in concurrent.futures.as_completed(futures):
-            results.append(f.result())
-    
-    total_pbar.close()
-    
-    # Phase 3: Process results sequentially (DB ops)
     asset_dir = ASSETS_DIR
     asset_dir.mkdir(parents=True, exist_ok=True)
-    
     count = 0
     skipped = 0
-    for url, data, err in tqdm(results, desc="Storing", unit="file", leave=False):
-        if not data:
-            skipped += 1
-            continue
-        checksum = _sha256_bytes(data)
-        existing = conn.execute(
-            'SELECT id FROM assets WHERE checksum=?', (checksum,)
-        ).fetchone()
-        if existing:
-            continue
-        ext = _ext_from_url(url)
-
-        # Extract title from document content if available
-        title = _extract_title_from_document(data, ext)
-
-        # Use title if available (first 30 chars), otherwise fallback to checksum
-        if title:
-            safe_title = _safe_stem(title[:30])
-            filename = f"{safe_title or checksum[:12]}-{checksum[:12]}.{ext}"
-        else:
-            # Fallback to checksum if title extraction fails
-            filename = f"{checksum}.{ext}"
-        # Determine real asset kind from extension instead of hardcoding 'image'
-        real_kind = _guess_kind_from_ext(ext)
-        db_kind = real_kind if real_kind in ('image', 'document', 'pdf', 'video', 'other') else 'other'
-        path, db_path = _asset_storage_path(asset_dir, db_kind, filename)
-        if not path.exists():
-            path.write_bytes(data)
-        conn.execute('''
-            INSERT INTO assets (filename, original_filename, path, mime_type, size, kind, 
-                                alt_text, caption, source_url, storage_status, is_external,
-                                checksum, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ''', (filename, filename, db_path, _guess_mime_from_ext(url), len(data), db_kind,
-              '', '', url[:2000], 'local', 0, checksum))
-        count += 1
+    url_iterator = iter(enumerate(url_list))
+    pending = set()
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+            for index, url in itertools.islice(url_iterator, 16):
+                pending.add(pool.submit(_worker, url, index % 8))
+            while pending:
+                done, pending = concurrent.futures.wait(
+                    pending, return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                for future in done:
+                    url, data, _error = future.result()
+                    if not data:
+                        skipped += 1
+                    elif _store_downloaded_asset(conn, asset_dir, url, data):
+                        count += 1
+                    try:
+                        index, next_url = next(url_iterator)
+                    except StopIteration:
+                        continue
+                    pending.add(pool.submit(_worker, next_url, index % 8))
+    finally:
+        total_pbar.close()
     
     if skipped:
         log.info(f"  Skipped {skipped} unavailable/invalid asset(s)")

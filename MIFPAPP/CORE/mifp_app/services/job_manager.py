@@ -8,6 +8,7 @@ import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
@@ -16,6 +17,8 @@ from ..utils.logger import get_logger, log_event, log_exception
 from .errors import JobCancelled, JobQueueFull
 
 _JOB_HISTORY_SECONDS = 24 * 3600
+_MAX_LOCAL_JOB_HISTORY = 100
+_MAX_PERSISTED_JOB_HISTORY = 1000
 
 
 @dataclass
@@ -38,7 +41,7 @@ def _load_job_history(db_path: str | None) -> dict[str, JobState]:
     if not db_path:
         return {}
     try:
-        with sqlite3.connect(str(_jobs_store_path(db_path)), timeout=5) as conn:
+        with closing(sqlite3.connect(str(_jobs_store_path(db_path)), timeout=5)) as conn:
             rows = conn.execute(
                 "SELECT id, name, status, submitted_at, started_at, finished_at, error "
                 "FROM jobs ORDER BY submitted_at DESC LIMIT 30"
@@ -67,7 +70,7 @@ def _persisted_job_status(db_path: str | None, job_id: str) -> str | None:
     if not db_path:
         return None
     try:
-        with sqlite3.connect(str(_jobs_store_path(db_path)), timeout=2) as conn:
+        with closing(sqlite3.connect(str(_jobs_store_path(db_path)), timeout=2)) as conn:
             row = conn.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
             return str(row[0]) if row else None
     except (sqlite3.Error, OSError):
@@ -78,13 +81,14 @@ def _request_persisted_cancel(db_path: str | None, job_id: str) -> bool:
     if not db_path:
         return False
     try:
-        with sqlite3.connect(str(_jobs_store_path(db_path)), timeout=5) as conn:
-            cur = conn.execute(
-                "UPDATE jobs SET status='cancel_requested' "
-                "WHERE id=? AND status IN ('queued','running','cancel_requested')",
-                (job_id,),
-            )
-            return cur.rowcount > 0
+        with closing(sqlite3.connect(str(_jobs_store_path(db_path)), timeout=5)) as conn:
+            with conn:
+                cur = conn.execute(
+                    "UPDATE jobs SET status='cancel_requested' "
+                    "WHERE id=? AND status IN ('queued','running','cancel_requested')",
+                    (job_id,),
+                )
+                return cur.rowcount > 0
     except (sqlite3.Error, OSError):
         return False
 
@@ -92,24 +96,35 @@ def _persist_job(db_path: str | None, state: JobState) -> None:
     if not db_path:
         return
     try:
-        with sqlite3.connect(str(_jobs_store_path(db_path)), timeout=5) as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS jobs ("
-                "id TEXT PRIMARY KEY, name TEXT, status TEXT, "
-                "submitted_at REAL, started_at REAL, finished_at REAL, error TEXT)"
-            )
-            conn.execute(
-                "INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    state.id,
-                    state.name,
-                    state.status,
-                    state.submitted_at,
-                    state.started_at,
-                    state.finished_at,
-                    state.error,
-                ),
-            )
+        with closing(sqlite3.connect(str(_jobs_store_path(db_path)), timeout=5)) as conn:
+            with conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS jobs ("
+                    "id TEXT PRIMARY KEY, name TEXT, status TEXT, "
+                    "submitted_at REAL, started_at REAL, finished_at REAL, error TEXT)"
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        state.id,
+                        state.name,
+                        state.status,
+                        state.submitted_at,
+                        state.started_at,
+                        state.finished_at,
+                        state.error,
+                    ),
+                )
+                if state.finished_at is not None:
+                    conn.execute(
+                        "DELETE FROM jobs WHERE finished_at IS NOT NULL AND finished_at < ?",
+                        (time.time() - _JOB_HISTORY_SECONDS,),
+                    )
+                    conn.execute(
+                        "DELETE FROM jobs WHERE id IN ("
+                        "SELECT id FROM jobs ORDER BY submitted_at DESC LIMIT -1 OFFSET ?)",
+                        (_MAX_PERSISTED_JOB_HISTORY,),
+                    )
     except (sqlite3.Error, OSError) as exc:
         log_event(
             get_logger("jobs"),
@@ -237,11 +252,26 @@ class JobManager:
             finally:
                 with self._lock:
                     state.finished_at = time.time()
+                    self._cancel_events.pop(job_id, None)
                     _persist_job(self._db_path, state)
                     self._prune_locked()
                 self._capacity.release()
 
-        return job_id, self._executor.submit(run)
+        try:
+            future = self._executor.submit(run)
+        except Exception:
+            # Executor shutdown can race with a late request. Do not leave a
+            # permanently queued registry row or consume queue capacity.
+            with self._lock:
+                state.status = "failed"
+                state.finished_at = time.time()
+                state.error = "job executor is unavailable"
+                self._jobs.pop(job_id, None)
+                self._cancel_events.pop(job_id, None)
+            _persist_job(self._db_path, state)
+            self._capacity.release()
+            raise
+        return job_id, future
 
     def request_cancel(self, job_id: str) -> bool:
         local = False
@@ -280,6 +310,17 @@ class JobManager:
             if state.finished_at is not None and state.finished_at < cutoff
         ]
         for job_id in stale:
+            self._jobs.pop(job_id, None)
+            self._cancel_events.pop(job_id, None)
+        finished = sorted(
+            (
+                (state.finished_at or 0.0, job_id)
+                for job_id, state in self._jobs.items()
+                if state.finished_at is not None
+            ),
+            reverse=True,
+        )
+        for _finished_at, job_id in finished[_MAX_LOCAL_JOB_HISTORY:]:
             self._jobs.pop(job_id, None)
             self._cancel_events.pop(job_id, None)
 

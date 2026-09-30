@@ -13,6 +13,22 @@ from urllib.parse import quote
 _LOGGER = logging.getLogger(__name__)
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """SQLite connection whose context manager also releases the handle.
+
+    ``sqlite3.Connection.__exit__`` only commits or rolls back; it does not
+    close the connection.  Runtime callers consistently use ``with connect()``
+    as a resource boundary, so make that boundary real without changing the
+    transaction semantics they already rely on.
+    """
+
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        try:
+            return bool(super().__exit__(exc_type, exc_value, traceback))
+        finally:
+            self.close()
+
+
 def utc_now() -> str:
     """Return current UTC time as ISO string with Z suffix."""
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -47,11 +63,16 @@ def connect(db_path: Path) -> sqlite3.Connection:
         uri=True,
         timeout=10,
         check_same_thread=False,
+        factory=_ClosingConnection,
     )
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout = 5000")
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
+    except Exception:
+        conn.close()
+        raise
 
 
 def connect_readonly(db_path: Path, *, timeout: float = 0.25) -> sqlite3.Connection:
@@ -61,12 +82,22 @@ def connect_readonly(db_path: Path, *, timeout: float = 0.25) -> sqlite3.Connect
     on ``PRAGMA journal_mode`` or accidentally start a write transaction.
     """
     uri = _sqlite_file_uri(Path(db_path), mode="ro")
-    conn = sqlite3.connect(uri, uri=True, timeout=timeout, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute(f"PRAGMA busy_timeout = {max(1, int(timeout * 1000))}")
-    conn.execute("PRAGMA query_only = ON")
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    conn = sqlite3.connect(
+        uri,
+        uri=True,
+        timeout=timeout,
+        check_same_thread=False,
+        factory=_ClosingConnection,
+    )
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout = {max(1, int(timeout * 1000))}")
+        conn.execute("PRAGMA query_only = ON")
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
+    except Exception:
+        conn.close()
+        raise
 
 
 def begin_immediate(

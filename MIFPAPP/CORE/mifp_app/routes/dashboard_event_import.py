@@ -11,7 +11,6 @@ from ..services.event_import import (
     apply_import,
     cleanup_staging,
     create_staging,
-    destination_url,
     detect_package,
     inspect_packages,
     resolve_staging,

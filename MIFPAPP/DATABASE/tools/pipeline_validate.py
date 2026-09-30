@@ -48,23 +48,28 @@ def validate_pipeline(db_path: Path, assets_dir: Path) -> int:
         errors.append(f"Assets directory does not exist: {assets_dir}")
 
     conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    missing_tables = [t for t in ("news", "events", "assets") if t not in tables]
-    if missing_tables:
-        errors.append(f"Missing required table(s): {', '.join(missing_tables)}")
+    try:
+        conn.row_factory = sqlite3.Row
+        tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        missing_tables = [t for t in ("news", "events", "assets") if t not in tables]
+        if missing_tables:
+            errors.append(f"Missing required table(s): {', '.join(missing_tables)}")
 
-    counts = {table: _count(conn, table) for table in MAIN_TABLES if table in tables}
-    for table in ("news", "events", "members"):
-        if table in counts and counts[table] <= 0:
-            errors.append(f"Table {table} has no rows")
-    if "assets" in counts and counts["assets"] <= 0:
-        log.warning("[WARN] Table assets has no rows (asset downloads may have been rate-limited)")
+        counts = {table: _count(conn, table) for table in MAIN_TABLES if table in tables}
+        for table in ("news", "events", "members"):
+            if table in counts and counts[table] <= 0:
+                errors.append(f"Table {table} has no rows")
+        if "assets" in counts and counts["assets"] <= 0:
+            log.warning("[WARN] Table assets has no rows (asset downloads may have been rate-limited)")
 
-
-    asset_rows = []
-    if "assets" in tables:
-        asset_rows = conn.execute("SELECT id, path, filename, is_external, storage_status FROM assets WHERE path IS NOT NULL").fetchall()
+        asset_rows = []
+        if "assets" in tables:
+            asset_rows = conn.execute(
+                "SELECT id, path, filename, is_external, storage_status "
+                "FROM assets WHERE path IS NOT NULL"
+            ).fetchall()
+    finally:
+        conn.close()
     present_asset_files = 0
     missing_asset_files: list[str] = []
     for row in asset_rows:

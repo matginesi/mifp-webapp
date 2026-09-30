@@ -26,6 +26,17 @@ def test_runtime_connect_opens_existing_database_read_write(tmp_path: Path) -> N
         assert conn.execute("SELECT value FROM settings WHERE key='runtime-test'").fetchone()[0] == "ok"
 
 
+def test_runtime_connection_context_releases_database_handle(tmp_path: Path) -> None:
+    path = tmp_path / "mifp.db"
+    init_database(path)
+
+    with connect(path) as conn:
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        conn.execute("SELECT 1")
+
+
 def test_write_transaction_commits_and_rolls_back(tmp_path: Path) -> None:
     path = tmp_path / "mifp.db"
     init_database(path)
