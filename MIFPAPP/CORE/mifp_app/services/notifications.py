@@ -531,6 +531,87 @@ Sent from the MIFP administrative dashboard &middot; {generated}
 </body></html>"""
 
 
+def render_poll_invitation_html(
+    *,
+    title: str,
+    body: str,
+    body_html: str | None,
+    cta_url: str,
+    cta_label: str = "Open poll",
+    deadline: str = "",
+    question_count: int = 0,
+    allow_changes: bool = True,
+) -> str:
+    """Render an external-facing MIFP poll invitation with no remote assets."""
+    parsed_cta_url = urlsplit(str(cta_url))
+    if parsed_cta_url.scheme not in {"http", "https"} or not parsed_cta_url.netloc:
+        raise ValueError("CTA URL must be an absolute HTTP(S) URL")
+
+    safe_title = escape(str(title or "MIFP Poll")[:MAX_MANUAL_MAIL_TITLE])
+    safe_cta_url = escape(str(cta_url), quote=True)
+    safe_cta_label = escape(str(cta_label or "Open poll")[:60])
+    rendered_body = (
+        _style_manual_email_content(sanitize_manual_email_html(body_html))
+        if body_html is not None
+        else _html_body(body)
+    )
+
+    deadline_value = str(deadline or "").strip()[:10]
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", deadline_value):
+        try:
+            parsed_deadline = datetime.strptime(deadline_value, "%Y-%m-%d")
+            deadline_label = f"{parsed_deadline.day} {parsed_deadline.strftime('%B %Y')}"
+        except ValueError:
+            deadline_label = deadline_value
+    else:
+        deadline_label = deadline_value or "Not specified"
+
+    count = max(0, int(question_count or 0))
+    question_label = "1 question" if count == 1 else f"{count} questions"
+    change_note = (
+        "You can reopen this personal link and update your response until the poll closes."
+        if allow_changes
+        else "This poll accepts one submitted response per invitation."
+    )
+
+    return f"""<!doctype html>
+<html><body style="margin:0;padding:0;background:{_EMAIL_THEME['page']};font-family:Inter,Segoe UI,Arial,sans-serif;color:{_EMAIL_THEME['text']};">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;background:{_EMAIL_THEME['page']};padding:32px 12px;"><tr><td align="center">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:{_EMAIL_THEME['surface']};border:1px solid {_EMAIL_THEME['border']};border-radius:8px;overflow:hidden;">
+<tr><td style="background:{_EMAIL_THEME['shell']};padding:18px 24px;border-left:5px solid {_EMAIL_THEME['accent']};">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+    <td valign="middle"><div style="color:#ffffff;font-size:15px;line-height:1.25;font-weight:800;letter-spacing:.02em;">MIFP</div><div style="margin-top:3px;color:{_EMAIL_THEME['shell_muted']};font-size:10px;line-height:1.4;letter-spacing:.08em;text-transform:uppercase;">Mediterranean Institute of Fundamental Physics</div></td>
+    <td valign="middle" align="right" style="color:{_EMAIL_THEME['shell_muted']};font-size:10px;line-height:1.4;font-weight:700;letter-spacing:.08em;text-transform:uppercase;">Poll invitation</td>
+  </tr></table>
+</td></tr>
+<tr><td style="padding:30px 32px 18px;">
+  <div style="color:{_EMAIL_THEME['accent']};font-size:11px;line-height:1.4;font-weight:800;letter-spacing:.08em;text-transform:uppercase;">Your response is requested</div>
+  <h1 style="margin:7px 0 20px;font-size:25px;line-height:1.28;color:{_EMAIL_THEME['text']};font-weight:750;">{safe_title}</h1>
+  <div style="color:{_EMAIL_THEME['text']};font-size:15px;line-height:1.7;">{rendered_body}</div>
+</td></tr>
+<tr><td style="padding:0 32px 22px;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8f9fa;border:1px solid #e2e5e9;border-radius:5px;">
+    <tr>
+      <td width="50%" valign="top" style="padding:12px 14px;border-right:1px solid #e2e5e9;"><div style="color:{_EMAIL_THEME['muted']};font-size:9px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;">Deadline</div><div style="margin-top:4px;color:{_EMAIL_THEME['text']};font-size:13px;font-weight:700;">{escape(deadline_label)}</div></td>
+      <td width="50%" valign="top" style="padding:12px 14px;"><div style="color:{_EMAIL_THEME['muted']};font-size:9px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;">Poll length</div><div style="margin-top:4px;color:{_EMAIL_THEME['text']};font-size:13px;font-weight:700;">{escape(question_label)}</div></td>
+    </tr>
+  </table>
+</td></tr>
+<tr><td style="padding:0 32px 32px;">
+  <table role="presentation" cellspacing="0" cellpadding="0"><tr><td bgcolor="{_EMAIL_THEME['accent']}" style="border-radius:5px;">
+    <a href="{safe_cta_url}" style="display:inline-block;padding:12px 20px;color:#ffffff;text-decoration:none;font-size:14px;font-weight:800;">{safe_cta_label}</a>
+  </td></tr></table>
+  <p style="margin:14px 0 0;color:{_EMAIL_THEME['muted']};font-size:12px;line-height:1.55;">{escape(change_note)}</p>
+  <p style="margin:5px 0 0;color:{_EMAIL_THEME['muted']};font-size:12px;line-height:1.55;">This secure link is unique to your invitation. Please do not forward it.</p>
+</td></tr>
+<tr><td style="padding:14px 24px;background:#f8f9fa;border-top:1px solid #e2e5e9;color:{_EMAIL_THEME['muted']};font-size:10px;line-height:1.55;">
+Mediterranean Institute of Fundamental Physics &middot; This message contains no open or click tracking.
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>"""
+
+
 def _state_paths(app) -> tuple[Path, Path]:
     directory = Path(app.config["RUNTIME_CONFIG_DIR"])
     return directory / "notification_state.json", directory / ".notification_state.lock"

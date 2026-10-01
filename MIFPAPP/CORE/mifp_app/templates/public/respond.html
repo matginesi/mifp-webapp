@@ -5,18 +5,38 @@
 {% block extra_css %}<link href="{{ url_for('static', filename='css/polls-public.css', v=static_version) }}" rel="stylesheet">{% endblock %}
 {% block content %}
 <section class="poll-response-shell" data-respond-app data-csrf-token="{{ csrf_token }}">
+  <header class="poll-response-masthead" aria-label="Mediterranean Institute of Fundamental Physics">
+    <div class="poll-response-identity">
+      <img src="{{ url_for('static', filename='img/logo-mifp.png', v=static_version) }}" alt="" width="38" height="38">
+      <div><strong>MIFP</strong><span>Mediterranean Institute of Fundamental Physics</span></div>
+    </div>
+    <span class="poll-response-secure">Secure response</span>
+  </header>
+
   <div class="poll-response-state" data-respond-state>
-    <img src="{{ url_for('static', filename='img/logo-mifp.png', v=static_version) }}" alt="" width="42" height="42">
+    <div class="poll-state-mark" aria-hidden="true"></div>
     <h1>Opening your poll</h1>
-    <p>Checking the secure invitation link.</p>
+    <p>Checking your secure invitation.</p>
   </div>
+
   <form class="poll-response-form" data-respond-form hidden>
     <div class="poll-public-card" data-respond-poll></div>
-    <div class="poll-response-actions"><button class="poll-submit-button" type="submit" data-respond-submit>Submit response</button><small>Your answers are sent securely to MIFP. This poll does not collect your IP address or browser details.</small></div>
+    <div class="poll-response-actions">
+      <button class="poll-submit-button" type="submit" data-respond-submit>Submit response</button>
+      <small>Your answers are sent securely to MIFP. No IP address or browser details are stored with your response.</small>
+    </div>
   </form>
+
   <div class="poll-response-state poll-response-success" data-respond-success hidden>
-    <span aria-hidden="true">✓</span><h1>Response received</h1><p>You may close this page. If changes are allowed, the same invitation link can reopen your response before the deadline.</p>
+    <span class="poll-success-mark" aria-hidden="true">✓</span>
+    <h1>Response received</h1>
+    <p>You can close this page. If changes are allowed, use the same invitation link again before the deadline.</p>
   </div>
+
+  <footer class="poll-response-footnote">
+    <span>Secure MIFP poll</span>
+    <a href="{{ url_for('public.privacy') }}">Privacy notice</a>
+  </footer>
 </section>
 {% endblock %}
 {% block extra_js %}

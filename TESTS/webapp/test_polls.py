@@ -659,3 +659,29 @@ def test_client_recipient_parser_never_uses_web_storage_or_upload_field() -> Non
     ).group(0)
     assert "name=" not in recipient_input
     assert "Promise.all" not in email_batch
+
+def test_poll_invitation_email_uses_external_mifp_layout_without_tracking() -> None:
+    from mifp_app.services.notifications import render_poll_invitation_html
+
+    rendered = render_poll_invitation_html(
+        title="Conference availability",
+        body="Hello, please choose your preferred date.",
+        body_html=None,
+        cta_url="https://mifp.eu/respond#p=abc&t=secret",
+        cta_label="Open poll",
+        deadline="2027-03-20",
+        question_count=3,
+        allow_changes=True,
+    )
+
+    assert "Mediterranean Institute of Fundamental Physics" in rendered
+    assert "Poll invitation" in rendered
+    assert "Conference availability" in rendered
+    assert "20 March 2027" in rendered
+    assert "3 questions" in rendered
+    assert "Open poll" in rendered
+    assert "no open or click tracking" in rendered
+    assert "Sent from the MIFP administrative dashboard" not in rendered
+    assert "<script" not in rendered.lower()
+    assert "<img" not in rendered.lower()
+

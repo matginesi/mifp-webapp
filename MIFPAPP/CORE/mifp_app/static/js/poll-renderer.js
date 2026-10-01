@@ -12,10 +12,25 @@
     options = options || {};
     container.replaceChildren();
     var header = element('header', 'poll-public-head');
-    header.append(element('span', 'poll-public-brand', options.preview ? 'MIFP Poll · Preview' : 'MIFP Poll'));
+    header.append(element('span', 'poll-public-brand', options.preview ? 'Poll preview' : 'Poll invitation'));
     header.append(element('h1', '', poll.title || 'Poll'));
     if (poll.description) header.append(element('p', '', poll.description));
-    if (poll.deadline) header.append(element('small', '', 'Deadline: ' + String(poll.deadline).slice(0, 10)));
+    var meta = element('div', 'poll-public-meta');
+    var questionCount = (poll.questions || []).length;
+    meta.append(element('span', '', questionCount === 1 ? '1 question' : questionCount + ' questions'));
+    if (poll.deadline) {
+      var parts = String(poll.deadline).slice(0, 10).split('-');
+      var deadlineLabel = String(poll.deadline).slice(0, 10);
+      if (parts.length === 3) {
+        var stamp = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])));
+        if (!Number.isNaN(stamp.getTime())) {
+          deadlineLabel = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(stamp);
+        }
+      }
+      meta.append(element('span', '', 'Deadline ' + deadlineLabel));
+    }
+    if (poll.allow_changes) meta.append(element('span', '', 'Responses can be updated'));
+    header.append(meta);
     container.append(header);
     var answers = poll.current_answers || {};
     (poll.questions || []).forEach(function (question, index) {
@@ -23,7 +38,7 @@
       fieldset.dataset.questionId = question.id;
       fieldset.dataset.questionType = question.type;
       var legend = element('legend');
-      legend.append(element('span', 'poll-question-number', String(index + 1)));
+      legend.append(element('span', 'poll-question-number', String(index + 1).padStart(2, '0')));
       legend.append(document.createTextNode(question.question));
       if (question.required) legend.append(element('small', 'poll-required', 'Required'));
       fieldset.append(legend);

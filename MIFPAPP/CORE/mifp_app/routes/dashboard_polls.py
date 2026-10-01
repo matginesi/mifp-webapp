@@ -9,7 +9,7 @@ from ..services.mailer import send_mail
 from ..services.notifications import (
     manual_email_content,
     normalize_email_address,
-    render_manual_email_html,
+    render_poll_invitation_html,
     smtp_status,
 )
 from ..services.polls import (
@@ -70,13 +70,15 @@ def _invitation_content(poll: dict, *, first_name: str, last_name: str, link: st
     message = _personalize(str(poll.get("invitation_message") or ""), first_name, last_name)
     body, safe_body = manual_email_content(text=message)
     plain = f"{body.rstrip()}\n\n{poll.get('invitation_cta') or 'Open poll'}: {link}\n"
-    html = render_manual_email_html(
+    html = render_poll_invitation_html(
         title=poll["title"],
-        subject=subject,
         body=plain,
         body_html=safe_body,
         cta_url=link,
         cta_label=str(poll.get("invitation_cta") or "Open poll"),
+        deadline=str(poll.get("deadline") or ""),
+        question_count=len(poll.get("questions") or []),
+        allow_changes=bool(poll.get("allow_changes", True)),
     )
     return subject, plain, html
 
