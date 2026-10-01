@@ -33,6 +33,7 @@ def test_dashboard_uses_bounded_page_specific_modules_without_build_step():
         "polls.js",
         "recipient-files.js",
         "safety-operations.js",
+        "send-confirmation.js",
         "site-copy.js",
         "stats.js",
     }

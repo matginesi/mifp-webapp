@@ -1792,6 +1792,10 @@ def test_update_cleans_sqlite_preflight_sidecars(tmp_path: Path) -> None:
 
 
 def _refresh_env(tmp_path: Path, bundle: Path) -> tuple[dict[str, str], Path, Path]:
+    # Model a release checkout independently of developer filesystem modes.
+    for path in bundle.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            path.chmod(path.stat().st_mode & ~0o022)
     home = tmp_path / "installed" / "opt-mifp"
     config = tmp_path / "installed" / "etc-mifp"
     systemd = tmp_path / "installed" / "systemd"
@@ -1930,13 +1934,15 @@ def test_host_tool_refresh_rejects_environment_backed_compose_secrets(tmp_path: 
     assert not (home / "deploy.sh").exists()
 
 
-@pytest.mark.parametrize("failure", ["incomplete", "invalid-shell"])
+@pytest.mark.parametrize("failure", ["incomplete", "invalid-shell", "group-writable"])
 def test_host_tool_refresh_rejects_invalid_bundle(tmp_path: Path, failure: str) -> None:
     bundle = tmp_path / "deploy-bundle"
     shutil.copytree(ROOT / "deploy", bundle)
     env, home, _config = _refresh_env(tmp_path, bundle)
     if failure == "incomplete":
         (bundle / "backup.sh").unlink()
+    elif failure == "group-writable":
+        (bundle / "bootstrap-vps.sh").chmod(0o775)
     else:
         with (bundle / "deploy.sh").open("a", encoding="utf-8") as handle:
             handle.write("\nif then invalid shell\n")
@@ -1952,3 +1958,5 @@ def test_host_tool_refresh_rejects_invalid_bundle(tmp_path: Path, failure: str) 
     assert result.returncode != 0
     assert not (home / "deploy.sh").exists()
     assert (home / ".env").read_text(encoding="utf-8") == "runtime-preserved\n"
+    if failure == "group-writable":
+        assert "File bundle modificabile da gruppo/altri" in result.stderr

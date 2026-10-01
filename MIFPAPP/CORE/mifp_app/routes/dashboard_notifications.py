@@ -32,7 +32,7 @@ from ..services.notifications import (
     validate_notification_settings,
 )
 from ..utils.logger import audit_log, get_logger, log_event
-from ..utils.security import get_client_ip, ip_rate_allowed
+from ..utils.security import admin_password_matches, get_client_ip, ip_rate_allowed
 from .auth import login_required
 from .dashboard import bp
 
@@ -251,6 +251,20 @@ def notifications():
     )
 
 
+@bp.get("/notifications/batch")
+@login_required
+def notifications_batch():
+    return render_template(
+        "dashboard/batch_email.html",
+        transport=smtp_status(current_app),
+        max_mail_subject=MAX_MANUAL_MAIL_SUBJECT,
+        max_mail_title=MAX_MANUAL_MAIL_TITLE,
+        max_mail_body=MAX_MANUAL_MAIL_BODY,
+        max_mail_recipients=MAX_MANUAL_MAIL_RECIPIENTS,
+        max_mail_attachments=MAX_MANUAL_MAIL_ATTACHMENTS,
+    )
+
+
 @bp.post("/notifications")
 @login_required
 def notifications_save():
@@ -293,6 +307,10 @@ def notifications_save():
 @bp.post("/notifications/test")
 @login_required
 def notifications_test():
+    if not admin_password_matches(request.form.get("password", "")):
+        flash("Password verification failed. No email was sent.", "error")
+        return redirect(url_for("dashboard.notifications"))
+
     test_type = str(request.form.get("test_type") or "info").strip().lower()
     sample = _NOTIFICATION_TEST_TYPES.get(test_type)
     if sample is None:
@@ -333,6 +351,10 @@ def notifications_test():
 def notifications_send():
     """Send one bounded administrator-authored email through the existing relay."""
     request.max_content_length = MAX_MANUAL_MAIL_REQUEST_BYTES
+    if not admin_password_matches(request.form.get("password", "")):
+        flash("Password verification failed. No email was sent.", "error")
+        return redirect(url_for("dashboard.notifications"))
+
     transport = smtp_status(current_app)
     if not transport["ready"]:
         log_event(
@@ -526,19 +548,49 @@ def notifications_send():
     return redirect(url_for("dashboard.notifications") + "#compose-email")
 
 
-def _personalize_batch_value(value: str, first_name: str, last_name: str) -> str:
-    rendered = (
-        str(value or "").replace("{{first_name}}", str(first_name or "")).replace("{{last_name}}", str(last_name or ""))
-    )
+_BATCH_PLACEHOLDER = re.compile(r"{{([^{}]*)}}")
+
+
+def _batch_variables(payload: dict) -> dict[str, str]:
+    submitted = payload.get("variables", {})
+    if not isinstance(submitted, dict) or len(submitted) > 64:
+        raise ValueError("Use at most 64 text columns for personalization")
+    variables = {}
+    for key, value in submitted.items():
+        if not isinstance(key, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key):
+            raise ValueError("Placeholder names must use letters, numbers and underscores")
+        if not isinstance(value, (str, int, float)) or len(str(value)) > 1000:
+            raise ValueError("Each personalization value must be text up to 1000 characters")
+        variables[key] = str(value)
+    if sum(len(value) for value in variables.values()) > 16_000:
+        raise ValueError("Personalization values are too large")
+    for key in ("first_name", "last_name"):
+        value = payload.get(key, "")
+        if not isinstance(value, str) or len(value) > 120:
+            raise ValueError("Names must be text up to 120 characters")
+        variables[key] = value
+    return variables
+
+
+def _personalize_batch_value(value: str, variables: dict[str, str], *, html: bool = False) -> str:
+    if not isinstance(value, str):
+        raise ValueError("Subject, title and message must be text")
+
+    def replace(match: re.Match) -> str:
+        key = match.group(1).strip()
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key):
+            raise ValueError("Use lowercase column names and underscores in placeholders")
+        if key not in variables:
+            raise ValueError(f"Unknown placeholder: {key}")
+        return escape(variables[key]) if html else variables[key]
+
+    # Single-pass substitution: values are data, never another template.
+    rendered = _BATCH_PLACEHOLDER.sub(replace, value)
+    if html:
+        return rendered
     rendered = "\n".join(line.rstrip() for line in rendered.splitlines()).strip()
     rendered = re.sub(r"[ \t]+([,.;:!?])", r"\1", rendered)
     return re.sub(r"(?im)^\s*(hello|dear|hi)\s*[,!]\s*$", "Hello,", rendered)
-
-
-def _personalize_batch_html(value: str, first_name: str, last_name: str) -> str:
-    return str(value or "").replace("{{first_name}}", escape(str(first_name or ""))).replace(
-        "{{last_name}}", escape(str(last_name or ""))
-    )
 
 
 @bp.post("/notifications/send-one")
@@ -549,29 +601,28 @@ def notifications_send_one():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"error": "Expected a JSON object"}), 400
+    if not admin_password_matches(payload.get("password", "")):
+        return jsonify({"error": "Password verification failed. No email was sent."}), 403
     recipient = normalize_email_addresses(payload.get("email"), limit=1)
-    subject = _clean_single_line(
-        _personalize_batch_value(
-            payload.get("subject", ""), payload.get("first_name", ""), payload.get("last_name", "")
-        ),
-        max_length=MAX_MANUAL_MAIL_SUBJECT,
-    )
-    title = _clean_single_line(
-        _personalize_batch_value(
-            payload.get("mail_title", ""), payload.get("first_name", ""), payload.get("last_name", "")
-        ),
-        max_length=MAX_MANUAL_MAIL_TITLE,
-    )
-    message = _personalize_batch_value(
-        payload.get("message", ""), payload.get("first_name", ""), payload.get("last_name", "")
-    )
-    message_html = _personalize_batch_html(
-        payload.get("message_html", ""), payload.get("first_name", ""), payload.get("last_name", "")
-    )
+    plain_text_only = payload.get("plain_text_only") is True
+    try:
+        variables = _batch_variables(payload)
+        subject = _clean_single_line(
+            _personalize_batch_value(payload.get("subject", ""), variables), max_length=MAX_MANUAL_MAIL_SUBJECT
+        )
+        title = "" if plain_text_only else _clean_single_line(
+            _personalize_batch_value(payload.get("mail_title", ""), variables), max_length=MAX_MANUAL_MAIL_TITLE
+        )
+        message = _personalize_batch_value(payload.get("message", ""), variables)
+        message_html = "" if plain_text_only else _personalize_batch_value(
+            payload.get("message_html", ""), variables, html=True
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if (
         not recipient
         or not subject
-        or not title
+        or (not plain_text_only and not title)
         or not message
         or len(message) > MAX_MANUAL_MAIL_BODY
         or len(message_html) > MAX_MANUAL_MAIL_HTML
@@ -588,8 +639,13 @@ def notifications_send_one():
         db_path=str(current_app.config["DATABASE_PATH"]),
     ):
         return jsonify({"error": "Batch email rate limit reached"}), 429
-    body, safe_html = manual_email_content(text=message, rich_html=message_html or None)
-    html_body = render_manual_email_html(title=title, subject=subject, body=body, body_html=safe_html)
+    if plain_text_only:
+        body, html_body = message, None
+    else:
+        body, safe_html = manual_email_content(text=message, rich_html=message_html or None)
+        if not body or len(body) > MAX_MANUAL_MAIL_BODY:
+            return jsonify({"error": "Check the message"}), 400
+        html_body = render_manual_email_html(title=title, subject=subject, body=body, body_html=safe_html)
     try:
         delivered = send_mail(
             current_app,

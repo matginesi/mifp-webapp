@@ -3,6 +3,7 @@
 {% block page_title %}Polls{% endblock %}
 {% block vendor_scripts %}{% if poll %}<script src="{{ url_for('static', filename='js/vendor/chart.umd.js', v=static_version) }}" defer></script>{% endif %}{% endblock %}
 {% block extra_js %}
+<script src="{{ url_for('static', filename='js/dashboard/send-confirmation.js', v=static_version) }}" defer></script>
 <script src="{{ url_for('static', filename='js/poll-renderer.js', v=static_version) }}" defer></script>
 <script src="{{ url_for('static', filename='js/dashboard/recipient-files.js', v=static_version) }}" defer></script>
 <script src="{{ url_for('static', filename='js/dashboard/polls.js', v=static_version) }}" defer></script>
@@ -10,10 +11,7 @@
 {% block content %}
 {{ page_header('Notifications', 'Polls', 'Create and manage polls, invitations and responses.') }}
 
-<nav class="notification-area-tabs" aria-label="Notification areas">
-  <a href="{{ url_for('dashboard.notifications') }}"><i class="bi bi-envelope"></i> Email</a>
-  <a class="is-active" href="{{ url_for('dashboard.polls') }}" aria-current="page"><i class="bi bi-ui-checks-grid"></i> Polls</a>
-</nav>
+{% include 'dashboard/_notification_tabs.html' %}
 
 <div class="poll-workspace{{ ' has-editor' if poll else '' }}{{ ' is-empty' if not polls else '' }}">
   <aside class="control-panel poll-selector" aria-label="Poll list">
@@ -100,19 +98,14 @@
       </section>
       </div>
 
-      <aside class="poll-editor-delivery" aria-label="Invitation and recipients">
-      <section class="control-panel poll-invitation-panel poll-section-card">
-        <div class="panel-head"><div><h3>Invitation email</h3><p>Each recipient receives an individual MIFP email and a unique secure link.</p></div></div>
-        <div class="poll-form-grid">
-          <label class="field poll-span-2"><span>Subject</span><input class="form-control form-control-sm" data-poll-field="invitation_subject" maxlength="160" value="{{ poll.invitation_subject }}"></label>
-          <label class="field poll-span-2"><span>Message</span><textarea class="form-control" data-poll-field="invitation_message" maxlength="10000" rows="7">{{ poll.invitation_message }}</textarea><small>Supported placeholders: <code>{{ '{{first_name}}' }}</code> and <code>{{ '{{last_name}}' }}</code>.</small></label>
-          <label class="field"><span>CTA label</span><input class="form-control form-control-sm" data-poll-field="invitation_cta" maxlength="60" value="{{ poll.invitation_cta }}"></label>
-        </div>
-      </section>
-
+      <aside class="poll-editor-delivery" aria-label="Poll recipients">
       <section class="control-panel poll-recipient-panel poll-section-card" data-recipient-panel>
         <div class="panel-head"><div><h3>Recipients</h3><p>The CSV/XLSX stays in this page's memory and is lost on refresh.</p></div><span class="status-chip status-info">browser only</span></div>
-        <input class="form-control form-control-sm" type="file" accept=".csv,.xlsx" data-recipient-file>
+        <div class="recipient-file-tools">
+          <input class="form-control form-control-sm" type="file" accept=".csv,.xlsx" data-recipient-file>
+          <button class="btn btn-outline btn-sm" type="button" data-recipient-template-download data-recipient-template-name="mifp-poll-recipients-template.csv"><i class="bi bi-download" aria-hidden="true"></i> Download template</button>
+        </div>
+        <small class="recipient-template-help">Template columns: <code>email</code>, <code>first_name</code>, <code>last_name</code>. The file remains local to this browser.</small>
         <div class="recipient-mapping" data-recipient-mapping hidden>
           <label class="field"><span>Email column</span><select class="form-select form-select-sm" data-map="email"></select></label>
           <label class="field"><span>First name column</span><select class="form-select form-select-sm" data-map="firstName"></select></label>
@@ -199,4 +192,5 @@
   </section>
   {% endif %}
 </div>
+{% include 'dashboard/_send_confirmation.html' %}
 {% endblock %}

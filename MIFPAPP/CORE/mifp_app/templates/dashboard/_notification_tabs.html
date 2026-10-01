@@ -1,0 +1,6 @@
+{% set area = 'batch' if request.endpoint == 'dashboard.notifications_batch' else 'email' if request.endpoint == 'dashboard.notifications' else 'polls' %}
+<nav class="notification-area-tabs" aria-label="Notification areas">
+  {% for key, endpoint, icon, label in [('email', 'dashboard.notifications', 'bi-envelope', 'Email'), ('polls', 'dashboard.polls', 'bi-ui-checks-grid', 'Polls'), ('batch', 'dashboard.notifications_batch', 'bi-envelope-paper', 'Batch email')] %}
+  <a class="{{ 'is-active' if area == key }}" {% if area == key %}aria-current="page"{% endif %} href="{{ url_for(endpoint) }}"><i class="bi {{ icon }}" aria-hidden="true"></i> {{ label }}</a>
+  {% endfor %}
+</nav>

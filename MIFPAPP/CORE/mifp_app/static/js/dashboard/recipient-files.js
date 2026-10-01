@@ -181,7 +181,32 @@
     };
   }
 
-  function recipients(tableData, selected) {
+  function downloadTemplate(filename, columns) {
+    var csv = '\uFEFF' + (columns || 'email,first_name,last_name') + '\r\n';
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = filename || 'mifp-recipient-template.csv';
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+  }
+
+  function variableNames(tableData) {
+    if (tableData.headers.length > 64) throw new Error('Use at most 64 columns for personalized email.');
+    var names = tableData.headers.map(function (header) {
+      return header.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    });
+    if (names.some(function (name) { return !/^[a-z][a-z0-9_]{0,63}$/.test(name); })) throw new Error('Column names must start with a letter and use letters, numbers or underscores.');
+    if (new Set(names).size !== names.length) throw new Error('Use distinct column names for personalized email.');
+    return names;
+  }
+
+  function recipients(tableData, selected, personalized) {
+    var names = personalized ? variableNames(tableData) : [];
     var seen = new Set();
     var valid = [];
     var invalid = 0;
@@ -198,14 +223,38 @@
         return;
       }
       seen.add(key);
-      valid.push({
+      var recipient = {
         email: email,
         first_name: selected.firstName === '' ? '' : String(row[Number(selected.firstName)] || '').trim().slice(0, 120),
         last_name: selected.lastName === '' ? '' : String(row[Number(selected.lastName)] || '').trim().slice(0, 120),
-      });
+      };
+      if (personalized) {
+        recipient.variables = Object.create(null);
+        names.forEach(function (name, index) {
+          var value = String(row[index] || '').trim();
+          if (value.length > 1000) throw new Error('Personalization values must be at most 1000 characters.');
+          recipient.variables[name] = value;
+        });
+        if (Object.values(recipient.variables).reduce(function (total, value) { return total + value.length; }, 0) > 16000) throw new Error('Personalization values in a row are too large.');
+        recipient.variables.first_name = recipient.first_name;
+        recipient.variables.last_name = recipient.last_name;
+      }
+      valid.push(recipient);
     });
     return { total: tableData.rows.length, valid: valid, invalid: invalid, duplicate: duplicate };
   }
 
-  window.MIFPRecipientFiles = Object.freeze({ parse: parse, mapping: mapping, recipients: recipients });
+  document.querySelectorAll('[data-recipient-template-download]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      downloadTemplate(button.dataset.recipientTemplateName || 'mifp-recipient-template.csv', button.dataset.recipientTemplateColumns);
+    });
+  });
+
+  window.MIFPRecipientFiles = Object.freeze({
+    parse: parse,
+    mapping: mapping,
+    recipients: recipients,
+    variableNames: variableNames,
+    downloadTemplate: downloadTemplate,
+  });
 })();

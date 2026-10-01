@@ -6,10 +6,7 @@
   <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.logs', event='notification.') }}"><i class="bi bi-list-check"></i> Notification logs</a>
 {% endcall %}
 
-<nav class="notification-area-tabs" aria-label="Notification areas">
-  <a class="is-active" href="{{ url_for('dashboard.notifications') }}" aria-current="page"><i class="bi bi-envelope"></i> Email</a>
-  <a href="{{ url_for('dashboard.polls') }}"><i class="bi bi-ui-checks-grid"></i> Polls</a>
-</nav>
+{% include 'dashboard/_notification_tabs.html' %}
 
 <section class="control-snapshot notification-snapshot" aria-label="Notification status summary">
   <article><span>Delivery</span><b class="{{ 'text-green' if transport.ready else 'text-amber' }}">{{ 'Ready' if transport.ready else 'Not configured' }}</b><small>{{ transport.provider|upper }}</small></article>
@@ -44,7 +41,7 @@
       <div><span class="control-kicker">Template laboratory</span><h2>Send a test email</h2><p>Preview the real MIFP VPS email styles without triggering an incident.</p></div>
       <span class="status-chip status-info">safe preview</span>
     </div>
-    <form method="post" action="{{ url_for('dashboard.notifications_test') }}" class="notification-test-form">
+    <form method="post" action="{{ url_for('dashboard.notifications_test') }}" class="notification-test-form" data-no-spinner="1">
       <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
       <label class="field notification-test-select">
         <span>Email type</span>
@@ -67,117 +64,8 @@
   </section>
 </div>
 
-<section class="control-panel notification-compose-panel" id="compose-email">
-  <div class="panel-head">
-    <div><span class="control-kicker">Administrator mail</span><h2>Compose email</h2><p>Send one controlled message through the same Aruba SMTP transport.</p></div>
-    <span class="status-chip status-{{ 'success' if transport.ready else 'warning' }}">{{ 'available' if transport.ready else 'smtp required' }}</span>
-  </div>
-  <form method="post" action="{{ url_for('dashboard.notifications_send') }}" class="notification-compose-form" data-confirm="Send this email now?" autocomplete="off" enctype="multipart/form-data" data-direct-email-form data-batch-url="{{ url_for('dashboard.notifications_send_one') }}" data-batch-audit-url="{{ url_for('dashboard.notifications_batch_audit') }}">
-    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-    <div class="notification-compose-grid">
-      <div class="notification-recipient-mode poll-span-2">
-        <label><input type="radio" name="recipient_mode" value="direct" checked data-recipient-mode><span><b>Direct recipients</b><small>Use To, CC and BCC for one message.</small></span></label>
-        <label><input type="radio" name="recipient_mode" value="file" data-recipient-mode><span><b>Recipient file</b><small>Individual sequential messages from browser memory.</small></span></label>
-      </div>
-      <label class="field notification-recipient-field" data-direct-recipient-fields>
-        <span>To</span>
-        <textarea class="form-control form-control-sm" name="recipients" rows="2" placeholder="name@example.org, colleague@example.org" required></textarea>
-        <small>Separate addresses with commas, semicolons or new lines. Up to {{ max_mail_recipients }} recipients across all fields.</small>
-      </label>
-      <details class="notification-copy-fields">
-        <summary><i class="bi bi-people" aria-hidden="true"></i> Add CC or BCC</summary>
-        <div>
-          <label class="field"><span>CC</span><textarea class="form-control form-control-sm" name="cc" rows="2" placeholder="Visible copy recipients"></textarea><small>Visible to everyone receiving the message.</small></label>
-          <label class="field"><span>BCC</span><textarea class="form-control form-control-sm" name="bcc" rows="2" placeholder="Hidden copy recipients"></textarea><small>Sent as envelope recipients and never added to the email headers.</small></label>
-        </div>
-      </details>
-      <section class="notification-batch-panel poll-span-2" data-email-batch-panel hidden>
-        <div class="control-note notification-compact-note"><i class="bi bi-incognito"></i><div><b>Ephemeral recipient list</b><span>The CSV/XLSX is parsed in your browser. It is never uploaded, stored in the session or written to the server.</span></div></div>
-        <input class="form-control form-control-sm" type="file" accept=".csv,.xlsx" data-email-recipient-file>
-        <div class="recipient-mapping" data-email-recipient-mapping hidden>
-          <label class="field"><span>Email column</span><select class="form-select form-select-sm" data-email-map="email"></select></label>
-          <label class="field"><span>First name column</span><select class="form-select form-select-sm" data-email-map="firstName"></select></label>
-          <label class="field"><span>Last name column</span><select class="form-select form-select-sm" data-email-map="lastName"></select></label>
-        </div>
-        <div class="recipient-summary" data-email-recipient-summary hidden><span><small>Total</small><b data-email-count="total">0</b></span><span><small>Valid</small><b data-email-count="valid">0</b></span><span><small>Invalid</small><b data-email-count="invalid">0</b></span><span><small>Duplicate</small><b data-email-count="duplicate">0</b></span></div>
-        <div class="poll-test-row"><label class="field"><span>Send test to</span><input class="form-control form-control-sm" type="email" data-email-test-address placeholder="you@example.org"></label><button class="btn btn-outline btn-sm" type="button" data-email-send-test><i class="bi bi-send"></i> Send test</button></div>
-        <div class="batch-progress" data-email-batch-progress hidden>
-          <div><b data-email-progress-title>Sending 0 / 0</b><small>Accepted means SMTP accepted the message; it does not guarantee final delivery, opening or reading.</small></div>
-          <progress max="1" value="0" data-email-progress-bar></progress>
-          <div class="recipient-summary"><span><small>Accepted</small><b data-email-progress="accepted">0</b></span><span><small>Failed</small><b data-email-progress="failed">0</b></span><span><small>Pending</small><b data-email-progress="pending">0</b></span></div>
-          <div class="inline-actions"><button class="btn btn-outline btn-sm" type="button" data-email-batch-pause>Pause</button><button class="btn btn-outline btn-sm" type="button" data-email-batch-resume disabled>Resume</button><button class="btn btn-outline btn-sm" type="button" data-email-batch-retry disabled>Retry failed</button></div>
-        </div>
-      </section>
-      <label class="field notification-subject-field">
-        <span>Subject</span>
-        <input class="form-control form-control-sm" type="text" name="subject" maxlength="{{ max_mail_subject }}" placeholder="Message subject" required>
-        <small>Used as the email subject line.</small>
-      </label>
-      <label class="field notification-html-title-field">
-        <span>Email title</span>
-        <input class="form-control form-control-sm" type="text" name="mail_title" maxlength="{{ max_mail_title }}" value="Mediterranean Institute of Fundamental Physics">
-        <small>Shown in the dark MIFP header when formatted HTML is enabled.</small>
-      </label>
-      <label class="notification-format-toggle">
-        <span><b>Plain text only</b><small>Disable the MIFP HTML layout and send only the text body.</small></span>
-        <input type="checkbox" name="plain_text_only" value="1" aria-label="Send plain text only" data-notification-plain-toggle>
-      </label>
-      <div class="field notification-message-field">
-        <span>Message</span>
-        <div class="notification-rich-editor" data-notification-mail-editor>
-          <div class="notification-rich-toolbar" data-notification-format-tools aria-label="Message formatting">
-            <div class="notification-tool-group" role="group" aria-label="History">
-              <button type="button" title="Undo" aria-label="Undo" data-rich-command="undo"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>
-              <button type="button" title="Redo" aria-label="Redo" data-rich-command="redo"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i></button>
-            </div>
-            <span class="notification-rich-divider" aria-hidden="true"></span>
-            <div class="notification-tool-group" role="group" aria-label="Text style">
-              <button type="button" title="Bold" aria-label="Bold" data-rich-command="bold"><b>B</b></button>
-              <button type="button" title="Italic" aria-label="Italic" data-rich-command="italic"><i>I</i></button>
-              <button type="button" title="Underline" aria-label="Underline" data-rich-command="underline"><u>U</u></button>
-              <button type="button" title="Paragraph" aria-label="Paragraph" data-rich-command="formatBlock" data-rich-value="p">Text</button>
-              <button type="button" title="Section heading" aria-label="Section heading" data-rich-command="formatBlock" data-rich-value="h2">Heading</button>
-            </div>
-            <span class="notification-rich-divider" aria-hidden="true"></span>
-            <div class="notification-tool-group" role="group" aria-label="Structure">
-              <button type="button" title="Bullet list" aria-label="Bullet list" data-rich-command="insertUnorderedList"><i class="bi bi-list-ul" aria-hidden="true"></i></button>
-              <button type="button" title="Numbered list" aria-label="Numbered list" data-rich-command="insertOrderedList"><i class="bi bi-list-ol" aria-hidden="true"></i></button>
-              <button type="button" title="Insert table" aria-label="Insert table" data-rich-action="table"><i class="bi bi-table" aria-hidden="true"></i> Table</button>
-            </div>
-            <span class="notification-rich-divider" aria-hidden="true"></span>
-            <div class="notification-tool-group" role="group" aria-label="Insert">
-              <button type="button" title="Insert link" aria-label="Insert link" data-rich-command="createLink"><i class="bi bi-link-45deg" aria-hidden="true"></i> Link</button>
-              <button type="button" title="Insert image from a secure public URL" aria-label="Insert image" data-rich-action="image"><i class="bi bi-image" aria-hidden="true"></i> Image</button>
-              <button type="button" title="Remove formatting" aria-label="Remove formatting" data-rich-command="removeFormat"><i class="bi bi-eraser" aria-hidden="true"></i></button>
-            </div>
-          </div>
-          <div class="notification-rich-surface" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Email message" data-notification-rich-input data-placeholder="Write your message…"></div>
-          <textarea class="form-control notification-plain-surface" rows="10" maxlength="{{ max_mail_body }}" placeholder="Write the plain-text message…" data-notification-plain-input hidden></textarea>
-          <input type="hidden" name="message" data-notification-message-text>
-          <input type="hidden" name="message_html" data-notification-message-html>
-          <div class="notification-editor-meta">
-            <small>Formatting, HTTPS images and simple tables are sanitized again by the server.</small>
-            <small><span data-notification-message-count>0</span> / {{ max_mail_body }}</small>
-          </div>
-        </div>
-      </div>
-      <div class="field notification-attachment-field">
-        <span>Attachments</span>
-        <label class="notification-attachment-picker">
-          <input type="file" name="attachments" multiple accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.docx,.xlsx" data-notification-attachments>
-          <i class="bi bi-paperclip" aria-hidden="true"></i>
-          <span><b>Add files</b><small>PDF, PNG, JPG, TXT, CSV, DOCX or XLSX · max 5 MB each, 10 MB total</small></span>
-        </label>
-        <ul class="notification-attachment-list" data-notification-attachment-list aria-live="polite"><li>No files selected.</li></ul>
-        <small>Files are validated in memory, attached to this message and never stored in the public site.</small>
-      </div>
-    </div>
-    <div class="notification-compose-footer">
-      <div class="control-note notification-compose-safety"><i class="bi bi-shield-check"></i><div><b>Bounded manual sender</b><span>Admin session and CSRF protection are required. Messages are rate-limited, audited with masked recipients, and use the fixed SMTP sender configured on the VPS.</span></div></div>
-      <button class="btn btn-primary btn-sm" type="submit" {{ 'disabled data-smtp-disabled' if not transport.ready }} data-email-submit><i class="bi bi-envelope-arrow-up"></i> <span>Send email</span></button>
-    </div>
-  </form>
-</section>
+{% set batch_mode = false %}
+{% include 'dashboard/_email_compose.html' %}
 
 <section class="control-panel notification-sent-panel">
   <div class="panel-head"><div><span class="control-kicker">Outgoing mail</span><h2>Sent emails</h2><p>Recent successful deliveries. Recipient addresses remain masked and BCC addresses stay hidden.</p></div><span>{{ sent_history|length }}</span></div>
@@ -262,10 +150,12 @@
 </section>
 
 <div class="control-note"><i class="bi bi-info-circle"></i><div><b>What is monitored</b><span>Application errors, new member requests and authentication activity are detected inside MIFP. Downtime, public reachability, readiness/storage degradation and failed backup service checks are monitored independently by the VPS timer, so a dead web container cannot silence the alert path.</span></div></div>
+{% include 'dashboard/_send_confirmation.html' %}
 {% endblock %}
 
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='js/dashboard/send-confirmation.js', v=static_version) }}" defer></script>
 {{ super() }}
 <script src="{{ url_for('static', filename='js/dashboard/notifications.js', v=static_version) }}" defer></script>
 <script src="{{ url_for('static', filename='js/dashboard/recipient-files.js', v=static_version) }}" defer></script>

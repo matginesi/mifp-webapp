@@ -34,7 +34,7 @@ from ..services.polls import (
     set_invitation_status,
 )
 from ..utils.logger import audit_log, get_logger, log_event
-from ..utils.security import get_client_ip, ip_rate_allowed
+from ..utils.security import admin_password_matches, get_client_ip, ip_rate_allowed
 from .auth import login_required
 from .dashboard import bp
 
@@ -169,6 +169,8 @@ def poll_invite(poll_id: str):
     started = time.monotonic()
     try:
         payload = _json_payload()
+        if not admin_password_matches(payload.get("password", "")):
+            return jsonify({"error": "Password verification failed. No invitation was sent."}), 403
         recipient = normalize_email_address(payload.get("email"))
         if not recipient:
             raise PollError("Enter a valid recipient email address")

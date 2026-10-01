@@ -373,7 +373,7 @@ def test_notification_test_route_supports_predefined_message_types(notification_
     client = _logged_in_client(notification_app)
     response = client.post(
         "/dashboard/notifications/test",
-        data={"test_type": "security"},
+        data={"password": "secret123", "test_type": "security"},
         follow_redirects=False,
     )
 
@@ -401,6 +401,7 @@ def test_manual_dashboard_email_uses_fixed_transport_and_escaped_mifp_layout(not
     response = client.post(
         "/dashboard/notifications/send",
         data={
+            "password": "secret123",
             "recipient": "researcher@example.org",
             "subject": "Project update\nignored-header",
             "mail_title": "MIFP <Research Update>",
@@ -434,6 +435,7 @@ def test_manual_dashboard_email_sanitizes_visual_editor_html_and_builds_plain_fa
     response = client.post(
         "/dashboard/notifications/send",
         data={
+            "password": "secret123",
             "recipient": "researcher@example.org",
             "subject": "Formatted update",
             "mail_title": "Research update",
@@ -484,9 +486,9 @@ def test_manual_email_layout_is_institutional_not_incident_style() -> None:
     assert "Sent from the MIFP administrative dashboard" in rendered
 
 
-def test_notification_composer_uses_visual_editor_not_markdown_source() -> None:
+def test_notification_composer_uses_visual_editor_not_markdown_source(notification_app) -> None:
     root = Path(__file__).resolve().parents[2]
-    template = (root / "MIFPAPP" / "CORE" / "mifp_app" / "templates" / "dashboard" / "notifications.html").read_text(encoding="utf-8")
+    template = _logged_in_client(notification_app).get("/dashboard/notifications").get_data(as_text=True)
     script = (root / "MIFPAPP" / "CORE" / "mifp_app" / "static" / "js" / "dashboard" / "notifications.js").read_text(encoding="utf-8")
 
     assert 'contenteditable="true"' in template
@@ -543,6 +545,7 @@ def test_manual_dashboard_email_can_send_plain_text_only(notification_app, monke
     response = client.post(
         "/dashboard/notifications/send",
         data={
+            "password": "secret123",
             "recipient": "researcher@example.org",
             "subject": "Plain message",
             "mail_title": "",
@@ -572,6 +575,7 @@ def test_manual_dashboard_email_rejects_invalid_recipient_in_list(notification_a
     response = client.post(
         "/dashboard/notifications/send",
         data={
+            "password": "secret123",
             "recipient": "one@example.org,not-an-address",
             "subject": "Should fail",
             "mail_title": "MIFP",
@@ -598,6 +602,7 @@ def test_manual_dashboard_email_supports_to_cc_bcc_and_safe_attachments(notifica
     response = client.post(
         "/dashboard/notifications/send",
         data={
+            "password": "secret123",
             "recipients": "one@example.org; two@example.org",
             "cc": "copy@example.org",
             "bcc": "hidden@example.org",
@@ -627,6 +632,7 @@ def test_successful_manual_email_appears_in_sent_history_immediately(notificatio
     response = client.post(
         "/dashboard/notifications/send",
         data={
+            "password": "secret123",
             "recipients": "researcher@example.org",
             "subject": "Immediate history entry",
             "mail_title": "Research update",
@@ -661,6 +667,7 @@ def test_manual_dashboard_email_rejects_spoofed_attachment_content(notification_
     response = client.post(
         "/dashboard/notifications/send",
         data={
+            "password": "secret123",
             "recipients": "one@example.org",
             "subject": "Unsafe file",
             "mail_title": "Project update",
@@ -732,3 +739,140 @@ def test_manual_mailer_omits_auto_submitted_for_human_authored_mail(monkeypatch)
         automated=False,
     ) is True
     assert sent[0].get("Auto-Submitted") is None
+
+
+@pytest.mark.parametrize("endpoint", ["send", "send-one", "test"])
+@pytest.mark.parametrize("password", [None, "wrong-confirmation-secret"])
+def test_real_email_requires_password_without_delivery_or_secret_retention(
+    notification_app, monkeypatch, endpoint, password
+) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    notification_app.config.update(MAIL_PROVIDER="console", ENV="test")
+    delivered = []
+    monkeypatch.setattr(dashboard_notifications, "send_mail", lambda *_a, **kw: delivered.append(kw) or True)
+    monkeypatch.setattr(dashboard_notifications, "notify", lambda *_a, **kw: delivered.append(kw))
+    payload = {
+        "recipient": "recipient@example.org",
+        "email": "recipient@example.org",
+        "subject": "Subject",
+        "mail_title": "Title",
+        "message": "Message",
+        "test_type": "info",
+    }
+    if password is not None:
+        payload["password"] = password
+    client = _logged_in_client(notification_app)
+    url = f"/dashboard/notifications/{endpoint}"
+    response = client.post(url, **({"json": payload} if endpoint == "send-one" else {"data": payload}))
+    assert response.status_code == (403 if endpoint == "send-one" else 302)
+    assert delivered == []
+    if endpoint != "send-one":
+        response = client.get(response.location)
+    assert b"Password verification failed" in response.data
+    with client.session_transaction() as stored_session:
+        assert "wrong-confirmation-secret" not in str(dict(stored_session))
+    for key in ("LOG_DIR", "RUNTIME_CONFIG_DIR"):
+        for path in Path(notification_app.config[key]).rglob("*"):
+            if path.is_file():
+                assert b"wrong-confirmation-secret" not in path.read_bytes()
+    assert b"wrong-confirmation-secret" not in response.data
+
+
+@pytest.mark.parametrize("endpoint", ["send", "send-one", "test"])
+def test_email_password_confirmation_preserves_auth_and_csrf(notification_app, monkeypatch, endpoint) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    delivered = []
+    monkeypatch.setattr(dashboard_notifications, "send_mail", lambda *_a, **kw: delivered.append(kw) or True)
+    monkeypatch.setattr(dashboard_notifications, "notify", lambda *_a, **kw: delivered.append(kw))
+    url = f"/dashboard/notifications/{endpoint}"
+    anonymous = notification_app.test_client().post(url, data={"password": "secret123"})
+    assert anonymous.status_code in {302, 401}
+    notification_app.config["WTF_CSRF_ENABLED"] = True
+    response = _logged_in_client(notification_app).post(url, data={"password": "secret123"})
+    assert response.status_code == 400
+    assert delivered == []
+
+
+def test_batch_email_has_its_own_authenticated_tab(notification_app) -> None:
+    assert notification_app.test_client().get('/dashboard/notifications/batch').status_code == 302
+    client = _logged_in_client(notification_app)
+    for route in ('/dashboard/notifications', '/dashboard/notifications/polls', '/dashboard/notifications/batch'):
+        page = client.get(route)
+        assert page.status_code == 200
+        assert b'href="/dashboard/notifications/batch"' in page.data
+        assert b'Batch email' in page.data
+    page = client.get('/dashboard/notifications/batch')
+    assert b'data-email-preview-row' in page.data
+    assert b'affiliation,date,time' in page.data
+    assert b'Poll invitation' not in page.data
+
+
+def test_batch_email_personalizes_arbitrary_columns_and_keeps_data_ephemeral(notification_app, monkeypatch) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    notification_app.config.update(MAIL_PROVIDER='console', ENV='test')
+    delivered = []
+    monkeypatch.setattr(dashboard_notifications, 'send_mail', lambda *_a, **kw: delivered.append(kw) or True)
+    payload = {
+        'password': 'secret123', 'email': 'person@example.org', 'first_name': 'Ada', 'last_name': 'Lovelace',
+        'variables': {'affiliation': 'PRIVATE-INSTITUTE <img src=x onerror=evil()>', 'date': '12/10/2026', 'time': '09:30', 'meeting_room': 'Room A'},
+        'subject': 'Meeting {{date}} at {{time}}', 'mail_title': 'Invitation for {{first_name}}',
+        'message': 'Dear {{first_name}} {{last_name}},\n{{affiliation}}\n{{date}} at {{time}}, {{meeting_room}}.',
+        'message_html': '<p>Dear {{first_name}} {{last_name}},</p><p>{{affiliation}}</p><p>{{date}} at {{time}}, {{meeting_room}}.</p>',
+    }
+    response = _logged_in_client(notification_app).post('/dashboard/notifications/send-one', json=payload)
+    assert response.status_code == 200
+    assert len(delivered) == 1
+    mail = delivered[0]
+    assert mail['subject'] == 'Meeting 12/10/2026 at 09:30'
+    assert 'Ada Lovelace' in mail['body'] and 'Room A' in mail['body']
+    assert 'Invitation for Ada' in mail['html_body']
+    assert '&lt;img' in mail['html_body'] and '<img src=x' not in mail['html_body']
+    assert 'password' not in mail and 'variables' not in mail
+    assert mail['privacy_safe_log'] is True
+    assert 'PRIVATE-INSTITUTE' not in response.get_data(as_text=True)
+    for key in ('LOG_DIR', 'RUNTIME_CONFIG_DIR'):
+        for path in Path(notification_app.config[key]).rglob('*'):
+            if path.is_file():
+                assert b'PRIVATE-INSTITUTE' not in path.read_bytes()
+
+
+@pytest.mark.parametrize('variables, message', [
+    ({}, 'Hello {{missing_column}}'),
+    ({'affiliation': 'Institute'}, 'Hello {{affiliation.name}}'),
+    ({'affiliation': {'nested': 'value'}}, 'Hello'),
+    ({'affiliation': 'x' * 1001}, 'Hello'),
+    ({'bad-name': 'value'}, 'Hello'),
+    ({f'column{i}': 'value' for i in range(65)}, 'Hello'),
+])
+def test_batch_email_rejects_invalid_variables_before_smtp(notification_app, monkeypatch, variables, message) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    notification_app.config.update(MAIL_PROVIDER='console', ENV='test')
+    delivered = []
+    monkeypatch.setattr(dashboard_notifications, 'send_mail', lambda *_a, **kw: delivered.append(kw) or True)
+    response = _logged_in_client(notification_app).post('/dashboard/notifications/send-one', json={
+        'password': 'secret123', 'email': 'person@example.org', 'variables': variables,
+        'subject': 'Subject', 'mail_title': 'Title', 'message': message,
+    })
+    assert response.status_code == 400
+    assert delivered == []
+
+
+def test_batch_substitution_is_single_pass_and_plain_text_stays_plain(notification_app, monkeypatch) -> None:
+    from mifp_app.routes import dashboard_notifications
+
+    notification_app.config.update(MAIL_PROVIDER='console', ENV='test')
+    delivered = []
+    monkeypatch.setattr(dashboard_notifications, 'send_mail', lambda *_a, **kw: delivered.append(kw) or True)
+    response = _logged_in_client(notification_app).post('/dashboard/notifications/send-one', json={
+        'password': 'secret123', 'email': 'person@example.org', 'plain_text_only': True,
+        'variables': {'affiliation': '{{date}}', 'date': '2026-10-12'},
+        'subject': 'Subject', 'mail_title': '{{unused_title}}', 'message': 'Institute: {{affiliation}}',
+        'message_html': '<p>{{missing_column}}</p>',
+    })
+    assert response.status_code == 200
+    assert delivered[0]['body'] == 'Institute: {{date}}'
+    assert delivered[0]['html_body'] is None

@@ -1,0 +1,16 @@
+{% extends 'dashboard/layout.html' %}
+{% from 'dashboard/_components.html' import page_header %}
+{% block page_title %}Batch email{% endblock %}
+{% block content %}
+{{ page_header('Notifications', 'Batch email', 'Invitations, updates and communications personalized for each recipient.') }}
+{% include 'dashboard/_notification_tabs.html' %}
+{% set batch_mode = true %}
+{% include 'dashboard/_email_compose.html' %}
+{% include 'dashboard/_send_confirmation.html' %}
+{% endblock %}
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/dashboard/send-confirmation.js', v=static_version) }}" defer></script>
+<script src="{{ url_for('static', filename='js/dashboard/notifications.js', v=static_version) }}" defer></script>
+<script src="{{ url_for('static', filename='js/dashboard/recipient-files.js', v=static_version) }}" defer></script>
+<script src="{{ url_for('static', filename='js/dashboard/email-batch.js', v=static_version) }}" defer></script>
+{% endblock %}

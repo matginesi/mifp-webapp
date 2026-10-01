@@ -1,0 +1,125 @@
+<section class="control-panel notification-compose-panel" id="compose-email">
+  <div class="panel-head">
+    <div><span class="control-kicker">{{ 'Personalized batch' if batch_mode else 'Direct email' }}</span><h2>Compose message</h2><p>{{ 'Write one message and personalize it with the columns of your recipient file.' if batch_mode else 'Send a message directly using To, CC and BCC.' }}</p></div>
+    <span class="status-chip status-{{ 'success' if transport.ready else 'warning' }}">{{ 'available' if transport.ready else 'smtp required' }}</span>
+  </div>
+  <form method="post" action="{{ url_for('dashboard.notifications_send') }}" class="notification-compose-form" data-no-spinner="1" autocomplete="off" enctype="multipart/form-data" data-direct-email-form data-email-mode="{{ 'file' if batch_mode else 'direct' }}" data-batch-url="{{ url_for('dashboard.notifications_send_one') }}" data-batch-audit-url="{{ url_for('dashboard.notifications_batch_audit') }}">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <div class="notification-compose-grid">
+      <label class="field notification-recipient-field" data-direct-recipient-fields {{ 'hidden' if batch_mode }}>
+        <span>To</span>
+        <textarea class="form-control form-control-sm" name="recipients" rows="2" placeholder="name@example.org, colleague@example.org" {{ 'required' if not batch_mode }}></textarea>
+        <small>Separate addresses with commas, semicolons or new lines. Up to {{ max_mail_recipients }} recipients across all fields.</small>
+      </label>
+      <details class="notification-copy-fields" {{ 'hidden' if batch_mode }}>
+        <summary><i class="bi bi-people" aria-hidden="true"></i> Add CC or BCC</summary>
+        <div>
+          <label class="field"><span>CC</span><textarea class="form-control form-control-sm" name="cc" rows="2" placeholder="Visible copy recipients"></textarea><small>Visible to everyone receiving the message.</small></label>
+          <label class="field"><span>BCC</span><textarea class="form-control form-control-sm" name="bcc" rows="2" placeholder="Hidden copy recipients"></textarea><small>Sent as envelope recipients and never added to the email headers.</small></label>
+        </div>
+      </details>
+      {% if batch_mode %}
+      <section class="notification-batch-panel poll-span-2" data-email-batch-panel>
+        <div class="control-note notification-compact-note"><i class="bi bi-incognito"></i><div><b>Ephemeral recipient list</b><span>The CSV/XLSX is parsed in your browser. It is never uploaded, stored in the session or written to the server.</span></div></div>
+        <div class="recipient-file-tools">
+          <input class="form-control form-control-sm" type="file" accept=".csv,.xlsx" data-email-recipient-file>
+          <button class="btn btn-outline btn-sm" type="button" data-recipient-template-download data-recipient-template-name="mifp-email-recipients-template.csv" data-recipient-template-columns="email,first_name,last_name,affiliation,date,time"><i class="bi bi-download" aria-hidden="true"></i> Download template</button>
+        </div>
+        <small class="recipient-template-help">Start with <code>email</code>, <code>first_name</code>, <code>last_name</code>, <code>affiliation</code>, <code>date</code>, <code>time</code>, or add your own columns. Enter dates and times as text exactly as they should appear in the email.</small>
+        <div class="recipient-mapping" data-email-recipient-mapping hidden>
+          <label class="field"><span>Email column</span><select class="form-select form-select-sm" data-email-map="email"></select></label>
+          <label class="field"><span>First name column</span><select class="form-select form-select-sm" data-email-map="firstName"></select></label>
+          <label class="field"><span>Last name column</span><select class="form-select form-select-sm" data-email-map="lastName"></select></label>
+        </div>
+        <div class="recipient-summary" data-email-recipient-summary hidden><span><small>Total</small><b data-email-count="total">0</b></span><span><small>Valid</small><b data-email-count="valid">0</b></span><span><small>Invalid</small><b data-email-count="invalid">0</b></span><span><small>Duplicate</small><b data-email-count="duplicate">0</b></span></div>
+        <div class="control-note notification-compact-note"><i class="bi bi-braces" aria-hidden="true"></i><div><b>Available placeholders</b><span data-email-variables>Load a file to see its placeholders. Use them in the subject, title and message.</span></div></div>
+        <div class="poll-test-row"><label class="field"><span>Send test to</span><input class="form-control form-control-sm" type="email" data-email-test-address placeholder="you@example.org"></label><button class="btn btn-outline btn-sm" type="button" data-email-send-test><i class="bi bi-send"></i> Send test</button></div>
+        <div class="batch-progress" data-email-batch-progress hidden>
+          <div><b data-email-progress-title>Sending 0 / 0</b><small>Accepted means SMTP accepted the message; it does not guarantee final delivery, opening or reading.</small></div>
+          <progress max="1" value="0" data-email-progress-bar></progress>
+          <div class="recipient-summary"><span><small>Accepted</small><b data-email-progress="accepted">0</b></span><span><small>Failed</small><b data-email-progress="failed">0</b></span><span><small>Pending</small><b data-email-progress="pending">0</b></span></div>
+          <div class="inline-actions"><button class="btn btn-outline btn-sm" type="button" data-email-batch-pause>Pause</button><button class="btn btn-outline btn-sm" type="button" data-email-batch-resume disabled>Resume</button><button class="btn btn-outline btn-sm" type="button" data-email-batch-retry disabled>Retry failed</button></div>
+        </div>
+      </section>
+      {% endif %}
+      <label class="field notification-subject-field">
+        <span>Subject</span>
+        <input class="form-control form-control-sm" type="text" name="subject" maxlength="{{ max_mail_subject }}" placeholder="Message subject" required>
+        <small>Used as the email subject line.</small>
+      </label>
+      <label class="field notification-html-title-field">
+        <span>Email title</span>
+        <input class="form-control form-control-sm" type="text" name="mail_title" maxlength="{{ max_mail_title }}" value="Mediterranean Institute of Fundamental Physics">
+        <small>Shown in the dark MIFP header when formatted HTML is enabled.</small>
+      </label>
+      <label class="notification-format-toggle">
+        <span><b>Plain text only</b><small>Disable the MIFP HTML layout and send only the text body.</small></span>
+        <input type="checkbox" name="plain_text_only" value="1" aria-label="Send plain text only" data-notification-plain-toggle>
+      </label>
+      <div class="field notification-message-field">
+        <span>Message</span>
+        <div class="notification-rich-editor" data-notification-mail-editor>
+          <div class="notification-rich-toolbar" data-notification-format-tools aria-label="Message formatting">
+            <div class="notification-tool-group" role="group" aria-label="History">
+              <button type="button" title="Undo" aria-label="Undo" data-rich-command="undo"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>
+              <button type="button" title="Redo" aria-label="Redo" data-rich-command="redo"><i class="bi bi-arrow-clockwise" aria-hidden="true"></i></button>
+            </div>
+            <span class="notification-rich-divider" aria-hidden="true"></span>
+            <div class="notification-tool-group" role="group" aria-label="Text style">
+              <button type="button" title="Bold" aria-label="Bold" data-rich-command="bold"><b>B</b></button>
+              <button type="button" title="Italic" aria-label="Italic" data-rich-command="italic"><i>I</i></button>
+              <button type="button" title="Underline" aria-label="Underline" data-rich-command="underline"><u>U</u></button>
+              <button type="button" title="Paragraph" aria-label="Paragraph" data-rich-command="formatBlock" data-rich-value="p">Text</button>
+              <button type="button" title="Section heading" aria-label="Section heading" data-rich-command="formatBlock" data-rich-value="h2">Heading</button>
+            </div>
+            <span class="notification-rich-divider" aria-hidden="true"></span>
+            <div class="notification-tool-group" role="group" aria-label="Structure">
+              <button type="button" title="Bullet list" aria-label="Bullet list" data-rich-command="insertUnorderedList"><i class="bi bi-list-ul" aria-hidden="true"></i></button>
+              <button type="button" title="Numbered list" aria-label="Numbered list" data-rich-command="insertOrderedList"><i class="bi bi-list-ol" aria-hidden="true"></i></button>
+              <button type="button" title="Insert table" aria-label="Insert table" data-rich-action="table"><i class="bi bi-table" aria-hidden="true"></i> Table</button>
+            </div>
+            <span class="notification-rich-divider" aria-hidden="true"></span>
+            <div class="notification-tool-group" role="group" aria-label="Insert">
+              <button type="button" title="Insert link" aria-label="Insert link" data-rich-command="createLink"><i class="bi bi-link-45deg" aria-hidden="true"></i> Link</button>
+              <button type="button" title="Insert image from a secure public URL" aria-label="Insert image" data-rich-action="image"><i class="bi bi-image" aria-hidden="true"></i> Image</button>
+              <button type="button" title="Remove formatting" aria-label="Remove formatting" data-rich-command="removeFormat"><i class="bi bi-eraser" aria-hidden="true"></i></button>
+            </div>
+          </div>
+          <div class="notification-rich-surface" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Email message" data-notification-rich-input data-placeholder="Write your message…"></div>
+          <textarea class="form-control notification-plain-surface" rows="10" maxlength="{{ max_mail_body }}" placeholder="Write the plain-text message…" data-notification-plain-input hidden></textarea>
+          <input type="hidden" name="message" data-notification-message-text>
+          <input type="hidden" name="message_html" data-notification-message-html>
+          <div class="notification-editor-meta">
+            <small>Formatting, HTTPS images and simple tables are supported.{% if batch_mode %} Use placeholders such as <code>{{ '{{first_name}}' }}</code>, <code>{{ '{{affiliation}}' }}</code> and <code>{{ '{{date}}' }}</code> to personalize each message.{% endif %}</small>
+            <small><span data-notification-message-count>0</span> / {{ max_mail_body }}</small>
+          </div>
+        </div>
+      </div>
+      <div class="field notification-attachment-field" {{ 'hidden' if batch_mode }}>
+        <span>Attachments</span>
+        <label class="notification-attachment-picker">
+          <input type="file" name="attachments" multiple accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.docx,.xlsx" data-notification-attachments>
+          <i class="bi bi-paperclip" aria-hidden="true"></i>
+          <span><b>Add files</b><small>PDF, PNG, JPG, TXT, CSV, DOCX or XLSX · max 5 MB each, 10 MB total</small></span>
+        </label>
+        <ul class="notification-attachment-list" data-notification-attachment-list aria-live="polite"><li>No files selected.</li></ul>
+        <small>Files are validated in memory, attached to this message and never stored in the public site.</small>
+      </div>
+    </div>
+    {% if batch_mode %}
+    <section class="control-panel" data-email-preview-panel>
+      <div class="panel-head"><div><h3>Personalized preview</h3><p>Check the selected row before sending. Preview sends no email.</p></div></div>
+      <div class="notification-panel-body">
+        <label class="field"><span>Recipient row</span><select class="form-select form-select-sm" data-email-preview-row disabled><option>Load a recipient file</option></select></label>
+        <p class="form-error" data-email-variable-error role="alert" hidden></p>
+        <dl class="system-facts"><div><dt>To</dt><dd data-email-preview="email">—</dd></div><div><dt>Subject</dt><dd data-email-preview="subject">—</dd></div><div><dt>Title</dt><dd data-email-preview="mail_title">—</dd></div></dl>
+        <div class="notification-plain-surface notification-preview-message" data-email-preview="message"></div>
+      </div>
+    </section>
+    {% endif %}
+    <div class="notification-compose-footer">
+      <div class="control-note notification-compose-safety"><i class="bi bi-shield-check"></i><div><b>Controlled individual delivery</b><span>{{ 'Recipient files remain in this page only. Every row receives a separate email, with its own values.' if batch_mode else 'Review recipients, message and attachments before sending.' }}</span></div></div>
+      <button class="btn btn-primary btn-sm" type="submit" {{ 'disabled data-smtp-disabled' if not transport.ready }} data-email-submit><i class="bi bi-envelope-arrow-up"></i> <span>{{ 'Send batch' if batch_mode else 'Send email' }}</span></button>
+    </div>
+  </form>
+</section>

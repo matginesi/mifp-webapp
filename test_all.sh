@@ -18,6 +18,9 @@ cleanup_test_runtime() {
   rm -rf -- "$TEST_RUNTIME_DIR"
 }
 trap cleanup_test_runtime EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 mkdir -p \
   "$TEST_RUNTIME_DIR/assets" \
   "$TEST_RUNTIME_DIR/exports" \

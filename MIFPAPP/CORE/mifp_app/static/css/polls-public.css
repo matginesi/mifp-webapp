@@ -16,6 +16,7 @@
 }
 
 .poll-response-page .site-header,
+.poll-response-page .nav,
 .poll-response-page .site-footer,
 .poll-response-page .cookie-banner { display: none; }
 

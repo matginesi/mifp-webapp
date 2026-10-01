@@ -97,6 +97,14 @@ jobs:
           print(f"Compose exposure contract OK ({len(entries)} loopback port mapping(s)).")
           PY
 
+      - name: Clean generated workspace files
+        if: always()
+        # Run after all workspace consumers; pip/Buildx caches live elsewhere.
+        run: |
+          if [ -d .git ]; then
+            git clean -ffdx
+          fi
+
   secrets:
     name: Scan tracked files and Git history for secrets
     runs-on: ubuntu-latest
@@ -122,6 +130,14 @@ jobs:
         run: timeout --foreground 4m ./gitleaks git . --no-banner --redact --config .gitleaks.toml
       - name: Scan the checked-out tree
         run: timeout --foreground 4m ./gitleaks dir . --no-banner --redact --config .gitleaks.toml
+
+      - name: Clean generated workspace files
+        if: always()
+        # Run after all workspace consumers; pip/Buildx caches live elsewhere.
+        run: |
+          if [ -d .git ]; then
+            git clean -ffdx
+          fi
 
   test:
     name: Test ${{ matrix.label }}
@@ -180,6 +196,14 @@ jobs:
           timeout --foreground 8m bash test_all.sh --suite database -- --durations=10
           timeout --foreground 4m bash test_all.sh --suite tools -- --durations=10
 
+      - name: Clean generated workspace files
+        if: always()
+        # Run after all workspace consumers; pip/Buildx caches live elsewhere.
+        run: |
+          if [ -d .git ]; then
+            git clean -ffdx
+          fi
+
   audit:
     name: Audit Python dependencies
     runs-on: ubuntu-latest
@@ -200,6 +224,14 @@ jobs:
         run: timeout --foreground 5m python -m pip_audit -r MIFPAPP/CORE/requirements.lock
       - name: Audit database pipeline dependencies
         run: timeout --foreground 5m python -m pip_audit -r MIFPAPP/DATABASE/requirements.txt
+
+      - name: Clean generated workspace files
+        if: always()
+        # Run after all workspace consumers; pip/Buildx caches live elsewhere.
+        run: |
+          if [ -d .git ]; then
+            git clean -ffdx
+          fi
 
   release:
     name: Build, verify, scan, and publish production image
@@ -330,3 +362,10 @@ jobs:
         run: |
           docker tag "$LOCAL_IMAGE" "$LATEST_IMAGE"
           timeout --foreground 10m docker push "$LATEST_IMAGE"
+      - name: Clean generated workspace files
+        if: always()
+        # Run after all workspace consumers; pip/Buildx caches live elsewhere.
+        run: |
+          if [ -d .git ]; then
+            git clean -ffdx
+          fi

@@ -33,6 +33,11 @@
     return item;
   }
 
+  function dashboardColor(name, fallback) {
+    var value = window.getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value || fallback;
+  }
+
   function button(label, action, icon) {
     var item = node('button', 'btn btn-ghost btn-sm');
     item.type = 'button';
@@ -260,29 +265,40 @@
   function delay(milliseconds) { return new Promise(function (resolve) { window.setTimeout(resolve, milliseconds); }); }
 
   async function runBatch(recipients) {
-    await save();
-    batch = { running: true, paused: false, recipients: recipients.slice(), failed: [], index: 0, accepted: 0, controller: new AbortController(), started: Date.now() };
-    editor.querySelector('[data-poll-send]').disabled = true;
-    progress();
-    while (batch.index < batch.recipients.length && !batch.controller.signal.aborted) {
-      while (batch.paused && !batch.controller.signal.aborted) await delay(200);
-      if (batch.controller.signal.aborted) break;
-      var recipient = batch.recipients[batch.index];
-      try {
-        await window.MIFP.request(editor.dataset.inviteUrl, { method: 'POST', json: recipient, signal: batch.controller.signal, timeout: 30000 });
-        batch.accepted += 1;
-      } catch (error) {
-        if (error.name === 'AbortError') break;
-        batch.failed.push(recipient);
-      }
-      batch.index += 1;
+    if (batch.running) return;
+    var password = await window.MIFPConfirmSend();
+    if (!password) return;
+    try {
+      batch = { running: true, paused: false, recipients: recipients.slice(), failed: [], index: 0, accepted: 0, controller: new AbortController(), started: Date.now() };
+      await save();
+      editor.querySelector('[data-poll-send]').disabled = true;
       progress();
-      if (batch.index < batch.recipients.length) await delay(350);
-    }
-    batch.running = false;
-    progress();
-    editor.querySelector('[data-poll-send]').disabled = !smtpReady || !recipientResult || recipientResult.valid.length === 0;
-    show('Invitation batch finished: ' + batch.accepted + ' accepted, ' + batch.failed.length + ' failed.', batch.failed.length > 0);
+      while (batch.index < batch.recipients.length && !batch.controller.signal.aborted) {
+        while (batch.paused && !batch.controller.signal.aborted) await delay(200);
+        if (batch.controller.signal.aborted) break;
+        var recipient = batch.recipients[batch.index];
+        try {
+          await window.MIFP.request(editor.dataset.inviteUrl, { method: 'POST', json: Object.assign({}, recipient, { password: password }), signal: batch.controller.signal, timeout: 30000 });
+          batch.accepted += 1;
+        } catch (error) {
+          if (error.name === 'AbortError') break;
+          if (error.status === 403) {
+            batch.failed.push.apply(batch.failed, batch.recipients.slice(batch.index));
+            batch.index = batch.recipients.length;
+            show(error.message, true);
+            break;
+          }
+          batch.failed.push(recipient);
+        }
+        batch.index += 1;
+        progress();
+        if (batch.index < batch.recipients.length) await delay(350);
+      }
+      batch.running = false;
+      progress();
+      editor.querySelector('[data-poll-send]').disabled = !smtpReady || !recipientResult || recipientResult.valid.length === 0;
+      show('Invitation batch finished: ' + batch.accepted + ' accepted, ' + batch.failed.length + ' failed.', batch.failed.length > 0);
+    } finally { password = ''; }
   }
 
   editor.querySelector('[data-poll-send]').addEventListener('click', function () {
@@ -297,7 +313,9 @@
   editor.querySelector('[data-poll-send-one]').addEventListener('click', async function () {
     var email = editor.querySelector('[data-single-email]').value.trim();
     if (!email) return show('Enter the recipient email.', true);
-    var payload = { email: email };
+    var password = await window.MIFPConfirmSend();
+    if (!password) return;
+    var payload = { email: email, password: password };
     var firstName = editor.querySelector('[data-single-first-name]');
     var lastName = editor.querySelector('[data-single-last-name]');
     if (firstName) payload.first_name = firstName.value.trim();
@@ -307,37 +325,96 @@
       await window.MIFP.request(editor.dataset.inviteUrl, { method: 'POST', json: payload, timeout: 30000 });
       show('Poll invitation accepted by SMTP. This is a real invitation with a secure respondent link.');
     } catch (error) { show(error.message, true); }
+    finally { password = ''; delete payload.password; }
   });
 
   function renderAnalysis() {
     var grid = editor.querySelector('[data-analysis-grid]');
     grid.replaceChildren();
 
-    if (analysis.activity && analysis.activity.length) {
-      var activityCard = node('article', 'control-panel poll-analysis-card poll-analysis-activity');
-      var activityHeading = node('div', 'panel-head');
-      var activityCopy = node('div');
-      activityCopy.append(node('h3', '', 'Response activity'), node('p', '', 'New responses and later modifications by day.'));
-      activityHeading.append(activityCopy);
-      activityCard.append(activityHeading);
+    var activity = Array.isArray(analysis.activity) ? analysis.activity : [];
+    var activityCard = node('article', 'control-panel poll-analysis-card poll-analysis-activity');
+    var activityHeading = node('div', 'panel-head');
+    var activityCopy = node('div');
+    activityCopy.append(
+      node('h3', '', 'Response activity'),
+      node('p', '', 'Daily first submissions and later response changes. Dates are grouped in UTC.')
+    );
+    activityHeading.append(activityCopy);
+    activityCard.append(activityHeading);
+
+    var activityBody = node('div', 'poll-activity-body');
+    var activityKpis = node('div', 'poll-activity-kpis');
+    var newTotal = activity.reduce(function (total, item) { return total + Number(item.new || 0); }, 0);
+    var modifiedTotal = activity.reduce(function (total, item) { return total + Number(item.modified || 0); }, 0);
+    var lastActivity = activity.length ? activity[activity.length - 1].date : '—';
+    [
+      ['First submissions', newTotal],
+      ['Later changes', modifiedTotal],
+      ['Active days', activity.length],
+      ['Last activity', lastActivity]
+    ].forEach(function (item) {
+      var stat = node('span', 'poll-activity-kpi');
+      stat.append(node('small', '', item[0]), node('b', '', String(item[1])));
+      activityKpis.append(stat);
+    });
+    activityBody.append(activityKpis);
+
+    if (activity.length) {
+      var activityLayout = node('div', 'poll-activity-layout');
+      var chartWrap = node('div', 'poll-activity-chart');
       var activityCanvas = document.createElement('canvas');
-      activityCanvas.height = 220;
-      activityCard.append(activityCanvas);
-      grid.append(activityCard);
+      activityCanvas.height = 210;
+      chartWrap.append(activityCanvas);
+
+      var tableWrap = node('div', 'poll-activity-table-wrap');
+      var table = node('table', 'poll-activity-table');
+      var thead = document.createElement('thead');
+      var headRow = document.createElement('tr');
+      ['Date', 'New', 'Changes', 'Events'].forEach(function (label) { headRow.append(node('th', '', label)); });
+      thead.append(headRow);
+      var tbody = document.createElement('tbody');
+      activity.slice().reverse().forEach(function (item) {
+        var row = document.createElement('tr');
+        var total = Number(item.new || 0) + Number(item.modified || 0);
+        [item.date, item.new, item.modified, total].forEach(function (value, index) {
+          var cell = node('td', index === 0 ? 'poll-activity-date' : '', String(value));
+          row.append(cell);
+        });
+        tbody.append(row);
+      });
+      table.append(thead, tbody);
+      tableWrap.append(table);
+      activityLayout.append(chartWrap, tableWrap);
+      activityBody.append(activityLayout);
+
       window.setTimeout(function () {
         new Chart(activityCanvas, {
           type: 'bar',
           data: {
-            labels: analysis.activity.map(function (item) { return item.date; }),
+            labels: activity.map(function (item) { return item.date; }),
             datasets: [
-              { label: 'New responses', data: analysis.activity.map(function (item) { return item.new; }), backgroundColor: '#a72b31', borderRadius: 3 },
-              { label: 'Modified responses', data: analysis.activity.map(function (item) { return item.modified; }), backgroundColor: '#7a838d', borderRadius: 3 }
+              { label: 'First submissions', data: activity.map(function (item) { return item.new; }), backgroundColor: dashboardColor('--accent', '#a72b31'), borderRadius: 3 },
+              { label: 'Later changes', data: activity.map(function (item) { return item.modified; }), backgroundColor: dashboardColor('--text-3', '#626b75'), borderRadius: 3 }
             ]
           },
-          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, boxHeight: 12 } } },
+            scales: {
+              x: { stacked: false, grid: { display: false } },
+              y: { beginAtZero: true, ticks: { precision: 0 } }
+            }
+          }
         });
       }, 0);
+    } else {
+      activityBody.append(node('p', 'poll-activity-empty', 'No response activity yet. Daily activity will appear after the first submitted response.'));
     }
+    activityCard.append(activityBody);
+    grid.append(activityCard);
 
     analysis.questions.forEach(function (question, index) {
       var card = node('article', 'control-panel poll-analysis-card');
@@ -352,7 +429,7 @@
         var canvas = document.createElement('canvas'); canvas.height = 210; card.append(canvas);
         if (question.type === 'multiple_choice') card.append(node('small', 'poll-analysis-note', 'Percentages use respondents as the denominator and may total more than 100%.'));
         window.setTimeout(function () {
-          new Chart(canvas, { type: 'bar', data: { labels: question.options.map(function (item) { return item.label; }), datasets: [{ data: question.options.map(function (item) { return item.count; }), backgroundColor: '#a72b31', borderRadius: 3 }] }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: function (context) { return question.options[context.dataIndex].percentage + '%'; } } } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } } });
+          new Chart(canvas, { type: 'bar', data: { labels: question.options.map(function (item) { return item.label; }), datasets: [{ data: question.options.map(function (item) { return item.count; }), backgroundColor: dashboardColor('--accent', '#a72b31'), borderRadius: 3 }] }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { afterLabel: function (context) { return question.options[context.dataIndex].percentage + '%'; } } } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } } } } });
         }, 0);
       }
       grid.append(card);

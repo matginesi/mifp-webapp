@@ -80,7 +80,7 @@
   </aside>
   {% endif %}
 
-  {% include "public/_navbar.html" %}
+  {% block public_navigation %}{% include "public/_navbar.html" %}{% endblock %}
 
   <main class="mifp-fade-in" id="main-content" tabindex="-1">
     {% block content %}{% endblock %}
