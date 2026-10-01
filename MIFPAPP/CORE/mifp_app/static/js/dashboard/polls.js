@@ -194,6 +194,9 @@
 
   function show(message, error) {
     feedback.textContent = message;
+    var deliveryFeedback = editor.querySelector('[data-delivery-feedback]');
+    deliveryFeedback.textContent = message;
+    deliveryFeedback.classList.toggle('is-error', Boolean(error));
     feedback.classList.toggle('is-error', Boolean(error));
     feedback.classList.add('is-visible');
     window.setTimeout(function () { feedback.classList.remove('is-visible'); }, 5000);
@@ -231,32 +234,64 @@
     headers.forEach(function (header, index) { var option = node('option', '', header); option.value = String(index); select.append(option); });
   }
 
-  function refreshRecipients() {
-    if (!recipientTable) return;
-    var selected = {};
-    editor.querySelectorAll('[data-map]').forEach(function (select) { selected[select.dataset.map] = select.value; });
-    if (selected.email === '') { recipientResult = null; return; }
-    recipientResult = window.MIFPRecipientFiles.recipients(recipientTable, selected);
-    Object.keys(recipientResult).forEach(function (key) {
-      var count = editor.querySelector('[data-count="' + key + '"]');
-      if (count) count.textContent = key === 'valid' ? recipientResult.valid.length : recipientResult[key];
-    });
-    editor.querySelector('[data-recipient-summary]').hidden = false;
-    editor.querySelector('[data-poll-send]').disabled = !smtpReady || recipientResult.valid.length === 0 || batch.running;
+  function updateSendControls() {
+    var count = recipientResult ? recipientResult.valid.length : 0;
+    var sendList = editor.querySelector('[data-poll-send]');
+    sendList.disabled = !smtpReady || !count || batch.running;
+    sendList.lastChild.textContent = ' Send to list (' + count + ')';
+    editor.querySelector('[data-poll-send-one]').disabled = !smtpReady || batch.running;
+    editor.querySelector('[data-recipient-file]').disabled = batch.running;
+    editor.querySelectorAll('[data-map], [data-recipient-mode]').forEach(function (control) { control.disabled = batch.running; });
   }
 
+  editor.querySelectorAll('[data-recipient-mode]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      editor.querySelectorAll('[data-recipient-mode]').forEach(function (item) {
+        var active = item === button;
+        item.setAttribute('aria-pressed', String(active));
+        item.classList.toggle('btn-primary', active);
+        item.classList.toggle('btn-outline', !active);
+      });
+      editor.querySelectorAll('[data-recipient-source]').forEach(function (panel) {
+        panel.hidden = panel.dataset.recipientSource !== button.dataset.recipientMode;
+      });
+    });
+  });
+
+  function refreshRecipients() {
+    recipientResult = null;
+    editor.querySelector('[data-recipient-summary]').hidden = true;
+    if (recipientTable) {
+      var selected = {};
+      editor.querySelectorAll('[data-map]').forEach(function (select) { selected[select.dataset.map] = select.value; });
+      if (selected.email !== '') {
+        recipientResult = window.MIFPRecipientFiles.recipients(recipientTable, selected);
+        Object.keys(recipientResult).forEach(function (key) {
+          var count = editor.querySelector('[data-count="' + key + '"]');
+          if (count) count.textContent = key === 'valid' ? recipientResult.valid.length : recipientResult[key];
+        });
+        editor.querySelector('[data-recipient-summary]').hidden = false;
+      } else show('Choose the column containing email addresses.', true);
+    }
+    updateSendControls();
+  }
+
+  editor.querySelectorAll('[data-map]').forEach(function (select) { select.addEventListener('change', refreshRecipients); });
   editor.querySelector('[data-recipient-file]').addEventListener('change', async function (event) {
+    recipientTable = null;
+    refreshRecipients();
+    editor.querySelector('[data-recipient-mapping]').hidden = true;
     try {
       recipientTable = await window.MIFPRecipientFiles.parse(event.target.files[0]);
       var guessed = window.MIFPRecipientFiles.mapping(recipientTable);
       editor.querySelectorAll('[data-map]').forEach(function (select) {
-        fillSelect(select, recipientTable.headers, select.dataset.map !== 'email');
+        fillSelect(select, recipientTable.headers, true);
+        select.options[0].textContent = select.dataset.map === 'email' ? 'Choose email column' : 'Not mapped';
         select.value = guessed[select.dataset.map];
-        select.addEventListener('change', refreshRecipients);
       });
       editor.querySelector('[data-recipient-mapping]').hidden = false;
       refreshRecipients();
-    } catch (error) { recipientTable = null; recipientResult = null; show(error.message, true); }
+    } catch (error) { recipientTable = null; refreshRecipients(); show(error.message, true); }
   });
 
   function progress() {
@@ -283,8 +318,8 @@
     if (!password) return;
     try {
       batch = { running: true, paused: false, recipients: recipients.slice(), failed: [], index: 0, accepted: 0, controller: new AbortController(), started: Date.now() };
+      updateSendControls();
       await save();
-      editor.querySelector('[data-poll-send]').disabled = true;
       progress();
       while (batch.index < batch.recipients.length && !batch.controller.signal.aborted) {
         while (batch.paused && !batch.controller.signal.aborted) await delay(200);
@@ -302,6 +337,7 @@
             break;
           }
           batch.failed.push(recipient);
+          show(error.message, true);
         }
         batch.index += 1;
         progress();
@@ -309,9 +345,9 @@
       }
       batch.running = false;
       progress();
-      editor.querySelector('[data-poll-send]').disabled = !smtpReady || !recipientResult || recipientResult.valid.length === 0;
-      show('Invitation batch finished: ' + batch.accepted + ' accepted, ' + batch.failed.length + ' failed.', batch.failed.length > 0);
-    } finally { password = ''; }
+      updateSendControls();
+      if (!batch.failed.length) show('Poll sent to list: ' + batch.accepted + ' accepted by SMTP.');
+    } finally { password = ''; batch.running = false; updateSendControls(); }
   }
 
   editor.querySelector('[data-poll-send]').addEventListener('click', function () {
@@ -324,8 +360,10 @@
   window.addEventListener('pagehide', function () { if (batch.controller) batch.controller.abort(); }, { once: true });
 
   editor.querySelector('[data-poll-send-one]').addEventListener('click', async function () {
-    var email = editor.querySelector('[data-single-email]').value.trim();
-    if (!email) return show('Enter the recipient email.', true);
+    if (batch.running) return;
+    var emailInput = editor.querySelector('[data-single-email]');
+    var email = emailInput.value.trim();
+    if (!email || !emailInput.reportValidity()) return show('Enter a valid recipient email.', true);
     if (!validateSettings(true)) return show('Retain until must be on or after the poll deadline.', true);
     var password = await window.MIFPConfirmSend();
     if (!password) return;

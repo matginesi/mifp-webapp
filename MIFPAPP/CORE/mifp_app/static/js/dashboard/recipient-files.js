@@ -43,7 +43,10 @@
   }
 
   function table(rows) {
+    // An email-only list has no header: keep its first recipient.
+    if (rows.length && rows[0].length === 1 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rows[0][0].trim())) rows.unshift(['email']);
     if (rows.length < 2) throw new Error('Recipient file needs a header and at least one data row.');
+    if (rows.length > MAX_ROWS + 1) throw new Error('Recipient file has more than ' + MAX_ROWS + ' rows.');
     var headers = rows[0].map(function (value, index) {
       return String(value || '').trim() || 'Column ' + (index + 1);
     });
@@ -168,7 +171,7 @@
   }
 
   function guess(headers, candidates) {
-    var normalized = headers.map(function (value) { return value.toLowerCase().replace(/[\s_-]+/g, ''); });
+    var normalized = headers.map(function (value) { return value.toLowerCase().replace(/^\uFEFF/, '').replace(/[\s_-]+/g, ''); });
     var index = normalized.findIndex(function (value) { return candidates.includes(value); });
     return index < 0 ? '' : String(index);
   }

@@ -56,26 +56,19 @@ def _poll_error(exc: Exception, status: int = 400):
     return jsonify({"error": str(exc)}), 404 if isinstance(exc, PollNotFound) else status
 
 
-def _personalize(value: str, first_name: str, last_name: str) -> str:
-    rendered = (
-        str(value or "").replace("{{first_name}}", str(first_name or "")).replace("{{last_name}}", str(last_name or ""))
-    )
-    rendered = re.sub(r"[ \t]+([,.;:!?])", r"\1", rendered)
-    rendered = re.sub(r"(?im)^\s*(hello|dear|hi)\s*[,!]\s*$", "Hello,", rendered)
-    return rendered
-
-
 def _invitation_content(poll: dict, *, first_name: str, last_name: str, link: str) -> tuple[str, str, str]:
-    subject = _personalize(str(poll.get("invitation_subject") or poll["title"]), first_name, last_name)
-    message = _personalize(str(poll.get("invitation_message") or ""), first_name, last_name)
+    subject = poll["title"]
+    name = " ".join(value.strip() for value in (first_name, last_name) if value.strip())
+    greeting = f"Hello {name}," if name else "Hello,"
+    message = f"{greeting}\n\nPlease use the secure link below to complete this MIFP poll.\n\nThank you."
     body, safe_body = manual_email_content(text=message)
-    plain = f"{body.rstrip()}\n\n{poll.get('invitation_cta') or 'Open poll'}: {link}\n"
+    plain = f"{body.rstrip()}\n\nOpen poll: {link}\n"
     html = render_poll_invitation_html(
         title=poll["title"],
         body=plain,
         body_html=safe_body,
         cta_url=link,
-        cta_label=str(poll.get("invitation_cta") or "Open poll"),
+        cta_label="Open poll",
         deadline=str(poll.get("deadline") or ""),
         question_count=len(poll.get("questions") or []),
         allow_changes=bool(poll.get("allow_changes", True)),

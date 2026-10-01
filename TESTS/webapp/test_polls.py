@@ -464,7 +464,8 @@ def test_poll_dashboard_and_public_token_exchange_flow(poll_app, monkeypatch) ->
     assert (
         b"Recipient file" not in page.data
     )  # Poll recipients use the explicit CSV/XLSX control.
-    assert b"browser only" in page.data
+    assert b"CSV / XLSX list" in page.data
+    assert b"data-recipient-source" in page.data
     assert b"Single recipient" in page.data
     assert b"Send poll" in page.data
     assert b"Send test" not in page.data
@@ -787,3 +788,24 @@ def test_poll_retention_before_deadline_is_rejected_without_changing_poll(poll_a
     assert response.status_code == 400
     assert response.get_json()['error'] == 'Retention date cannot precede the deadline'
     assert get_poll(runtime, poll['id']) == poll
+
+
+def test_poll_email_ignores_old_invitation_composer_settings(poll_app, monkeypatch):
+    from mifp_app.routes import dashboard_polls
+    from mifp_app.services.polls import save_poll
+
+    poll = open_poll(Path(poll_app.config["RUNTIME_CONFIG_DIR"]))
+    poll.update(invitation_subject="Obsolete subject", invitation_message="Obsolete message", invitation_cta="Obsolete button")
+    save_poll(poll_app.config["RUNTIME_CONFIG_DIR"], poll["id"], poll)
+    sent = []
+    monkeypatch.setattr(dashboard_polls, "send_mail", lambda _app, **kwargs: sent.append(kwargs) or True)
+    response = logged_in_client(poll_app).post(
+        f"/dashboard/notifications/polls/{poll['id']}/invite",
+        json={"email": "person@example.org", "first_name": "Ada", "password": "secret123"},
+    )
+    assert response.status_code == 200
+    assert sent[0]["subject"] == poll["title"]
+    assert "Hello Ada," in sent[0]["body"]
+    assert "Open poll:" in sent[0]["body"]
+    assert "#p=" in sent[0]["body"] and "&t=" in sent[0]["body"]
+    assert "Obsolete" not in sent[0]["body"] + sent[0]["html_body"] + sent[0]["subject"]

@@ -100,12 +100,27 @@
 
       <aside class="poll-editor-delivery" aria-label="Poll recipients">
       <section class="control-panel poll-recipient-panel poll-section-card" data-recipient-panel>
-        <div class="panel-head"><div><h3>Recipients</h3><p>The CSV/XLSX stays in this page's memory and is lost on refresh.</p></div><span class="status-chip status-info">browser only</span></div>
+        <div class="panel-head"><div><h3>Send poll</h3><p>Each recipient receives a personal secure link in a standard poll email.</p></div></div>
+        <div class="inline-actions" role="group" aria-label="Recipient source">
+          <button class="btn btn-primary btn-sm" type="button" data-recipient-mode="single" aria-pressed="true">Single recipient</button>
+          <button class="btn btn-outline btn-sm" type="button" data-recipient-mode="file" aria-pressed="false">CSV / XLSX list</button>
+        </div>
+        <div data-recipient-source="single">
+        <div class="poll-send-row poll-single-recipient-row">
+          <label class="field"><span>Email address</span><input class="form-control form-control-sm" type="email" data-single-email placeholder="person@example.org"></label>
+          {% if poll.response_mode == 'identified' %}
+          <label class="field"><span>First name</span><input class="form-control form-control-sm" type="text" maxlength="120" data-single-first-name></label>
+          <label class="field"><span>Last name</span><input class="form-control form-control-sm" type="text" maxlength="120" data-single-last-name></label>
+          {% endif %}
+          <button class="btn btn-outline btn-sm" type="button" data-poll-send-one {{ 'disabled' if not transport.ready }}><i class="bi bi-send"></i> Send to this recipient</button>
+        </div>
+        </div>
+        <div data-recipient-source="file" hidden>
         <div class="recipient-file-tools">
           <input class="form-control form-control-sm" type="file" accept=".csv,.xlsx" data-recipient-file>
           <button class="btn btn-outline btn-sm" type="button" data-recipient-template-download data-recipient-template-name="mifp-poll-recipients-template.csv"><i class="bi bi-download" aria-hidden="true"></i> Download template</button>
         </div>
-        <small class="recipient-template-help">Template columns: <code>email</code>, <code>first_name</code>, <code>last_name</code>. The file remains local to this browser.</small>
+        <small class="recipient-template-help">CSV/XLSX: <code>email</code> required; <code>first_name</code> and <code>last_name</code> optional. A CSV with one email per line also works.</small>
         <div class="recipient-mapping" data-recipient-mapping hidden>
           <label class="field"><span>Email column</span><select class="form-select form-select-sm" data-map="email"></select></label>
           <label class="field"><span>First name column</span><select class="form-select form-select-sm" data-map="firstName"></select></label>
@@ -114,16 +129,10 @@
         <div class="recipient-summary" data-recipient-summary hidden>
           <span><small>Total</small><b data-count="total">0</b></span><span><small>Valid</small><b data-count="valid">0</b></span><span><small>Invalid</small><b data-count="invalid">0</b></span><span><small>Duplicate</small><b data-count="duplicate">0</b></span>
         </div>
-        <div class="poll-send-row poll-single-recipient-row">
-          <label class="field"><span>Single recipient</span><input class="form-control form-control-sm" type="email" data-single-email placeholder="person@example.org"></label>
-          {% if poll.response_mode == 'identified' %}
-          <label class="field"><span>First name</span><input class="form-control form-control-sm" type="text" maxlength="120" data-single-first-name></label>
-          <label class="field"><span>Last name</span><input class="form-control form-control-sm" type="text" maxlength="120" data-single-last-name></label>
-          {% endif %}
-          <button class="btn btn-outline btn-sm" type="button" data-poll-send-one {{ 'disabled' if not transport.ready }}><i class="bi bi-send"></i> Send poll</button>
-          <button class="btn btn-primary btn-sm" type="button" data-poll-send disabled><i class="bi bi-send-check"></i> Send invitations</button>
+          <div class="poll-send-row"><button class="btn btn-primary btn-sm" type="button" data-poll-send disabled><i class="bi bi-send-check"></i> Send to list (0)</button></div>
         </div>
-        <small class="poll-single-recipient-note">“Send poll” creates a real secure invitation and counts in this poll's invitation/response statistics. Use Reset poll data after end-to-end testing if you do not want test responses retained.</small>
+        <small class="poll-single-recipient-note">The list stays in this browser and is cleared on refresh. Invalid and duplicate emails are skipped. For custom communications, use <a href="{{ url_for('dashboard.notifications_batch') }}">Batch email</a>.</small>
+        <small class="poll-single-recipient-note" data-delivery-feedback role="status" aria-live="polite"></small>
         {% if not transport.ready %}<small class="poll-smtp-warning">Configure SMTP before sending poll invitations.</small>{% endif %}
         <div class="batch-progress" data-batch-progress hidden>
           <div><b data-progress-title>Sending 0 / 0</b><small>Accepted means the SMTP server accepted the message; it does not guarantee delivery or reading.</small></div>

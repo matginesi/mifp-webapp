@@ -166,6 +166,7 @@ class TestDashboardRoutes:
         page.locator("[data-poll-save]").click()
         expect(page.locator("[data-poll-feedback]")).to_contain_text("Poll saved")
 
+        page.locator('[data-recipient-mode="file"]').click()
         page.locator("[data-recipient-file]").set_input_files(
             files=[{
                 "name": "recipients.csv",
@@ -680,3 +681,85 @@ def test_send_confirmation_survives_early_and_duplicate_submit(live_server, page
     expect(page.locator('#sendAuthModal')).to_be_visible()
     page.locator('#sendAuthModal button').filter(has_text='Cancel').click()
     page.wait_for_function('() => window.__confirmationCancelled === true')
+
+
+@pytest.mark.parametrize("file_kind", ["csv", "email_list", "xlsx"])
+def test_poll_recipient_list_send_and_retry(live_server, page, file_kind):
+    from .conftest import _admin_credentials
+
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    _login(page, live_server)
+    page.goto(f"{live_server}/dashboard/notifications/polls")
+    page.locator("[data-poll-new-toggle]").click()
+    page.locator('[name="template"]').select_option("attendance")
+    page.get_by_role("button", name="Create Poll").click()
+    page.wait_for_load_state("networkidle")
+
+    # Enable the real UI against a simulated relay; never deliver test mail.
+    def relay_ready(route):
+        response = route.fetch()
+        route.fulfill(response=response, body=response.text().replace('data-smtp-ready="0"', 'data-smtp-ready="1"'))
+
+    page.route(page.url, relay_ready)
+    page.reload(wait_until="networkidle")
+    page.locator('[data-poll-field="status"]').select_option("open")
+    expect(page.locator('[data-recipient-source="single"]')).to_be_visible()
+    expect(page.locator('[data-recipient-source="file"]')).to_be_hidden()
+    page.locator('[data-recipient-mode="file"]').click()
+    expect(page.locator('[data-recipient-source="single"]')).to_be_hidden()
+
+    if file_kind == "xlsx":
+        workbook = Workbook()
+        workbook.active.append(["email"])
+        for email in ["ada@example.org", "grace@example.org", "ADA@example.org", "bad"]:
+            workbook.active.append([email])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        file_data = buffer.getvalue()
+        name = "list.xlsx"
+    else:
+        file_data = b"ada@example.org\ngrace@example.org\nADA@example.org\nbad\n"
+        if file_kind == "csv":
+            file_data = b"email\n" + file_data
+        name = "list.csv"
+    page.locator('[data-recipient-file]').set_input_files({"name": name, "mimeType": "application/octet-stream", "buffer": file_data})
+    expect(page.locator('[data-count="valid"]')).to_have_text("2")
+    expect(page.locator('[data-count="duplicate"]')).to_have_text("1")
+    expect(page.locator('[data-count="invalid"]')).to_have_text("1")
+    expect(page.locator('[data-poll-send]')).to_have_text("Send to list (2)")
+    expect(page.locator('[data-poll-send]')).to_be_enabled()
+
+    deliveries = []
+    _, password = _admin_credentials()
+
+    def relay(route):
+        payload = route.request.post_data_json
+        assert payload.pop("password") == password
+        assert set(payload) == {"email", "first_name", "last_name"}
+        deliveries.append(payload)
+        failed = len(deliveries) == 2
+        route.fulfill(status=503 if failed else 200, json={"error": "SMTP temporarily unavailable"} if failed else {"ok": True})
+
+    page.route("**/notifications/polls/*/invite", relay)
+    page.locator('[data-poll-send]').click()
+    page.locator('#sendAuthPassword').fill(password)
+    page.locator('#sendAuthForm button[type="submit"]').click()
+    expect(page.locator('[data-progress-title]')).to_have_text("Finished 2 / 2")
+    expect(page.locator('[data-progress="accepted"]')).to_have_text("1")
+    expect(page.locator('[data-progress="failed"]')).to_have_text("1")
+    expect(page.locator('[data-delivery-feedback]')).to_contain_text("SMTP temporarily unavailable")
+    assert [item["email"] for item in deliveries] == ["ada@example.org", "grace@example.org"]
+    page.locator('[data-batch-retry]').click()
+    page.locator('#sendAuthPassword').fill(password)
+    page.locator('#sendAuthForm button[type="submit"]').click()
+    expect(page.locator('[data-progress-title]')).to_have_text("Finished 1 / 1")
+    expect(page.locator('[data-progress="accepted"]')).to_have_text("1")
+    assert [item["email"] for item in deliveries] == ["ada@example.org", "grace@example.org", "grace@example.org"]
+
+    # A bad replacement file cannot leave the previous list sendable.
+    page.locator('[data-recipient-file]').set_input_files({"name": "bad.csv", "mimeType": "text/csv", "buffer": b'email\n"unterminated'})
+    expect(page.locator('[data-poll-send]')).to_be_disabled()
+    expect(page.locator('[data-recipient-summary]')).to_be_hidden()
+    expect(page.locator('[data-delivery-feedback]')).to_contain_text("unterminated")
+    assert not errors

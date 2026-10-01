@@ -164,9 +164,7 @@
 .poll-option-row { display:grid; grid-template-columns:minmax(0,1fr) repeat(3,36px); gap:4px; }
 .poll-option-row .btn { padding:5px; }
 .recipient-mapping { display:grid; grid-template-columns:1fr; gap:9px; margin-top:12px; }
-.poll-recipient-panel > input,.poll-recipient-panel > .recipient-mapping,.poll-recipient-panel > .recipient-summary,.poll-recipient-panel > .poll-send-row,.poll-recipient-panel > .batch-progress,
-.poll-recipient-panel > .recipient-file-tools,
-.poll-recipient-panel > .recipient-template-help { margin-inline:14px; width:calc(100% - 28px); }
+.poll-recipient-panel > [data-recipient-source],.poll-recipient-panel > .inline-actions,.poll-recipient-panel > .batch-progress { margin-inline:14px; width:calc(100% - 28px); }
 .poll-recipient-panel { padding-bottom:14px; }
 .recipient-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; margin-top:12px; border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden; background:var(--border); }
 .recipient-summary > span { display:grid; padding:8px 9px; background:var(--surface); }
@@ -174,7 +172,7 @@
 .recipient-summary b { color:var(--text-bright); font-size:.88rem; }
 .poll-send-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
 .poll-send-row .field { grid-column:1/-1; }
-.poll-send-row .btn { width:100%; }
+.poll-send-row .btn { width:100%; grid-column:1/-1; }
 .poll-smtp-warning { display:block; margin:8px 14px 0; color:var(--amber); }
 .batch-progress { display:grid; gap:10px; margin-top:12px; padding:12px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-2); }
 .batch-progress > div:first-child { display:flex; justify-content:space-between; gap:14px; }
@@ -5576,7 +5574,6 @@ textarea:focus-visible { outline: 0; }.dash-empty-state,.empty-state{
 .recipient-file-tools { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; }
 .recipient-template-help { display:block; color:var(--text-3); font-size:.66rem; line-height:1.4; }
 .recipient-template-help code { color:var(--text-2); font-size:.64rem; }
-.poll-recipient-panel > .recipient-file-tools { margin-top:0; }
 .poll-recipient-panel > .recipient-template-help { margin-top:6px; }
 .poll-activity-body { display:grid; gap:14px; padding:0 16px 16px; }
 .poll-activity-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; overflow:hidden; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--border); }
