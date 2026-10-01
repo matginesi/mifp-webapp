@@ -1,0 +1,25 @@
+{% extends 'public/base.html' %}
+{% block title %}MIFP Poll{% endblock %}
+{% block meta_description %}Secure MIFP poll response page.{% endblock %}
+{% block body_class %} poll-response-page{% endblock %}
+{% block extra_css %}<link href="{{ url_for('static', filename='css/polls-public.css', v=static_version) }}" rel="stylesheet">{% endblock %}
+{% block content %}
+<section class="poll-response-shell" data-respond-app data-csrf-token="{{ csrf_token }}">
+  <div class="poll-response-state" data-respond-state>
+    <img src="{{ url_for('static', filename='img/logo-mifp.png', v=static_version) }}" alt="" width="42" height="42">
+    <h1>Opening your poll</h1>
+    <p>Checking the secure invitation link.</p>
+  </div>
+  <form class="poll-response-form" data-respond-form hidden>
+    <div class="poll-public-card" data-respond-poll></div>
+    <div class="poll-response-actions"><button class="poll-submit-button" type="submit" data-respond-submit>Submit response</button><small>Your answers are sent securely to MIFP. This poll does not collect your IP address or browser details.</small></div>
+  </form>
+  <div class="poll-response-state poll-response-success" data-respond-success hidden>
+    <span aria-hidden="true">✓</span><h1>Response received</h1><p>You may close this page. If changes are allowed, the same invitation link can reopen your response before the deadline.</p>
+  </div>
+</section>
+{% endblock %}
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/poll-renderer.js', v=static_version) }}" defer></script>
+<script src="{{ url_for('static', filename='js/respond.js', v=static_version) }}" defer></script>
+{% endblock %}

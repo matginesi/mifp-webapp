@@ -976,7 +976,7 @@ def test_version_release_page_exposes_source_and_runtime_versions(client):
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Version &amp; release" in body or "Version & release" in body
-    assert "v1.0.0" in body
+    assert "v1.0.1" in body
     assert "Database schema" in body
     assert "MIFP content package" in body
     assert "Release changes stay outside the container" in body
@@ -1678,6 +1678,16 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.notifications_save",
     "dashboard.notifications_test",
     "dashboard.notifications_send",
+    "dashboard.notifications_send_one",
+    "dashboard.notifications_batch_audit",
+    "dashboard.polls_new",
+    "dashboard.poll_update",
+    "dashboard.poll_invite",
+    "dashboard.poll_test_invitation",
+    "dashboard.poll_clean",
+    "dashboard.poll_anonymize",
+    "dashboard.poll_reset",
+    "dashboard.poll_delete",
     "dashboard.seo_save",
     "dashboard.server_db_dump",
     "dashboard.server_db_restore",

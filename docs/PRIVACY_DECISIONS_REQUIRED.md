@@ -182,6 +182,6 @@ Recorded here so the same questions are not re-opened without cause:
 | Cookies on ordinary public pages | None. The public base template no longer renders a global CSRF token. |
 | Cookie notice | Present again, **informational only**: it lists the two strictly necessary cookies, links to the Cookie Policy, and collects no consent. Dismissing it stores only the acknowledged revision in `localStorage`; a new dashboard revision makes it appear again. No cookie or server-side record is created. |
 | Contact form / event registration | Do not exist in this application; the policy no longer describes them. |
-| localStorage | Public site: `mifp-cookie-notice-revision`, used only to avoid repeating an acknowledged notice revision. Dashboard: `mifp-dashboard-sidebar-collapsed`, used only for the sidebar preference. Neither value is transmitted or used for tracking. |
+| localStorage | Public site: `mifp-cookie-notice-revision`, used only to avoid repeating an acknowledged notice revision. Dashboard: `mifp-dashboard-sidebar-collapsed` and `mifp-dashboard-sidebar-scroll`, used only for sidebar presentation preferences. None of these values is transmitted or used for tracking. |
 | Raw IP storage for applications | Disabled by default (`JOIN_STORE_RAW_IP=0`); IP addresses are still processed transiently for rate limiting. |
 | Manual Event authoring | Removed. Canonical events are created only by ingestion pipelines; `POST /dashboard/events` is update-only. |

@@ -594,6 +594,35 @@ function initDashboardShell() {
   if (!shell || !toggle || !sidebar || shell.dataset.shellReady === '1') return;
   shell.dataset.shellReady = '1';
   const mobileQuery = window.matchMedia('(max-width: 768px)');
+  const sidebarNav = sidebar.querySelector('.sidebar-nav');
+  const sidebarScrollKey = 'mifp-dashboard-sidebar-scroll';
+
+  function persistSidebarScroll() {
+    if (!sidebarNav) return;
+    try {
+      window.localStorage.setItem(sidebarScrollKey, String(Math.max(0, Math.round(sidebarNav.scrollTop))));
+    } catch (_) {
+      // Storage is optional; navigation remains fully usable without it.
+    }
+  }
+
+  if (sidebarNav) {
+    try {
+      const storedScroll = Number.parseInt(window.localStorage.getItem(sidebarScrollKey) || '0', 10);
+      if (Number.isFinite(storedScroll) && storedScroll > 0) sidebarNav.scrollTop = storedScroll;
+    } catch (_) {
+      // Storage is optional; keep the browser's default scroll position.
+    }
+    let scrollFrame = 0;
+    sidebarNav.addEventListener('scroll', function () {
+      if (scrollFrame) return;
+      scrollFrame = window.requestAnimationFrame(function () {
+        scrollFrame = 0;
+        persistSidebarScroll();
+      });
+    }, { passive: true });
+    window.addEventListener('pagehide', persistSidebarScroll, { once: true });
+  }
 
   function setExpanded(expanded) {
     toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
@@ -644,6 +673,7 @@ function initDashboardShell() {
   toggle.addEventListener('click', toggleShell);
   if (closeControl) closeControl.addEventListener('click', function () { closeMobile(true); });
   sidebar.addEventListener('click', function (event) {
+    if (event.target.closest('a')) persistSidebarScroll();
     if (mobileQuery.matches && event.target.closest('a')) closeMobile(false);
   });
   document.addEventListener('keydown', function (event) {

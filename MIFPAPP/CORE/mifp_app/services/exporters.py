@@ -75,12 +75,21 @@ def _safe_filename(title: str) -> str:
 # Color palette — MIFP institutional theme
 # ---------------------------------------------------------------------------
 
-_MIFP_RED = "B42318"
-_MIFP_RED_DARK = "7F1D1D"
-_MIFP_NAVY = "0A0E1A"
-_MIFP_GRAY_100 = "F3F4F6"
-_MIFP_GRAY_200 = "E5E7EB"
-_MIFP_GRAY_500 = "6B7280"
+MIFP_EXPORT_COLORS = {
+    "red": "B42318",
+    "red_dark": "7F1D1D",
+    "navy": "0A0E1A",
+    "gray_100": "F3F4F6",
+    "gray_200": "E5E7EB",
+    "gray_500": "6B7280",
+}
+
+_MIFP_RED = MIFP_EXPORT_COLORS["red"]
+_MIFP_RED_DARK = MIFP_EXPORT_COLORS["red_dark"]
+_MIFP_NAVY = MIFP_EXPORT_COLORS["navy"]
+_MIFP_GRAY_100 = MIFP_EXPORT_COLORS["gray_100"]
+_MIFP_GRAY_200 = MIFP_EXPORT_COLORS["gray_200"]
+_MIFP_GRAY_500 = MIFP_EXPORT_COLORS["gray_500"]
 _MIFP_WHITE = "FFFFFF"
 
 

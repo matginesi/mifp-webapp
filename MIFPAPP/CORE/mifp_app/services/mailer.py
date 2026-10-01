@@ -48,6 +48,7 @@ def send_mail(
     bcc: Sequence[str] | None = None,
     attachments: Sequence[MailAttachment] | None = None,
     automated: bool = True,
+    privacy_safe_log: bool = False,
 ) -> bool:
     """Send one message through the configured transport.
 
@@ -65,8 +66,9 @@ def send_mail(
     envelope_recipients = list(dict.fromkeys([*to_addresses, *cc_addresses, *bcc_addresses]))
 
     provider = str(app.config.get("MAIL_PROVIDER", "disabled") or "disabled").lower()
+    logged_subject = "[redacted]" if privacy_safe_log else _clean_header(subject)[:180]
     if provider == "disabled":
-        log.info("mail disabled subject=%s recipients=%d", _clean_header(subject), len(envelope_recipients))
+        log.info("mail disabled subject=%s recipients=%d", logged_subject, len(envelope_recipients))
         return False
 
     msg = EmailMessage()
@@ -101,13 +103,14 @@ def send_mail(
             raise RuntimeError("MAIL_PROVIDER=console is not allowed in production")
         log.info(
             "console mail subject=%s recipients=%d body_bytes=%d html=%s attachments=%d",
-            _clean_header(subject)[:180],
+            logged_subject,
             len(envelope_recipients),
             len(body or ""),
             bool(html_body),
             len(attachments or ()),
         )
-        log.debug("console mail body\n%s", msg.as_string())
+        if not privacy_safe_log:
+            log.debug("console mail body\n%s", msg.as_string())
         return True
 
     if provider == "smtp":

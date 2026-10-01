@@ -13,6 +13,7 @@ from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 import bleach
 
@@ -477,7 +478,15 @@ def render_notification_html(*, subject: str, body: str, severity: str, event: s
     )
 
 
-def render_manual_email_html(*, title: str, subject: str, body: str, body_html: str | None = None) -> str:
+def render_manual_email_html(
+    *,
+    title: str,
+    subject: str,
+    body: str,
+    body_html: str | None = None,
+    cta_url: str | None = None,
+    cta_label: str = "Open",
+) -> str:
     """Render an administrator-authored message with a calm institutional layout."""
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     safe_title = escape(str(title or "MIFP message")[:MAX_MANUAL_MAIL_TITLE])
@@ -486,6 +495,20 @@ def render_manual_email_html(*, title: str, subject: str, body: str, body_html: 
         if body_html is not None
         else _html_body(body)
     )
+    if cta_url:
+        parsed_cta_url = urlsplit(str(cta_url))
+        if parsed_cta_url.scheme not in {"http", "https"} or not parsed_cta_url.netloc:
+            raise ValueError("CTA URL must be an absolute HTTP(S) URL")
+        safe_cta_url = escape(str(cta_url), quote=True)
+        safe_cta_label = escape(str(cta_label or "Open")[:60])
+        rendered_body += (
+            '<p style="margin:24px 0 8px;">'
+            f'<a href="{safe_cta_url}" style="display:inline-block;background:{_EMAIL_THEME["accent"]};'
+            'color:#ffffff;padding:11px 18px;border-radius:4px;text-decoration:none;font-weight:700;">'
+            f"{safe_cta_label}</a></p>"
+            '<p style="margin:8px 0 0;color:#5f6670;font-size:12px;line-height:1.5;">'
+            "This personal link grants access to the poll. Do not forward it.</p>"
+        )
     # `subject` intentionally stays in the SMTP header only: repeating it inside
     # the card made manual messages look like operational alerts.
     return f"""<!doctype html>

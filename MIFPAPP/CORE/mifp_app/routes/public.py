@@ -20,26 +20,27 @@ from flask import (
 from werkzeug.exceptions import HTTPException
 
 from ..db.connection import connect, connect_readonly, write_transaction
-from ..services.notifications import notify
+from ..services.institutional_pdf import render_institutional_pdf
 from ..services.metrics_service import classify_asset_key, increment_daily
+from ..services.notifications import notify
 from ..services.public_repository import (
     NEWS_TYPE_LABELS,
-    get_home_context,
+    event_public_destination,
     get_archive_entry,
+    get_home_context,
     get_public_event,
     get_public_news,
     get_public_page,
     get_public_page_by_slug,
     get_public_sponsor,
-    list_home_sponsors,
     list_archive_entries,
+    list_home_sponsors,
     list_members_page,
     list_news_page,
     list_public_events,
     list_public_publications,
     list_public_research,
     sanitize_html,
-    event_public_destination,
 )
 from ..services.search import run_search
 from ..services.seo import build_sitemap_entries, preferred_origin, settings_from_conn
@@ -366,16 +367,14 @@ def pdf_page(page_name: str):
     if not content_html:
         abort(404)
     try:
-        import weasyprint
-    except ImportError:
-        return Response("PDF generation not available", status=501)
-    try:
-        html = render_template("public/pdf_page.html",
+        pdf_bytes = render_institutional_pdf(
             title=title,
             content_html=content_html,
-            today=date.today().isoformat(),
-            source_url=request.url_root.rstrip("/"))
-        pdf_bytes = weasyprint.HTML(string=html, base_url=request.url_root).write_pdf()
+            exported_on=date.today().isoformat(),
+            source_url=request.url_root.rstrip("/"),
+            assets_dir=current_app.config["ASSETS_DIR"],
+            static_dir=current_app.static_folder,
+        )
     except Exception:
         current_app.logger.exception("PDF generation failed")
         abort(500)
@@ -443,19 +442,15 @@ def pdf_research():
         current_app.logger.exception("research PDF data fetch failed")
         abort(500)
     try:
-        import weasyprint
-    except ImportError:
-        return Response("PDF generation not available", status=501)
-    try:
         content_html = render_template("public/_research_pdf_content.html", research_areas=areas)
-        html = render_template(
-            "public/pdf_page.html",
+        pdf_bytes = render_institutional_pdf(
             title="Research Areas",
             content_html=content_html,
-            today=date.today().isoformat(),
+            exported_on=date.today().isoformat(),
             source_url=request.url_root.rstrip("/"),
+            assets_dir=current_app.config["ASSETS_DIR"],
+            static_dir=current_app.static_folder,
         )
-        pdf_bytes = weasyprint.HTML(string=html, base_url=request.url_root).write_pdf()
     except Exception:
         current_app.logger.exception("research PDF generation failed")
         abort(500)
@@ -687,3 +682,8 @@ def sitemap_xml():
     resp.headers["Cache-Control"] = "public, max-age=300"
     resp.set_etag(hashlib.sha256(xml.encode("utf-8")).hexdigest())
     return resp.make_conditional(request)
+
+
+# Poll response routes share the public blueprint without coupling poll storage
+# to the rest of the public-site repository helpers.
+from . import public_polls  # noqa: E402,F401

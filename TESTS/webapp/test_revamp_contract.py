@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
-
-import pytest
 from pathlib import Path
 
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "MIFPAPP" / "CORE" / "mifp_app"
@@ -28,8 +27,11 @@ def test_dashboard_uses_bounded_page_specific_modules_without_build_step():
         "data-portability.js",
         "data-quality.js",
         "event-import.js",
+        "email-batch.js",
         "login.js",
         "notifications.js",
+        "polls.js",
+        "recipient-files.js",
         "safety-operations.js",
         "site-copy.js",
         "stats.js",
@@ -47,6 +49,8 @@ def test_dashboard_uses_bounded_page_specific_modules_without_build_step():
     assert "dashboard/core.js" in templates
     assert "dashboard/stats.js" in templates
     assert "dashboard/data-quality.js" in templates
+    assert "dashboard/polls.js" in templates
+    assert "dashboard/recipient-files.js" in templates
 
 
 def test_retired_assistant_and_graph_assets_are_absent():
@@ -304,15 +308,15 @@ def test_public_directory_and_institutional_pages_share_the_new_contract():
     assert 'style="' not in research
 
     base = (public_templates / "base.html").read_text(encoding="utf-8")
-    pdf = (public_templates / "pdf_page.html").read_text(encoding="utf-8")
+    pdf = (APP / "services" / "institutional_pdf.py").read_text(encoding="utf-8")
     assert 'public-site{% block body_class %}' in base
     assert "--f-body:" in public_css
     assert "--f-display:" in public_css
     assert "--f-data:" in public_css
-    assert "--pdf-serif:" in pdf
-    assert "--pdf-sans:" in pdf
-    assert ".pdf-header .doc-title" in pdf
-    assert "font-family: var(--pdf-serif);" in pdf
+    assert "InstitutionalDocumentTitle" in pdf
+    assert "InstitutionalFinalFooter" in pdf
+    assert "MIFP_EXPORT_COLORS" in pdf
+    assert "page_number" in pdf
 
     conference_css = (APP / "conference_templates/site.css").read_text(encoding="utf-8")
     wip_css = (APP / "static/css/work-in-progress.css").read_text(encoding="utf-8")

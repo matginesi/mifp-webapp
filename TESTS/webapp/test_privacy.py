@@ -66,19 +66,7 @@ def test_sponsor_how_to_page_accessible(app):
     assert b"How to become a sponsor" in resp.data
 
 
-def test_research_pdf_is_available_even_without_research_rows(app, monkeypatch):
-    import sys
-    import types
-
-    class FakeHTML:
-        def __init__(self, *, string, base_url):
-            assert "Research Areas" in string
-            assert base_url.startswith("http://")
-
-        def write_pdf(self):
-            return b"%PDF-1.4\nempty-research\n"
-
-    monkeypatch.setitem(sys.modules, "weasyprint", types.SimpleNamespace(HTML=FakeHTML))
+def test_research_pdf_is_available_even_without_research_rows(app):
     resp = app.test_client().get("/pdf/research")
 
     assert resp.status_code == 200

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import io
+import re
 import uuid
 import zipfile
+from html import escape
 from pathlib import Path
 
-from flask import current_app, flash, redirect, render_template, request, session, url_for
+from flask import current_app, flash, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.utils import secure_filename
 
 from ..db.connection import connect
@@ -24,8 +26,8 @@ from ..services.notifications import (
     normalize_email_addresses,
     notification_settings,
     notify,
-    render_manual_email_html,
     record_manual_email_delivery,
+    render_manual_email_html,
     smtp_status,
     validate_notification_settings,
 )
@@ -33,7 +35,6 @@ from ..utils.logger import audit_log, get_logger, log_event
 from ..utils.security import get_client_ip, ip_rate_allowed
 from .auth import login_required
 from .dashboard import bp
-
 
 log = get_logger("notification")
 
@@ -90,8 +91,7 @@ _NOTIFICATION_TEST_TYPES = {
         "subject": "Test — Production recovered",
         "event": "test_recovery",
         "body": (
-            "This is a simulated recovery message.\n\n"
-            "It previews the email sent when a monitored incident clears."
+            "This is a simulated recovery message.\n\nIt previews the email sent when a monitored incident clears."
         ),
     },
     "security": {
@@ -223,12 +223,10 @@ def notifications():
         limit=120,
     )
     stored_sent_history = manual_email_history(current_app, limit=40)
-    stored_delivery_ids = {
-        str(row.get("details", {}).get("delivery_id") or "")
-        for row in stored_sent_history
-    }
+    stored_delivery_ids = {str(row.get("details", {}).get("delivery_id") or "") for row in stored_sent_history}
     logged_sent_history = [
-        row for row in history
+        row
+        for row in history
         if row.get("event") == "notification.delivered"
         and str(row.get("details", {}).get("delivery_id") or "") not in stored_delivery_ids
     ]
@@ -352,17 +350,11 @@ def notifications_send():
     recipients = normalize_email_addresses(request.form.get("recipients") or request.form.get("recipient"))
     cc = normalize_email_addresses(request.form.get("cc"))
     bcc = normalize_email_addresses(request.form.get("bcc"))
-    subject = _clean_single_line(
-        request.form.get("subject", ""), max_length=MAX_MANUAL_MAIL_SUBJECT
-    )
-    title = _clean_single_line(
-        request.form.get("mail_title", ""), max_length=MAX_MANUAL_MAIL_TITLE
-    )
+    subject = _clean_single_line(request.form.get("subject", ""), max_length=MAX_MANUAL_MAIL_SUBJECT)
+    title = _clean_single_line(request.form.get("mail_title", ""), max_length=MAX_MANUAL_MAIL_TITLE)
     submitted_body = str(request.form.get("message") or "").strip()
     submitted_html = str(request.form.get("message_html") or "")
-    plain_text_only = str(request.form.get("plain_text_only") or "").lower() in {
-        "1", "true", "yes", "on"
-    }
+    plain_text_only = str(request.form.get("plain_text_only") or "").lower() in {"1", "true", "yes", "on"}
 
     if plain_text_only:
         body = submitted_body.replace("\r\n", "\n").replace("\r", "\n").strip()
@@ -427,9 +419,7 @@ def notifications_send():
 
     html_body = None
     if not plain_text_only:
-        html_body = render_manual_email_html(
-            title=title, subject=subject, body=body, body_html=safe_body_html
-        )
+        html_body = render_manual_email_html(title=title, subject=subject, body=body, body_html=safe_body_html)
 
     try:
         delivered = send_mail(
@@ -534,3 +524,110 @@ def notifications_send():
     else:
         flash("Email sent, but its delivery history could not be saved.", "warning")
     return redirect(url_for("dashboard.notifications") + "#compose-email")
+
+
+def _personalize_batch_value(value: str, first_name: str, last_name: str) -> str:
+    rendered = (
+        str(value or "").replace("{{first_name}}", str(first_name or "")).replace("{{last_name}}", str(last_name or ""))
+    )
+    rendered = "\n".join(line.rstrip() for line in rendered.splitlines()).strip()
+    rendered = re.sub(r"[ \t]+([,.;:!?])", r"\1", rendered)
+    return re.sub(r"(?im)^\s*(hello|dear|hi)\s*[,!]\s*$", "Hello,", rendered)
+
+
+def _personalize_batch_html(value: str, first_name: str, last_name: str) -> str:
+    return str(value or "").replace("{{first_name}}", escape(str(first_name or ""))).replace(
+        "{{last_name}}", escape(str(last_name or ""))
+    )
+
+
+@bp.post("/notifications/send-one")
+@login_required
+def notifications_send_one():
+    """Send one member of an ephemeral browser-managed batch."""
+    request.max_content_length = 128 * 1024
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected a JSON object"}), 400
+    recipient = normalize_email_addresses(payload.get("email"), limit=1)
+    subject = _clean_single_line(
+        _personalize_batch_value(
+            payload.get("subject", ""), payload.get("first_name", ""), payload.get("last_name", "")
+        ),
+        max_length=MAX_MANUAL_MAIL_SUBJECT,
+    )
+    title = _clean_single_line(
+        _personalize_batch_value(
+            payload.get("mail_title", ""), payload.get("first_name", ""), payload.get("last_name", "")
+        ),
+        max_length=MAX_MANUAL_MAIL_TITLE,
+    )
+    message = _personalize_batch_value(
+        payload.get("message", ""), payload.get("first_name", ""), payload.get("last_name", "")
+    )
+    message_html = _personalize_batch_html(
+        payload.get("message_html", ""), payload.get("first_name", ""), payload.get("last_name", "")
+    )
+    if (
+        not recipient
+        or not subject
+        or not title
+        or not message
+        or len(message) > MAX_MANUAL_MAIL_BODY
+        or len(message_html) > MAX_MANUAL_MAIL_HTML
+    ):
+        return jsonify({"error": "Check the recipient, subject, title and message"}), 400
+    if not smtp_status(current_app)["ready"]:
+        return jsonify({"error": "SMTP is not configured"}), 503
+    rate_key = f"{session.get('admin_username') or 'admin'}:{get_client_ip()}"
+    if not ip_rate_allowed(
+        "dashboard_batch_email",
+        rate_key,
+        limit=300,
+        window_seconds=60 * 60,
+        db_path=str(current_app.config["DATABASE_PATH"]),
+    ):
+        return jsonify({"error": "Batch email rate limit reached"}), 429
+    body, safe_html = manual_email_content(text=message, rich_html=message_html or None)
+    html_body = render_manual_email_html(title=title, subject=subject, body=body, body_html=safe_html)
+    try:
+        delivered = send_mail(
+            current_app,
+            to=recipient[0],
+            subject=subject,
+            body=body,
+            html_body=html_body,
+            automated=False,
+            privacy_safe_log=True,
+        )
+    except Exception as exc:
+        current_app.logger.error("batch email delivery failed error_type=%s", type(exc).__name__)
+        return jsonify({"error": "Email could not be sent", "error_type": type(exc).__name__}), 502
+    if not delivered:
+        return jsonify({"error": "Mail transport declined the message"}), 503
+    return jsonify({"ok": True, "accepted": True})
+
+
+@bp.post("/notifications/batch-audit")
+@login_required
+def notifications_batch_audit():
+    request.max_content_length = 16 * 1024
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected a JSON object"}), 400
+    phase = str(payload.get("phase") or "")
+    if phase not in {"started", "completed", "failed"}:
+        return jsonify({"error": "Invalid batch phase"}), 400
+    counts = {}
+    for key in ("attempted", "accepted", "failed", "duration_ms"):
+        try:
+            counts[key] = max(0, min(int(payload.get(key) or 0), 1_000_000))
+        except (TypeError, ValueError):
+            counts[key] = 0
+    audit_log(
+        f"notifications.batch_{phase}",
+        f"ephemeral email batch {phase}",
+        category="system",
+        **counts,
+    )
+    return jsonify({"ok": True})

@@ -1,0 +1,191 @@
+{% extends 'dashboard/layout.html' %}
+{% from 'dashboard/_components.html' import page_header, empty_state %}
+{% block page_title %}Polls{% endblock %}
+{% block vendor_scripts %}{% if poll %}<script src="{{ url_for('static', filename='js/vendor/chart.umd.js', v=static_version) }}" defer></script>{% endif %}{% endblock %}
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/poll-renderer.js', v=static_version) }}" defer></script>
+<script src="{{ url_for('static', filename='js/dashboard/recipient-files.js', v=static_version) }}" defer></script>
+<script src="{{ url_for('static', filename='js/dashboard/polls.js', v=static_version) }}" defer></script>
+{% endblock %}
+{% block content %}
+{{ page_header('Notifications', 'Polls', 'Create and manage polls, invitations and responses.') }}
+
+<nav class="notification-area-tabs" aria-label="Notification areas">
+  <a href="{{ url_for('dashboard.notifications') }}"><i class="bi bi-envelope"></i> Email</a>
+  <a class="is-active" href="{{ url_for('dashboard.polls') }}" aria-current="page"><i class="bi bi-ui-checks-grid"></i> Polls</a>
+</nav>
+
+<div class="poll-workspace{{ ' has-editor' if poll else '' }}{{ ' is-empty' if not polls else '' }}">
+  <aside class="control-panel poll-selector" aria-label="Poll list">
+    <div class="panel-head">
+      <div><h2>Poll library</h2><p>Choose a questionnaire or start from a focused template.</p></div>
+      <button class="btn btn-primary btn-sm" type="button" data-poll-new-toggle><i class="bi bi-plus-lg"></i> New Poll</button>
+    </div>
+    <form class="poll-new-form" method="post" action="{{ url_for('dashboard.polls_new') }}" data-poll-new-form hidden>
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <label class="field"><span>Starting point</span><select class="form-select form-select-sm" name="template">
+        <option value="blank">Blank poll</option>
+        <option value="attendance">Attendance confirmation</option>
+        <option value="availability">Event availability</option>
+        <option value="date">Choose a date</option>
+        <option value="location">Choose a location</option>
+      </select></label>
+      <div class="inline-actions"><button class="btn btn-primary btn-sm" type="submit">Create Poll</button><button class="btn btn-ghost btn-sm" type="button" data-poll-new-cancel>Cancel</button></div>
+    </form>
+    <div class="poll-list">
+      {% for item in polls %}
+      <a class="poll-list-item{{ ' is-active' if poll and item.id == poll.id }}" href="{{ url_for('dashboard.poll_detail', poll_id=item.id) }}">
+        <span class="poll-list-title"><b>{{ item.title }}</b><small>Updated {{ item.updated_at[:10] }}</small></span>
+        <span class="status-chip status-{{ 'success' if item.status == 'open' else 'neutral' if item.status == 'closed' else 'warning' }}">{{ item.status|title }}</span>
+        <span class="poll-list-counts"><small><b>{{ item.response_count }}</b> responses</small><small><b>{{ item.invitation_count }}</b> invitations</small></span>
+        <small class="poll-list-deadline"><i class="bi bi-calendar3" aria-hidden="true"></i> {{ item.deadline or 'No deadline' }}</small>
+      </a>
+      {% else %}
+      <div class="poll-library-empty">
+        <i class="bi bi-ui-checks-grid" aria-hidden="true"></i>
+        <div><h3>No polls yet</h3><p>Create a poll from scratch or start from an editable example.</p></div>
+        <small>Recipient files stay in browser memory and are never stored as mailing lists.</small>
+      </div>
+      {% endfor %}
+    </div>
+  </aside>
+
+  {% if poll %}
+  <main class="poll-editor" data-poll-editor
+        data-poll-id="{{ poll.id }}"
+        data-smtp-ready="{{ '1' if transport.ready else '0' }}"
+        data-save-url="{{ url_for('dashboard.poll_update', poll_id=poll.id) }}"
+        data-invite-url="{{ url_for('dashboard.poll_invite', poll_id=poll.id) }}"
+        data-test-url="{{ url_for('dashboard.poll_test_invitation', poll_id=poll.id) }}">
+    <script type="application/json" data-poll-json>{{ poll|tojson }}</script>
+    <script type="application/json" data-analysis-json>{{ analysis|tojson }}</script>
+    <header class="poll-editor-head">
+      <div class="poll-editor-identity"><span class="status-chip status-{{ 'success' if poll.status == 'open' else 'neutral' if poll.status == 'closed' else 'warning' }}">{{ poll.status|title }}</span><div><h2>{{ poll.title }}</h2><p>Organisational questionnaire</p></div></div>
+      <div class="poll-editor-facts" aria-label="Poll summary">
+        <span><b>{{ analysis.responses }}</b><small>Responses</small></span>
+        <span><b>{{ analysis.invitations }}</b><small>Invitations</small></span>
+        <span><b>{{ poll.deadline or '—' }}</b><small>Deadline</small></span>
+      </div>
+      <button class="btn btn-primary btn-sm" type="button" data-poll-save><i class="bi bi-check2"></i> Save changes</button>
+    </header>
+
+    <div class="poll-tabs" role="tablist" aria-label="Poll sections">
+      <button type="button" role="tab" aria-selected="true" data-poll-tab="editor"><i class="bi bi-pencil-square" aria-hidden="true"></i><span>Editor</span></button>
+      <button type="button" role="tab" aria-selected="false" data-poll-tab="responses"><i class="bi bi-table" aria-hidden="true"></i><span>Responses</span><b>{{ analysis.responses }}</b></button>
+      <button type="button" role="tab" aria-selected="false" data-poll-tab="analysis"><i class="bi bi-bar-chart" aria-hidden="true"></i><span>Analysis</span></button>
+      <button type="button" role="tab" aria-selected="false" data-poll-tab="export"><i class="bi bi-download" aria-hidden="true"></i><span>Export</span></button>
+      <button type="button" role="tab" aria-selected="false" data-poll-tab="clean"><i class="bi bi-database-gear" aria-hidden="true"></i><span>Data</span></button>
+    </div>
+
+    <section class="poll-tab-panel is-active" data-poll-panel="editor">
+      <div class="poll-editor-layout">
+      <div class="poll-editor-primary">
+      <section class="control-panel poll-settings-panel poll-section-card">
+        <div class="panel-head"><div><h3>Settings</h3><p>Define availability, privacy and retention.</p></div></div>
+        <div class="poll-form-grid">
+          <label class="field poll-span-2"><span>Title</span><input class="form-control form-control-sm" data-poll-field="title" maxlength="180" value="{{ poll.title }}" required></label>
+          <label class="field poll-span-2"><span>Description</span><textarea class="form-control form-control-sm" data-poll-field="description" maxlength="4000" rows="3">{{ poll.description }}</textarea></label>
+          <label class="field"><span>Status</span><select class="form-select form-select-sm" data-poll-field="status"><option value="draft" {{ 'selected' if poll.status == 'draft' }}>Draft</option><option value="open" {{ 'selected' if poll.status == 'open' }}>Open</option><option value="closed" {{ 'selected' if poll.status == 'closed' }}>Closed</option></select></label>
+          <label class="field"><span>Deadline</span><input class="form-control form-control-sm" type="date" data-poll-field="deadline" value="{{ poll.deadline[:10] }}" required></label>
+          <label class="field"><span>Response mode</span><select class="form-select form-select-sm" data-poll-field="response_mode"><option value="anonymous" {{ 'selected' if poll.response_mode == 'anonymous' }}>Anonymous</option><option value="identified" {{ 'selected' if poll.response_mode == 'identified' }}>Identified by name</option></select></label>
+          <label class="field"><span>Retain until</span><input class="form-control form-control-sm" type="date" data-poll-field="retention_until" value="{{ poll.retention_until[:10] }}"></label>
+          <label class="field poll-session-field"><span>Respondent session</span><div class="input-group input-group-sm"><input class="form-control" type="number" min="10" max="1440" step="5" inputmode="numeric" data-poll-field="respondent_session_minutes" value="{{ poll.respondent_session_minutes }}"><span class="input-group-text">minutes</span></div><small>10–1440 min. The invitation link itself remains valid until the poll deadline.</small></label>
+          <label class="toggle-row"><input type="checkbox" data-poll-field="allow_changes" {{ 'checked' if poll.allow_changes }}><span><b>Allow response changes</b><small>The same secure link can create a new short session and append a newer revision until the deadline.</small></span></label>
+        </div>
+        <div class="control-note notification-compact-note"><i class="bi bi-shield-exclamation"></i><div><b>Organisational information only</b><span>Do not collect passwords or sensitive personal data with MIFP Polls.</span></div></div>
+      </section>
+
+      <section class="control-panel poll-questions-panel poll-section-card">
+        <div class="panel-head"><div><h3>Questions</h3><p>Five focused response types; no branching or scoring.</p></div><button class="btn btn-outline btn-sm" type="button" data-question-add><i class="bi bi-plus-lg"></i> Add question</button></div>
+        <div data-question-list></div>
+      </section>
+      </div>
+
+      <aside class="poll-editor-delivery" aria-label="Invitation and recipients">
+      <section class="control-panel poll-invitation-panel poll-section-card">
+        <div class="panel-head"><div><h3>Invitation email</h3><p>Each recipient receives an individual MIFP email and a unique secure link.</p></div></div>
+        <div class="poll-form-grid">
+          <label class="field poll-span-2"><span>Subject</span><input class="form-control form-control-sm" data-poll-field="invitation_subject" maxlength="160" value="{{ poll.invitation_subject }}"></label>
+          <label class="field poll-span-2"><span>Message</span><textarea class="form-control" data-poll-field="invitation_message" maxlength="10000" rows="7">{{ poll.invitation_message }}</textarea><small>Supported placeholders: <code>{{ '{{first_name}}' }}</code> and <code>{{ '{{last_name}}' }}</code>.</small></label>
+          <label class="field"><span>CTA label</span><input class="form-control form-control-sm" data-poll-field="invitation_cta" maxlength="60" value="{{ poll.invitation_cta }}"></label>
+        </div>
+      </section>
+
+      <section class="control-panel poll-recipient-panel poll-section-card" data-recipient-panel>
+        <div class="panel-head"><div><h3>Recipients</h3><p>The CSV/XLSX stays in this page's memory and is lost on refresh.</p></div><span class="status-chip status-info">browser only</span></div>
+        <input class="form-control form-control-sm" type="file" accept=".csv,.xlsx" data-recipient-file>
+        <div class="recipient-mapping" data-recipient-mapping hidden>
+          <label class="field"><span>Email column</span><select class="form-select form-select-sm" data-map="email"></select></label>
+          <label class="field"><span>First name column</span><select class="form-select form-select-sm" data-map="firstName"></select></label>
+          <label class="field"><span>Last name column</span><select class="form-select form-select-sm" data-map="lastName"></select></label>
+        </div>
+        <div class="recipient-summary" data-recipient-summary hidden>
+          <span><small>Total</small><b data-count="total">0</b></span><span><small>Valid</small><b data-count="valid">0</b></span><span><small>Invalid</small><b data-count="invalid">0</b></span><span><small>Duplicate</small><b data-count="duplicate">0</b></span>
+        </div>
+        <div class="poll-test-row">
+          <label class="field"><span>Test recipient</span><input class="form-control form-control-sm" type="email" data-test-email placeholder="you@example.org"></label>
+          <button class="btn btn-outline btn-sm" type="button" data-poll-test {{ 'disabled' if not transport.ready }}><i class="bi bi-send"></i> Send test</button>
+          <button class="btn btn-primary btn-sm" type="button" data-poll-send disabled><i class="bi bi-send-check"></i> Send invitations</button>
+        </div>
+        {% if not transport.ready %}<small class="poll-smtp-warning">Configure SMTP before sending test messages or invitations.</small>{% endif %}
+        <div class="batch-progress" data-batch-progress hidden>
+          <div><b data-progress-title>Sending 0 / 0</b><small>Accepted means the SMTP server accepted the message; it does not guarantee delivery or reading.</small></div>
+          <progress max="1" value="0" data-progress-bar></progress>
+          <div class="recipient-summary"><span><small>Accepted</small><b data-progress="accepted">0</b></span><span><small>Failed</small><b data-progress="failed">0</b></span><span><small>Pending</small><b data-progress="pending">0</b></span></div>
+          <div class="inline-actions"><button class="btn btn-outline btn-sm" type="button" data-batch-pause>Pause</button><button class="btn btn-outline btn-sm" type="button" data-batch-resume disabled>Resume</button><button class="btn btn-outline btn-sm" type="button" data-batch-retry disabled>Retry failed</button></div>
+        </div>
+      </section>
+      </aside>
+      </div>
+
+      <section class="control-panel poll-preview-panel poll-section-card">
+        <div class="panel-head"><div><h3>Respondent preview</h3><p>Uses the same question rendering as the public response page.</p></div><span class="status-chip status-info">preview</span></div>
+        <div class="poll-preview-stage"><div class="poll-public-card" data-poll-preview></div></div>
+      </section>
+    </section>
+
+    <section class="poll-tab-panel" data-poll-panel="responses" hidden>
+      <section class="control-panel">
+        <div class="panel-head"><div><h3>Responses</h3><p>Current answers with submission and modification history. Answers cannot be edited from the dashboard.</p></div><input class="form-control form-control-sm poll-response-search" type="search" placeholder="Filter responses" data-response-search></div>
+        <div class="table-wrap"><table class="data-table poll-response-table"><thead><tr>{% if poll.response_mode == 'identified' %}<th><button type="button" data-response-sort="0">Name</button></th>{% endif %}<th><button type="button" data-response-sort="{{ 1 if poll.response_mode == 'identified' else 0 }}">First submitted</button></th><th><button type="button" data-response-sort="{{ 2 if poll.response_mode == 'identified' else 1 }}">Last modified</button></th><th><button type="button" data-response-sort="{{ 3 if poll.response_mode == 'identified' else 2 }}">Revisions</button></th>{% for question in poll.questions %}<th>Q{{ loop.index }}</th>{% endfor %}<th>Activity</th></tr></thead><tbody data-response-rows>
+          {% for row in responses %}
+          <tr data-response-main-row>{% if poll.response_mode == 'identified' %}<td>{{ row.display_name or '—' }}</td>{% endif %}<td data-sort="{{ row.first_submitted_at }}">{{ row.first_submitted_at[:19].replace('T', ' ') }}</td><td data-sort="{{ row.last_modified_at }}">{{ row.last_modified_at[:19].replace('T', ' ') }}</td><td data-sort="{{ row.revision_count }}"><span class="status-chip {{ 'status-info' if row.revision_count > 1 else 'status-neutral' }}">{{ row.revision_count }}</span></td>{% for question in poll.questions %}<td>{{ row.display_answers.get(question.id) or '—' }}</td>{% endfor %}<td><button class="btn btn-ghost btn-sm" type="button" data-response-history data-url="{{ url_for('dashboard.poll_response_history', poll_id=poll.id, response_id=row.response_id) }}" data-target="history-{{ row.response_id }}"><i class="bi bi-clock-history" aria-hidden="true"></i> History</button></td></tr>
+          <tr class="poll-response-history-row" id="history-{{ row.response_id }}" data-response-history-row hidden><td colspan="{{ poll.questions|length + (5 if poll.response_mode == 'identified' else 4) }}"><div class="poll-response-history" data-response-history-content></div></td></tr>
+          {% else %}<tr><td colspan="{{ poll.questions|length + (5 if poll.response_mode == 'identified' else 4) }}">No responses received.</td></tr>{% endfor %}
+        </tbody></table></div>
+      </section>
+    </section>
+
+    <section class="poll-tab-panel" data-poll-panel="analysis" hidden>
+      <div class="control-snapshot poll-analysis-summary"><article><span>Invitations</span><b>{{ analysis.invitations }}</b><small>Active secure links</small></article><article><span>Responses</span><b>{{ analysis.responses }}</b><small>Current responses</small></article><article><span>Response rate</span><b>{{ analysis.response_rate }}%</b><small>Responses / invitations</small></article><article><span>Modified</span><b>{{ analysis.modified_responses }}</b><small>Responses changed later</small></article><article><span>Total revisions</span><b>{{ analysis.total_revisions }}</b><small>All submitted revisions</small></article><article><span>Status</span><b>{{ poll.status|title }}</b><small>Deadline {{ poll.deadline }}</small></article></div>
+      <div class="poll-analysis-grid" data-analysis-grid></div>
+    </section>
+
+    <section class="poll-tab-panel" data-poll-panel="export" hidden>
+      <section class="control-panel"><div class="panel-head"><div><h3>Poll exports</h3><p>Separate from MIFP import/export. Only current response revisions are included.</p></div></div>
+        <div class="poll-export-options">
+          <a href="{{ url_for('dashboard.poll_export', poll_id=poll.id, fmt='csv') }}"><i class="bi bi-filetype-csv"></i><span><b>CSV</b><small>One row per current response</small></span></a>
+          <a href="{{ url_for('dashboard.poll_export', poll_id=poll.id, fmt='xlsx') }}"><i class="bi bi-file-earmark-spreadsheet"></i><span><b>Excel</b><small>Overview, responses and analysis</small></span></a>
+          <a href="{{ url_for('dashboard.poll_export', poll_id=poll.id, fmt='pdf') }}"><i class="bi bi-filetype-pdf"></i><span><b>PDF</b><small>Paginated MIFP report</small></span></a>
+        </div>
+      </section>
+    </section>
+
+    <section class="poll-tab-panel" data-poll-panel="clean" hidden>
+      <section class="control-panel poll-lifecycle-panel">
+        <div class="panel-head"><div><h3>Storage maintenance</h3><p>Remove obsolete technical invitation metadata without deleting response history.</p></div><button class="btn btn-outline btn-sm" type="button" data-lifecycle="clean" data-url="{{ url_for('dashboard.poll_clean', poll_id=poll.id) }}">Clean technical data</button></div>
+      </section>
+      <section class="control-panel poll-danger-panel"><div><h3>Compact response history</h3><p>Irreversibly removes older answer revisions while preserving the current answer, first submission time, last modification time and revision count.</p></div><button class="btn btn-outline btn-sm" type="button" data-lifecycle="compact-history" data-url="{{ url_for('dashboard.poll_compact_history', poll_id=poll.id) }}">Compact history</button></section>
+      {% if poll.response_mode == 'identified' %}<section class="control-panel poll-danger-panel"><div><h3>Anonymize poll</h3><p>Permanently removes retained participant names while keeping answers and aggregates.</p></div><button class="btn btn-outline btn-sm" type="button" data-lifecycle="anonymize" data-url="{{ url_for('dashboard.poll_anonymize', poll_id=poll.id) }}">Anonymize poll</button></section>{% endif %}
+      <section class="control-panel poll-danger-panel"><div><h3>Clear responses / Reset poll data</h3><p>Deletes all responses, invitations and token hashes. Poll settings and questions remain.</p></div><button class="btn btn-danger btn-sm" type="button" data-lifecycle="reset" data-url="{{ url_for('dashboard.poll_reset', poll_id=poll.id) }}">Reset poll data</button></section>
+      <section class="control-panel poll-danger-panel"><div><h3>Delete poll</h3><p>Permanently deletes this poll directory and everything it contains.</p></div><button class="btn btn-danger btn-sm" type="button" data-lifecycle="delete" data-url="{{ url_for('dashboard.poll_delete', poll_id=poll.id) }}">Delete poll</button></section>
+    </section>
+    <div class="poll-feedback" role="status" aria-live="polite" data-poll-feedback></div>
+  </main>
+  {% elif polls %}
+  <section class="control-panel poll-welcome">
+    {{ empty_state('Select a poll', 'Choose a poll from the library or create a new one.', 'bi-ui-checks-grid') }}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

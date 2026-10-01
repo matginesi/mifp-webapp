@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from pathlib import Path
 import re
 import zipfile
 
 import pytest
+from openpyxl import Workbook
 from playwright.sync_api import expect
 
 from .helpers import screenshot_on_failure
@@ -22,6 +24,7 @@ DASHBOARD_GET = [
     "/dashboard/assets",
     "/dashboard/logs",
     "/dashboard/notifications",
+    "/dashboard/notifications/polls",
     "/dashboard/data-quality",
     "/dashboard/conferences",
     "/dashboard/control",
@@ -123,7 +126,15 @@ class TestDashboardRoutes:
         page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
         page.set_viewport_size({"width": width, "height": height})
         _login(page, live_server)
-        for route in ("/dashboard/", "/dashboard/events", "/dashboard/assets", "/dashboard/data-portability", "/dashboard/security", "/dashboard/notifications"):
+        for route in (
+            "/dashboard/",
+            "/dashboard/events",
+            "/dashboard/assets",
+            "/dashboard/data-portability",
+            "/dashboard/security",
+            "/dashboard/notifications",
+            "/dashboard/notifications/polls",
+        ):
             page.goto(f"{live_server}{route}")
             page.wait_for_load_state("networkidle")
             overflow = page.evaluate(
@@ -132,6 +143,69 @@ class TestDashboardRoutes:
             assert overflow <= 1, f"{route} overflows by {overflow}px at {width}px"
         page.screenshot(path=f"/tmp/mifp-dashboard-{width}x{height}.png", full_page=True)
         assert not errors, f"Console errors at {width}px: {errors}"
+
+    @screenshot_on_failure
+    def test_poll_editor_recipient_file_and_mobile_layout(self, live_server, page):
+        errors: list[str] = []
+        page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        _login(page, live_server)
+        page.goto(f"{live_server}/dashboard/notifications/polls")
+        page.wait_for_load_state("networkidle")
+        page.locator("[data-poll-new-toggle]").click()
+        page.locator('[name="template"]').select_option("attendance")
+        page.get_by_role("button", name="Create Poll").click()
+        page.wait_for_load_state("networkidle")
+
+        expect(page.locator("[data-poll-editor]")).to_be_visible()
+        expect(page.locator("[data-question-list] .poll-question-editor")).to_have_count(1)
+        expect(page.locator("[data-poll-preview] .poll-public-question")).to_have_count(1)
+        page.locator('[data-poll-field="title"]').fill("Browser availability poll")
+        page.locator("[data-question-add]").click()
+        expect(page.locator("[data-question-list] .poll-question-editor")).to_have_count(2)
+        page.locator("[data-poll-save]").click()
+        expect(page.locator("[data-poll-feedback]")).to_contain_text("Poll saved")
+
+        page.locator("[data-recipient-file]").set_input_files(
+            files=[{
+                "name": "recipients.csv",
+                "mimeType": "text/csv",
+                "buffer": b"email,first_name,last_name\nada@example.org,Ada,Lovelace\nADA@example.org,Duplicate,Name\nbad,Invalid,Row\n",
+            }]
+        )
+        expect(page.locator('[data-count="total"]')).to_have_text("3")
+        expect(page.locator('[data-count="valid"]')).to_have_text("1")
+        expect(page.locator('[data-count="invalid"]')).to_have_text("1")
+        expect(page.locator('[data-count="duplicate"]')).to_have_text("1")
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["Email", "First name", "Last name", "Ignored"])
+        sheet.append(["grace@example.org", "Grace", "Hopper", "not uploaded"])
+        xlsx = io.BytesIO()
+        workbook.save(xlsx)
+        page.locator("[data-recipient-file]").set_input_files(
+            files=[{
+                "name": "recipients.xlsx",
+                "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "buffer": xlsx.getvalue(),
+            }]
+        )
+        expect(page.locator('[data-count="total"]')).to_have_text("1")
+        expect(page.locator('[data-count="valid"]')).to_have_text("1")
+
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.wait_for_timeout(200)
+        desktop_overflow = page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
+        assert desktop_overflow <= 1
+        page.screenshot(path="/tmp/mifp-polls-desktop.png", full_page=True)
+
+        page.set_viewport_size({"width": 375, "height": 812})
+        page.wait_for_timeout(200)
+        overflow = page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
+        assert overflow <= 1
+        page.screenshot(path="/tmp/mifp-polls-mobile.png", full_page=True)
+        assert not errors, errors
 
     @screenshot_on_failure
     def test_security_page_is_responsive_and_does_not_render_secrets(self, live_server, page):
@@ -220,6 +294,25 @@ class TestDashboardRoutes:
         page.reload()
         assert shell.evaluate("(element) => element.classList.contains('is-collapsed')")
         page.screenshot(path="/tmp/mifp-shell-desktop-collapsed.png", full_page=False)
+
+    def test_sidebar_scroll_position_persists_between_pages(self, live_server, page):
+        page.set_viewport_size({"width": 1280, "height": 620})
+        _login(page, live_server)
+        page.evaluate("localStorage.removeItem('mifp-dashboard-sidebar-scroll')")
+        navigation = page.locator(".sidebar-nav")
+        stored = navigation.evaluate(
+            """element => {
+                element.scrollTop = element.scrollHeight;
+                element.dispatchEvent(new Event('scroll'));
+                return element.scrollTop;
+            }"""
+        )
+        assert stored > 0
+        page.wait_for_timeout(100)
+        page.locator('.sidebar-link[href="/dashboard/stats"]').click()
+        page.wait_for_load_state("networkidle")
+        restored = page.locator(".sidebar-nav").evaluate("element => element.scrollTop")
+        assert restored >= stored - 2
 
     @pytest.mark.parametrize("route", DASHBOARD_GET)
     @screenshot_on_failure

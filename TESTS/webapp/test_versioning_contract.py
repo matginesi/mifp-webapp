@@ -11,7 +11,7 @@ from mifp_app.services.versioning import (
 
 
 def test_application_version_is_source_controlled_semver():
-    assert application_version() == "1.0.0"
+    assert application_version() == "1.0.1"
 
 
 def test_version_contracts_expose_current_schema_and_package_versions():
