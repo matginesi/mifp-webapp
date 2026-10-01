@@ -483,7 +483,12 @@ def test_poll_dashboard_and_public_token_exchange_flow(poll_app, monkeypatch) ->
     assert len(sent) == 1
     assert "#p=" in sent[0]["body"] and "&t=" in sent[0]["body"]
     assert sent[0]["privacy_safe_log"] is True
-    assert 'style="display:inline-block;background:' in sent[0]["html_body"]
+    html_body = sent[0]["html_body"]
+    assert '<a href="' in html_body
+    assert "#p=" in html_body and "&amp;t=" in html_body
+    assert "display:inline-block" in html_body
+    assert 'bgcolor="' in html_body
+    assert "This message contains no open or click tracking." in html_body
     assert (
         "person@example.org"
         not in (runtime / "polls" / poll["id"] / "invitations.json").read_text()
