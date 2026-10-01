@@ -169,15 +169,15 @@
 .poll-option-row { display:grid; grid-template-columns:minmax(0,1fr) repeat(3,36px); gap:4px; }
 .poll-option-row .btn { padding:5px; }
 .recipient-mapping { display:grid; grid-template-columns:1fr; gap:9px; margin-top:12px; }
-.poll-recipient-panel > input,.poll-recipient-panel > .recipient-mapping,.poll-recipient-panel > .recipient-summary,.poll-recipient-panel > .poll-test-row,.poll-recipient-panel > .batch-progress { margin-inline:14px; width:calc(100% - 28px); }
+.poll-recipient-panel > input,.poll-recipient-panel > .recipient-mapping,.poll-recipient-panel > .recipient-summary,.poll-recipient-panel > .poll-send-row,.poll-recipient-panel > .batch-progress { margin-inline:14px; width:calc(100% - 28px); }
 .poll-recipient-panel { padding-bottom:14px; }
 .recipient-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; margin-top:12px; border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden; background:var(--border); }
 .recipient-summary > span { display:grid; padding:8px 9px; background:var(--surface); }
 .recipient-summary small { color:var(--text-3); font-size:.57rem; }
 .recipient-summary b { color:var(--text-bright); font-size:.88rem; }
-.poll-test-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
-.poll-test-row .field { grid-column:1/-1; }
-.poll-test-row .btn { width:100%; }
+.poll-send-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+.poll-send-row .field { grid-column:1/-1; }
+.poll-send-row .btn { width:100%; }
 .poll-smtp-warning { display:block; margin:8px 14px 0; color:var(--amber); }
 .batch-progress { display:grid; gap:10px; margin-top:12px; padding:12px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-2); }
 .batch-progress > div:first-child { display:flex; justify-content:space-between; gap:14px; }
@@ -269,8 +269,8 @@
   .poll-question-actions { width:100%; }
   .poll-question-actions .btn { flex:1 1 auto; }
   .recipient-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .poll-test-row { grid-template-columns:1fr; }
-  .poll-test-row .field { grid-column:auto; }
+  .poll-send-row { grid-template-columns:1fr; }
+  .poll-send-row .field { grid-column:auto; }
 }
 
 /* Event list sections */
@@ -5558,3 +5558,13 @@ textarea:focus-visible { outline: 0; }.dash-empty-state,.empty-state{
 .poll-history-timeline { display:flex; flex-wrap:wrap; gap:6px 12px; padding:8px 10px; border:1px solid var(--border-soft); background:var(--surface); font-size:.64rem; }
 .poll-history-timeline b { width:100%; color:var(--text-bright); }
 .poll-history-timeline span { color:var(--text-2); }
+
+/* Poll single-recipient send is a real invitation, not a preview/test message. */
+.poll-single-recipient-row { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:end; }
+.poll-single-recipient-row .field { grid-column:auto; min-width:0; }
+.poll-single-recipient-row .field:first-child { grid-column:1/-1; }
+.poll-single-recipient-note { display:block; margin:.5rem 14px 0; color:var(--text-3); line-height:1.4; }
+@media (max-width:720px) {
+  .poll-single-recipient-row { grid-template-columns:1fr; }
+  .poll-single-recipient-row .field:first-child { grid-column:auto; }
+}

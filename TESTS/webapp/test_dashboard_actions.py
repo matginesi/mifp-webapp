@@ -1683,7 +1683,6 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.polls_new",
     "dashboard.poll_update",
     "dashboard.poll_invite",
-    "dashboard.poll_test_invitation",
     "dashboard.poll_clean",
     "dashboard.poll_anonymize",
     "dashboard.poll_reset",

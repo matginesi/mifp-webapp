@@ -294,11 +294,19 @@
   editor.querySelector('[data-batch-retry]').addEventListener('click', function () { if (batch.failed.length) runBatch(batch.failed).catch(function (error) { show(error.message, true); }); });
   window.addEventListener('pagehide', function () { if (batch.controller) batch.controller.abort(); }, { once: true });
 
-  editor.querySelector('[data-poll-test]').addEventListener('click', async function () {
-    var email = editor.querySelector('[data-test-email]').value.trim();
-    if (!email) return show('Enter the test recipient email.', true);
-    try { await save(); await window.MIFP.request(editor.dataset.testUrl, { method: 'POST', json: { email: email } }); show('Test invitation accepted by SMTP.'); }
-    catch (error) { show(error.message, true); }
+  editor.querySelector('[data-poll-send-one]').addEventListener('click', async function () {
+    var email = editor.querySelector('[data-single-email]').value.trim();
+    if (!email) return show('Enter the recipient email.', true);
+    var payload = { email: email };
+    var firstName = editor.querySelector('[data-single-first-name]');
+    var lastName = editor.querySelector('[data-single-last-name]');
+    if (firstName) payload.first_name = firstName.value.trim();
+    if (lastName) payload.last_name = lastName.value.trim();
+    try {
+      await save();
+      await window.MIFP.request(editor.dataset.inviteUrl, { method: 'POST', json: payload, timeout: 30000 });
+      show('Poll invitation accepted by SMTP. This is a real invitation with a secure respondent link.');
+    } catch (error) { show(error.message, true); }
   });
 
   function renderAnalysis() {

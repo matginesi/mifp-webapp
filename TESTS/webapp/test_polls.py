@@ -465,6 +465,9 @@ def test_poll_dashboard_and_public_token_exchange_flow(poll_app, monkeypatch) ->
         b"Recipient file" not in page.data
     )  # Poll recipients use the explicit CSV/XLSX control.
     assert b"browser only" in page.data
+    assert b"Single recipient" in page.data
+    assert b"Send poll" in page.data
+    assert b"Send test" not in page.data
     assert b"Respondent session" in page.data
     assert b"data-response-history" not in page.data  # no responses yet
 

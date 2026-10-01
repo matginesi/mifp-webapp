@@ -246,41 +246,6 @@ def poll_invite(poll_id: str):
     return jsonify({"ok": True, "accepted": True})
 
 
-@bp.post("/notifications/polls/<poll_id>/test")
-@login_required
-def poll_test_invitation(poll_id: str):
-    request.max_content_length = 32 * 1024
-    try:
-        payload = _json_payload()
-        recipient = normalize_email_address(payload.get("email"))
-        if not recipient:
-            raise PollError("Enter a valid test email address")
-        poll = get_poll(_runtime_dir(), poll_id)
-        preview_link = url_for("dashboard.poll_detail", poll_id=poll_id, _external=True) + "#preview"
-        subject, plain, html = _invitation_content(
-            poll,
-            first_name=str(payload.get("first_name") or ""),
-            last_name=str(payload.get("last_name") or ""),
-            link=preview_link,
-        )
-        delivered = send_mail(
-            current_app,
-            to=recipient,
-            subject=f"[TEST] {subject}",
-            body=plain,
-            html_body=html,
-            automated=False,
-            privacy_safe_log=True,
-        )
-        if not delivered:
-            raise PollError("Mail transport declined the test")
-    except PollError as exc:
-        return _poll_error(exc)
-    except Exception as exc:
-        current_app.logger.error("poll test delivery failed error_type=%s", type(exc).__name__)
-        return jsonify({"error": "Test email could not be sent"}), 502
-    return jsonify({"ok": True, "accepted": True})
-
 
 @bp.get("/notifications/polls/<poll_id>/responses")
 @login_required

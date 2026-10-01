@@ -55,8 +55,7 @@
         data-poll-id="{{ poll.id }}"
         data-smtp-ready="{{ '1' if transport.ready else '0' }}"
         data-save-url="{{ url_for('dashboard.poll_update', poll_id=poll.id) }}"
-        data-invite-url="{{ url_for('dashboard.poll_invite', poll_id=poll.id) }}"
-        data-test-url="{{ url_for('dashboard.poll_test_invitation', poll_id=poll.id) }}">
+        data-invite-url="{{ url_for('dashboard.poll_invite', poll_id=poll.id) }}">
     <script type="application/json" data-poll-json>{{ poll|tojson }}</script>
     <script type="application/json" data-analysis-json>{{ analysis|tojson }}</script>
     <header class="poll-editor-head">
@@ -122,12 +121,17 @@
         <div class="recipient-summary" data-recipient-summary hidden>
           <span><small>Total</small><b data-count="total">0</b></span><span><small>Valid</small><b data-count="valid">0</b></span><span><small>Invalid</small><b data-count="invalid">0</b></span><span><small>Duplicate</small><b data-count="duplicate">0</b></span>
         </div>
-        <div class="poll-test-row">
-          <label class="field"><span>Test recipient</span><input class="form-control form-control-sm" type="email" data-test-email placeholder="you@example.org"></label>
-          <button class="btn btn-outline btn-sm" type="button" data-poll-test {{ 'disabled' if not transport.ready }}><i class="bi bi-send"></i> Send test</button>
+        <div class="poll-send-row poll-single-recipient-row">
+          <label class="field"><span>Single recipient</span><input class="form-control form-control-sm" type="email" data-single-email placeholder="person@example.org"></label>
+          {% if poll.response_mode == 'identified' %}
+          <label class="field"><span>First name</span><input class="form-control form-control-sm" type="text" maxlength="120" data-single-first-name></label>
+          <label class="field"><span>Last name</span><input class="form-control form-control-sm" type="text" maxlength="120" data-single-last-name></label>
+          {% endif %}
+          <button class="btn btn-outline btn-sm" type="button" data-poll-send-one {{ 'disabled' if not transport.ready }}><i class="bi bi-send"></i> Send poll</button>
           <button class="btn btn-primary btn-sm" type="button" data-poll-send disabled><i class="bi bi-send-check"></i> Send invitations</button>
         </div>
-        {% if not transport.ready %}<small class="poll-smtp-warning">Configure SMTP before sending test messages or invitations.</small>{% endif %}
+        <small class="poll-single-recipient-note">“Send poll” creates a real secure invitation and counts in this poll's invitation/response statistics. Use Reset poll data after end-to-end testing if you do not want test responses retained.</small>
+        {% if not transport.ready %}<small class="poll-smtp-warning">Configure SMTP before sending poll invitations.</small>{% endif %}
         <div class="batch-progress" data-batch-progress hidden>
           <div><b data-progress-title>Sending 0 / 0</b><small>Accepted means the SMTP server accepted the message; it does not guarantee delivery or reading.</small></div>
           <progress max="1" value="0" data-progress-bar></progress>
