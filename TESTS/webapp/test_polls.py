@@ -335,7 +335,7 @@ def test_respondent_session_duration_defaults_bounds_and_expiry(tmp_path: Path) 
         save_poll(runtime, poll["id"], invalid)
 
 
-def test_response_history_and_daily_activity_survive_explicit_compaction(
+def test_response_history_and_daily_activity_survive_cleaning(
     tmp_path: Path, monkeypatch
 ) -> None:
     from mifp_app.services import polls
@@ -374,15 +374,14 @@ def test_response_history_and_daily_activity_survive_explicit_compaction(
 
     assert polls.clean_poll(runtime, poll["id"])["revisions_removed"] == 0
     assert len((runtime / "polls" / poll["id"] / "responses.jsonl").read_text().splitlines()) == 3
-    assert polls.compact_response_history(runtime, poll["id"])["revisions_removed"] == 2
-    compacted_response = polls.response_view(runtime, poll["id"])[0]
-    compacted = polls.response_history(runtime, poll["id"], compacted_response["response_id"])
-    compacted_analysis = polls.poll_analysis(runtime, poll["id"])
-    assert compacted["history_compacted"] is True
-    assert compacted["revision_count"] == 3
-    assert len(compacted["revision_timestamps"]) == 3
-    assert len(compacted["revisions"]) == 1
-    assert compacted_analysis["activity"] == analysis["activity"]
+    preserved_response = polls.response_view(runtime, poll["id"])[0]
+    preserved = polls.response_history(runtime, poll["id"], preserved_response["response_id"])
+    preserved_analysis = polls.poll_analysis(runtime, poll["id"])
+    assert preserved["history_compacted"] is False
+    assert preserved["revision_count"] == 3
+    assert len(preserved["revision_timestamps"]) == 3
+    assert len(preserved["revisions"]) == 3
+    assert preserved_analysis["activity"] == analysis["activity"]
 
 
 def test_truncated_final_jsonl_is_tolerated_but_middle_corruption_is_not(
@@ -607,7 +606,8 @@ def test_lifecycle_clean_anonymize_reset_delete_and_retention(
     polls.submit_response(runtime, access, {qid: "no"})
     assert polls.clean_poll(runtime, poll["id"])["revisions_removed"] == 0
     assert len((runtime / "polls" / poll["id"] / "responses.jsonl").read_text().splitlines()) == 2
-    assert polls.compact_response_history(runtime, poll["id"])["revisions_removed"] == 1
+    current = polls.response_view(runtime, poll["id"])[0]
+    assert len(polls.response_history(runtime, poll["id"], current["response_id"])["revisions"]) == 2
     polls.anonymize_poll(runtime, poll["id"])
     assert polls.get_poll(runtime, poll["id"])["response_mode"] == "anonymous"
     assert (

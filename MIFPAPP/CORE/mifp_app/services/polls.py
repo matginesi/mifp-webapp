@@ -1406,42 +1406,6 @@ def clean_poll(runtime_config_dir: Path | str, poll_id: str) -> dict[str, int]:
         return {"revisions_removed": 0, "invitations_removed": len(invitations) - len(retained)}
 
 
-def compact_response_history(runtime_config_dir: Path | str, poll_id: str) -> dict[str, int]:
-    """Irreversibly keep only the current response while preserving activity metadata."""
-    directory = _poll_dir(runtime_config_dir, poll_id)
-    with _poll_lock(directory):
-        rows = _read_responses_unlocked(directory)
-        groups = _response_groups(rows)
-        current: list[dict[str, Any]] = []
-        for records in groups.values():
-            row = dict(records[-1])
-            row.update(_response_activity(records))
-            row["revision_timestamps"] = _revision_timestamps(records)
-            current.append(row)
-        response_path = directory / "responses.jsonl"
-        descriptor, name = tempfile.mkstemp(prefix=".responses-", suffix=".tmp", dir=directory)
-        temporary = Path(name)
-        try:
-            os.fchmod(descriptor, 0o600)
-            with os.fdopen(descriptor, "wb") as handle:
-                for row in current:
-                    handle.write(
-                        (json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
-                    )
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, response_path)
-            os.chmod(response_path, 0o600)
-            directory_fd = os.open(directory, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-        finally:
-            temporary.unlink(missing_ok=True)
-        return {"revisions_removed": len(rows) - len(current), "responses_preserved": len(current)}
-
-
 def anonymize_poll(runtime_config_dir: Path | str, poll_id: str) -> None:
     directory = _poll_dir(runtime_config_dir, poll_id)
     with _poll_lock(directory):

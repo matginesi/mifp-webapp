@@ -18,7 +18,6 @@ from ..services.polls import (
     anonymize_poll,
     clean_poll,
     cleanup_retention,
-    compact_response_history,
     create_invitation,
     create_poll,
     delete_poll,
@@ -349,23 +348,6 @@ def poll_clean(poll_id: str):
     except PollError as exc:
         return _poll_error(exc)
     audit_log("poll.cleaned", "poll technical data cleaned", category="poll", poll_id=poll_id, **result)
-    return jsonify({"ok": True, **result})
-
-
-@bp.post("/notifications/polls/<poll_id>/compact-history")
-@login_required
-def poll_compact_history(poll_id: str):
-    try:
-        result = compact_response_history(_runtime_dir(), poll_id)
-    except PollError as exc:
-        return _poll_error(exc)
-    audit_log(
-        "poll.history_compacted",
-        "poll response history compacted",
-        category="poll",
-        poll_id=poll_id,
-        **result,
-    )
     return jsonify({"ok": True, **result})
 
 

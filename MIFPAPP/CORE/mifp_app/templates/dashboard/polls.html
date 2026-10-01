@@ -74,7 +74,7 @@
       <button type="button" role="tab" aria-selected="false" data-poll-tab="responses"><i class="bi bi-table" aria-hidden="true"></i><span>Responses</span><b>{{ analysis.responses }}</b></button>
       <button type="button" role="tab" aria-selected="false" data-poll-tab="analysis"><i class="bi bi-bar-chart" aria-hidden="true"></i><span>Analysis</span></button>
       <button type="button" role="tab" aria-selected="false" data-poll-tab="export"><i class="bi bi-download" aria-hidden="true"></i><span>Export</span></button>
-      <button type="button" role="tab" aria-selected="false" data-poll-tab="clean"><i class="bi bi-database-gear" aria-hidden="true"></i><span>Data</span></button>
+      <button type="button" role="tab" aria-selected="false" data-poll-tab="clean"><i class="bi bi-database-gear" aria-hidden="true"></i><span>Clean / Delete</span></button>
     </div>
 
     <section class="poll-tab-panel is-active" data-poll-panel="editor">
@@ -173,12 +173,19 @@
 
     <section class="poll-tab-panel" data-poll-panel="clean" hidden>
       <section class="control-panel poll-lifecycle-panel">
-        <div class="panel-head"><div><h3>Storage maintenance</h3><p>Remove obsolete technical invitation metadata without deleting response history.</p></div><button class="btn btn-outline btn-sm" type="button" data-lifecycle="clean" data-url="{{ url_for('dashboard.poll_clean', poll_id=poll.id) }}">Clean technical data</button></div>
+        <div class="panel-head"><div><h3>Export before maintenance</h3><p>Download a current snapshot before cleaning or deleting poll data.</p></div></div>
+        <div class="poll-maintenance-exports" aria-label="Poll maintenance exports">
+          <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.poll_export', poll_id=poll.id, fmt='csv') }}"><i class="bi bi-filetype-csv" aria-hidden="true"></i> CSV</a>
+          <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.poll_export', poll_id=poll.id, fmt='xlsx') }}"><i class="bi bi-file-earmark-spreadsheet" aria-hidden="true"></i> Excel</a>
+          <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.poll_export', poll_id=poll.id, fmt='pdf') }}"><i class="bi bi-filetype-pdf" aria-hidden="true"></i> PDF</a>
+        </div>
       </section>
-      <section class="control-panel poll-danger-panel"><div><h3>Compact response history</h3><p>Irreversibly removes older answer revisions while preserving the current answer, first submission time, last modification time and revision count.</p></div><button class="btn btn-outline btn-sm" type="button" data-lifecycle="compact-history" data-url="{{ url_for('dashboard.poll_compact_history', poll_id=poll.id) }}">Compact history</button></section>
+      <section class="control-panel poll-lifecycle-panel">
+        <div class="panel-head"><div><h3>Clean technical data</h3><p>Remove obsolete invitation metadata. Submitted responses and their revision history are preserved.</p></div><button class="btn btn-outline btn-sm" type="button" data-lifecycle="clean" data-url="{{ url_for('dashboard.poll_clean', poll_id=poll.id) }}">Clean</button></div>
+      </section>
       {% if poll.response_mode == 'identified' %}<section class="control-panel poll-danger-panel"><div><h3>Anonymize poll</h3><p>Permanently removes retained participant names while keeping answers and aggregates.</p></div><button class="btn btn-outline btn-sm" type="button" data-lifecycle="anonymize" data-url="{{ url_for('dashboard.poll_anonymize', poll_id=poll.id) }}">Anonymize poll</button></section>{% endif %}
-      <section class="control-panel poll-danger-panel"><div><h3>Clear responses / Reset poll data</h3><p>Deletes all responses, invitations and token hashes. Poll settings and questions remain.</p></div><button class="btn btn-danger btn-sm" type="button" data-lifecycle="reset" data-url="{{ url_for('dashboard.poll_reset', poll_id=poll.id) }}">Reset poll data</button></section>
-      <section class="control-panel poll-danger-panel"><div><h3>Delete poll</h3><p>Permanently deletes this poll directory and everything it contains.</p></div><button class="btn btn-danger btn-sm" type="button" data-lifecycle="delete" data-url="{{ url_for('dashboard.poll_delete', poll_id=poll.id) }}">Delete poll</button></section>
+      <section class="control-panel poll-danger-panel"><div><h3>Clear responses / Reset poll data</h3><p>Deletes all responses, invitations and token hashes. Poll settings and questions remain. Export first if you need a copy.</p></div><button class="btn btn-danger btn-sm" type="button" data-lifecycle="reset" data-url="{{ url_for('dashboard.poll_reset', poll_id=poll.id) }}">Reset poll data</button></section>
+      <section class="control-panel poll-danger-panel"><div><h3>Delete poll</h3><p>Permanently deletes this poll directory and everything it contains. Export first if you need a copy.</p></div><button class="btn btn-danger btn-sm" type="button" data-lifecycle="delete" data-url="{{ url_for('dashboard.poll_delete', poll_id=poll.id) }}">Delete poll</button></section>
     </section>
     <div class="poll-feedback" role="status" aria-live="polite" data-poll-feedback></div>
   </main>
