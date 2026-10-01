@@ -170,7 +170,7 @@ def poll_invite(poll_id: str):
     try:
         payload = _json_payload()
         if not admin_password_matches(payload.get("password", "")):
-            return jsonify({"error": "Password verification failed. No invitation was sent."}), 403
+            return jsonify({"error": "Password verification failed. No invitation was sent.", "code": "admin_password_invalid"}), 403
         recipient = normalize_email_address(payload.get("email"))
         if not recipient:
             raise PollError("Enter a valid recipient email address")

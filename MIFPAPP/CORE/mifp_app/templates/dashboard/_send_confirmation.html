@@ -7,8 +7,9 @@
       </div>
       <div class="modal-body">
         <div class="export-auth-notice"><i class="bi bi-envelope" aria-hidden="true"></i><div><b>Authorize a real send</b><span>Enter the administrator password to send the selected email or invitations.</span></div></div>
+        <input type="hidden" name="username" autocomplete="username" value="{{ session.get('admin_username', '') }}">
         <label class="form-label" for="sendAuthPassword">Administrator password</label>
-        <input class="form-control" id="sendAuthPassword" type="password" autocomplete="current-password" required>
+        <input class="form-control" id="sendAuthPassword" name="password" type="password" autocomplete="current-password" required>
         <small class="export-auth-security">The server verifies the password. It is never saved or included in delivery logs.</small>
       </div>
       <div class="modal-footer"><button type="button" class="btn btn-outline" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Verify and send</button></div>

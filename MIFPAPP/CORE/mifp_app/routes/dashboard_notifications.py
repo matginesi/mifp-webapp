@@ -602,7 +602,7 @@ def notifications_send_one():
     if not isinstance(payload, dict):
         return jsonify({"error": "Expected a JSON object"}), 400
     if not admin_password_matches(payload.get("password", "")):
-        return jsonify({"error": "Password verification failed. No email was sent."}), 403
+        return jsonify({"error": "Password verification failed. No email was sent.", "code": "admin_password_invalid"}), 403
     recipient = normalize_email_addresses(payload.get("email"), limit=1)
     plain_text_only = payload.get("plain_text_only") is True
     try:

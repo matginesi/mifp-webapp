@@ -176,9 +176,20 @@
     });
   }
 
+  function validateSettings(report) {
+    var deadline = editor.querySelector('[data-poll-field="deadline"]');
+    var retention = editor.querySelector('[data-poll-field="retention_until"]');
+    retention.min = deadline.value;
+    var invalid = Boolean(deadline.value && retention.value && retention.value < deadline.value);
+    retention.setCustomValidity(invalid ? 'Retain until must be on or after the poll deadline.' : '');
+    if (invalid && report) retention.reportValidity();
+    return !invalid;
+  }
+
   function renderPreview() {
     syncFields();
-    window.MIFPPollRenderer.render(preview, state, { preview: true, disabled: true });
+    validateSettings(false);
+    window.MIFPPollRenderer.render(preview, state, { preview: true });
   }
 
   function show(message, error) {
@@ -189,6 +200,7 @@
   }
 
   async function save() {
+    if (!validateSettings(true)) throw new Error('Retain until must be on or after the poll deadline. Correct the dates before sending.');
     syncFields();
     var result = await window.MIFP.request(editor.dataset.saveUrl, { method: 'POST', json: state });
     state = result.data.poll;
@@ -266,6 +278,7 @@
 
   async function runBatch(recipients) {
     if (batch.running) return;
+    if (!validateSettings(true)) return show('Retain until must be on or after the poll deadline.', true);
     var password = await window.MIFPConfirmSend();
     if (!password) return;
     try {
@@ -313,6 +326,7 @@
   editor.querySelector('[data-poll-send-one]').addEventListener('click', async function () {
     var email = editor.querySelector('[data-single-email]').value.trim();
     if (!email) return show('Enter the recipient email.', true);
+    if (!validateSettings(true)) return show('Retain until must be on or after the poll deadline.', true);
     var password = await window.MIFPConfirmSend();
     if (!password) return;
     var payload = { email: email, password: password };

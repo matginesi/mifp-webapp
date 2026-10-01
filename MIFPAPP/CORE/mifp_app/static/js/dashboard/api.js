@@ -24,6 +24,9 @@
       429: 'Too many requests. Wait a moment and try again.',
     };
     var message = defaults[status] || 'The request could not be completed.';
+    if (status === 403 && payload && payload.code === 'admin_password_invalid') {
+      message = 'Administrator password verification failed. Enter the same password used to sign in. Nothing was sent.';
+    }
     if (![401, 403].includes(status) && payload && typeof payload === 'object') {
       var value = payload.message || payload.error;
       if (typeof value === 'string' && value.length <= 2000 && !/<[a-z][\s\S]*>/i.test(value)) {

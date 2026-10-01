@@ -11,9 +11,13 @@
     if (pending) return Promise.resolve(null);
     return new Promise(function (resolve) { pending = resolve; modal.show(); });
   };
-  element.addEventListener('shown.bs.modal', function () { input.focus(); });
+  element.addEventListener('shown.bs.modal', function () {
+    if (password) modal.hide();
+    else input.focus();
+  });
   form.addEventListener('submit', function (event) {
     event.preventDefault();
+    if (password || !pending || !input.value) return;
     password = input.value;
     input.value = '';
     modal.hide();

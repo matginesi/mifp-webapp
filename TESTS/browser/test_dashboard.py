@@ -649,3 +649,34 @@ class TestDashboardRoutes:
         delete_modal.get_by_role("button", name="Delete conference and storage").click()
         page.wait_for_url("**/dashboard/conferences")
         expect(page.get_by_text("Browser Physics 2028", exact=True)).to_have_count(0)
+
+
+def test_send_confirmation_survives_early_and_duplicate_submit(live_server, page):
+    _login(page, live_server)
+    page.goto(live_server + '/dashboard/notifications')
+    page.wait_for_load_state('networkidle')
+    # Submit while Bootstrap is still opening the modal; this must resolve once
+    # with the submitted value even when a second submit arrives immediately.
+    page.evaluate("""() => {
+        window.__confirmationDone = false;
+        window.MIFPConfirmSend().then(value => {
+            window.__confirmationCorrect = value === 'browser-confirmation-value';
+            window.__confirmationDone = true;
+        });
+        document.getElementById('sendAuthPassword').value = 'browser-confirmation-value';
+        const form = document.getElementById('sendAuthForm');
+        form.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+        form.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+    }""")
+    page.wait_for_function('() => window.__confirmationDone === true')
+    assert page.evaluate('window.__confirmationCorrect') is True
+    expect(page.locator('#sendAuthModal')).to_be_hidden()
+    expect(page.locator('#sendAuthPassword')).to_have_value('')
+    # A later confirmation remains usable and cancellation supplies no secret.
+    page.evaluate("""() => {
+        window.__confirmationCancelled = false;
+        window.MIFPConfirmSend().then(value => { window.__confirmationCancelled = value === null; });
+    }""")
+    expect(page.locator('#sendAuthModal')).to_be_visible()
+    page.locator('#sendAuthModal button').filter(has_text='Cancel').click()
+    page.wait_for_function('() => window.__confirmationCancelled === true')

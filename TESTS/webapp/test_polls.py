@@ -729,6 +729,7 @@ def test_poll_send_confirmation_fails_closed_before_creating_tokens(
         assert polls.get_poll(runtime, poll["id"])["id"] == poll["id"]
     else:
         assert response.status_code == 403
+        assert response.get_json()["code"] == "admin_password_invalid"
         assert delivered == []
         after = {path.name: path.read_bytes() for path in (runtime / "polls" / poll["id"]).iterdir() if path.is_file()}
         assert after == before
@@ -751,3 +752,38 @@ def test_poll_invitation_confirmation_preserves_auth_and_csrf(poll_app, monkeypa
     response = logged_in_client(poll_app).post(url, json={"email": "person@example.org", "password": "secret123"})
     assert response.status_code == 400
     assert delivered == []
+
+
+def test_poll_confirmation_accepts_the_same_password_as_login(poll_app, monkeypatch) -> None:
+    from mifp_app.routes import dashboard_polls
+
+    poll = open_poll(Path(poll_app.config['RUNTIME_CONFIG_DIR']), 'date')
+    sent = []
+    monkeypatch.setattr(dashboard_polls, 'send_mail', lambda *_a, **kw: sent.append(kw) or True)
+    client = poll_app.test_client()
+    login = client.post('/login', data={'login_username': 'admin', 'login_password': 'secret123'})
+    assert login.status_code == 302
+    denied = client.post(f"/dashboard/notifications/polls/{poll['id']}/invite", json={
+        'email': 'person@example.org', 'password': 'incorrect',
+    })
+    assert denied.status_code == 403
+    assert denied.get_json()['code'] == 'admin_password_invalid'
+    assert sent == []
+    accepted = client.post(f"/dashboard/notifications/polls/{poll['id']}/invite", json={
+        'email': 'person@example.org', 'password': 'secret123',
+    })
+    assert accepted.status_code == 200
+    assert len(sent) == 1
+    assert 'password' not in sent[0]
+
+
+def test_poll_retention_before_deadline_is_rejected_without_changing_poll(poll_app) -> None:
+    from mifp_app.services.polls import get_poll
+
+    runtime = Path(poll_app.config['RUNTIME_CONFIG_DIR'])
+    poll = open_poll(runtime)
+    submitted = {**poll, 'retention_until': '2000-01-01'}
+    response = logged_in_client(poll_app).post(f"/dashboard/notifications/polls/{poll['id']}", json=submitted)
+    assert response.status_code == 400
+    assert response.get_json()['error'] == 'Retention date cannot precede the deadline'
+    assert get_poll(runtime, poll['id']) == poll

@@ -57,6 +57,10 @@
       } else if (question.type === 'date') {
         var dateInput = element('input', 'form-control');
         dateInput.type = 'date';
+        dateInput.setAttribute('aria-label', question.question);
+        dateInput.addEventListener('click', function () {
+          if (typeof dateInput.showPicker === 'function' && !dateInput.disabled) dateInput.showPicker();
+        });
         dateInput.name = name;
         dateInput.value = typeof current === 'string' ? current : '';
         dateInput.required = Boolean(question.required);
