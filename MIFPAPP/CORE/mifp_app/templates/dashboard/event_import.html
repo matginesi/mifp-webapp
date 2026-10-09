@@ -127,7 +127,7 @@
           {% endif %}
         </fieldset>
       </div>
-      {% if inspection.website and inspection.website.php_files %}<div class="php-policy"><i class="bi bi-filetype-php"></i><div><strong>Registration form PHP detected — PHP execution: disabled</strong><span>Publication does not enable code. {% if inspection.website.regform_php_files %}After review, an operator may run <code>sudo mifpctl events-php-enable {{ inspection.destination }}/regform</code>.{% else %}No executable regform path was detected; PHP remains denied.{% endif %}</span></div></div>{% endif %}
+      {% if inspection.website and inspection.website.php_files %}<div class="php-policy"><i class="bi bi-filetype-php"></i><div><strong>Registration form PHP detected — PHP execution: host status unavailable</strong><span>Publication does not enable code. {% if inspection.website.regform_php_files %}After review, an operator may run <code>sudo mifpctl events-php-enable {{ inspection.destination }}/regform</code>.{% else %}No executable regform path was detected; PHP execution requires host-side approval.{% endif %}</span></div></div>{% endif %}
       <div class="wizard-footer"><button class="btn btn-outline btn-sm" type="button" data-wizard-back>Back</button><button class="btn btn-primary btn-sm" type="button" data-wizard-next>Review <i class="bi bi-arrow-right"></i></button></div>
     </section>
 
@@ -139,7 +139,7 @@
         {% if inspection.website %}<dt>Destination</dt><dd data-review-url>{{ inspection.events_host }}/{{ inspection.destination }}/</dd>{% endif %}
         <dt>INFO / Event</dt><dd>{{ inspection.db_action ~ ' ' ~ inspection.info.uid if inspection.info else 'Not supplied — no Event changes' }}</dd>
         {% if inspection.info %}<dt>Forthcoming</dt><dd data-review-forthcoming>Choose Yes or No in Settings</dd>{% endif %}
-        <dt>PHP</dt><dd>{{ (inspection.website.php_files|string) ~ ' detected / disabled' if inspection.website else 'No WEBSITE package' }}</dd>
+        <dt>PHP</dt><dd>{{ (inspection.website.php_files|string) ~ ' detected / host status unavailable' if inspection.website else 'No WEBSITE package' }}</dd>
         <dt>Warnings</dt><dd>{{ inspection.warnings|length }}</dd>
       </dl>
       {% if inspection.warnings %}<label class="check-row warning-accept"><input type="checkbox" name="accept_warnings" value="1" required><span><strong>I reviewed and accept {{ inspection.warnings|length }} warning(s)</strong><small>Blocking errors can never be overridden.</small></span></label>{% endif %}

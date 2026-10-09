@@ -375,7 +375,7 @@ def inspect_packages(conn, website_path: Path | None, info_path: Path | None,
     if website:
         checks.append(Check("PASS", "WEBSITE paths, object types, limits, sensitive-file rules, YAML, and ZIP integrity passed."))
         if website.php_files:
-            checks.append(Check("WARNING", f"PHP files detected: {website.php_files}. Execution remains disabled after import."))
+            checks.append(Check("WARNING", f"PHP files detected: {website.php_files}. Execution status is managed by the hosting operator and is unavailable here."))
     if info:
         # Exercise the canonical record validator without writing to the DB.
         summary = import_zip_payload(
@@ -645,7 +645,7 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
                 "website_bytes": inspection.website.unpacked_bytes if inspection.website else 0,
                 "php_files": inspection.website.php_files if inspection.website else 0,
                 "regform_php_files": inspection.website.regform_php_files if inspection.website else 0,
-                "php_execution": "disabled",
+                "php_execution": "unknown",
                 "validation": "passed",
             }
             slug = inspection.info.slug if inspection.info else destination.casefold()

@@ -90,6 +90,8 @@ services:
       # Dedicated publication-only tree. It is outside normal application data
       # and is served directly by host Caddy only in local-vps mode.
       - "${EVENTS_LOCAL_ROOT:-/srv/mifp-events}:/app/event-sites"
+      # Minimal host-owned interlock only; no credentials or host allow-list.
+      - "${EVENTS_PUBLICATION_POLICY:-/opt/mifp/events-publication-policy}:/run/mifp-events-policy:ro"
     restart: unless-stopped
     init: true
     read_only: true

@@ -20,6 +20,7 @@ DATA_DIR="$MIFP_HOME/data"
 EVENTS_PRIVATE_DIR="${MIFP_EVENTS_PRIVATE_DIR:-/srv/mifp-events-private}"
 EVENTS_PUBLIC_GROUP="${MIFP_EVENTS_PUBLIC_GROUP:-mifp-events-public}"
 EVENTS_PHP_USER="${MIFP_EVENTS_PHP_USER:-mifp-events}"
+EVENTS_PUBLICATION_POLICY="${MIFP_EVENTS_PUBLICATION_POLICY:-$MIFP_HOME/events-publication-policy}"
 EVENTS_PHP_STATE="${MIFP_EVENTS_PHP_STATE:-$MIFP_HOME/events-php-enabled.txt}"
 EVENTS_PHP_INCLUDE="${MIFP_EVENTS_PHP_INCLUDE:-/etc/caddy/mifp-events-php.caddy}"
 EVENTS_PHP_SOCKET="${MIFP_EVENTS_PHP_SOCKET:-/run/php/mifp-events.sock}"
@@ -274,7 +275,7 @@ $events_host {
         file_server @event_public_conference_yaml
 
         @event_sensitive_extension path_regexp event_sensitive_extension (?i)\\.(?:inc|module|install|engine|ini|log|htpasswd|htaccess|sh|bash|zsh|fish|py|pyc|rb|pl|cgi|yml|yaml|toml|dist|pem|key|crt|cer|p12|pfx|gitignore|netrc|npmrc|ftpconfig)$
-        @event_php path_regexp event_php (?i)\\.(?:php|phtml|phar|phps|php[0-9]*)$
+        @event_php path_regexp event_php (?i)\\.(?:php|phtml|phar|phps|php[0-9]*)(?:/|$)
         respond @event_sensitive_extension 404
         import $EVENTS_PHP_INCLUDE
         respond @event_php 404
@@ -393,6 +394,7 @@ compose_with_image() {
   local image="$1"; shift
   prepare_compose_secrets
   MIFP_IMAGE="$image" MIFP_DATA_DIR="$DATA_DIR" MIFP_SECRETS_DIR="$SECRET_MATERIAL_DIR" \
+    EVENTS_PUBLICATION_POLICY="$EVENTS_PUBLICATION_POLICY" \
     MIFP_DEPLOY_CONTRACT="$DEPLOY_CONTRACT_VERSION" \
     "${COMPOSE_BASE[@]}" "$@"
 }
@@ -422,6 +424,9 @@ validate_database_host() {
 }
 
 prepare_runtime_storage() {
+  if [[ "$(config_cli get EVENTS_PUBLISH_BACKEND)" == "local-vps" ]]; then
+    prepare_events_publication_policy
+  fi
   local dirs=(assets backups conferences exports logs config tmp) name bad
   install -d -o "$RUNTIME_UID" -g "$RUNTIME_GID" -m 0750 "$DATA_DIR"
   for name in "${dirs[@]}"; do install -d -o "$RUNTIME_UID" -g "$RUNTIME_GID" -m 0750 "$DATA_DIR/$name"; done
@@ -1594,14 +1599,66 @@ render_events_php_include() {
           && die "Allow-list PHP contiene symlink: $prefix"
         escaped="$(python3 -c 'import re,sys; print(re.escape(sys.argv[1]))' "$prefix")"
         i=$((i + 1))
+        # Rewrite only the explicitly approved module entry URL. Do not add a
+        # catch-all PHP front controller for other paths or static microsites.
+        printf '@mifp_events_entry_redirect_%d path /%s\n' "$i" "$prefix"
+        printf 'redir @mifp_events_entry_redirect_%d /%s/?{query} 308\n' "$i" "$prefix"
+        printf '@mifp_events_entry_%d path /%s/\n' "$i" "$prefix"
+        printf 'rewrite @mifp_events_entry_%d /%s/index.php\n' "$i" "$prefix"
         printf '@mifp_events_php_%d path_regexp mifp_events_php_%d ^/%s/(?:.*/)?[^/]+\\.php$\n' "$i" "$i" "$escaped"
-        printf 'php_fastcgi @mifp_events_php_%d unix/%s\n\n' "$i" "$EVENTS_PHP_SOCKET"
+        printf 'php_fastcgi @mifp_events_php_%d unix/%s {\n    try_files {path} =404\n}\n\n' "$i" "$EVENTS_PHP_SOCKET"
       done < "$policy"
     fi
   } > "$target"
 }
 
-install_events_php_include() {
+# Only publication interlocks are shared with the container, never host state.
+# Keep the lock inode stable; atomically replace the policy under that lock.
+open_events_publication_lock() {
+  [[ ! -L "$EVENTS_PUBLICATION_POLICY" ]] || die "Policy pubblicazione non sicura."
+  install -d -o root -g root -m 0755 "$EVENTS_PUBLICATION_POLICY"
+  [[ ! -L "$EVENTS_PUBLICATION_POLICY/lock" ]] || die "Lock pubblicazione non sicuro."
+  touch "$EVENTS_PUBLICATION_POLICY/lock"
+  chown root:root "$EVENTS_PUBLICATION_POLICY/lock"
+  chmod 0644 "$EVENTS_PUBLICATION_POLICY/lock"
+  exec 8<"$EVENTS_PUBLICATION_POLICY/lock"
+  flock -x 8
+}
+
+write_events_publication_policy() {
+  local policy="$1" tmp
+  tmp="$(mktemp "$EVENTS_PUBLICATION_POLICY/.policy.XXXXXX")"
+  cat "$policy" > "$tmp"
+  chown root:root "$tmp"; chmod 0644 "$tmp"
+  mv -f "$tmp" "$EVENTS_PUBLICATION_POLICY/protected-paths"
+}
+
+protect_events_publication_paths() {
+  local policy="$1" tmp
+  [[ -f "$EVENTS_PHP_STATE" && ! -L "$EVENTS_PHP_STATE" ]] \
+    || die "Stato PHP eventi mancante o non sicuro; pubblicazione bloccata."
+  tmp="$(mktemp "$EVENTS_PUBLICATION_POLICY/.union.XXXXXX")"
+  # Preserve conservative blocks after a failed Caddy reload or host restart.
+  { [[ ! -f "$EVENTS_PUBLICATION_POLICY/protected-paths" ]] || cat "$EVENTS_PUBLICATION_POLICY/protected-paths";
+    [[ ! -f "$EVENTS_PHP_STATE" ]] || cat "$EVENTS_PHP_STATE";
+    [[ ! -f "$policy" ]] || cat "$policy";
+  } | LC_ALL=C sort -u > "$tmp"
+  write_events_publication_policy "$tmp"
+  rm -f "$tmp"
+}
+
+prepare_events_publication_policy() (
+  open_events_publication_lock
+  protect_events_publication_paths "$EVENTS_PHP_STATE"
+)
+
+install_events_php_include() (
+  open_events_publication_lock
+  protect_events_publication_paths "${1:-$EVENTS_PHP_STATE}"
+  install_events_php_include_locked "$@"
+)
+
+install_events_php_include_locked() {
   local policy="${1:-$EVENTS_PHP_STATE}" candidate backup include_dir had_old=0
   include_dir="$(dirname "$EVENTS_PHP_INCLUDE")"
   [[ -d "$include_dir" ]] || die "Directory Caddy mancante: $include_dir"
@@ -1624,6 +1681,7 @@ install_events_php_include() {
     die "Caddy non ha accettato il reload; routing PHP precedente ripristinato."
   fi
   rm -f "$backup"
+  write_events_publication_policy "$policy"
   if [[ "$policy" != "$EVENTS_PHP_STATE" ]]; then
     chmod 0644 "$policy"; chown root:root "$policy"; mv -f "$policy" "$EVENTS_PHP_STATE"
   fi
@@ -2217,7 +2275,7 @@ EOF_SECRET_FILES
         esac
         case "$mount_target" in /run/secrets/mifp_*) continue ;; esac
         case "$mount_source|$mount_target" in
-          "$DATA_DIR|/app/data"|"$events_root|/app/event-sites") continue ;;
+          "$DATA_DIR|/app/data"|"$events_root|/app/event-sites"|"$EVENTS_PUBLICATION_POLICY|/run/mifp-events-policy") continue ;;
         esac
         case "$mount_source" in
           "$ENV_FILE"|"$PUBLIC_CONFIG_FILE"|"$SECRETS_FILE"|"$DOCKER_CONFIG_FILE"|"$MAIL_RELAY_CONFIG"|"$MIFP_HOME"|"$MIFP_HOME"/*|"$CONFIG_DIR"|"$CONFIG_DIR"/*|"$EVENTS_PRIVATE_DIR"|"$EVENTS_PRIVATE_DIR"/*|"$backup_root"|"$backup_root"/*|/root|/root/*|/etc|/etc/*)

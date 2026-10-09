@@ -198,7 +198,7 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
         assert event["review_status"] == "published"
         site = conn.execute("SELECT * FROM conference_sites").fetchone()
         assert site["public_path"] == "PLMCN-2027"
-        assert json.loads(site["package_manifest_json"])["php_execution"] == "disabled"
+        assert json.loads(site["package_manifest_json"])["php_execution"] == "unknown"
         # INFO supplied an explicit URL, so publication must not overwrite it.
         assert event["remote_url"] == "https://events.mifp.eu/PLMCN-2027/"
         retained = Path(app.config["CONFERENCES_DIR"]) / site["slug"] / "packages" / f"{site['package_sha256']}.zip"
@@ -238,7 +238,16 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
     conference_page = client.get("/dashboard/conferences").get_data(as_text=True)
     assert "Website published" in conference_page
     assert "Open" in conference_page
-    assert "PHP 1 / disabled" in conference_page
+    assert "PHP 1 / host status unavailable" in conference_page
+    assert "PHP 1 / disabled" not in conference_page
+    assert "hosted separately from the MIFP VPS" not in conference_page
+    previous_backend = app.config["EVENTS_PUBLISH_BACKEND"]
+    app.config["EVENTS_PUBLISH_BACKEND"] = "local-vps"
+    vps_page = client.get("/dashboard/conferences").get_data(as_text=True)
+    assert "Caddy on the same VPS" in vps_page
+    assert "Local development publisher" not in vps_page
+    assert "PHP 1 / host status unavailable" in vps_page
+    app.config["EVENTS_PUBLISH_BACKEND"] = previous_backend
     assert "sudo mifpctl events-php-enable PLMCN-2027/regform" in conference_page
     assert "Import WEBSITE / INFO" in conference_page
 
@@ -660,3 +669,29 @@ def test_event_import_route_enables_maintenance_during_apply_and_restores_after(
         assert conn.execute(
             "SELECT 1 FROM settings WHERE key='maintenance_operation_count'"
         ).fetchone() is None
+
+
+def test_import_cannot_replace_php_with_existing_host_approval(app, tmp_path):
+    website = tmp_path / "web.zip"
+    website.write_bytes(_website())
+    root = Path(app.config["EVENTS_LOCAL_ROOT"])
+    regform = root / "PLMCN-2027/regform"
+    regform.mkdir(parents=True)
+    (regform / "index.php").write_text("<?php echo 'approved old version';")
+    policy = tmp_path / "policy"
+    policy.mkdir()
+    (policy / "lock").touch()
+    (policy / "protected-paths").write_text("PLMCN-2027/regform\n")
+    publisher = LocalEventSitePublisher(root, backend="local-vps", policy_root=policy)
+    with _conn(app) as conn:
+        inspection = inspect_packages(conn, website, None, assets_dir=app.config["ASSETS_DIR"])
+        with pytest.raises(PublicationError, match="events-php-disable"):
+            apply_import(conn, inspection, website, None, publisher=publisher,
+                         conferences_root=app.config["CONFERENCES_DIR"], assets_dir=app.config["ASSETS_DIR"],
+                         destination="PLMCN-2027", publish_website=True, import_metadata=False,
+                         replace=True, keep_rollback=True, public_base_url="https://events.test")
+        site = conn.execute("SELECT deploy_status, publication_error FROM conference_sites").fetchone()
+        assert site["deploy_status"] == "failed"
+        assert "events-php-disable" in site["publication_error"]
+    assert (regform / "index.php").read_text() == "<?php echo 'approved old version';"
+    assert (policy / "protected-paths").read_text() == "PLMCN-2027/regform\n"

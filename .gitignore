@@ -122,3 +122,6 @@ MIFPAPP/DATABASE/events-php-enabled.txt
 
 
 error*.txt
+
+# Local documentation artifacts, session reports, agent plans and external patches
+/docs/local/

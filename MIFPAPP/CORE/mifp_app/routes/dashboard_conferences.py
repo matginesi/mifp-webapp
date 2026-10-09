@@ -257,7 +257,7 @@ def _conference_runtime_status(site: dict) -> dict:
         enriched["destination_url"] = ""
     enriched["php_files"] = int(manifest.get("php_files") or 0)
     enriched["regform_php_files"] = int(manifest.get("regform_php_files") or 0)
-    enriched["php_execution"] = "disabled"
+    enriched["php_execution"] = "unknown"
     enriched["validation_status"] = str(manifest.get("validation") or "unknown")
     enriched["metadata_linked"] = enriched.get("event_id") is not None
     version_state = conference_version_state(enriched)

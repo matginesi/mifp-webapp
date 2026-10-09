@@ -277,6 +277,7 @@ docs/                documentazione corrente
 
 ## Documentazione
 
+- [Indice della documentazione](docs/README.md)
 - [Schema database e lifecycle](docs/database-schema.md)
 - [Gestione Conference](docs/conference-sites.md)
 - [Formato di import](docs/import-format.md)

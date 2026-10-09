@@ -6,9 +6,11 @@ publication path; they never derive credentials or remote paths from a URL.
 """
 from __future__ import annotations
 
+import fcntl
 import ftplib
 import shutil
 import ssl
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable
@@ -76,11 +78,15 @@ class DisabledEventSitePublisher(EventSitePublisher):
 class LocalEventSitePublisher(EventSitePublisher):
     backend = "local"
 
-    def __init__(self, root: Path, *, backend: str = "local") -> None:
+    def __init__(self, root: Path, *, backend: str = "local",
+                 policy_root: Path = Path("/run/mifp-events-policy")) -> None:
         self.root = Path(root)
         self.backend = backend
+        self.policy_root = Path(policy_root)
 
     def status(self) -> PublisherStatus:
+        if self.backend == "local-vps":
+            return PublisherStatus(self.backend, True, "VPS publisher: event sites served by Caddy on the same VPS")
         return PublisherStatus(self.backend, True, f"Local development publisher: {self.root}")
 
     def _target(self, destination: str) -> Path:
@@ -93,7 +99,40 @@ class LocalEventSitePublisher(EventSitePublisher):
             raise ValueError("Publication destination escapes the local publisher root.") from exc
         return target
 
-    def publish(
+    @contextmanager
+    def _publication_guard(self, destination: str):
+        if self.backend != "local-vps":
+            yield
+            return
+        relative = safe_publication_path(destination)
+        resolved = self._target(destination).relative_to(self.root.resolve()).as_posix()
+        # This dedicated host-owned directory is mounted read-only. Never use
+        # the public tree or private host state as an authorization source.
+        try:
+            lock = (self.policy_root / "lock").open("rb")
+        except OSError as exc:
+            raise PublicationError("VPS PHP publication policy unavailable; ask an operator to refresh host tools.") from exc
+        with lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                prefixes = (self.policy_root / "protected-paths").read_text().splitlines()
+                prefixes = [safe_publication_path(prefix) for prefix in prefixes]
+            except (OSError, ValueError) as exc:
+                raise PublicationError("VPS PHP publication policy unavailable or invalid; publication blocked.") from exc
+            if any(path == prefix or path.startswith(prefix + "/")
+                   or prefix.startswith(path + "/")
+                   for path in (relative, resolved) for prefix in prefixes):
+                raise PublicationError(
+                    "Publication overlaps an approved PHP path. An operator must first run "
+                    "mifpctl events-php-disable EVENTO/regform, then publish and review before enabling PHP again."
+                )
+            yield
+
+    def publish(self, source: Path, destination: str, *, replace: bool, keep_rollback: bool) -> None:
+        with self._publication_guard(destination):
+            self._publish(source, destination, replace=replace, keep_rollback=keep_rollback)
+
+    def _publish(
         self, source: Path, destination: str, *, replace: bool, keep_rollback: bool
     ) -> None:
         source = Path(source)
@@ -119,10 +158,6 @@ class LocalEventSitePublisher(EventSitePublisher):
                 target.rename(rollback)
                 moved_old = True
             stage.rename(target)
-            if moved_old and not keep_rollback:
-                shutil.rmtree(rollback)
-            if old_rollback.exists():
-                shutil.rmtree(old_rollback)
         except Exception:
             if target.exists() and moved_old:
                 shutil.rmtree(target, ignore_errors=True)
@@ -133,8 +168,18 @@ class LocalEventSitePublisher(EventSitePublisher):
             raise
         finally:
             shutil.rmtree(stage, ignore_errors=True)
+        # The switch is complete. Cleanup failure must never remove the new
+        # site after its previous version has already been discarded.
+        if moved_old and not keep_rollback:
+            shutil.rmtree(rollback, ignore_errors=True)
+        if old_rollback.exists():
+            shutil.rmtree(old_rollback, ignore_errors=True)
 
     def restore_previous(self, destination: str) -> None:
+        with self._publication_guard(destination):
+            self._restore_previous(destination)
+
+    def _restore_previous(self, destination: str) -> None:
         target = self._target(destination)
         rollback = target.parent / f".{target.name}.rollback"
         if not target.is_dir() or target.is_symlink() or not rollback.is_dir() or rollback.is_symlink():

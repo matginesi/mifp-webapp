@@ -163,10 +163,10 @@ def event_import_apply():
         shutil.rmtree(stage, ignore_errors=True)
         event_action = {"CREATE": "created", "UPDATE": "updated"}.get(result["metadata"], "imported")
         if result["website"] == "published" and result["metadata"] != "skipped":
-            flash(f"Conference website published and Event {event_action}. PHP execution is disabled.", "success")
+            flash(f"Conference website published and Event {event_action}. PHP execution status is managed by the hosting operator.", "success")
             return redirect(url_for("dashboard.conference_sites"))
         if result["website"] == "published":
-            flash(f"Conference website published. PHP execution is disabled. Destination: {result.get('url', result['destination'])}", "success")
+            flash(f"Conference website published. PHP execution status is managed by the hosting operator. Destination: {result.get('url', result['destination'])}", "success")
             return redirect(url_for("dashboard.conference_sites"))
         flash(f"Event {event_action} from INFO package.", "success")
         return redirect(url_for("dashboard.events"))

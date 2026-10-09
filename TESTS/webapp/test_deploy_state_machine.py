@@ -1731,14 +1731,40 @@ def test_php_allowlist_is_regform_only_validated_and_reversible(tmp_path: Path) 
     assert enabled.returncode == 0, enabled.stderr
     include = Path(env["MIFP_EVENTS_PHP_INCLUDE"]).read_text(encoding="utf-8")
     assert "^/PLMCN\\-2027/regform/(?:.*/)?[^/]+\\.php$" in include
+    assert "@mifp_events_entry_1 path /PLMCN-2027/regform/" in include
+    assert "rewrite @mifp_events_entry_1 /PLMCN-2027/regform/index.php" in include
+    assert "try_files {path} =404" in include
     assert "admin.php" not in include
     assert "phtml" not in include
     assert (home / "events-php-enabled.txt").read_text() == "PLMCN-2027/regform\n"
+    policy_root = home / "events-publication-policy"
+    assert (policy_root / "protected-paths").read_text() == "PLMCN-2027/regform\n"
+    from mifp_app.services.event_site_publisher import LocalEventSitePublisher, PublicationError
+    publisher = LocalEventSitePublisher(event_root, backend="local-vps", policy_root=policy_root)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "index.html").write_text("replacement")
+    with pytest.raises(PublicationError, match="events-php-disable"):
+        publisher.publish(source, "PLMCN-2027", replace=True, keep_rollback=True)
+    assert (regform / "index.php").read_text() == "<?php echo 'ok';"
+
+    # A failed Caddy validation must not release the publication interlock.
+    caddy_stub = Path(env["PATH"].split(os.pathsep)[0]) / "caddy"
+    _write_executable(caddy_stub, "#!/bin/sh\nexit 1\n")
+    rejected = _run(env, "events-php-disable", "PLMCN-2027/regform", check=False)
+    assert rejected.returncode != 0
+    assert (policy_root / "protected-paths").read_text() == "PLMCN-2027/regform\n"
+    with pytest.raises(PublicationError, match="events-php-disable"):
+        publisher.publish(source, "PLMCN-2027", replace=True, keep_rollback=True)
+    _write_executable(caddy_stub, "#!/bin/sh\nexit 0\n")
 
     disabled = _run(env, "events-php-disable", "PLMCN-2027/regform", check=False)
     assert disabled.returncode == 0, disabled.stderr
     assert (home / "events-php-enabled.txt").read_text() == ""
     assert "path_regexp" not in Path(env["MIFP_EVENTS_PHP_INCLUDE"]).read_text()
+    assert (policy_root / "protected-paths").read_text() == ""
+    publisher.publish(source, "PLMCN-2027", replace=True, keep_rollback=True)
+    assert (event_root / "PLMCN-2027/index.html").read_text() == "replacement"
 
 
 def test_security_check_fails_when_docker_tcp_api_is_exposed(tmp_path: Path) -> None:

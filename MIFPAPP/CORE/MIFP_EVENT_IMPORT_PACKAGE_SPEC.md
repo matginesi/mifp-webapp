@@ -23,7 +23,7 @@ PLMCN-2027/
 ├── conference.version.json       # optional
 ├── assets/…                       # optional
 ├── data/…                         # optional
-└── regform/*.php                  # optional; disabled after import
+└── regform/*.php                  # optional; execution managed by host
 ```
 
 `conference.yaml` and one static root `index.html` or `index.htm` are
@@ -127,6 +127,52 @@ before committing the approval. PHTML/PHAR and PHP outside the approved prefix
 remain denied. Remote mode delegates runtime support to the remote host and
 does not use VPS Caddy/PHP-FPM.
 
+Approved directory entry URLs (`/<public_path>/regform/`) are rewritten only
+to that module's `index.php`; the bare directory URL receives a 308 redirect
+with its query preserved. Direct `.php` URLs remain restricted to the approved
+prefix, with `try_files {path} =404` so missing scripts never fall back to a
+site-root front controller. Private path/dotfile checks run before any rewrite.
+After revocation, both directory and direct PHP entry URLs are inaccessible.
+
+The VPS pool retains `upload_max_filesize=10M` and `post_max_size=12M`.
+Packages must not promise a larger upload. PLMCN-2027 clamps its displayed and
+validated limit to its configured cap, PHP's file cap, and PHP's POST cap minus
+one MiB for multipart overhead. Oversized POST requests receive an explicit
+size error rather than a misleading expired-session error. The module is
+initially closed with `submit_enabled: false` pending confirmation of fees and
+conditions. See [the VPS microsite runbook](../../docs/deployment/conference-microsites.md).
+
+The dashboard reports PHP execution as unknown: it cannot inspect the live
+host routing or PHP-FPM status. File counts describe the imported package only.
+
+For `local-vps`, publication and retained-version restore are blocked whenever
+the destination overlaps an approved PHP prefix, even if the new package is
+static or identical. To update an approved site:
+
+```bash
+sudo mifpctl events-php-disable PLMCN-2027/regform
+# Publish/restore the website through the dashboard, then review the code.
+sudo mifpctl events-php-enable PLMCN-2027/regform
+```
+
+The host maintains a dedicated `events-publication-policy` directory under
+`/opt/mifp`, mounted read-only at `/run/mifp-events-policy`. It contains only a
+stable lock and protected publication prefixes; no credentials, private
+registration data, or canonical host allow-list are mounted. Host approval
+changes and publication hold the same exclusive lock. Prefixes are protected
+before Caddy reload and released only after a successful revocation reload.
+Failed reloads retain conservative blocks. A missing/unreadable/invalid policy
+blocks publication and restore; it is never interpreted as an empty allow-list.
+
+For an existing VPS, refresh the versioned host tools and production Compose
+bundle with `refresh-host-tools.sh` before deploying this image. The normal
+`mifpctl deploy`/`update` prepares the policy from existing approvals before
+starting the container. Recreate the container with the updated Compose mount.
+No database migration or PHP reapproval is needed for unchanged sites. After
+snapshot recovery, revoke restored approvals before `events-republish-all`,
+then review and explicitly reapprove each rebuilt regform.
+
+
 ## 11. Prohibited files
 
 Packages must not contain `.env` files, repositories such as `.git`/`.svn`,
@@ -173,7 +219,7 @@ parser before producing it; do not silently reinterpret an existing version.
 
 - **PASS:** structural, integrity, identity, and security checks succeeded.
 - **WARNING:** safe but reviewable differences, such as title/URL-path drift or
-  PHP source that will remain disabled.
+  PHP source requiring host-side review and approval.
 - **ERROR:** unsafe ZIP/path/object, prohibited/private material, bad YAML/JSON,
   integrity failure, missing asset, invalid UID/slug, multiple event records,
   identity/date mismatch, invalid destination, or an existing destination when

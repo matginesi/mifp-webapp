@@ -169,3 +169,145 @@ def test_partially_open_ftps_connection_is_closed_on_login_failure(tmp_path):
         publisher.publish(_source(tmp_path / "site", "new"), "Event-2027", replace=False, keep_rollback=False)
 
     assert fake.closed is True
+
+
+@pytest.mark.parametrize("backend, expected", [
+    ("local", "Local development publisher"),
+    ("local-vps", "Caddy on the same VPS"),
+])
+def test_local_publisher_description(tmp_path, backend, expected):
+    status = LocalEventSitePublisher(tmp_path, backend=backend).status()
+    assert status.backend == backend
+    assert expected in status.message
+    if backend == "local-vps":
+        assert "development" not in status.message
+        assert str(tmp_path) not in status.message
+
+
+@pytest.mark.parametrize("destination", ["Event-2027", "Event-2027/regform", "Event-2027/regform/sub"])
+def test_vps_approval_blocks_publish_and_restore_until_revoked(tmp_path, destination):
+    policy = tmp_path / "policy"
+    policy.mkdir()
+    (policy / "lock").touch()
+    protected = policy / "protected-paths"
+    protected.write_text("")
+    root = tmp_path / "public"
+    publisher = LocalEventSitePublisher(root, backend="local-vps", policy_root=policy)
+    publisher.publish(_source(tmp_path / "v1", "old"), destination, replace=False, keep_rollback=True)
+    publisher.publish(_source(tmp_path / "v2", "current"), destination, replace=True, keep_rollback=True)
+    protected.write_text("Event-2027/regform\n")
+    with pytest.raises(PublicationError, match="events-php-disable"):
+        publisher.publish(tmp_path / "v1", destination, replace=True, keep_rollback=True)
+    with pytest.raises(PublicationError, match="events-php-disable"):
+        publisher.restore_previous(destination)
+    assert (root / destination / "index.html").read_text() == "current"
+    protected.write_text("")
+    publisher.restore_previous(destination)
+    assert (root / destination / "index.html").read_text() == "old"
+    publisher.publish(tmp_path / "v2", destination, replace=True, keep_rollback=True)
+    assert (root / destination / "index.html").read_text() == "current"
+
+
+@pytest.mark.parametrize("contents", [None, "../unsafe\n", "\n"])
+def test_vps_missing_or_invalid_policy_fails_closed(tmp_path, contents):
+    policy = tmp_path / "policy"
+    policy.mkdir()
+    (policy / "lock").touch()
+    if contents is not None:
+        (policy / "protected-paths").write_text(contents)
+    publisher = LocalEventSitePublisher(tmp_path / "public", backend="local-vps", policy_root=policy)
+    with pytest.raises(PublicationError, match="policy unavailable or invalid"):
+        publisher.publish(_source(tmp_path / "source", "new"), "Event-2027", replace=True, keep_rollback=True)
+    assert not publisher.root.exists()
+
+
+def test_vps_policy_blocks_missing_approved_target_but_allows_unrelated_site(tmp_path):
+    policy = tmp_path / "policy"
+    policy.mkdir()
+    (policy / "lock").touch()
+    (policy / "protected-paths").write_text("Event-2027/regform\n")
+    publisher = LocalEventSitePublisher(tmp_path / "public", backend="local-vps", policy_root=policy)
+    source = _source(tmp_path / "source", "new")
+    with pytest.raises(PublicationError, match="approved PHP path"):
+        publisher.publish(source, "Event-2027", replace=False, keep_rollback=True)
+    publisher.publish(source, "Event-20270", replace=False, keep_rollback=True)
+    assert (publisher.root / "Event-20270/index.html").read_text() == "new"
+
+
+def test_vps_publication_holds_host_interlock_during_copy(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    import shutil
+
+    policy = tmp_path / "policy"
+    policy.mkdir()
+    (policy / "lock").touch()
+    (policy / "protected-paths").write_text("")
+    publisher = LocalEventSitePublisher(tmp_path / "public", backend="local-vps", policy_root=policy)
+    copytree = shutil.copytree
+
+    def checked_copy(*args, **kwargs):
+        result = subprocess.run([sys.executable, "-c", """
+import fcntl, sys
+with open(sys.argv[1], 'rb') as lock:
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit(23)
+""", str(policy / "lock")], check=False)
+        assert result.returncode == 23
+        return copytree(*args, **kwargs)
+
+    monkeypatch.setattr("mifp_app.services.event_site_publisher.shutil.copytree", checked_copy)
+    publisher.publish(_source(tmp_path / "source", "new"), "Event", replace=False, keep_rollback=True)
+
+
+@pytest.mark.parametrize("failure", ["copy", "switch"])
+def test_failed_vps_replacement_after_revocation_keeps_php_unapproved(tmp_path, monkeypatch, failure):
+    policy = tmp_path / "policy"
+    policy.mkdir()
+    (policy / "lock").touch()
+    (policy / "protected-paths").write_text("")
+    root = tmp_path / "public"
+    publisher = LocalEventSitePublisher(root, backend="local-vps", policy_root=policy)
+    old = _source(tmp_path / "old", "old")
+    (old / "index.php").write_text("<?php echo 'old';")
+    new = _source(tmp_path / "new", "new")
+    (new / "index.php").write_text("<?php echo 'new';")
+    publisher.publish(old, "Event", replace=False, keep_rollback=True)
+    if failure == "copy":
+        def interrupted(*_args, **_kwargs):
+            raise OSError("interrupted copy")
+        monkeypatch.setattr("mifp_app.services.event_site_publisher.shutil.copytree", interrupted)
+    else:
+        rename = Path.rename
+        def interrupted(path, target):
+            if ".stage-" in path.name:
+                raise OSError("interrupted switch")
+            return rename(path, target)
+        monkeypatch.setattr(Path, "rename", interrupted)
+    with pytest.raises(OSError, match="interrupted"):
+        publisher.publish(new, "Event", replace=True, keep_rollback=True)
+    assert (root / "Event/index.php").read_text() == "<?php echo 'old';"
+    assert (policy / "protected-paths").read_text() == ""
+    assert not list(root.glob(".*.stage-*"))
+
+
+def test_rollback_cleanup_failure_does_not_remove_successful_publication(tmp_path, monkeypatch):
+    import shutil
+    root = tmp_path / "public"
+    publisher = LocalEventSitePublisher(root)
+    publisher.publish(_source(tmp_path / "v1", "v1"), "Event", replace=False, keep_rollback=True)
+    publisher.publish(_source(tmp_path / "v2", "v2"), "Event", replace=True, keep_rollback=True)
+    rmtree = shutil.rmtree
+
+    def failed_cleanup(path, *args, **kwargs):
+        if ".rollback-old-" in path.name:
+            if kwargs.get("ignore_errors"):
+                return
+            raise OSError("rollback cleanup denied")
+        return rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr("mifp_app.services.event_site_publisher.shutil.rmtree", failed_cleanup)
+    publisher.publish(_source(tmp_path / "v3", "v3"), "Event", replace=True, keep_rollback=False)
+    assert (root / "Event/index.html").read_text() == "v3"

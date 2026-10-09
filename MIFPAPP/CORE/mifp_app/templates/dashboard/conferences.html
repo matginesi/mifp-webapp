@@ -17,7 +17,7 @@
   <article><span>Publication failures</span><strong>{{ overview.failed }}</strong><small>Retry by importing the WEBSITE package again</small></article>
 </div>
 
-<div class="conference-boundary-note"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i><div><strong>Publisher: {{ publisher_status.backend }}</strong><span>{{ publisher_status.message }}. Event sites are hosted separately from the MIFP VPS.</span></div></div>
+<div class="conference-boundary-note"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i><div><strong>Publisher: {{ publisher_status.backend }}</strong><span>{{ publisher_status.message }}. PHP execution is managed by the hosting operator; its live status is unavailable here.</span></div></div>
 
 <div class="conference-boundary-note">
   <i class="bi bi-diagram-3" aria-hidden="true"></i>
@@ -45,7 +45,7 @@
           <td>
             <div class="conference-site-state">
               <span class="status-badge status-{{ 'success' if site.website_installed else 'warning' }}">Website {{ 'published' if site.website_installed else site.deploy_status|replace('_',' ') }}</span>
-              {% if site.php_files %}<span class="status-badge status-neutral">PHP {{ site.php_files }} / disabled</span>{% endif %}
+              {% if site.php_files %}<span class="status-badge status-neutral">PHP {{ site.php_files }} / host status unavailable</span>{% endif %}
             </div>
             {% if site.destination_url %}<a class="conference-public-url" href="{{ site.destination_url }}" target="_blank" rel="noopener">{{ site.destination_url }}</a>{% else %}<span class="cell-text">No safe public path</span>{% endif %}
             <span class="cell-text">/{{ site.public_path or site.slug }}/ · {{ site.deploy_status|replace('_',' ') }}</span>
