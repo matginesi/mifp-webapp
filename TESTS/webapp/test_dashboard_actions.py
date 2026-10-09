@@ -976,7 +976,7 @@ def test_version_release_page_exposes_source_and_runtime_versions(client):
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Version &amp; release" in body or "Version & release" in body
-    assert "v1.0.1" in body
+    assert "v1.0.2" in body
     assert "Database schema" in body
     assert "MIFP content package" in body
     assert "Release changes stay outside the container" in body
@@ -1627,6 +1627,8 @@ def test_log_export_and_cleanup_actions(app, client):
 
 
 MUTATING_DASHBOARD_ENDPOINTS = {
+    "dashboard.registration_detail",
+    "dashboard.registrations_request",
     "dashboard.archive_cancel_job",
     "dashboard.archive_detach",
     "dashboard.archive_import",

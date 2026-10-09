@@ -5,15 +5,18 @@ import pty
 import re
 import select
 import shutil
+import socket
 import stat
 import subprocess
 import time
+import tempfile
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy" / "deploy.sh"
+_SOCKET_ROOT = tempfile.TemporaryDirectory(prefix="mifp-unit-sockets-", dir="/tmp")
 
 
 def _write_executable(path: Path, text: str) -> None:
@@ -123,7 +126,9 @@ ln -sfn "$stamp" "$root/snapshots/latest"
     _write_executable(
         bin_dir / "id",
         "#!/bin/sh\n"
+        "if [ \"${1:-}\" = -nG ] && [ \"${2:-}\" = caddy ]; then echo mifp-events-public; exit 0; fi\n"
         "if [ \"${1:-}\" = -u ]; then echo 0; exit 0; fi\n"
+        "if [ \"${1:-}\" = -g ] && [ \"${2:-}\" = mifp-events ]; then exec /usr/bin/id -g; fi\n"
         "if [ \"${1:-}\" = mifp-events ]; then exit 0; fi\n"
         "exec /usr/bin/id \"$@\"\n",
     )
@@ -144,6 +149,11 @@ ln -sfn "$stamp" "$root/snapshots/latest"
         "exit 0\n",
     )
     _write_executable(bin_dir / "caddy", "#!/bin/sh\nexit 0\n")
+    _write_executable(bin_dir / "getent", '#!/bin/sh\nif [ "$1" = group ] && [ "${2:-}" = mifp-events-public ]; then echo "mifp-events-public:x:1000:"; exit 0; fi\nexec /usr/bin/getent "$@"\n')
+    for command in ("groupadd", "useradd", "usermod"):
+        _write_executable(bin_dir / command, "#!/bin/sh\nexit 0\n")
+    _write_executable(bin_dir / "php", "#!/bin/sh\necho 8.3\n")
+    _write_executable(bin_dir / "php-fpm8.3", "#!/bin/sh\n[ \"${FAIL_PHP_VALIDATE:-0}\" != 1 ]\n")
     _write_executable(bin_dir / "msmtp", "#!/bin/sh\nexit 0\n")
     _write_executable(
         bin_dir / "curl",
@@ -317,6 +327,11 @@ fi
 exit 0
 ''',
     )
+    php_root = tmp_path / "php"
+    (php_root / "8.3/fpm/pool.d").mkdir(parents=True)
+    socket_path = Path(_SOCKET_ROOT.name) / f"php-{hash(tmp_path)}.sock"
+    with socket.socket(socket.AF_UNIX) as php_socket:
+        php_socket.bind(str(socket_path))
     env = os.environ.copy()
     env.update(
         {
@@ -334,8 +349,11 @@ exit 0
             "MIFP_BACKUP_ROOT": str(tmp_path / "host-backups"),
             "MIFP_EVENTS_PHP_INCLUDE": str(caddy_dir / "mifp-events-php.caddy"),
             "MIFP_EVENTS_PHP_STATE": str(php_state),
-            "MIFP_EVENTS_PHP_SOCKET": str(tmp_path / "mifp-events.sock"),
+            "MIFP_EVENTS_PHP_SOCKET": str(socket_path),
             "MIFP_EVENTS_PRIVATE_DIR": str(tmp_path / "events-private"),
+            "MIFP_PHP_CONFIG_ROOT": str(php_root),
+            "MIFP_PHP_ERROR_LOG": str(tmp_path / "php-error.log"),
+            "MIFP_PHP_MAIL_RELAY_CONFIG": str(tmp_path / "msmtprc-mifp-events"),
             "MIFP_MAIL_RELAY_CONFIG": str(tmp_path / "msmtprc"),
             "MIFP_SYSTEMD_DIR": str(systemd_dir),
             "MIFP_CADDY_CONFIG": str(caddy_dir / "Caddyfile"),
@@ -512,13 +530,14 @@ def test_backend_transition_stops_remote_php_and_restarts_it_for_local_vps(tmp_p
 
     remote = _run(env, "config-set", "EVENTS_PUBLISH_BACKEND", "remote", check=False)
     assert remote.returncode == 0, remote.stderr
-    assert "disable --now php8.3-fpm.service" in systemctl_log.read_text(encoding="utf-8")
+    assert "disable --now php8.3-fpm.service" not in systemctl_log.read_text(encoding="utf-8")
     assert not relay.exists()
 
     systemctl_log.write_text("", encoding="utf-8")
     local = _run(env, "config-set", "EVENTS_PUBLISH_BACKEND", "local-vps", check=False)
     assert local.returncode == 0, local.stderr
-    assert "enable --now php8.3-fpm.service" in systemctl_log.read_text(encoding="utf-8")
+    assert "enable php8.3-fpm.service" in systemctl_log.read_text(encoding="utf-8")
+    assert "reload php8.3-fpm.service" in systemctl_log.read_text(encoding="utf-8")
 
 
 def test_local_vps_mail_change_regenerates_relay_and_secret_removal_fails_closed(tmp_path: Path) -> None:
@@ -546,7 +565,10 @@ def test_local_vps_mail_change_regenerates_relay_and_secret_removal_fails_closed
     assert 'host "smtp.new.example"' in rendered
     assert 'user "mailer@example.test"' in rendered
     assert f'password "{secret}"' in rendered
-    assert stat.S_IMODE(relay.stat().st_mode) == 0o640
+    assert stat.S_IMODE(relay.stat().st_mode) == 0o600
+    php_relay = Path(env["MIFP_PHP_MAIL_RELAY_CONFIG"])
+    assert php_relay.read_text() == rendered
+    assert stat.S_IMODE(php_relay.stat().st_mode) == 0o600
     assert secret not in changed.stdout + changed.stderr
 
     removed = _run(env, "config-unset", "SMTP_PASSWORD", check=False)
@@ -1840,6 +1862,7 @@ def _refresh_env(tmp_path: Path, bundle: Path) -> tuple[dict[str, str], Path, Pa
 
     bin_dir = tmp_path / "refresh-bin"
     bin_dir.mkdir()
+    _write_executable(bin_dir / "stat", "#!/bin/sh\n[ \"${2:-}\" = %u ] && { echo 0; exit 0; }\nexec /usr/bin/stat \"$@\"\n")
     _write_executable(bin_dir / "id", "#!/bin/sh\n[ \"${1:-}\" = -u ] && { echo 0; exit 0; }\nexec /usr/bin/id \"$@\"\n")
     _write_executable(
         bin_dir / "docker",
@@ -2063,3 +2086,122 @@ def test_documented_transfer_normalizes_writable_checkout_permissions(tmp_path: 
         for path in destination.rglob("*"):
             assert stat.S_IMODE(path.stat().st_mode) == (0o700 if path.is_dir() else 0o600)
     assert (staging / "bootstrap-vps.sh").read_bytes() == (source / "bootstrap-vps.sh").read_bytes()
+
+
+def test_host_apply_is_idempotent_and_preserves_operator_state(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    for name in ('data/marker', 'release.env'):
+        (home / name).write_text('preserved')
+    config = Path(env['MIFP_CONFIG_DIR'])
+    before = {p: p.read_bytes() for p in (config / 'config.env', config / 'secrets.env', home / 'data/marker', home / 'release.env')}
+    _run(env, 'host-apply')
+    log = Path(env['FAKE_SYSTEMCTL_LOG'])
+    log.write_text('')
+    pool = Path(env['MIFP_PHP_CONFIG_ROOT']) / '8.3/fpm/pool.d/mifp-events.conf'
+    inode = pool.stat().st_ino
+    _run(env, 'host-apply')
+    assert all(p.read_bytes() == content for p, content in before.items())
+    assert pool.stat().st_ino == inode
+    assert 'reload ' not in log.read_text()
+    assert 'restart ' not in log.read_text()
+    assert '--file=' + env['MIFP_PHP_MAIL_RELAY_CONFIG'] in pool.read_text()
+    assert Path(env['MIFP_EVENTS_PHP_STATE']).read_text() == ''
+
+
+@pytest.mark.parametrize('failure', ['validate', 'reload'])
+def test_host_apply_web_restores_both_files_after_failure(tmp_path: Path, failure: str) -> None:
+    env, _home = _env(tmp_path)
+    _run(env, 'host-apply')
+    caddy = Path(env['MIFP_CADDY_CONFIG'])
+    include = Path(env['MIFP_EVENTS_PHP_INCLUDE'])
+    old = caddy.read_bytes(), include.read_bytes()
+    include.write_text('# old formatting; empty allowlist\n')
+    old = caddy.read_bytes(), include.read_bytes()
+    config = Path(env['MIFP_CONFIG_DIR']) / 'config.env'
+    config.write_text(config.read_text().replace('www.vpsbox.home.arpa', 'www.changed.home.arpa'))
+    bin_dir = Path(env['PATH'].split(':')[0])
+    if failure == 'validate':
+        _write_executable(bin_dir / 'caddy', '#!/bin/sh\n[ "$1" != validate ]\n')
+    else:
+        _write_executable(bin_dir / 'systemctl', '#!/bin/sh\n[ "$1" != reload ]\n')
+    failed = _run(env, 'host-apply', 'web', check=False)
+    assert failed.returncode != 0
+    assert (caddy.read_bytes(), include.read_bytes()) == old
+    # The failed apply is retryable after the external error is resolved.
+    _write_executable(bin_dir / 'caddy', '#!/bin/sh\nexit 0\n')
+    _write_executable(bin_dir / 'systemctl', '#!/bin/sh\nexit 0\n')
+    _run(env, 'host-apply', 'web')
+    assert 'www.changed.home.arpa' in caddy.read_text()
+
+
+def test_invalid_pool_does_not_replace_working_configuration(tmp_path: Path) -> None:
+    env, _home = _env(tmp_path)
+    _run(env, 'host-apply', 'php')
+    pool = Path(env['MIFP_PHP_CONFIG_ROOT']) / '8.3/fpm/pool.d/mifp-events.conf'
+    pool.write_text(pool.read_text() + '; operator previous version\n')
+    before = pool.read_bytes()
+    failed = _run(dict(env, FAIL_PHP_VALIDATE='1'), 'host-apply', 'php', check=False)
+    assert failed.returncode != 0
+    assert pool.read_bytes() == before
+
+
+def test_mail_only_apply_leaves_caddy_and_pool_untouched(tmp_path: Path) -> None:
+    env, _home = _env(tmp_path)
+    _run(env, 'host-apply')
+    caddy = Path(env['MIFP_CADDY_CONFIG'])
+    before = caddy.read_bytes()
+    log = Path(env['FAKE_SYSTEMCTL_LOG'])
+    log.write_text('')
+    _run(env, 'host-apply', 'mail')
+    assert caddy.read_bytes() == before
+    assert 'caddy' not in log.read_text()
+    assert 'php8.3' not in log.read_text()
+
+
+def test_backend_transition_preserves_data_allowlist_and_other_pools(tmp_path: Path) -> None:
+    env, _home = _env(tmp_path)
+    _run(env, 'host-apply')
+    pool_dir = Path(env['MIFP_PHP_CONFIG_ROOT']) / '8.3/fpm/pool.d'
+    (pool_dir / 'other.conf').write_text('; unrelated host pool\n')
+    marker = Path(env['MIFP_EVENTS_PRIVATE_DIR']) / 'registrations/marker'
+    marker.write_text('private data')
+    regform = tmp_path / 'event-sites/Event/regform'
+    regform.mkdir(parents=True)
+    state = Path(env['MIFP_EVENTS_PHP_STATE'])
+    state.write_text('Event/regform\n')
+    for backend in ('remote', 'disabled', 'local-vps'):
+        _run(env, 'config-set', 'EVENTS_PUBLISH_BACKEND', backend)
+        assert marker.read_text() == 'private data'
+        assert state.read_text() == 'Event/regform\n'
+        assert (pool_dir / 'other.conf').read_text() == '; unrelated host pool\n'
+    assert 'stop php8.3' not in Path(env['FAKE_SYSTEMCTL_LOG']).read_text()
+    assert 'Event/regform/index.php' in Path(env['MIFP_EVENTS_PHP_INCLUDE']).read_text()
+
+
+def test_remote_host_apply_does_not_require_php_installation(tmp_path: Path) -> None:
+    env, _home = _env(tmp_path)
+    config = Path(env['MIFP_CONFIG_DIR']) / 'config.env'
+    config.write_text(config.read_text().replace('EVENTS_PUBLISH_BACKEND=local-vps', 'EVENTS_PUBLISH_BACKEND=remote'))
+    shutil.rmtree(Path(env['MIFP_PHP_CONFIG_ROOT']))
+    _write_executable(Path(env['PATH'].split(':')[0]) / 'php', '#!/bin/sh\nexit 99\n')
+    _run(env, 'host-apply')
+    result = _run(env, 'mail-diagnose')
+    assert 'not applicable' in result.stdout
+
+
+def test_new_event_root_cannot_inherit_php_approval(tmp_path: Path) -> None:
+    env, _home = _env(tmp_path)
+    _run(env, 'host-apply')
+    config = Path(env['MIFP_CONFIG_DIR']) / 'config.env'
+    before = config.read_bytes()
+    old_root = tmp_path / 'event-sites'
+    (old_root / 'Event/regform').mkdir(parents=True)
+    Path(env['MIFP_EVENTS_PHP_STATE']).write_text('Event/regform\n')
+    new_root = tmp_path / 'new-events'
+    blocked = _run(env, 'config-set', 'EVENTS_LOCAL_ROOT', str(new_root), check=False)
+    assert blocked.returncode != 0 and 'Revoca tutte' in blocked.stderr
+    assert config.read_bytes() == before and not new_root.exists()
+    # A direct canonical edit cannot bypass the guard with a web-only apply.
+    config.write_text(config.read_text().replace(str(old_root), str(new_root)))
+    blocked = _run(env, 'host-apply', 'web', check=False)
+    assert blocked.returncode != 0 and 'Revoca tutte' in blocked.stderr

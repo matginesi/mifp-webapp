@@ -56,10 +56,11 @@ def test_real_form_closed_sessions_and_oversized_request(events_runtime, plmcn_s
     shutil.copytree(plmcn_source / "regform", public_site / "regform", dirs_exist_ok=True)
     shutil.copyfile(plmcn_source / "conference.yaml", public_site / "conference.yaml")
     settings = public_site / "regform/settings.yaml"
-    assert "submit_enabled: false" in settings.read_text()
-    assert "max_upload_mb: 10" in settings.read_text()
-    # A stale package may still request 16 MiB; the live form must promise 10.
-    settings.write_text(settings.read_text().replace("max_upload_mb: 10", "max_upload_mb: 16"))
+    # Admission settings belong to the authoritative event package. Close only
+    # this disposable copy and request 16 MiB to exercise the runtime clamp.
+    synthetic_settings = re.sub(r"(submit_enabled:\s*)true", r"\1false", settings.read_text())
+    synthetic_settings = re.sub(r"(max_upload_mb:\s*)\d+", r"\g<1>16", synthetic_settings)
+    settings.write_text(synthetic_settings)
     assert _run(runtime["env"], "events-php-enable", "PLMCN-2027/regform", check=False).returncode == 0
     with _serve(runtime) as request:
         status, body, headers = request("/PLMCN-2027/regform/")

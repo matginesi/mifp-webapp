@@ -1,5 +1,5 @@
-# Base template for the MIFP application domains. deploy.sh/bootstrap-vps.sh
-# append a direct static events site only when EVENTS_PUBLISH_BACKEND=local-vps.
+# Base template for the MIFP application domains. deploy.sh (also called by
+# bootstrap-vps.sh) appends a direct static events site only when EVENTS_PUBLISH_BACKEND=local-vps.
 # Remote/disabled mode leaves that host entirely outside VPS Caddy and ACME.
 
 # One canonical public host: avoid serving duplicate www/apex URL surfaces.

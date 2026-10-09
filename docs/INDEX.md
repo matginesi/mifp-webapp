@@ -13,9 +13,12 @@ Per avviare il progetto, partire dal [README principale](../README.md).
 
 ## Deployment e manutenzione
 
+- [Aggiornare la VPS esistente: procedura operativa](deployment/update-existing-vps.md)
+
 - [Avvio su una VPS nuova](DEPLOY_NEW_VPS.md)
 - [Installazione VPS e VM locale](deployment/vps-installation.md)
 - [Micrositi, routing e autorizzazioni PHP](deployment/conference-microsites.md)
+- [Registrazioni e affidabilità email](deployment/registrations.md)
 - [Backup e ripristino](deployment/backups.md)
 - [Hardening](deployment/hardening.md)
 - [Riferimento deployment](../DEPLOYMENT.md)

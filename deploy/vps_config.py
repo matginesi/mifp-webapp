@@ -7,13 +7,19 @@ import getpass
 import ipaddress
 import json
 import os
+import pwd
 import re
 import secrets
 import shlex
 import socket
 import sys
+import subprocess
+import stat
+import smtplib
+import ssl
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Callable
 
 PUBLIC_KEYS = (
@@ -25,7 +31,7 @@ PUBLIC_KEYS = (
     "REGISTRY", "DNS_PROVIDER", "DNS_EXPECTED_IPV4",
     "DNS_EXPECTED_IPV6", "MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT",
     "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME", "MAIL_TO",
-    "BACKUP_ENABLED", "BACKUP_LOCAL_RETENTION", "RESTIC_REPOSITORY",
+    "REGISTRATIONS_DASHBOARD_ENABLED", "BACKUP_ENABLED", "BACKUP_LOCAL_RETENTION", "RESTIC_REPOSITORY",
     "ADMIN_USERNAME",
 )
 SECRET_KEYS = ("SECRET_KEY", "ADMIN_PASSWORD_HASH", "SMTP_PASSWORD", "RESTIC_PASSWORD", "EVENTS_REMOTE_PASSWORD")
@@ -61,6 +67,7 @@ RUNTIME_TO_CANONICAL = {
     "SMTP_PASSWORD": "SMTP_PASSWORD",
     "MAIL_FROM": "SMTP_FROM_ADDRESS",
     "MAIL_TO": "MAIL_TO",
+    "MAIL_FROM_NAME": "SMTP_FROM_NAME",
     "MIFP_BACKUP_KEEP": "BACKUP_LOCAL_RETENTION",
     "MIFP_RESTIC_REPOSITORY": "RESTIC_REPOSITORY",
     "ADMIN_USERNAME": "ADMIN_USERNAME",
@@ -70,6 +77,13 @@ RUNTIME_TO_CANONICAL = {
     "EVENTS_REMOTE_PASSWORD": "EVENTS_REMOTE_PASSWORD",
     "EVENTS_PUBLIC_BASE_URL": "EVENTS_PUBLIC_BASE_URL",
     "EVENTS_PUBLISH_BACKEND": "EVENTS_PUBLISH_BACKEND",
+    "EVENTS_LOCAL_ROOT": "EVENTS_LOCAL_ROOT",
+    "EVENTS_REMOTE_PROTOCOL": "EVENTS_REMOTE_PROTOCOL",
+    "EVENTS_REMOTE_HOST": "EVENTS_REMOTE_HOST",
+    "EVENTS_REMOTE_PORT": "EVENTS_REMOTE_PORT",
+    "EVENTS_REMOTE_USER": "EVENTS_REMOTE_USER",
+    "EVENTS_REMOTE_ROOT": "EVENTS_REMOTE_ROOT",
+    "EVENTS_REMOTE_TIMEOUT": "EVENTS_REMOTE_TIMEOUT",
 }
 
 
@@ -153,7 +167,7 @@ def update_runtime_env(path: Path, updates: dict[str, str], example: Path | None
     atomic_write_text(path, "\n".join(output).rstrip() + "\n", 0o600)
 
 
-def atomic_write_text(path: Path, text: str, mode: int) -> None:
+def atomic_write_text(path: Path, text: str, mode: int, uid: int = 0, gid: int = 0) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
@@ -163,7 +177,7 @@ def atomic_write_text(path: Path, text: str, mode: int) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         if os.geteuid() == 0:
-            os.chown(temp_name, 0, 0)
+            os.chown(temp_name, uid, gid)
         os.replace(temp_name, path)
         os.chmod(path, mode)
     except BaseException:
@@ -241,13 +255,11 @@ def _msmtp_quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render_msmtp_config(values: dict[str, str], output: Path) -> bool:
-    """Render the root-managed host SMTP relay.
+def render_msmtp_config(values: dict[str, str], output: Path, uid: int = 0, gid: int = 0) -> bool:
+    """Render an owner-only relay, assigning ownership before atomic replacement.
 
-    The relay is used by the independent notification monitor and, when the
-    event backend is local-vps, by PHP regforms. The SMTP password is never
-    printed. The caller assigns the narrowest final ownership required by the
-    selected host features after this root-only atomic write.
+    Root monitor and PHP use separate files derived from the same canonical
+    settings. Credentials are never printed or exposed in temporary files.
     """
     provider = str(values.get("MAIL_PROVIDER", "disabled") or "disabled").lower()
     if provider not in {"disabled", "console", "smtp"}:
@@ -314,7 +326,17 @@ def render_msmtp_config(values: dict[str, str], output: Path) -> bool:
             pass
         raise
 
-    atomic_write_text(output, "\n".join(lines) + "\n", 0o600)
+    rendered = "\n".join(lines) + "\n"
+    # Adopt an already-correct relay, including the production PHP ownership
+    # fix, without replacing it on every host-tools/configuration update.
+    if output.exists() and not output.is_symlink():
+        current = output.stat()
+        if (stat.S_ISREG(current.st_mode)
+                and stat.S_IMODE(current.st_mode) == 0o600
+                and (current.st_uid, current.st_gid) == (uid, gid)
+                and output.read_text(encoding="utf-8") == rendered):
+            return True
+    atomic_write_text(output, rendered, 0o600, uid, gid)
     return True
 
 
@@ -326,7 +348,13 @@ class Store:
         self.example = example
 
     def values(self) -> dict[str, str]:
-        return {**read_env(self.config), **read_env(self.secrets_path)}
+        values = {**read_env(self.config), **read_env(self.secrets_path)}
+        if "MAIL_PROVIDER" in values:
+            provider = str(values["MAIL_PROVIDER"]).strip().lower()
+            if provider not in {"disabled", "console", "smtp"}:
+                provider = "smtp" if values.get("SMTP_HOST", "").strip() else "disabled"
+            values["MAIL_PROVIDER"] = provider
+        return values
 
     def save(self, values: dict[str, str]) -> None:
         public = {key: values[key] for key in PUBLIC_KEYS if values.get(key)}
@@ -387,6 +415,7 @@ class Store:
                 if runtime_values["SMTP_USE_TLS"].lower() in {"1", "true", "yes", "on"}
                 else "none"
             )
+        values.setdefault("MAIL_PROVIDER", "disabled")
         values.setdefault("ENVIRONMENT", "production")
         values.setdefault("HOSTNAME", socket.gethostname())
         values.setdefault("IMAGE_REPOSITORY", "ghcr.io/matginesi/mifp-webapp")
@@ -497,8 +526,12 @@ def normalize_value(key: str, value: str) -> str:
         raise ValueError("SMTP_SECURITY must be tls, starttls or none")
     elif key in {"SMTP_FROM_ADDRESS", "MAIL_TO"} and value and not EMAIL_RE.fullmatch(value):
         raise ValueError(f"invalid email address for {key}")
-    elif key in {"BACKUP_ENABLED"} and value.lower() not in {"true", "false"}:
-        raise ValueError(f"{key} must be true or false")
+    elif key == "REGISTRATIONS_DASHBOARD_ENABLED":
+        if value.lower() not in {"true", "false"}:
+            raise ValueError(f"{key} must be true or false")
+        return value.lower()
+    elif key == "BACKUP_ENABLED" and value.lower() not in {"true", "false"}:
+        raise ValueError("BACKUP_ENABLED must be true or false")
     elif key == "BACKUP_LOCAL_RETENTION" and (not value.isdigit() or int(value) < 2):
         # deploy/backup.sh requires >= 2: keeping a single snapshot would make
         # the pre-restore safety snapshot delete the one being restored.
@@ -698,6 +731,106 @@ def run_wizard(store: Store, section: str | None, docker_config: Path) -> int:
     return 0
 
 
+
+def audit_caddy_config(values: dict[str, str], document: dict) -> list[str]:
+    """Compare the running Caddy JSON with canonical MIFP hosts/root."""
+    def objects(value):
+        if isinstance(value, dict):
+            yield value
+            for child in value.values():
+                yield from objects(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from objects(child)
+
+    nodes = list(objects(document.get("apps", {}).get("http", {})))
+    hosts = {host for node in nodes for host in node.get("host", [])}
+    domain = values.get("DOMAIN", "")
+    expected = {domain, values.get("WWW_DOMAIN", "")} - {""}
+    event_host = urlsplit(values.get("EVENTS_PUBLIC_BASE_URL", "")).hostname
+    local = values.get("EVENTS_PUBLISH_BACKEND") == "local-vps" and bool(domain)
+    if local:
+        expected.add(event_host)
+    errors = []
+    if not expected.issubset(hosts) or (not domain and hosts):
+        errors.append("Caddy runtime domains differ from canonical configuration")
+    event_routes = [node for node in nodes if any(event_host in match.get("host", []) for match in node.get("match", []))]
+    if local:
+        roots = {child.get("root") for route in event_routes for child in objects(route) if isinstance(child.get("root"), str)}
+        if values.get("EVENTS_LOCAL_ROOT") not in roots:
+            errors.append("Caddy runtime event root differs from canonical configuration")
+    elif event_routes:
+        errors.append("Caddy runtime still serves events while local hosting is disabled")
+    return errors
+
+
+def diagnose_mail(values, relay: Path, php_user: str, network: bool = False) -> bool:
+    """Read-only diagnostics. Never print relay content or SMTP stderr."""
+    provider = values.get("MAIL_PROVIDER", "disabled")
+    print("Mail provider: " + provider)
+    if provider != "smtp":
+        print("Host relay: disabled by configuration; no message sent")
+        return False
+    checks = []
+    with tempfile.TemporaryDirectory(prefix="mifp-mail-diagnose-") as temp:
+        expected = Path(temp) / "msmtprc"
+        try:
+            render_msmtp_config(values, expected)
+            info = relay.lstat()
+            account = pwd.getpwnam(php_user)
+            valid = (
+                stat.S_ISREG(info.st_mode) and not relay.is_symlink()
+                and info.st_uid == account.pw_uid and info.st_gid == account.pw_gid
+                and stat.S_IMODE(info.st_mode) == 0o600
+            )
+            checks.append(("Relay ownership/permissions", valid))
+            checks.append(("Relay matches canonical settings", valid and relay.read_bytes() == expected.read_bytes()))
+        except (ValueError, OSError, KeyError):
+            checks.append(("Relay configuration", False))
+    def command_check(label, command):
+        try:
+            result = subprocess.run(command, input=b"", capture_output=True, timeout=30, check=False)
+            checks.append((label, result.returncode == 0))
+        except (OSError, subprocess.TimeoutExpired):
+            checks.append((label, False))
+    command_check("PHP user can read relay", ["runuser", "-u", php_user, "--", "test", "-r", str(relay)])
+    command_check("PHP user msmtp configuration", ["runuser", "-u", php_user, "--", "/usr/bin/msmtp", "--file=" + str(relay), "--account=default", "--pretend", "--", "synthetic@example.invalid"])
+    try:
+        version = subprocess.run(["php", "-r", 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;'],
+            capture_output=True, timeout=10, check=True).stdout.decode().strip()
+        if not re.fullmatch(r"[0-9]+\.[0-9]+", version):
+            raise ValueError("invalid PHP version")
+        pool = Path(os.environ.get('MIFP_PHP_CONFIG_ROOT', '/etc/php')) / version / 'fpm/pool.d/mifp-events.conf'
+        pool_lines = pool.read_text().splitlines() if not pool.is_symlink() else []
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pool_lines = []
+    expected_sendmail = f'php_admin_value[sendmail_path] = "/usr/bin/msmtp --file={relay} --account=default -t"'
+    checks.append(("Dedicated pool sendmail_path", expected_sendmail in pool_lines))
+    if network and all(ok for _, ok in checks):
+        command_check("SMTP connection/TLS (no mail, authentication not proven)", ["runuser", "-u", php_user, "--", "/usr/bin/msmtp", "--file=" + str(relay), "--account=default", "--serverinfo"])
+        try:
+            host, port = values["SMTP_HOST"], int(values["SMTP_PORT"])
+            context = ssl.create_default_context()
+            if values["SMTP_SECURITY"] == "tls":
+                client = smtplib.SMTP_SSL(host, port, timeout=20, context=context)
+            else:
+                client = smtplib.SMTP(host, port, timeout=20)
+            with client:
+                client.ehlo()
+                if values["SMTP_SECURITY"] == "starttls":
+                    client.starttls(context=context)
+                    client.ehlo()
+                if values.get("SMTP_USERNAME"):
+                    client.login(values["SMTP_USERNAME"], values.get("SMTP_PASSWORD", ""))
+                checks.append(("SMTP TLS/authentication (no message)", True))
+        except (OSError, ValueError, smtplib.SMTPException):
+            checks.append(("SMTP TLS/authentication (no message)", False))
+    for label, ok in checks:
+        print(label + ': ' + ('OK' if ok else 'FAILED'))
+    print('No message sent. Transport acceptance and inbox delivery require separate evidence.')
+    return all(ok for _, ok in checks)
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser()
     root.add_argument("--config-file", type=Path, required=True)
@@ -720,6 +853,7 @@ def parser() -> argparse.ArgumentParser:
     subs.add_parser("check")
     subs.add_parser("validate", help=argparse.SUPPRESS)
     subs.add_parser("audit-layout", help=argparse.SUPPRESS)
+    subs.add_parser("audit-caddy", help=argparse.SUPPRESS)
     materialize = subs.add_parser("materialize-secrets", help=argparse.SUPPRESS)
     materialize.add_argument("--output-dir", type=Path, required=True)
     materialize.add_argument("--uid", type=int, default=0)
@@ -730,8 +864,14 @@ def parser() -> argparse.ArgumentParser:
     subs.add_parser("import-admin", help=argparse.SUPPRESS)
     get_cmd = subs.add_parser("get")
     get_cmd.add_argument("key")
+    diagnose = subs.add_parser("diagnose-mail")
+    diagnose.add_argument("--relay", type=Path, default=Path("/etc/msmtprc-mifp-events"))
+    diagnose.add_argument("--php-user", default="mifp-events")
+    diagnose.add_argument("--network", action="store_true")
     relay = subs.add_parser("render-mail-relay", help=argparse.SUPPRESS)
     relay.add_argument("--output", type=Path, required=True)
+    relay.add_argument("--uid", type=int, default=0)
+    relay.add_argument("--gid", type=int, default=0)
     return root
 
 
@@ -743,10 +883,22 @@ def main() -> int:
         return 0
     if args.command == "configure":
         return run_wizard(store, args.section, args.docker_config)
+    if args.command == "audit-caddy":
+        try:
+            errors = audit_caddy_config(store.values(), json.load(sys.stdin))
+        except (ValueError, TypeError, AttributeError):
+            errors = ["Caddy runtime configuration is unavailable or invalid"]
+        for error in errors:
+            print("ERROR: " + error)
+        if not errors:
+            print("Caddy runtime/canonical configuration: OK")
+        return int(bool(errors))
+    if args.command == "diagnose-mail":
+        return 0 if diagnose_mail(store.values(), args.relay, args.php_user, args.network) else 1
     if args.command == "render-mail-relay":
         values = store.values()
         try:
-            enabled = render_msmtp_config(values, args.output)
+            enabled = render_msmtp_config(values, args.output, args.uid, args.gid)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
         print("configured" if enabled else "disabled")

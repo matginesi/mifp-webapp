@@ -111,14 +111,15 @@ su IPv6. Non è previsto alcun dominio di staging.
 Dal PC:
 
 ```bash
-scp -r deploy user@host:/tmp/mifp-deploy
+# Seguire lo staging con manifest verificato:
+# docs/deployment/vps-installation.md#host-tools-refresh
 ssh user@host
 ```
 
 Sulla VPS:
 
 ```bash
-sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
+sudo bash "$staging/bootstrap-vps.sh" \
   --domain mifp.eu \
   --image-repository ghcr.io/matginesi/mifp-webapp
 ```
@@ -255,7 +256,7 @@ tocca il Caddyfile live, non riavvia container o servizi e conserva
 dati e backup.
 Se cambia il template Caddy o il routing generato da `deploy.sh`, il comando lascia intenzionalmente invariata la
 configurazione live e segnala di revisionarla e applicarla esplicitamente con
-`sudo mifpctl configure --section web` (che può riavviare l'app in esecuzione).
+`sudo mifpctl host-apply web` (senza riavviare il container).
 Una nuova Compose entra invece in vigore solo al successivo deploy/restart
 applicativo esplicito.
 
@@ -334,7 +335,7 @@ mantiene il rollback congiunto.
 Per una VM con hostname Linux `vpsbox` e dominio applicativo locale distinto:
 
 ```bash
-sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
+sudo bash "$staging/bootstrap-vps.sh" \
   --domain vpsbox.home.arpa \
   --image-repository ghcr.io/matginesi/mifp-webapp
 sudo mifpctl init
@@ -485,7 +486,10 @@ nel file runtime `.env` né nell'environment del container. La pagina dashboard
 **Notifications** mostra soltanto stato/parametri non segreti e destinatario
 mascherato: non rende username o password e non offre campi per modificarli.
 
-La stessa configurazione alimenta un `/etc/msmtprc` root-owned per il monitor
+La stessa configurazione alimenta `/etc/msmtprc` root:root `0600` per il monitor
+e `/etc/msmtprc-mifp-events` mifp-events:mifp-events `0600` per PHP, generati
+atomicamente con `sudo mifpctl host-apply all`. Il pool dedicato usa il secondo
+file; non sono richiesti chmod o copie manuali. Il relay host è usato per il monitor
 indipendente `mifp-alert-check.timer`, così down, readiness/storage degradati e
 backup falliti possono essere notificati anche se il container web non risponde.
 Quando il backend eventi è `local-vps`, il relay è inoltre leggibile dal solo

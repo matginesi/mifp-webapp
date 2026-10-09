@@ -74,8 +74,9 @@ def test_local_tls_is_strictly_conditional_in_bootstrap() -> None:
     bootstrap = (ROOT / "deploy" / "bootstrap-vps.sh").read_text(encoding="utf-8")
     caddyfile = (ROOT / "deploy" / "Caddyfile").read_text(encoding="utf-8")
     assert 'if [[ "$DOMAIN" == *.home.arpa ]]' in bootstrap
-    assert 'MIFP_TLS_DIRECTIVE="tls internal"' in bootstrap
-    assert 'MIFP_TLS_DIRECTIVE=""' in bootstrap
+    host = (ROOT / "deploy/deploy.sh").read_text()
+    assert '[[ "$domain" != *.home.arpa ]] || tls_directive="tls internal"' in host
+    assert 'tls_directive=""' in host
     assert "__MIFP_TLS__" in caddyfile
     assert "tls internal" not in caddyfile
 

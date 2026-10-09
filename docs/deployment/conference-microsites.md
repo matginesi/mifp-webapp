@@ -114,3 +114,7 @@ Gli esempi usano `PLMCN-2027`; sostituire il percorso con quello del sito.
    siti siano negati. Non inviare registrazioni o email reali come smoke test.
 6. Aprire gli invii solo dopo le conferme umane. Anche il successivo aggiornamento
    di `submit_enabled` richiede revoca, nuova pubblicazione e nuova approvazione.
+
+Per la gestione operativa dei dati privati vedere
+[Registrazioni e affidabilità email](registrations.md): dashboard, mount read-only,
+correzione msmtp, retry controllati, pulizia con backup e recupero selettivo.

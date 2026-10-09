@@ -25,6 +25,9 @@ EVENTS_PHP_STATE="${MIFP_EVENTS_PHP_STATE:-$MIFP_HOME/events-php-enabled.txt}"
 EVENTS_PHP_INCLUDE="${MIFP_EVENTS_PHP_INCLUDE:-/etc/caddy/mifp-events-php.caddy}"
 EVENTS_PHP_SOCKET="${MIFP_EVENTS_PHP_SOCKET:-/run/php/mifp-events.sock}"
 MAIL_RELAY_CONFIG="${MIFP_MAIL_RELAY_CONFIG:-/etc/msmtprc}"
+PHP_MAIL_RELAY_CONFIG="${MIFP_PHP_MAIL_RELAY_CONFIG:-/etc/msmtprc-mifp-events}"
+PHP_CONFIG_ROOT="${MIFP_PHP_CONFIG_ROOT:-/etc/php}"
+PHP_ERROR_LOG="${MIFP_PHP_ERROR_LOG:-/var/log/php-mifp-events.log}"
 SYSTEMD_DIR="${MIFP_SYSTEMD_DIR:-/etc/systemd/system}"
 PHP_FPM_SERVICE_FILE="${MIFP_PHP_FPM_SERVICE_FILE:-$MIFP_HOME/php-fpm.service}"
 CADDY_CONFIG="${MIFP_CADDY_CONFIG:-/etc/caddy/Caddyfile}"
@@ -76,10 +79,12 @@ Compatibilità / diagnostica:
   sudo mifpctl events-php-list            mostra i regform autorizzati a eseguire PHP
   sudo mifpctl events-php-enable PATH     abilita PHP per un PATH <evento>/regform sicuro
   sudo mifpctl events-php-disable PATH    revoca immediatamente PHP per quel regform
+  sudo mifpctl host-apply [all|web|php|mail] applica intenzionalmente configurazione host
   sudo mifpctl doctor                     diagnostica completa
   sudo mifpctl security-check             audit read-only di superficie e permessi host
   sudo mifpctl ssh-harden --operator USER hardening opzionale: disabilita password SSH
   sudo mifpctl ssh-rollback               rimuove il drop-in SSH e ricarica sshd
+  sudo mifpctl registrations-request ID   review/apply explicit registration operation
   sudo mifpctl fix-permissions            corregge ownership dati solo su richiesta
 Manutenzione rara:
   sudo mifpctl registry-login             login opzionale per package privati (PAT read:packages)
@@ -145,26 +150,29 @@ sync_mail_relay() {
   # health monitor, so downtime can be reported when the web container is dead.
   # Local-vps PHP regforms may share this relay without receiving credentials.
   if [[ "$provider" != "smtp" ]]; then
-    rm -f -- "$MAIL_RELAY_CONFIG"
+    rm -f -- "$MAIL_RELAY_CONFIG" "$PHP_MAIL_RELAY_CONFIG"
     say "Host mail relay: disabled (${provider:-disabled})"
     return 0
   fi
 
   has msmtp || die "msmtp non disponibile; riesegui bootstrap-vps.sh."
   if ! state="$(config_cli render-mail-relay --output "$MAIL_RELAY_CONFIG")"; then
-    rm -f -- "$MAIL_RELAY_CONFIG"
+    rm -f -- "$MAIL_RELAY_CONFIG" "$PHP_MAIL_RELAY_CONFIG"
     die "Configurazione SMTP incompleta o non valida; relay host disabilitato."
   fi
   [[ "$state" == "configured" && -f "$MAIL_RELAY_CONFIG" && ! -L "$MAIL_RELAY_CONFIG" ]] \
     || die "Impossibile configurare il relay SMTP sicuro host."
+  chown root:root "$MAIL_RELAY_CONFIG"
+  chmod 0600 "$MAIL_RELAY_CONFIG"
   if [[ "$backend" == "local-vps" ]]; then
-    id "$EVENTS_PHP_USER" >/dev/null 2>&1 \
-      || die "Utente PHP eventi mancante: $EVENTS_PHP_USER"
-    chown root:"$EVENTS_PHP_USER" "$MAIL_RELAY_CONFIG"
-    chmod 0640 "$MAIL_RELAY_CONFIG"
+    id "$EVENTS_PHP_USER" >/dev/null 2>&1 || die "Utente PHP eventi mancante: $EVENTS_PHP_USER"
+    if ! config_cli render-mail-relay --output "$PHP_MAIL_RELAY_CONFIG" \
+      --uid "$(id -u "$EVENTS_PHP_USER")" --gid "$(id -g "$EVENTS_PHP_USER")" >/dev/null; then
+      rm -f -- "$PHP_MAIL_RELAY_CONFIG"
+      die "Configurazione SMTP PHP non valida; relay PHP disabilitato."
+    fi
   else
-    chown root:root "$MAIL_RELAY_CONFIG"
-    chmod 0600 "$MAIL_RELAY_CONFIG"
+    rm -f -- "$PHP_MAIL_RELAY_CONFIG"
   fi
   say "Host mail relay: configured (credentials not displayed)"
 }
@@ -189,31 +197,160 @@ sync_alert_timer() {
 }
 
 
-sync_events_php_lifecycle() {
-  local backend="$1" service
+assert_events_root_approval() {
+  local root="$1" service version pool old_root
+  [[ -f "$EVENTS_PHP_STATE" ]] && grep -Eq '^[^#[:space:]]' "$EVENTS_PHP_STATE" || return 0
   service="$(events_php_service || true)"
-  if [[ "$backend" != "local-vps" ]]; then
-    if [[ -n "$service" ]]; then
-      systemctl disable --now "$service" >/dev/null 2>&1 \
-        || die "Impossibile disattivare il runtime PHP eventi locale."
-    fi
-    say "Event PHP-FPM: disattivato per backend $backend"
-    return 0
-  fi
-
-  [[ -d "$EVENTS_PRIVATE_DIR/registrations" && -d "$EVENTS_PRIVATE_DIR/uploads" \
-     && -f "$EVENTS_PHP_STATE" && -f "$EVENTS_PHP_INCLUDE" ]] \
-    || die "Runtime PHP eventi locale incompleto; riesegui bootstrap-vps.sh prima di abilitare local-vps."
-  [[ -n "$service" ]] \
-    || die "Pool PHP-FPM eventi non configurato; riesegui bootstrap-vps.sh."
-  systemctl enable --now "$service" \
-    || die "Impossibile avviare il runtime PHP eventi locale."
-  install_events_php_include
+  version="${service#php}"; version="${version%-fpm.service}"
+  pool="$PHP_CONFIG_ROOT/$version/fpm/pool.d/mifp-events.conf"
+  [[ -f "$pool" ]] || pool="$pool.disabled"
+  old_root="$(sed -n 's/^php_admin_value\[open_basedir\] = \([^:]*\):.*/\1/p' "$pool" 2>/dev/null || true)"
+  [[ -n "$old_root" && "$old_root" == "$root" ]] \
+    || die "Revoca tutte le autorizzazioni PHP prima di cambiare EVENTS_LOCAL_ROOT; l'approvazione non è trasferibile a un altro tree."
 }
 
-apply_host_configuration() {
-  local domain www_domain tls_directive="" tmp events_backend events_url events_host events_root
-  cleanup_host_config_tmp() { [[ -z "${tmp:-}" ]] || rm -f -- "$tmp"; }
+sync_events_php_lifecycle() {
+  local backend="$1" version service pool candidate backup changed=0 had_old=0
+  if [[ "$backend" != "local-vps" ]]; then
+    service="$(events_php_service || true)"
+    if [[ -z "$service" ]]; then
+      say "Event PHP-FPM: non configurato per backend $backend"
+      return 0
+    fi
+    version="${service#php}"; version="${version%-fpm.service}"
+  else
+    version="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
+    service="php${version}-fpm.service"
+  fi
+  PHP_POOL_DIR="$PHP_CONFIG_ROOT/$version/fpm/pool.d"
+  pool="$PHP_POOL_DIR/mifp-events.conf"
+  if [[ ! -d "$PHP_POOL_DIR" ]]; then
+    [[ "$backend" != local-vps ]] || die "PHP-FPM mancante: esegui bootstrap-vps.sh."
+    return 0
+  fi
+  if [[ "$backend" != "local-vps" ]]; then
+    # Disable only our pool; other host virtual hosts may use this service.
+    if [[ -f "$pool" ]]; then
+      mv -f "$pool" "$pool.disabled"
+      if ! "php-fpm${version}" -t || { systemctl is-active --quiet "$service" && ! systemctl reload "$service"; }; then
+        mv -f "$pool.disabled" "$pool"
+        die "Disattivazione pool PHP fallita; file precedente ripristinato."
+      fi
+    fi
+    say "Event PHP-FPM: pool dedicato disattivato per backend $backend"
+    return 0
+  fi
+  getent group "$EVENTS_PUBLIC_GROUP" >/dev/null || groupadd --system "$EVENTS_PUBLIC_GROUP"
+  id "$EVENTS_PHP_USER" >/dev/null 2>&1 || useradd --system --user-group --home "$EVENTS_PRIVATE_DIR" --shell /usr/sbin/nologin "$EVENTS_PHP_USER"
+  usermod -a -G "$EVENTS_PUBLIC_GROUP" "$EVENTS_PHP_USER"
+  local root dir
+  root="$(config_cli get EVENTS_LOCAL_ROOT)"
+  assert_events_root_approval "$root"
+  for dir in "$root" "$EVENTS_PRIVATE_DIR" "$EVENTS_PRIVATE_DIR/registrations" "$EVENTS_PRIVATE_DIR/uploads" "$EVENTS_PRIVATE_DIR/sessions" "$EVENTS_PRIVATE_DIR/tmp"; do
+    [[ ! -L "$dir" ]] || die "Directory eventi non sicura: $dir"
+  done
+  install -d -o "$RUNTIME_UID" -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$root"
+  install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$EVENTS_PRIVATE_DIR"
+  for dir in registrations uploads sessions tmp; do
+    install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$EVENTS_PRIVATE_DIR/$dir"
+  done
+  chmod 0750 "$EVENTS_PRIVATE_DIR/registrations" "$EVENTS_PRIVATE_DIR/uploads"
+  for dir in "$EVENTS_PHP_STATE" "$EVENTS_PHP_INCLUDE"; do
+    [[ ! -L "$dir" && ( ! -e "$dir" || -f "$dir" ) ]] || die "Stato PHP non sicuro: $dir"
+  done
+  [[ -e "$EVENTS_PHP_STATE" ]] || install -o root -g root -m 0644 /dev/null "$EVENTS_PHP_STATE"
+  [[ -e "$EVENTS_PHP_INCLUDE" ]] || install -o root -g caddy -m 0644 /dev/null "$EVENTS_PHP_INCLUDE"
+  candidate="$(mktemp "$PHP_POOL_DIR/.mifp-events.XXXXXX")"
+  cat > "$candidate" <<EOF_PHP_POOL
+[mifp-events]
+user = $EVENTS_PHP_USER
+group = $EVENTS_PHP_USER
+listen = $EVENTS_PHP_SOCKET
+listen.owner = caddy
+listen.group = caddy
+listen.mode = 0660
+pm = ondemand
+pm.max_children = 4
+pm.process_idle_timeout = 10s
+pm.max_requests = 500
+request_terminate_timeout = 60s
+catch_workers_output = yes
+clear_env = yes
+security.limit_extensions = .php
+; Transport credentials are host-managed in a dedicated owner-only file; event PHP never
+; receives SMTP passwords through environment variables or package files.
+php_admin_value[sendmail_path] = "/usr/bin/msmtp --file=$PHP_MAIL_RELAY_CONFIG --account=default -t"
+env[MIFP_EVENTS_PRIVATE_DIR] = $EVENTS_PRIVATE_DIR
+env[MIFP_REGISTRATION_READ_GROUP] = 1
+env[MIFP_REGISTRATION_DIR] = $EVENTS_PRIVATE_DIR/registrations
+env[MIFP_UPLOAD_DIR] = $EVENTS_PRIVATE_DIR/uploads
+php_admin_value[open_basedir] = $root:$EVENTS_PRIVATE_DIR:/tmp
+php_admin_value[session.save_path] = $EVENTS_PRIVATE_DIR/sessions
+php_admin_value[upload_tmp_dir] = $EVENTS_PRIVATE_DIR/tmp
+php_admin_value[display_errors] = Off
+php_admin_value[log_errors] = On
+php_admin_value[error_log] = $PHP_ERROR_LOG
+php_admin_value[expose_php] = Off
+php_admin_value[cgi.fix_pathinfo] = 0
+php_admin_value[user_ini.filename] = ""
+php_admin_flag[allow_url_include] = Off
+php_admin_value[session.cookie_secure] = 1
+php_admin_value[session.cookie_httponly] = 1
+php_admin_value[session.cookie_samesite] = Lax
+php_admin_value[session.use_strict_mode] = 1
+php_admin_value[memory_limit] = 128M
+php_admin_value[max_execution_time] = 30
+php_admin_value[upload_max_filesize] = 10M
+php_admin_value[post_max_size] = 12M
+php_admin_value[max_file_uploads] = 5
+php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,putenv
+EOF_PHP_POOL
+  chmod 0644 "$candidate"; chown root:root "$candidate"
+  backup="$(mktemp "$PHP_POOL_DIR/.mifp-events.previous.XXXXXX")"
+  if [[ -f "$pool" ]]; then cp -a "$pool" "$backup"; had_old=1; fi
+  if ! cmp -s "$candidate" "$pool"; then
+    mv -f "$candidate" "$pool"; changed=1
+  else
+    rm -f "$candidate"
+  fi
+  if ! "php-fpm${version}" -t; then
+    if ((changed && had_old)); then mv -f "$backup" "$pool";
+    elif ((changed)); then rm -f "$pool"; fi
+    rm -f "$backup"
+    die "Pool PHP non valido; file precedente ripristinato."
+  fi
+  # Do not truncate an existing error log on repeated provisioning.
+  [[ -e "$PHP_ERROR_LOG" ]] || install -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0640 /dev/null "$PHP_ERROR_LOG"
+  systemctl enable "$service"
+  if systemctl is-active --quiet "$service"; then
+    if ((changed)) && ! systemctl reload "$service"; then
+      if ((had_old)); then mv -f "$backup" "$pool"; else rm -f "$pool"; fi
+      rm -f "$backup"
+      die "Reload PHP fallito; file precedente ripristinato."
+    fi
+  elif ! systemctl start "$service"; then
+    if ((had_old)); then mv -f "$backup" "$pool"; else rm -f "$pool"; fi
+    rm -f "$backup"
+    die "Avvio PHP fallito; file precedente ripristinato."
+  fi
+  rm -f "$backup"
+  local attempt
+  for attempt in {1..50}; do [[ ! -S "$EVENTS_PHP_SOCKET" ]] || break; sleep 0.1; done
+  [[ -S "$EVENTS_PHP_SOCKET" ]] || die "Socket PHP dedicato non disponibile: $EVENTS_PHP_SOCKET"
+  printf '%s\n' "$service" > "$MIFP_HOME/php-fpm.service"
+  chmod 0644 "$MIFP_HOME/php-fpm.service"
+  prepare_events_publication_policy
+}
+
+apply_host_configuration() (
+  open_events_publication_lock
+  local domain www_domain tls_directive="" tmp events_backend events_url events_host events_root backup include_backup="" include_changed=0 committed=0
+  cleanup_host_config_tmp() {
+    [[ -z "${tmp:-}" ]] || rm -f -- "$tmp"
+    if [[ -n "$include_backup" ]]; then
+      if ((committed == 0)); then mv -f "$include_backup" "$EVENTS_PHP_INCLUDE"; else rm -f "$include_backup"; fi
+    fi
+  }
   trap cleanup_host_config_tmp EXIT
   domain="$(config_cli get DOMAIN)"
   events_backend="$(config_cli get EVENTS_PUBLISH_BACKEND)"
@@ -229,6 +366,20 @@ apply_host_configuration() {
     events_root="$(config_cli get EVENTS_LOCAL_ROOT)"
     [[ "$events_backend" != "local-vps" || -n "$events_host" ]] || die "EVENTS_PUBLIC_BASE_URL non valido."
     if [[ "$events_backend" == "local-vps" ]]; then
+      assert_events_root_approval "$events_root"
+      local caddy_pid caddy_gid
+      CADDY_GROUPS_CHANGED=0
+      if ! id -nG caddy | tr ' ' '\n' | grep -Fxq "$EVENTS_PUBLIC_GROUP"; then
+        usermod -a -G "$EVENTS_PUBLIC_GROUP" caddy
+        CADDY_GROUPS_CHANGED=1
+      fi
+      caddy_gid="$(getent group "$EVENTS_PUBLIC_GROUP" | cut -d: -f3)"
+      caddy_pid="$(systemctl show --property MainPID --value caddy.service)"
+      if [[ "$caddy_pid" =~ ^[1-9][0-9]*$ && -r "/proc/$caddy_pid/status" ]]; then
+        if ! awk '/^Groups:/ {for (i=2; i<=NF; i++) print $i}' "/proc/$caddy_pid/status" | grep -Fxq "$caddy_gid"; then
+          CADDY_GROUPS_CHANGED=1
+        fi
+      fi
       install -d -o "$RUNTIME_UID" -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$events_root"
       bash "$LOCAL_HOSTS_HELPER" "$domain" "${MIFP_HOSTS_FILE:-/etc/hosts}" "$www_domain" "$events_host"
     else
@@ -287,16 +438,43 @@ $events_host {
 EOF_EVENTS_CADDY
     fi
   fi
+  if [[ "$events_backend" == "local-vps" ]]; then
+    local include_candidate
+    include_candidate="$(mktemp "$(dirname "$EVENTS_PHP_INCLUDE")/.mifp-events-php.XXXXXX")"
+    render_events_php_include "$include_candidate" "$EVENTS_PHP_STATE"
+    chown root:caddy "$include_candidate"; chmod 0644 "$include_candidate"
+    if ! cmp -s "$include_candidate" "$EVENTS_PHP_INCLUDE"; then
+      include_backup="$(mktemp "$(dirname "$EVENTS_PHP_INCLUDE")/.mifp-events-php.previous.XXXXXX")"
+      cp -a "$EVENTS_PHP_INCLUDE" "$include_backup"
+      mv -f "$include_candidate" "$EVENTS_PHP_INCLUDE"; include_changed=1
+    else
+      rm -f "$include_candidate"
+    fi
+  fi
   chown root:caddy "$tmp"; chmod 0644 "$tmp"
   caddy fmt --overwrite "$tmp" >/dev/null
   caddy validate --config "$tmp" --adapter caddyfile >/dev/null
-  mv -f "$tmp" "$CADDY_CONFIG"
-  tmp=""
+  if cmp -s "$tmp" "$CADDY_CONFIG" && ((include_changed == 0 && ${CADDY_GROUPS_CHANGED:-0} == 0)); then
+    rm -f "$tmp"; tmp=""
+    say "Caddy: configurazione invariata; nessun reload"
+  else
+    backup="$(mktemp "$(dirname "$CADDY_CONFIG")/.mifp-caddy.previous.XXXXXX")"
+    cp -a "$CADDY_CONFIG" "$backup"
+    mv -f "$tmp" "$CADDY_CONFIG"; tmp=""
+    # A failed reload leaves the old Caddy process serving. Never restart it.
+    local caddy_action=reload
+    # Supplementary groups are fixed at process start. Only the first grant
+    # requires restart; ordinary template applies always use graceful reload.
+    [[ "${CADDY_GROUPS_CHANGED:-0}" != 1 ]] || caddy_action=restart
+    if ! systemctl "$caddy_action" caddy.service; then
+      mv -f "$backup" "$CADDY_CONFIG"
+      die "Applicazione Caddy fallita; file precedente ripristinato."
+    fi
+    rm -f "$backup"
+  fi
+  committed=1
+  cleanup_host_config_tmp
   trap - EXIT
-  systemctl reload caddy.service 2>/dev/null || systemctl restart caddy.service
-  sync_mail_relay "$events_backend"
-  sync_alert_timer || die "Configurazione mail salvata, ma il monitor notifiche non è stato applicato."
-  sync_events_php_lifecycle "$events_backend"
   if [[ "$domain" == *.home.arpa ]]; then
     caddy trust --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null 2>&1 \
       || say "WARN: CA locale Caddy non installata nel trust store della VPS."
@@ -308,7 +486,7 @@ EOF_EVENTS_CADDY
       say "Workstation /etc/hosts: individua l'IP LAN con 'hostname -I', poi mappa $domain $www_domain"
     fi
   fi
-}
+)
 
 read_release_value() {
   local key="$1"
@@ -392,11 +570,17 @@ prepare_compose_secrets() {
 
 compose_with_image() {
   local image="$1"; shift
+  local registrations_gid="" extra_compose=()
+  if [[ "$(config_cli get REGISTRATIONS_DASHBOARD_ENABLED)" == "true" && "$(config_cli get EVENTS_PUBLISH_BACKEND)" == "local-vps" ]]; then
+    registrations_gid="$(id -g "$EVENTS_PHP_USER")"
+    extra_compose=(-f "$MIFP_HOME/compose.registrations.yaml")
+  fi
   prepare_compose_secrets
   MIFP_IMAGE="$image" MIFP_DATA_DIR="$DATA_DIR" MIFP_SECRETS_DIR="$SECRET_MATERIAL_DIR" \
     EVENTS_PUBLICATION_POLICY="$EVENTS_PUBLICATION_POLICY" \
     MIFP_DEPLOY_CONTRACT="$DEPLOY_CONTRACT_VERSION" \
-    "${COMPOSE_BASE[@]}" "$@"
+    MIFP_REGISTRATIONS_GID="$registrations_gid" MIFP_REGISTRATIONS_PRIVATE_DIR="$EVENTS_PRIVATE_DIR" \
+    "${COMPOSE_BASE[@]}" "${extra_compose[@]}" "$@"
 }
 
 ensure_tools() {
@@ -1842,9 +2026,17 @@ do_doctor() {
   if config_cli check; then say "Configuration: OK"; else say "Configuration: ERROR"; failed=1; fi
   docker info >/dev/null 2>&1 && say "Docker: OK" || { say "Docker: ERROR"; failed=1; }
   docker compose version >/dev/null 2>&1 && say "Compose: OK" || { say "Compose: ERROR"; failed=1; }
+  if docker compose -f "$COMPOSE_FILE" config --no-interpolate -q >/dev/null 2>&1; then
+    say "Compose definition: OK (validated)"
+  else
+    say "Compose definition: ERROR"; failed=1
+  fi
   systemctl is-active caddy >/dev/null 2>&1 && say "Caddy: OK" || { say "Caddy: ERROR"; failed=1; }
   caddy validate --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null 2>&1 \
     && say "Caddyfile: OK" || { say "Caddyfile: ERROR"; failed=1; }
+  if ! curl --fail --silent --show-error --max-time 3 http://127.0.0.1:2019/config/ | config_cli audit-caddy; then
+    say "Caddy runtime: ERROR (admin API or canonical/runtime discrepancy)"; failed=1
+  fi
   events_backend="$(config_cli get EVENTS_PUBLISH_BACKEND)"
   events_url="$(config_cli get EVENTS_PUBLIC_BASE_URL)"
   if [[ "$events_backend" == "local-vps" ]]; then
@@ -1856,21 +2048,47 @@ do_doctor() {
     fi
     event_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$events_url/" 2>/dev/null || true)"
     case "$event_code" in
-      200|403|404) say "Event HTTPS/ACME: OK ($events_url, HTTP $event_code)" ;;
+      200|404) say "Event HTTPS/ACME: OK ($events_url, HTTP $event_code)" ;;
       *) say "Event HTTPS/ACME: ERROR ($events_url, HTTP ${event_code:-unreachable})"; failed=1 ;;
     esac
     php_service="$(events_php_service || true)"
     if [[ -n "$php_service" ]] && systemctl is-active --quiet "$php_service" \
-       && [[ -S "$EVENTS_PHP_SOCKET" ]]; then
-      say "Event PHP-FPM: OK (dedicated pool; deny-by-default allow-list)"
+       && [[ -S "$EVENTS_PHP_SOCKET" && "$(stat -c '%a|%U|%G' "$EVENTS_PHP_SOCKET")" == '660|caddy|caddy' ]]; then
+      local php_version="${php_service#php}"
+      php_version="${php_version%-fpm.service}"
+      if "php-fpm${php_version}" -t >/dev/null 2>&1; then
+        say "Event PHP-FPM: OK (configuration validated; dedicated socket)"
+      else
+        say "Event PHP-FPM: ERROR (configuration invalid)"; failed=1
+      fi
     else
       say "Event PHP-FPM: ERROR (dedicated service/socket unavailable)"; failed=1
     fi
-    if [[ -d "$EVENTS_PRIVATE_DIR/registrations" && ! -L "$EVENTS_PRIVATE_DIR" \
-       && ! -L "$EVENTS_PRIVATE_DIR/registrations" ]]; then
-      say "Event private storage: OK ($EVENTS_PRIVATE_DIR)"
+    local private_uid private_gid private_path private_mode
+    private_uid="$(id -u "$EVENTS_PHP_USER" 2>/dev/null || true)"
+    private_gid="$(id -g "$EVENTS_PHP_USER" 2>/dev/null || true)"
+    for private_path in "$EVENTS_PRIVATE_DIR" "$EVENTS_PRIVATE_DIR/registrations" "$EVENTS_PRIVATE_DIR/uploads" "$EVENTS_PRIVATE_DIR/sessions" "$EVENTS_PRIVATE_DIR/tmp"; do
+      private_mode="$(stat -c %a "$private_path" 2>/dev/null || true)"
+      if [[ -d "$private_path" && ! -L "$private_path" && -n "$private_uid" && -n "$private_gid" \
+         && "$(stat -c %u "$private_path")" == "$private_uid" && "$(stat -c %g "$private_path")" == "$private_gid" \
+         && ( "$private_mode" == 700 || ( "$private_mode" == 750 && ( "$private_path" == */registrations || "$private_path" == */uploads ) ) ) ]]; then
+        say "Event private storage: OK ($private_path)"
+      else
+        say "Event private storage: ERROR (missing, unsafe or wrong owner/mode: $private_path)"; failed=1
+      fi
+    done
+    local expected_include
+    expected_include="$(mktemp "$MIFP_HOME/.mifp-php-check.XXXXXX")"
+    if render_events_php_include "$expected_include" "$EVENTS_PHP_STATE" && cmp -s "$expected_include" "$EVENTS_PHP_INCLUDE"; then
+      say "Event PHP allowlist: OK (canonical and runtime match)"
     else
-      say "Event private storage: ERROR ($EVENTS_PRIVATE_DIR)"; failed=1
+      say "Event PHP allowlist: ERROR (runtime mismatch)"; failed=1
+    fi
+    rm -f "$expected_include"
+    if [[ "$(config_cli get MAIL_PROVIDER)" == smtp ]]; then
+      config_cli diagnose-mail --relay "$PHP_MAIL_RELAY_CONFIG" --php-user "$EVENTS_PHP_USER" || failed=1
+    else
+      say "Event PHP mail: WARNING (disabled by canonical configuration)"
     fi
   else
     say "Event hosting: $events_backend (VPS event serving and HTTPS checks disabled)"
@@ -1884,7 +2102,7 @@ do_doctor() {
 
   check_backup_health || failed=1
   if [[ -f /var/run/reboot-required ]]; then
-    say "Host reboot: REQUIRED to finish applying updates (/var/run/reboot-required)"; failed=1
+    say "Host reboot: WARNING — richiesto per completare gli aggiornamenti (/var/run/reboot-required)"
   else
     say "Host reboot: not required"
   fi
@@ -2037,7 +2255,7 @@ do_security_check() {
   fi
 
   if [[ -f /var/run/reboot-required ]]; then
-    security_error "host requires a reboot to finish applying updates (/var/run/reboot-required)"
+    security_warn "host requires a reboot to finish applying updates (/var/run/reboot-required)"
   else
     security_ok "No pending reboot"
   fi
@@ -2140,14 +2358,12 @@ do_security_check() {
     mail_provider="smtp"
   fi
   if [[ "$mail_provider" == "smtp" ]]; then
+    security_file "Host SMTP relay secret" "$MAIL_RELAY_CONFIG" 600 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID"
     if [[ "$events_backend" == "local-vps" ]]; then
-      local events_php_gid
+      local events_php_uid events_php_gid
+      events_php_uid="$(id -u "$EVENTS_PHP_USER" 2>/dev/null || true)"
       events_php_gid="$(id -g "$EVENTS_PHP_USER" 2>/dev/null || true)"
-      [[ -n "$events_php_gid" ]] \
-        && security_file "Host SMTP relay secret" "$MAIL_RELAY_CONFIG" 640 "$SECURITY_ROOT_UID" "$events_php_gid" \
-        || security_error "cannot resolve group for event PHP user: $EVENTS_PHP_USER"
-    else
-      security_file "Host SMTP relay secret" "$MAIL_RELAY_CONFIG" 600 "$SECURITY_ROOT_UID" "$SECURITY_ROOT_GID"
+      security_file "PHP SMTP relay secret" "$PHP_MAIL_RELAY_CONFIG" 600 "$events_php_uid" "$events_php_gid"
     fi
     local alert_timer_enabled
     alert_timer_enabled="$(systemctl is-enabled mifp-alert-check.timer 2>/dev/null || true)"
@@ -2413,10 +2629,37 @@ do_admin() {
   current="$(current_image || true)"; [[ -n "$current" ]] && service_running "$current" && do_restart || true
 }
 
+do_host_apply() {
+  local section="${1:-all}" backend
+  backend="$(config_cli get EVENTS_PUBLISH_BACKEND)"
+  case "$section" in
+    all|php) sync_events_php_lifecycle "$backend" ;;
+    web|mail) ;;
+    *) die "Uso: mifpctl host-apply [all|web|php|mail]" ;;
+  esac
+  case "$section" in
+    all|mail) sync_mail_relay "$backend"; sync_alert_timer ;;
+  esac
+  case "$section" in
+    all|web) apply_host_configuration ;;
+  esac
+}
+
 do_configure() {
-  local current; shift || true
+  local current previous_root; shift || true
+  previous_root="$(config_cli get EVENTS_LOCAL_ROOT)"
   config_cli configure "$@"
-  apply_host_configuration
+  if [[ "$previous_root" != "$(config_cli get EVENTS_LOCAL_ROOT)" ]] \
+     && ! (assert_events_root_approval "$(config_cli get EVENTS_LOCAL_ROOT)"); then
+    config_cli set EVENTS_LOCAL_ROOT "$previous_root"
+    die "EVENTS_LOCAL_ROOT precedente conservato; revoca PHP prima di cambiare root."
+  fi
+  case "${*:-}" in
+    "--section mail") do_host_apply mail ;;
+    "--section web") do_host_apply all ;;
+    "--section backup") ;;
+    *) do_host_apply all ;;
+  esac
   sync_backup_timer || die "Configurazione salvata, ma lo stato del timer backup non è stato applicato."
   current="$(current_image || true)"; [[ -n "$current" ]] && service_running "$current" && do_restart || true
 }
@@ -2424,10 +2667,15 @@ do_configure() {
 do_config_set() {
   local current
   [[ $# -eq 2 ]] || die "Uso: mifpctl config-set KEY VALUE"
+  [[ "${1^^}" != EVENTS_LOCAL_ROOT ]] || assert_events_root_approval "$2"
   config_cli set "$1" "$2"
   case "${1^^}" in
     DOMAIN|WWW_DOMAIN|ENVIRONMENT|EVENTS_PUBLISH_BACKEND|EVENTS_PUBLIC_BASE_URL|EVENTS_LOCAL_ROOT|EVENTS_REMOTE_PROTOCOL|EVENTS_REMOTE_HOST|EVENTS_REMOTE_PORT|EVENTS_REMOTE_USER|EVENTS_REMOTE_ROOT|EVENTS_REMOTE_TIMEOUT|MAIL_PROVIDER|SMTP_HOST|SMTP_PORT|SMTP_SECURITY|SMTP_USERNAME|SMTP_FROM_ADDRESS|SMTP_FROM_NAME|MAIL_TO)
-      apply_host_configuration
+      case "${1^^}" in
+        MAIL_PROVIDER|SMTP_*) do_host_apply mail ;;
+        EVENTS_REMOTE_*) ;;
+        *) do_host_apply all ;;
+      esac
       current="$(current_image || true)"; [[ -n "$current" ]] && service_running "$current" && do_restart || true ;;
     BACKUP_ENABLED) sync_backup_timer || die "Valore salvato, ma lo stato del timer backup non è stato applicato." ;;
   esac
@@ -2436,10 +2684,15 @@ do_config_set() {
 do_config_unset() {
   local current
   [[ $# -eq 1 ]] || die "Uso: mifpctl config-unset KEY"
+  [[ "${1^^}" != EVENTS_LOCAL_ROOT ]] || assert_events_root_approval ""
   config_cli unset "$1"
   case "${1^^}" in
     DOMAIN|WWW_DOMAIN|ENVIRONMENT|EVENTS_PUBLISH_BACKEND|EVENTS_PUBLIC_BASE_URL|EVENTS_LOCAL_ROOT|EVENTS_REMOTE_PROTOCOL|EVENTS_REMOTE_HOST|EVENTS_REMOTE_PORT|EVENTS_REMOTE_USER|EVENTS_REMOTE_ROOT|EVENTS_REMOTE_TIMEOUT|MAIL_PROVIDER|SMTP_HOST|SMTP_PORT|SMTP_SECURITY|SMTP_USERNAME|SMTP_FROM_ADDRESS|SMTP_FROM_NAME|MAIL_TO|SMTP_PASSWORD)
-      apply_host_configuration
+      case "${1^^}" in
+        MAIL_PROVIDER|SMTP_*) do_host_apply mail ;;
+        EVENTS_REMOTE_*) ;;
+        *) do_host_apply all ;;
+      esac
       current="$(current_image || true)"; [[ -n "$current" ]] && service_running "$current" && do_restart || true ;;
     BACKUP_ENABLED) sync_backup_timer || die "Valore salvato, ma lo stato del timer backup non è stato applicato." ;;
   esac
@@ -2447,10 +2700,11 @@ do_config_unset() {
 
 command="${1:-status}"
 case "$command" in
-  init|check|update|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|events-republish-all|events-php-enable|events-php-disable|rollback-upgrade|rollback|--rollback|restart|stop|admin|admin-reset-password|configure|config-set|config-unset|fix-permissions|security-check|ssh-harden|ssh-rollback)
+  host-apply|registrations-resolve|registrations-access|registrations-request|init|check|update|first-deploy|deploy|init-db|upgrade-db|restore-db|restore-snapshot|events-republish-all|events-php-enable|events-php-disable|rollback-upgrade|rollback|--rollback|restart|stop|admin|admin-reset-password|configure|config-set|config-unset|fix-permissions|security-check|ssh-harden|ssh-rollback)
     mkdir -p "$(dirname "$LOCK_FILE")"; exec 9>"$LOCK_FILE"; flock -n 9 || die "Un'altra operazione MIFP è già in corso." ;;
 esac
 case "$command" in
+  host-apply) shift; [[ $# -le 1 ]] || die "Uso: mifpctl host-apply [all|web|php|mail]"; do_host_apply "$@" ;;
   registry-login) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl registry-login"; do_registry_login ;;
   registry-check) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl registry-check"; do_registry_check ;;
   init) shift; do_init "$@" ;;
@@ -2465,6 +2719,31 @@ case "$command" in
   restore-db) shift; do_restore_db "$@" ;;
   restore-snapshot) shift; do_restore_snapshot "$@" ;;
   events-republish-all) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl events-republish-all"; do_events_republish_all ;;
+  mail-diagnose) shift;
+    [[ $# -eq 0 || ( $# -eq 1 && "$1" == --network ) ]] || die "Uso: mifpctl mail-diagnose [--network]"
+    if [[ "$(config_cli get EVENTS_PUBLISH_BACKEND)" == local-vps ]]; then
+      config_cli diagnose-mail --relay "$PHP_MAIL_RELAY_CONFIG" --php-user "$EVENTS_PHP_USER" "$@"
+    else
+      say "PHP mail: not applicable for the selected event backend; no message sent."
+    fi ;;
+  registrations-resolve) shift;
+    [[ $# -eq 4 && "$4" == --not-accepted ]] || die "Uso: mifpctl registrations-resolve EVENT RECEIPT CHANNEL --not-accepted"
+    python3 "$MIFP_HOME/registration-tools.py" "$1" --resolve-receipt "$2" --channel "$3" --not-accepted --confirm "$1" --requests "$DATA_DIR/conferences/.registrations-admin/requests" --private "$EVENTS_PRIVATE_DIR" --backups "$MIFP_HOME/registration-backups" --allowlist "$EVENTS_PHP_STATE" ;;
+  registrations-access) shift;
+    [[ $# -eq 1 ]] || die "Uso: mifpctl registrations-access EVENT"
+    python3 "$MIFP_HOME/registration-tools.py" "$1" --grant-read --confirm "$1" --php-uid "$(id -u "$EVENTS_PHP_USER")" --php-gid "$(id -g "$EVENTS_PHP_USER")" --requests "$DATA_DIR/conferences/.registrations-admin/requests" --private "$EVENTS_PRIVATE_DIR" --backups "$MIFP_HOME/registration-backups" --allowlist "$EVENTS_PHP_STATE" ;;
+  registrations-request) shift;
+    [[ $# -ge 1 ]] || die "Uso: mifpctl registrations-request ID [--confirm EVENT --approve SHA256] [--organizer-to EMAIL] [--restore]"
+    registration_args=("$1"); shift
+    while (($#)); do
+      case "$1" in
+        --confirm|--organizer-to|--approve) [[ $# -ge 2 ]] || die "Valore mancante"; registration_args+=("$1" "$2"); shift 2 ;;
+        --restore) registration_args+=("$1"); shift ;;
+        *) die "Opzione registrations-request non consentita" ;;
+      esac
+    done
+    registration_keep="$(config_cli get BACKUP_LOCAL_RETENTION)"
+    python3 "$MIFP_HOME/registration-tools.py" "${registration_args[@]}" --requests "$DATA_DIR/conferences/.registrations-admin/requests" --private "$EVENTS_PRIVATE_DIR" --backups "$MIFP_HOME/registration-backups" --allowlist "$EVENTS_PHP_STATE" --relay "$MAIL_RELAY_CONFIG" --from-address "$(config_cli get SMTP_FROM_ADDRESS)" --keep "${registration_keep:-14}" ;;
   events-php-list) shift; [[ $# -eq 0 ]] || die "Uso: mifpctl events-php-list"; do_events_php_list ;;
   events-php-enable) shift; [[ $# -eq 1 ]] || die "Uso: mifpctl events-php-enable EVENTO/regform"; do_events_php_enable "$1" ;;
   events-php-disable) shift; [[ $# -eq 1 ]] || die "Uso: mifpctl events-php-disable EVENTO/regform"; do_events_php_disable "$1" ;;

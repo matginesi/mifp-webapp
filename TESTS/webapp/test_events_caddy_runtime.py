@@ -64,7 +64,7 @@ echo json_encode(['script' => $_SERVER['SCRIPT_NAME'], 'query' => $_GET,
         pool = root / "php-fpm.conf"
         # Use the real versioned pool's PHP restrictions/limits. Only paths and
         # mail execution are replaced for this disposable test environment.
-        bootstrap = (Path(__file__).resolve().parents[2] / "deploy/bootstrap-vps.sh").read_text()
+        bootstrap = (Path(__file__).resolve().parents[2] / "deploy/deploy.sh").read_text()
         settings = []
         for line in bootstrap.splitlines():
             if line.startswith(("php_admin_value[", "php_admin_flag[", "env[MIFP_")):
@@ -72,8 +72,8 @@ echo json_encode(['script' => $_SERVER['SCRIPT_NAME'], 'query' => $_GET,
                     line = "php_admin_value[sendmail_path] = /bin/false"
                 elif "disable_functions" in line:
                     line += ",mail"
-                line = line.replace("$EVENTS_LOCAL_ROOT", str(public)).replace("$EVENTS_PRIVATE_DIR", str(private))
-                line = line.replace("/var/log/php-mifp-events.log", str(root / "php.log"))
+                line = line.replace("$root", str(public)).replace("$EVENTS_PRIVATE_DIR", str(private))
+                line = line.replace("$PHP_ERROR_LOG", str(root / "php.log"))
                 settings.append(line)
         pool.write_text("[global]\ndaemonize = no\nerror_log = " + str(root / "fpm.log") +
                         "\n[events-test]\nlisten = " + str(sock) +

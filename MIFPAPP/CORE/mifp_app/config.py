@@ -159,6 +159,8 @@ class Config:
         "BANNER_SETTINGS_PATH",
         str(RUNTIME_CONFIG_DIR / "banner_settings.json"),
     )
+    REGISTRATIONS_PRIVATE_ROOT = os.getenv("REGISTRATIONS_PRIVATE_ROOT", "")
+
     CONFERENCES_DIR = _path_from_config(
         "conferences_dir", "CONFERENCES_DIR", "../DATABASE/conferences"
     )

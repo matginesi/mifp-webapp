@@ -125,7 +125,7 @@ send_alert() {
   MIFP_ALERT_EVENT="$event" \
   MIFP_ALERT_SUBJECT="$subject" \
   MIFP_ALERT_BODY="$body" \
-  python3 - <<'PY' | msmtp --file="$MAIL_RELAY_CONFIG" -- "$recipient"
+  python3 - <<'PY' | msmtp --file=/dev/null --account=default -- "$recipient"
 import os
 import sys
 from datetime import datetime, timezone

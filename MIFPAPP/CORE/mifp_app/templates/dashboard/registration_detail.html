@@ -1,0 +1,16 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Registration {{ row.receipt_id }}{% endblock %}
+{% block content %}
+{% call page_header('Registrations', row.receipt_id, 'Saved submission and separate operator metadata.') %}{% endcall %}
+<p><a href="{{ url_for('dashboard.registrations',site_id=site.id) }}">Back to registrations</a></p>
+<dl>{% for key,value in row.items() if key not in ['admin_status','internal_note','archived','notifications'] %}<dt>{{ key|replace('_',' ') }}</dt><dd>{{ value or '—' }}</dd>{% endfor %}</dl>
+{% if row.proof_file %}<p><a class="btn btn-outline" href="{{ url_for('dashboard.registration_proof',site_id=site.id,receipt=row.receipt_id) }}">Download payment receipt</a></p>{% endif %}
+<p>Organizer notification: {{ notifications.organizers }} · Participant confirmation: {{ notifications.participant }}. Accepted by the relay does not prove delivery.</p>
+<form method="post"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+<label>Status<select class="form-select" name="status">{% for status in statuses %}<option {% if row.admin_status==status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select></label>
+<label>Internal notes<textarea class="form-control" name="note" maxlength="4000" rows="5">{{ row.internal_note }}</textarea></label>
+<label><input type="checkbox" name="archived" value="1" {% if row.archived %}checked{% endif %}> Archived</label>
+<button class="btn btn-primary">Save administrative metadata</button></form>
+<h2>History</h2><ul>{% for timestamp,actor,operation in history %}<li>{{ timestamp }} · {{ actor }} · {{ operation }}</li>{% else %}<li>No administrative changes.</li>{% endfor %}</ul>
+{% endblock %}

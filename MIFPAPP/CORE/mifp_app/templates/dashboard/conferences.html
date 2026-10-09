@@ -68,6 +68,7 @@
           </td>
           <td class="col-actions"><div class="dash-row-actions">
             {% if site.website_installed and site.destination_url %}<a class="btn btn-mini btn-outline" href="{{ site.destination_url }}" target="_blank" rel="noopener">Open</a>{% endif %}
+            <a class="btn btn-mini btn-outline" href="{{ url_for('dashboard.registrations', site_id=site.id) }}">Registrations</a>
             <a class="btn btn-mini btn-outline" href="{{ url_for('dashboard.conference_edit', site_id=site.id) }}">Configure</a>
             {% if site.rollback_available %}<button class="btn btn-mini btn-outline" type="button" data-bs-toggle="modal" data-bs-target="#restoreConference{{ site.id }}">Restore {{ site.previous_version }}</button>{% endif %}
             <button class="btn btn-mini btn-outline" type="button" data-bs-toggle="modal" data-bs-target="#editConference{{ site.id }}">Edit</button>

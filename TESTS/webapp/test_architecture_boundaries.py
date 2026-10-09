@@ -352,17 +352,19 @@ def test_release_script_tracks_current_and_previous_images() -> None:
 
 def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     script = _read("deploy", "bootstrap-vps.sh")
+    host = _read("deploy", "deploy.sh")
+    assert 'bash "$MIFP_HOME/deploy.sh" host-apply all' in script
     assert 'MIFP_UID="10001"' in script
     assert 'MIFP_GID="10001"' in script
     assert "apt-get install -y docker-ce" in script
     assert "docker-compose-plugin caddy" in script
     assert "php-fpm php-cli php-mbstring php-curl" in script
-    assert "mifp-events.conf" in script
-    assert "/run/php/mifp-events.sock" in script
-    assert "security.limit_extensions = .php" in script
-    assert "php_admin_value[open_basedir]" in script
-    assert "php_admin_value[user_ini.filename]" in script
-    assert "php_admin_value[disable_functions]" in script
+    assert "mifp-events.conf" in host
+    assert "/run/php/mifp-events.sock" in host
+    assert "security.limit_extensions = .php" in host
+    assert "php_admin_value[open_basedir]" in host
+    assert "php_admin_value[user_ini.filename]" in host
+    assert "php_admin_value[disable_functions]" in host
     assert "/etc/systemd/system/caddy.service" not in script
     assert 'install -o root -g root -m 0750 "$SCRIPT_DIR/configure.py"' in script
     assert 'install -o root -g root -m 0755 "$SCRIPT_DIR/mifpctl" /usr/local/sbin/mifpctl' in script
@@ -375,10 +377,10 @@ def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     assert "Host bootstrap completed" in script
     # The live Caddyfile must never be written before it validates: render to a
     # temp file, format+validate it, then publish atomically.
-    assert 'mktemp /etc/caddy/.mifp-caddy.XXXXXX' in script
-    assert 'caddy fmt --overwrite "$CADDY_TMP"' in script
-    assert 'caddy validate --config "$CADDY_TMP" --adapter caddyfile' in script
-    assert 'mv -f "$CADDY_TMP" /etc/caddy/Caddyfile' in script
+    assert '.mifp-caddy.XXXXXX' in host
+    assert 'caddy fmt --overwrite "$tmp"' in host
+    assert 'caddy validate --config "$tmp" --adapter caddyfile' in host
+    assert 'mv -f "$tmp" "$CADDY_CONFIG"' in host
     # Host security baseline: security-only unattended upgrades (never an
     # automatic reboot), SSH brute-force protection, and pinned apt keys.
     assert "unattended-upgrades" in script
@@ -388,9 +390,9 @@ def test_bootstrap_uses_fixed_runtime_uid_and_packaged_caddy_service() -> None:
     assert "MIFP_CADDY_KEY_FINGERPRINT" in script
     assert "ufw limit" in script
     assert 'if [[ "$DOMAIN" == *.home.arpa ]]' in script
-    assert 'MIFP_TLS_DIRECTIVE="tls internal"' in script
-    assert 'MIFP_TLS_DIRECTIVE=""' in script
-    assert 'bash "$SCRIPT_DIR/local-hosts.sh" "$DOMAIN"' in script
+    assert 'tls_directive="tls internal"' in host
+    assert 'tls_directive=""' in host
+    assert 'bash "$LOCAL_HOSTS_HELPER" "$domain"' in host
 
 
 @pytest.mark.parametrize(

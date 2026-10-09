@@ -63,8 +63,8 @@ def test_regform_uses_private_runtime_and_cannot_write_public_tree(tmp_path: Pat
 
 
 def test_bootstrap_assigns_public_and_private_event_permissions_to_distinct_users() -> None:
-    bootstrap = (ROOT / "deploy" / "bootstrap-vps.sh").read_text(encoding="utf-8")
+    bootstrap = (ROOT / "deploy" / "deploy.sh").read_text(encoding="utf-8")
 
-    assert 'install -d -o "$MIFP_UID" -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$EVENTS_LOCAL_ROOT"' in bootstrap
+    assert 'install -d -o "$RUNTIME_UID" -g "$EVENTS_PUBLIC_GROUP" -m 0750 "$root"' in bootstrap
     assert 'install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$EVENTS_PRIVATE_DIR"' in bootstrap
     assert 'install -d -o "$EVENTS_PHP_USER" -g "$EVENTS_PHP_USER" -m 0700 "$EVENTS_PRIVATE_DIR/$dir"' in bootstrap

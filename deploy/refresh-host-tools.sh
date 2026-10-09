@@ -13,7 +13,7 @@ SYSTEMD_DIR="${MIFP_SYSTEMD_DIR:-/etc/systemd/system}"
 MIFPCTL_TARGET="${MIFPCTL_TARGET:-/usr/local/sbin/mifpctl}"
 RUNTIME_UID="${MIFP_RUNTIME_UID:-10001}"
 RUNTIME_GID="${MIFP_RUNTIME_GID:-10001}"
-LOCK_FILE="${MIFP_REFRESH_LOCK_FILE:-/run/lock/mifp-host-tools-refresh.lock}"
+LOCK_FILE="${MIFP_REFRESH_LOCK_FILE:-${MIFP_DEPLOY_LOCK_FILE:-/run/lock/mifp-deploy.lock}}"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -26,7 +26,7 @@ done
 required=(
   bootstrap-vps.sh refresh-host-tools.sh deploy.sh configure.py vps_config.py
   backup.sh local-hosts.sh mifpctl compose.production.yaml .env.production.example
-  Caddyfile mifp-backup.service mifp-backup.timer
+  registration-tools.py compose.registrations.yaml Caddyfile mifp-backup.service mifp-backup.timer
   mifp-alert-check.sh mifp-alert-check.service mifp-alert-check.timer
 )
 for name in "${required[@]}"; do
@@ -34,12 +34,28 @@ for name in "${required[@]}"; do
   [[ -f "$source_path" && ! -L "$source_path" ]] || die "Bundle deploy incompleto o non sicuro: $name"
   mode="$(stat -c '%a' "$source_path")"
   (( (8#$mode & 8#022) == 0 )) || die "File bundle modificabile da gruppo/altri: $name"
+  [[ "$(stat -c %u "$source_path")" == 0 ]] || die "File bundle non root-owned: $name"
+done
+
+# Staging must be root-owned, including its ancestors. A sticky root-owned
+# /tmp is allowed as an ancestor, never as the staging directory itself.
+bundle_parent="$SCRIPT_DIR"
+while :; do
+  [[ ! -L "$bundle_parent" && "$(stat -c %u "$bundle_parent")" == 0 ]] \
+    || die "Staging bundle non root-owned: $bundle_parent"
+  bundle_mode="$(stat -c %a "$bundle_parent")"
+  if (( (8#$bundle_mode & 8#022) != 0 )); then
+    [[ "$bundle_parent" != "$SCRIPT_DIR" ]] && (( (8#$bundle_mode & 8#1000) != 0 )) \
+      || die "Directory bundle modificabile da gruppo/altri: $bundle_parent"
+  fi
+  [[ "$bundle_parent" != / ]] || break
+  bundle_parent="$(dirname "$bundle_parent")"
 done
 
 for script in bootstrap-vps.sh refresh-host-tools.sh deploy.sh backup.sh local-hosts.sh mifp-alert-check.sh mifpctl; do
   bash -n "$SCRIPT_DIR/$script" || die "Sintassi shell non valida: $script"
 done
-for helper in configure.py vps_config.py; do
+for helper in configure.py vps_config.py registration-tools.py; do
   python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); compile(p.read_bytes(), str(p), "exec")' "$SCRIPT_DIR/$helper" \
     || die "Sintassi Python non valida: $helper"
 done
@@ -60,6 +76,11 @@ done
   || die "Host non inizializzato: directory dati mancante o non sicura."
 [[ "$SECRET_MATERIAL_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] \
   || die "Percorso Docker secrets non sicuro: $SECRET_MATERIAL_DIR"
+install -d -o root -g root -m 0755 "$MIFP_HOME" "$(dirname "$MIFPCTL_TARGET")" "$SYSTEMD_DIR" "$(dirname "$LOCK_FILE")"
+exec 9>"$LOCK_FILE"
+flock -n 9 || die "Un altro refresh degli strumenti MIFP è in corso."
+
+
 python3 "$SCRIPT_DIR/vps_config.py" \
   --config-file "$CONFIG_DIR/config.env" \
   --secrets-file "$CONFIG_DIR/secrets.env" \
@@ -68,9 +89,6 @@ python3 "$SCRIPT_DIR/vps_config.py" \
   --uid "$RUNTIME_UID" --gid "$RUNTIME_GID" --mode 0400 \
   || die "Impossibile materializzare i Docker secrets dal file canonico."
 
-install -d -o root -g root -m 0755 "$MIFP_HOME" "$(dirname "$MIFPCTL_TARGET")" "$SYSTEMD_DIR" "$(dirname "$LOCK_FILE")"
-exec 9>"$LOCK_FILE"
-flock -n 9 || die "Un altro refresh degli strumenti MIFP è in corso."
 
 declare -a staged=() targets=()
 cleanup() {
@@ -102,6 +120,8 @@ stage_file "$SCRIPT_DIR/mifp-backup.timer" "$SYSTEMD_DIR/mifp-backup.timer" 0644
 stage_file "$SCRIPT_DIR/mifp-alert-check.sh" "$MIFP_HOME/mifp-alert-check.sh" 0750
 stage_file "$SCRIPT_DIR/mifp-alert-check.service" "$SYSTEMD_DIR/mifp-alert-check.service" 0644
 stage_file "$SCRIPT_DIR/mifp-alert-check.timer" "$SYSTEMD_DIR/mifp-alert-check.timer" 0644
+stage_file "$SCRIPT_DIR/registration-tools.py" "$MIFP_HOME/registration-tools.py" 0750
+stage_file "$SCRIPT_DIR/compose.registrations.yaml" "$MIFP_HOME/compose.registrations.yaml" 0644
 
 if [[ "$MIFP_HOME" != /opt/mifp || "$CONFIG_DIR" != /etc/mifp ]]; then
   backup_service_stage="${staged[10]}"
@@ -139,10 +159,11 @@ say "Derived Docker secret files refreshed in $SECRET_MATERIAL_DIR (root-only; c
 say "No packages, firewall, SSH policy, Docker repositories, live Caddy configuration, containers or services were changed."
 say "Next: run 'sudo mifpctl config-check' and 'sudo mifpctl security-check'."
 if (( caddy_template_changed )); then
-  say "ACTION REQUIRED: the Caddy template changed but the live Caddyfile did not. Review it, then apply explicitly with 'sudo mifpctl configure --section web' (this may restart a running app)."
+  say "ACTION REQUIRED: the Caddy template changed but the live Caddyfile did not. Review it, then apply explicitly with 'sudo mifpctl host-apply web'."
 fi
+say "PHP/mail infrastructure changes require explicit review and sudo mifpctl host-apply all; refresh does not apply them."
 if (( caddy_generator_changed )); then
-  say "REVIEW REQUIRED: deploy.sh changed and contains the events Caddy routing generator. The live Caddyfile remains unchanged; routing changes require explicit application with 'sudo mifpctl configure --section web' (this may restart a running app)."
+  say "REVIEW REQUIRED: deploy.sh changed and contains the events Caddy routing generator. The live Caddyfile remains unchanged; routing changes require explicit application with 'sudo mifpctl host-apply web'."
 fi
 if (( compose_changed )); then
   say "NOTICE: the Compose definition changed; it takes effect only on a subsequent explicit application deploy/restart."

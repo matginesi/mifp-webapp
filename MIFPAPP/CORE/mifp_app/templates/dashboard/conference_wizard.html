@@ -3,6 +3,7 @@
 {% block page_title %}{{ site.acronym or site.title }}{% endblock %}
 {% block extra_js %}{{ super() }}<script src="{{ url_for('static', filename='js/dashboard/conferences.js') }}" defer></script>{% endblock %}
 {% block content %}
+<a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.registrations', site_id=site.id) }}">Registrations</a>
 <div class="conference-workspace" data-entity="conferences">
 {% call page_header('Conference site', site.title, 'Manage the conference identity, source package and deployment state without duplicating the authoring workflow.', entity_type='conferences') %}
   <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.conference_sites') }}"><i class="bi bi-arrow-left"></i> All conferences</a>

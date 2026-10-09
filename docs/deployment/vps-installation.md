@@ -1,5 +1,10 @@
 # Guida completa al deploy VPS MIFP
 
+**La VPS MIFP è già in produzione?** Seguire prima la
+[procedura di aggiornamento della VPS esistente](update-existing-vps.md).
+Il bootstrap descritto sotto riguarda il provisioning iniziale e non serve
+per applicare questa patch all’host attuale.
+
 Questa guida copre due installazioni distinte:
 
 1. una VPS pubblica con dominio reale, DNS pubblico e certificati ACME;
@@ -61,22 +66,9 @@ La pipeline pubblica ogni immagine con `sha-<commit>`, la verifica e soltanto
 dopo il successo sposta `latest` sul digest verificato. `latest` serve solo al
 primo `init`; `/opt/mifp/release.env` conserva sempre un digest immutabile.
 
-Dal computer che contiene il repository copia il bundle:
-
-```bash
-scp -r deploy USER@HOST:/tmp/mifp-deploy
-ssh USER@HOST
-```
-
-Controlla che non manchino file:
-
-```bash
-ls -la /tmp/mifp-deploy
-```
-
-Devono essere presenti almeno `bootstrap-vps.sh`, `deploy.sh`, `mifpctl`,
-`configure.py`, `vps_config.py`, `local-hosts.sh`, `Caddyfile`, `compose.production.yaml` e i
-file systemd del backup.
+Trasferisci un bundle verificato con la procedura di
+[staging sicuro](#host-tools-refresh), valida per installazione e aggiornamenti.
+Non eseguire script root dalla directory di ingresso dell'operatore.
 
 ## 2. Deploy su VPS pubblica
 
@@ -101,8 +93,9 @@ raggiungibilità e firewall IPv6. Nessun dominio di staging fa parte del flusso.
 Subito dopo il cambio DNS, sulla VPS:
 
 ```bash
-sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
+sudo bash "$staging/bootstrap-vps.sh" \
   --domain mifp.eu \
+  --events-backend local-vps \
   --image-repository ghcr.io/matginesi/mifp-webapp
 ```
 
@@ -110,7 +103,10 @@ Il comando installa Docker Engine, Compose, Caddy, SQLite, PHP-FPM e gli
 strumenti host; crea utenti/directory, systemd e firewall; installa `mifpctl`;
 infine inizializza i file di configurazione senza chiedere credenziali
 applicative. Il bootstrap è idempotente e non elimina DB, dati o release
-esistenti. Non modifica la policy di autenticazione SSH del provider.
+esistenti. Importa direttamente lo stato canonico o il vecchio runtime: non
+precompila un `.env` dai default produzione prima della migrazione. Omettere
+`--domain`, `--image-repository` e `--events-backend` su un host già configurato
+conserva le scelte esistenti. Non modifica la policy di autenticazione SSH del provider.
 
 Un vecchio `/opt/mifp/.env` viene migrato preservando dominio, repository,
 admin e segreti esistenti. Dopo la migrazione, i file autorevoli sono:
@@ -137,8 +133,16 @@ sudo mifpctl admin
 
 Impostando `DOMAIN`, il default pubblico della VPS diventa `www.DOMAIN`. Con
 `EVENTS_PUBLISH_BACKEND=local-vps`, `EVENTS_PUBLIC_BASE_URL` è
-`https://events.mifp.eu` e Caddy aggiunge il virtual host eventi. Ogni modifica
-rigenera e valida Caddy prima del reload.
+`https://events.mifp.eu` e Caddy aggiunge il virtual host eventi. Le modifiche web rigenerano e validano Caddy prima del reload. Una configurazione
+invariata non causa reload; le modifiche mail aggiornano soltanto i relay e il monitor.
+Il bootstrap e `host-apply all` usano lo stesso provisioning: directory, pool e
+socket mancanti vengono creati quando si seleziona `local-vps`. `remote` e
+`disabled` preservano i dati e disattivano soltanto il pool dedicato MIFP, senza
+fermare PHP-FPM per gli altri siti. La allowlist nuova è vuota; nessun regform
+viene autorizzato automaticamente. Anche cambiare `EVENTS_LOCAL_ROOT` richiede
+prima la revoca delle autorizzazioni: un altro tree non può ereditarle. Il
+controllo si applica anche a `host-apply web` dopo modifiche dirette ai file
+canonici.
 Per un dominio pubblico rimuove un eventuale vecchio blocco MIFP da
 `/etc/hosts`, non configura `tls internal` e lascia certificati e redirect al
 normale percorso DNS/ACME di Caddy.
@@ -251,6 +255,8 @@ può essere disabilitato esplicitamente:
 
 ```bash
 sudo mifpctl configure --section mail
+# Aruba: SMTP_HOST=smtps.aruba.it, SMTP_PORT=465, SMTP_SECURITY=tls
+# SMTP_FROM_ADDRESS=secretary@mifp.eu; inserire password soltanto nel prompt
 # SMTP_SECURITY: tls (normalmente 465), starttls (normalmente 587), none
 
 sudo mifpctl configure --section backup
@@ -266,6 +272,28 @@ sudo mifpctl config-set TIMEZONE Europe/Rome
 sudo mifpctl config-unset PUBLIC_IPV6
 sudo mifpctl config-show
 ```
+
+Il wizard genera atomicamente due file derivati dalle impostazioni canoniche:
+`/etc/msmtprc` root:root `0600` per il monitor e i retry host;
+`/etc/msmtprc-mifp-events` mifp-events:mifp-events `0600` per PHP.
+Il pool usa `/usr/bin/msmtp --file=/etc/msmtprc-mifp-events --account=default -t`.
+Owner e modo vengono impostati sul file temporaneo prima della sostituzione;
+le rotazioni non richiedono copia o chmod manuali né modifiche al backend Python.
+Se SMTP viene disabilitato o reso incompleto, i relay derivati vengono rimossi.
+`MAIL_PROVIDER=enabled` mantiene il significato SMTP quando è presente un host;
+`disabled` e `console` restano espliciti e non vengono convertiti in SMTP.
+
+Verifica senza inviare email:
+
+```bash
+sudo mifpctl mail-diagnose
+sudo mifpctl mail-diagnose --network
+```
+
+Il primo controlla contenuto canonico, owner/mode, lettura e parser msmtp come
+utente PHP e direttiva del pool. Il secondo aggiunge TLS/autenticazione senza
+MAIL/RCPT/DATA. Non prova la consegna in casella. Con SMTP disabilitato il
+comando lo dichiara esplicitamente; non abilita il servizio.
 
 Non passare password a `config-set`: il comando le rifiuta per evitare shell
 history e process list. Dopo cambi a dominio o mail, ripeti `config-check`; se
@@ -306,17 +334,13 @@ ssh USER@192.168.1.50
 
 ### 3.2 Copia il bundle ed esegui il bootstrap
 
-Dalla workstation:
-
-```bash
-scp -r deploy USER@192.168.1.50:/tmp/mifp-deploy
-ssh USER@192.168.1.50
-```
+Dalla workstation trasferisci e verifica il bundle seguendo
+[lo staging root-owned](#host-tools-refresh), poi collegati alla VM.
 
 Nella VM:
 
 ```bash
-sudo bash /tmp/mifp-deploy/bootstrap-vps.sh \
+sudo bash "$staging/bootstrap-vps.sh" \
   --image-repository ghcr.io/matginesi/mifp-webapp
 sudo mifpctl config-set DOMAIN vpsbox.home.arpa
 sudo mifpctl admin
@@ -457,37 +481,54 @@ root-owned sotto `/root`. Servono SSH, sudo e rsync su entrambe le macchine.
 Usare un checkout/release verificato: i permessi non attestano la provenienza.
 Non eseguire il refresh direttamente dalla directory scrivibile dall'operatore.
 
+Dal TUXEDO, nella root di un checkout/release revisionato, prepara una copia
+con permessi normalizzati e un manifest dei file. Il digest del manifest deve
+arrivare alla sessione VPS tramite questo output fidato, non letto dall'ingresso:
+
 ```bash
-# TUXEDO, dalla root del repository; sostituire OPERATOR@VPS
-# Conservare il percorso stampato per il passo successivo.
-ssh OPERATOR@VPS 'mktemp -d /tmp/mifp-deploy-incoming.XXXXXXXX'
-# Sostituire XXXXXXXX con il suffisso effettivamente restituito.
-rsync -rtp --chmod=D700,F600 deploy/ OPERATOR@VPS:/tmp/mifp-deploy-incoming.XXXXXXXX/
+bundle=$(mktemp -d)
+rsync -rtp --chmod=D700,F600 --exclude='__pycache__/' --exclude='*.pyc' \
+  --include='.env.production.example' --exclude='.env*' deploy/ "$bundle/" &&
+  (cd "$bundle" && find . -type f ! -path ./BUNDLE.sha256 -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > "$bundle/BUNDLE.sha256"
+sha256sum "$bundle/BUNDLE.sha256"
+incoming=$(ssh OPERATOR@VPS 'mktemp -d /tmp/mifp-deploy-incoming.XXXXXXXX') &&
+  rsync -rtp --chmod=D700,F600 "$bundle/" "OPERATOR@VPS:$incoming/"
+printf 'Ingresso VPS: %s\n' "$incoming"
 ```
 
-Solo dopo che rsync è terminato con successo, collegarsi alla VPS e copiare
-nell'area root. I permessi vengono impostati durante la copia, indipendentemente
-da quelli del checkout TUXEDO; non occorre alcun chmod correttivo. Il primo
-trasferimento non conserva symlink, device o file speciali; il refresh verifica
-comunque tutti i file richiesti prima di installarli.
+Dopo il successo del trasferimento, nella sessione SSH dell'operatore imposta
+`incoming` al percorso stampato e `expected` al digest SHA256 del manifest
+stampato **sul TUXEDO**. Non eseguire file provenienti dall'ingresso:
 
 ```bash
-# VPS già inizializzata, nella stessa sessione shell
 incoming=/tmp/mifp-deploy-incoming.XXXXXXXX
+expected=INSERIRE_DIGEST_SHA256_STAMPATO_SUL_TUXEDO
+sudo -v
 staging=$(sudo mktemp -d /root/mifp-deploy.XXXXXXXX) &&
   sudo rsync -rtp --chown=root:root --chmod=D700,F600 "$incoming/" "$staging/" &&
-  sudo bash "$staging/refresh-host-tools.sh" &&
-  sudo mifpctl config-check &&
-  sudo mifpctl security-check
+  printf '%s  %s\n' "$expected" "$staging/BUNDLE.sha256" | sudo sha256sum --check --strict &&
+  sudo bash -c 'cd "$1" && sha256sum --check --strict BUNDLE.sha256' bash "$staging"
 ```
 
-Le directory create da mktemp hanno modo 0700; nello staging i file sono
-root:root 0600 e le directory root:root 0700. Lo script si avvia tramite bash;
-l'installazione imposta poi i modi eseguibili previsti. La catena `&&` interrompe
-il workflow al primo errore. In caso di errore non aggiornare l'applicazione:
-correggere la causa e ripartire con ingresso e staging nuovi. Al termine, le due
-directory temporanee possono essere rimosse dopo aver verificato i loro percorsi;
-non contengono dati runtime, ma soltanto il bundle trasferito.
+Prosegui soltanto se **entrambi** i controlli hash terminano con successo. La
+copia root-owned è privata e i suoi contenuti sono verificati contro il manifest
+fidato prima di eseguire codice root: cambiare owner/mode da solo non rende
+fidato il contenuto. Un errore di copia/hash richiede un ingresso e staging nuovi,
+non un chmod correttivo. rsync senza `-l`, `-D` o `-a` non conserva symlink,
+device o file speciali; gli script rifiutano comunque file non regolari,
+file scrivibili da gruppo/altri e staging/file non root-owned.
+
+Su **VPS nuova**, usa la variabile `staging` per il bootstrap del paragrafo 2.1.
+Su **VPS esistente**, aggiorna soltanto gli strumenti:
+
+```bash
+sudo bash "$staging/refresh-host-tools.sh"
+```
+
+Non rieseguire il bootstrap per un update ordinario. Le directory temporanee
+contengono solo il bundle e possono essere eliminate dopo averne verificato i
+percorsi e concluso le verifiche. Conserva la release precedente verificata per
+un eventuale rollback host; non usare il bundle d'ingresso come copia fidata.
 
 Il refresh valida completezza e sintassi del bundle, installa atomicamente dove
 possibile, rifiuta secret Compose `environment:` incompatibili con il rootfs
@@ -502,8 +543,7 @@ iniziale o quando una modifica documentata richiede provisioning host.
 Il routing eventi è generato da `deploy.sh`, oltre al template `Caddyfile`.
 Il refresh segnala modifiche al template e richiede revisione quando cambia
 `deploy.sh`; non applica nessuno dei due live: dopo la
-revisione usa esplicitamente `sudo mifpctl configure --section web` (può
-riavviare l'app). Le modifiche Compose attendono il successivo deploy/restart
+revisione usa esplicitamente `sudo mifpctl host-apply web`. Le modifiche Compose attendono il successivo deploy/restart
 applicativo esplicito.
 
 Il refresh e i normali `mifpctl update`/`restart` conservano
@@ -511,13 +551,38 @@ Il refresh e i normali `mifpctl update`/`restart` conservano
 `events.mifp.eu` resta servito sulla stessa VPS. Non rieseguire il bootstrap
 per un aggiornamento ordinario.
 
-L’applicazione Caddy è un passaggio distinto e intenzionale: rivedere template,
-generatore e configurazione salvata, poi eseguire
-`sudo mifpctl configure --section web`, mantenendo dominio eventi e backend
-esistenti alle richieste interattive. Il comando rigenera il Caddyfile gestito,
-lo valida e ricarica Caddy; può anche riavviare l’app. Verificare prima eventuali
-personalizzazioni live: la rigenerazione le può sostituire.
-Un semplice aggiornamento Docker non applica nuove regole Caddy.
+L'applicazione infrastrutturale è distinta dal refresh e dal deploy Docker:
+
+```bash
+sudo mifpctl config-show
+sudo mifpctl host-apply all   # upgrade di questo bundle: PHP, relay e Caddy
+sudo mifpctl config-check
+sudo mifpctl doctor
+sudo mifpctl security-check
+```
+
+`host-apply` legge lo stato canonico salvato e non riavvia il container.
+Per aggiornamenti successivi circoscritti usa `host-apply web`, `php` o `mail`.
+`web` rigenera template, routing e include PHP sotto lo stesso lock di
+pubblicazione, valida e applica con un solo reload. Se file e include sono
+invariati, salta il reload. Non ricade su restart dopo un reload fallito e
+ripristina i file precedenti. Il primo inserimento di Caddy nel gruppo pubblico
+richiede un solo restart intenzionale per acquisire il gruppo; è evitato nelle
+esecuzioni successive. `php` valida il pool prima del reload, ripristina il file
+precedente in caso di errore e non tronca i log esistenti. La gestione
+del gruppo Caddy avviene nel passaggio `web`; per il primo provisioning usa `all`.
+I passaggi sono ripetibili dopo un errore; non esiste una transazione unica tra
+servizi diversi. Un errore resta esplicito e va risolto prima del deploy app.
+
+La rigenerazione gestisce il Caddyfile MIFP: confronta eventuali personalizzazioni
+live prima dell'applicazione. Per rollback host reinstalla il bundle precedente
+verificato e riapplica esplicitamente i soli componenti interessati, preservando
+configurazione canonica, segreti, dati, backup e allowlist. Non ripristinare il
+comando difettoso `--file=/etc/msmtprc` nel pool.
+
+Un aggiornamento Docker non applica nuove regole Caddy/PHP. Gli avvisi reboot
+sono separati dagli errori applicativi: pianifica il riavvio host, senza trattare
+una sola richiesta reboot come indisponibilità dell'applicazione.
 
 ### 4.2 Immagine applicativa
 
@@ -660,3 +725,34 @@ VM locale:
 - root CA Caddy installata sulla workstation;
 - `sudo mifpctl doctor` termina con `Doctor: OK`;
 - backup timer attivo dopo `init`.
+
+## 8. Verifiche locali riproducibili e limiti
+
+La regressione ordinaria si esegue con `bash test_all.sh --suite quick -- -q`.
+Il test opt-in del bootstrap richiede un container Ubuntu 24.04 usa e getta:
+
+```bash
+# TUXEDO, dalla root; nessun socket Docker o dato host nel container
+# Adattare soltanto i due percorsi dei binari Docker se diversi sulla workstation.
+docker run --rm \
+  --mount type=bind,src="$(pwd)/deploy",dst=/work/deploy,readonly \
+  --mount type=bind,src="$(pwd)/TESTS",dst=/work/TESTS,readonly \
+  --mount type=bind,src=/usr/bin/docker,dst=/test-bin/docker-real,readonly \
+  --mount type=bind,src=/usr/lib/docker/cli-plugins,dst=/usr/lib/docker/cli-plugins,readonly \
+  ubuntu:24.04 bash /work/TESTS/tools/bootstrap-ubuntu-runtime.sh
+```
+
+Il runner installa i prerequisiti nel container e prova utenti, gruppi, owner/mode,
+bootstrap ripetuto, cambio backend, preservazione di impostazioni/dati/backup/log,
+refresh e rifiuto dei bundle insicuri. Usa Caddy, PHP-FPM 8.3, msmtp e validazione
+Compose reali, HTTPS con CA locale e SMTP catturato su loopback. La catena
+HTTPS → pool PHP → `mail()` → msmtp viene eseguita senza inviare email Internet.
+`doctor` confronta anche i domini/root della configurazione Caddy caricata via
+admin API loopback con lo stato canonico; non basta un file valido sul disco.
+
+Systemd, firewall e daemon Docker sono simulati: il container non dimostra un
+boot completo su VM, persistenza dopo reboot, regole firewall effettive, DNS
+pubblico, ACME Let's Encrypt, autenticazione Aruba o consegna in casella.
+Questi restano controlli finali dell'operatore sulla VPS; il codice non li dichiara
+superati in base alla sola presenza dei file. Il test distruttivo rispetto al suo
+filesystem rifiuta l'esecuzione fuori da un container root esplicitamente opt-in.

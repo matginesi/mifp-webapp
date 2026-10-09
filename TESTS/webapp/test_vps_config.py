@@ -58,7 +58,7 @@ def test_bootstrap_accepts_missing_domain_and_does_not_prompt_for_admin() -> Non
     script = (ROOT / "deploy" / "bootstrap-vps.sh").read_text(encoding="utf-8")
     assert "--domain è obbligatorio" not in script
     assert "--admin-if-missing" not in script
-    assert "MIFP host ready; run sudo mifpctl configure" in script
+    assert "MIFP host ready; run sudo mifpctl configure" in (ROOT / "deploy/deploy.sh").read_text()
     assert "Host bootstrap completed" in script
 
 
@@ -523,6 +523,28 @@ def test_render_msmtp_config_keeps_smtp_secret_out_of_cli_and_event_files(tmp_pa
     assert cli_output.read_text(encoding="utf-8") == rendered
 
 
+def test_render_msmtp_config_adopts_secure_existing_relay_and_repairs_mode(tmp_path: Path) -> None:
+    module, _store_obj = _store(tmp_path)
+    values = dict(MAIL_PROVIDER="smtp", SMTP_HOST="localhost", SMTP_PORT="587",
+                  SMTP_SECURITY="starttls", SMTP_FROM_ADDRESS="test@example.invalid")
+    output = tmp_path / "php-relay"
+    uid, gid = os.geteuid(), os.getegid()
+    assert module.render_msmtp_config(values, output, uid, gid)
+    before = output.stat()
+    content = output.read_bytes()
+
+    assert module.render_msmtp_config(values, output, uid, gid)
+    after = output.stat()
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    assert (after.st_uid, after.st_gid) == (uid, gid)
+    assert output.read_bytes() == content
+
+    output.chmod(0o640)
+    assert module.render_msmtp_config(values, output, uid, gid)
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert output.read_bytes() == content
+
+
 def test_render_msmtp_config_removes_transport_when_mail_disabled(tmp_path: Path) -> None:
     module, _store_obj = _store(tmp_path)
     output = tmp_path / "msmtprc"
@@ -608,14 +630,12 @@ def test_php_regform_mail_transport_is_host_managed() -> None:
     deploy = (ROOT / "deploy" / "deploy.sh").read_text(encoding="utf-8")
 
     assert "msmtp-mta" in bootstrap
-    assert "php_admin_value[sendmail_path] = /usr/bin/msmtp" in bootstrap
-    assert 'systemctl enable "$PHP_FPM_SERVICE"' in bootstrap
-    assert 'systemctl restart "$PHP_FPM_SERVICE"' in bootstrap
-    assert 'systemctl enable --now "$PHP_FPM_SERVICE"' not in bootstrap
-    assert "render-mail-relay --output" in bootstrap
-    assert "sync_mail_relay" in deploy
-    assert 'chown root:"$EVENTS_PHP_USER" "$MAIL_RELAY_CONFIG"' in deploy
-    assert 'chmod 0640 "$MAIL_RELAY_CONFIG"' in deploy
+    assert 'bash "$MIFP_HOME/deploy.sh" host-apply all' in bootstrap
+    assert 'php_admin_value[sendmail_path] = "/usr/bin/msmtp --file=$PHP_MAIL_RELAY_CONFIG' in deploy
+    assert 'render-mail-relay --output "$PHP_MAIL_RELAY_CONFIG"' in deploy
+    assert 'chmod 0600 "$MAIL_RELAY_CONFIG"' in deploy
+    assert 'systemctl restart caddy.service' not in deploy
+
 
 
 def test_secret_setting_uses_file_when_runtime_env_contains_blank_placeholder(monkeypatch, tmp_path: Path) -> None:
@@ -709,3 +729,91 @@ def test_audit_web_secret_material_reports_key_only_on_mismatch(tmp_path: Path) 
     assert "SECRET_KEY" in rendered
     assert "canonical-secret" not in rendered
     assert "wrong-secret" not in rendered
+
+
+@pytest.mark.parametrize('provider,host,expected', [
+    ('enabled', 'smtp.example.invalid', 'smtp'),
+    (' ENABLED ', 'smtp.example.invalid', 'smtp'),
+    ('enabled', '', 'disabled'),
+    ('disabled', 'smtp.example.invalid', 'disabled'),
+    ('console', 'smtp.example.invalid', 'console'),
+])
+def test_legacy_mail_provider_has_one_semantics_for_all_host_consumers(tmp_path, provider, host, expected):
+    module, store = _store(tmp_path)
+    store.config.parent.mkdir(parents=True)
+    module.atomic_write_env(store.config, {'MAIL_PROVIDER': provider, 'SMTP_HOST': host}, mode=0o640)
+    assert store.values()['MAIL_PROVIDER'] == expected
+
+
+def test_msmtp_explicit_user_config_rejects_group_readable_secret_without_sending(tmp_path):
+    import shutil
+    if not shutil.which('msmtp'):
+        pytest.skip('msmtp not installed')
+    module, store = _store(tmp_path)
+    relay = tmp_path / 'synthetic-msmtprc'
+    module.render_msmtp_config(dict(MAIL_PROVIDER='smtp', SMTP_HOST='localhost', SMTP_PORT='1',
+        SMTP_SECURITY='starttls', SMTP_USERNAME='synthetic', SMTP_PASSWORD='synthetic-only',
+        SMTP_FROM_ADDRESS='test@example.invalid'), relay)
+    relay.chmod(0o640)
+    rejected = subprocess.run(['msmtp', '--file=' + str(relay), '--pretend', '--', 'test@example.invalid'], capture_output=True)
+    assert rejected.returncode != 0
+    relay.chmod(0o600)
+    accepted = subprocess.run(['msmtp', '--file=' + str(relay), '--pretend', '--', 'test@example.invalid'], capture_output=True)
+    assert accepted.returncode == 0
+
+
+def test_mail_diagnostics_never_print_password_addresses_or_raw_transport_errors(tmp_path, monkeypatch, capsys):
+    module, store = _store(tmp_path)
+    values = dict(MAIL_PROVIDER='smtp', SMTP_HOST='localhost', SMTP_PORT='1', SMTP_SECURITY='starttls',
+        SMTP_USERNAME='sensitive-user', SMTP_PASSWORD='sensitive-password', SMTP_FROM_ADDRESS='private@example.invalid')
+    relay = tmp_path / 'synthetic-relay'
+    module.render_msmtp_config(values, relay)
+    monkeypatch.setattr(module.subprocess, 'run', lambda *args, **kwargs: SimpleNamespace(returncode=1,
+        stdout=b'sensitive-user', stderr=b'sensitive-password private@example.invalid'))
+    assert module.diagnose_mail(values, relay, 'synthetic', network=False) is False
+    output = capsys.readouterr().out
+    assert 'FAILED' in output
+    assert 'sensitive-' not in output
+    assert 'private@example.invalid' not in output
+    assert 'No message sent' in output
+
+
+def test_registration_read_only_access_opt_in_is_normalized_and_validated():
+    module = _module()
+    assert module.normalize_value('REGISTRATIONS_DASHBOARD_ENABLED', 'TRUE') == 'true'
+    assert module.normalize_value('REGISTRATIONS_DASHBOARD_ENABLED', 'false') == 'false'
+    with pytest.raises(ValueError):
+        module.normalize_value('REGISTRATIONS_DASHBOARD_ENABLED', 'enabled')
+
+
+def test_caddy_runtime_audit_detects_unapplied_hosts_backend_and_root():
+    module = _module()
+    values = dict(DOMAIN='example.test', WWW_DOMAIN='www.example.test',
+                  EVENTS_PUBLISH_BACKEND='local-vps', EVENTS_PUBLIC_BASE_URL='https://events.example.test',
+                  EVENTS_LOCAL_ROOT='/srv/synthetic-events')
+    document = {'apps': {'http': {'servers': {'main': {'routes': [
+        {'match': [{'host': ['example.test', 'www.example.test']}]},
+        {'match': [{'host': ['events.example.test']}], 'handle': [
+            {'handler': 'vars', 'root': '/srv/synthetic-events'}]},
+    ]}}}}}
+    assert module.audit_caddy_config(values, document) == []
+    assert module.audit_caddy_config(dict(values, DOMAIN='new.example.test'), document)
+    assert module.audit_caddy_config(dict(values, EVENTS_LOCAL_ROOT='/srv/other'), document)
+    assert module.audit_caddy_config(dict(values, EVENTS_PUBLISH_BACKEND='remote'), document)
+    assert module.audit_caddy_config(values, {'apps': {}})
+
+
+def test_migration_preserves_legacy_mail_and_remote_publisher_settings(tmp_path):
+    module, store = _store(tmp_path)
+    store.runtime.parent.mkdir(parents=True)
+    store.runtime.write_text("MAIL_PROVIDER=enabled\nSMTP_HOST=synthetic.example.invalid\n"
+        "SMTP_PASSWORD=synthetic-secret\nEVENTS_PUBLISH_BACKEND=remote\n"
+        "EVENTS_REMOTE_HOST=remote.example.invalid\nEVENTS_REMOTE_ROOT=/conferences\n"
+        "EVENTS_LOCAL_ROOT=/srv/custom-events\n")
+    store.migrate()
+    assert store.values()['MAIL_PROVIDER'] == 'smtp'
+    assert store.values()['SMTP_PASSWORD'] == 'synthetic-secret'
+    assert store.values()['EVENTS_PUBLISH_BACKEND'] == 'remote'
+    assert store.values()['EVENTS_REMOTE_HOST'] == 'remote.example.invalid'
+    assert store.values()['EVENTS_REMOTE_ROOT'] == '/conferences'
+    assert store.values()['EVENTS_LOCAL_ROOT'] == '/srv/custom-events'

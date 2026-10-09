@@ -1,0 +1,21 @@
+# Optional, selected by mifpctl only after REGISTRATIONS_DASHBOARD_ENABLED=true.
+# No sessions, credentials, host socket or writable private tree is exposed.
+services:
+  web:
+    environment:
+      REGISTRATIONS_PRIVATE_ROOT: /run/mifp-registrations
+    group_add:
+      - "${MIFP_REGISTRATIONS_GID:?host PHP group required}"
+    volumes:
+      - type: bind
+        source: "${MIFP_REGISTRATIONS_PRIVATE_DIR:?private registration root required}/registrations"
+        target: /run/mifp-registrations/registrations
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${MIFP_REGISTRATIONS_PRIVATE_DIR:?private registration root required}/uploads"
+        target: /run/mifp-registrations/uploads
+        read_only: true
+        bind:
+          create_host_path: false

@@ -139,8 +139,7 @@ dallo staging root; non eseguire direttamente il bundle dell’operatore.
 Il refresh non cambia segreti/stato/dati e non riavvia l'applicazione. Il
 bootstrap completo resta riservato alla prima installazione o a provisioning
 host esplicitamente documentato. Se segnala modifiche al template Caddy o al generatore in `deploy.sh`,
-revisionarlo e applicarlo con `sudo mifpctl configure --section web` (può
-riavviare l'app); una Compose aggiornata attende il successivo deploy/restart
+revisionarlo e applicarlo con `sudo mifpctl host-apply web`; una Compose aggiornata attende il successivo deploy/restart
 esplicito.
 
 Manutenzione rara:
@@ -155,3 +154,26 @@ sudo mifpctl fix-permissions
 ```
 
 Vedi [`../DEPLOYMENT.md`](../DEPLOYMENT.md).
+
+
+### Applicazione infrastrutturale esplicita
+
+`sudo mifpctl host-apply [all|web|php|mail]` applica la configurazione canonica
+senza aggiornare o riavviare Docker. `all` completa il provisioning locale,
+`web` applica template/routing Caddy, `php` aggiorna il pool dedicato e `mail`
+rigenera i relay con owner/mode corretti. Il refresh non esegue questo comando.
+Vedi [installazione e aggiornamento host](deployment/vps-installation.md#host-tools-refresh).
+
+### Registrations e diagnostica del relay
+
+- `sudo mifpctl mail-diagnose [--network]`: diagnostica senza inviare email;
+  con `--network` verifica anche TLS/autenticazione SMTP.
+- `sudo mifpctl registrations-access EVENT`: a PHP revocato, prepara accesso
+  read-only ai soli CSV, ricevute e stati riconosciuti di quella conferenza.
+- `sudo mifpctl registrations-request ID [--confirm EVENT --approve SHA256] [--organizer-to EMAIL]`:
+  revisiona/applica una richiesta dashboard; `--restore` recupera il backup
+  selettivo a PHP revocato.
+- `sudo mifpctl registrations-resolve EVENT RECEIPT CHANNEL --not-accepted`:
+  attesta una mancata accettazione già verificata; non invia email.
+
+Procedura, limiti e retention: [Registrazioni e affidabilità email](deployment/registrations.md).

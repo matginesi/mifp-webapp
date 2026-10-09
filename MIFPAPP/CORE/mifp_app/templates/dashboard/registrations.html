@@ -1,0 +1,42 @@
+{% extends "dashboard/layout.html" %}
+{% from "dashboard/_components.html" import page_header %}
+{% block page_title %}Registrations · {{ site.title }}{% endblock %}
+{% block content %}
+{% call page_header('Conference site', 'Registrations · ' ~ (site.acronym or site.title), 'Review saved submissions, administrative states and notification outcomes.') %}{% endcall %}
+<p><a href="{{ url_for('dashboard.conference_edit', site_id=site.id) }}">Back to conference site</a></p>
+<p>{{ count }} matching / {{ total }} saved. {% for status, value in counters.items() %}{{ status }}: {{ value }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+<p>“Accepted” means accepted by the mail transport, not confirmed delivery. Old registrations may have no notification state.</p>
+<form class="toolbar" method="get">
+<label>Search<input class="form-control form-control-sm" name="q" value="{{ request.args.get('q','') }}" placeholder="Name, email or receipt ID"></label>
+<label>From<input class="form-control form-control-sm" type="date" name="from" value="{{ request.args.get('from','') }}"></label>
+<label>To<input class="form-control form-control-sm" type="date" name="to" value="{{ request.args.get('to','') }}"></label>
+{% for name, label, options in [('status','Status',statuses), ('type','Type',types), ('payment','Payment',payments)] %}
+<label>{{ label }}<select class="form-select form-select-sm" name="{{ name }}"><option value="">All</option>{% for value in options %}<option {% if request.args.get(name)==value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+{% endfor %}
+<label>Sort<select class="form-select form-select-sm" name="sort">{% for field in ['submitted_at','first_name','last_name','receipt_id','admin_status'] %}<option value="{{ field }}" {% if request.args.get('sort','submitted_at')==field %}selected{% endif %}>{{ field|replace('_',' ') }}</option>{% endfor %}</select></label>
+<label>Order<select class="form-select form-select-sm" name="order"><option value="desc">Descending</option><option value="asc" {% if request.args.get('order')=='asc' %}selected{% endif %}>Ascending</option></select></label>
+<label><input type="checkbox" name="archived" value="1" {% if request.args.get('archived')=='1' %}checked{% endif %}> Include archived</label>
+<button class="btn btn-primary btn-sm">Filter</button>
+</form>
+<p>{% for fmt in ['csv','xlsx'] %}<a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.registrations_export',site_id=site.id,fmt=fmt) }}?{{ request.query_string.decode()|e }}">Export filtered {{ fmt|upper }}</a> {% endfor %}</p>
+<form method="post" action="{{ url_for('dashboard.registrations_request',site_id=site.id) }}">
+<input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+<div class="table-card"><div class="data-scroll"><table class="data-table">
+<thead><tr><th>Select</th><th>Receipt / date</th><th>Name</th><th>Type / payment</th><th>Status</th><th>Email notifications</th></tr></thead>
+<tbody>{% for row in rows %}<tr>
+<td><input type="checkbox" name="receipt" value="{{ row.receipt_id }}" aria-label="Select {{ row.receipt_id }}"></td>
+<td><a href="{{ url_for('dashboard.registration_detail',site_id=site.id,receipt=row.receipt_id) }}">{{ row.receipt_id }}</a><br>{{ row.submitted_at }}</td>
+<td>{{ row.last_name }}, {{ row.first_name }}<br>{{ row.email }}</td>
+<td>{{ row.registration_type }}<br>{{ row.payment_method }}</td><td>{{ row.admin_status }}{% if row.archived %} · archived{% endif %}</td>
+<td>Organizers: {{ row.notifications.organizers }}<br>Participant: {{ row.notifications.participant }}</td>
+</tr>{% else %}<tr><td colspan="6">No matching registrations.</td></tr>{% endfor %}</tbody></table></div></div>
+<p>Page {{ page }} / {{ pages }} {% if page>1 %}<a href="{{ url_for('dashboard.registrations',site_id=site.id,**dict(request.args,page=page-1)) }}">Previous</a>{% endif %} {% if page<pages %}<a href="{{ url_for('dashboard.registrations',site_id=site.id,**dict(request.args,page=page+1)) }}">Next</a>{% endif %}</p>
+<fieldset><legend>Controlled host operations</legend>
+<p>These requests require explicit host approval. Deletion includes a private backup before any removal. No mail is sent from this page.</p>
+<label>Operation<select name="action" class="form-select"><option value="retry">Retry selected notifications</option><option value="delete">Delete selected test registrations</option></select></label>
+<label>Notification channel<select name="channel" class="form-select"><option value="organizers">Organizers</option><option value="participant">Participant</option></select></label>
+<label><input type="checkbox" name="all" value="1"> Delete all registrations in this conference (ignores filters and selection)</label>
+<label>Confirm conference key <strong>{{ (site.public_path or site.slug).rstrip('/').split('/')[-1] }}</strong><input class="form-control" name="confirm" required autocomplete="off"></label>
+<button class="btn btn-outline-danger" type="submit">Request host approval</button>
+</fieldset></form>
+{% endblock %}
