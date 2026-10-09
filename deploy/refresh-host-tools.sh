@@ -112,6 +112,7 @@ fi
 systemd_changed=0
 compose_changed=0
 caddy_template_changed=0
+caddy_generator_changed=0
 for index in "${!staged[@]}"; do
   target="${targets[$index]}"
   if [[ -f "$target" && ! -L "$target" ]] && cmp -s "${staged[$index]}" "$target"; then
@@ -124,6 +125,7 @@ for index in "${!staged[@]}"; do
     || systemd_changed=1
   [[ "$target" != "$MIFP_HOME/compose.yaml" ]] || compose_changed=1
   [[ "$target" != "$MIFP_HOME/Caddyfile.example" ]] || caddy_template_changed=1
+  [[ "$target" != "$MIFP_HOME/deploy.sh" ]] || caddy_generator_changed=1
   mv -f -- "${staged[$index]}" "$target"
   staged[index]=""
 done
@@ -138,6 +140,9 @@ say "No packages, firewall, SSH policy, Docker repositories, live Caddy configur
 say "Next: run 'sudo mifpctl config-check' and 'sudo mifpctl security-check'."
 if (( caddy_template_changed )); then
   say "ACTION REQUIRED: the Caddy template changed but the live Caddyfile did not. Review it, then apply explicitly with 'sudo mifpctl configure --section web' (this may restart a running app)."
+fi
+if (( caddy_generator_changed )); then
+  say "REVIEW REQUIRED: deploy.sh changed and contains the events Caddy routing generator. The live Caddyfile remains unchanged; routing changes require explicit application with 'sudo mifpctl configure --section web' (this may restart a running app)."
 fi
 if (( compose_changed )); then
   say "NOTICE: the Compose definition changed; it takes effect only on a subsequent explicit application deploy/restart."

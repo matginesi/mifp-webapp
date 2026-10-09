@@ -237,15 +237,9 @@ Una modifica sotto `deploy/` non è una nuova immagine applicativa. Da un
 checkout verificato, copia manualmente l'intero bundle e avvia lo script che si
 trova **nel bundle copiato**:
 
-```bash
-# workstation
-rsync -a --delete deploy/ OPERATOR@VPS:/tmp/mifp-deploy/
-
-# VPS
-sudo bash /tmp/mifp-deploy/refresh-host-tools.sh
-sudo mifpctl config-check
-sudo mifpctl security-check
-```
+Workflow completo: [trasferimento sicuro e refresh host tools](docs/deployment/vps-installation.md#host-tools-refresh).
+Usare ingresso privato e staging root-owned con permessi normalizzati durante
+la copia; non eseguire il bundle direttamente da una directory dell’operatore.
 
 `refresh-host-tools.sh` è riservato a un host già inizializzato. Verifica che il
 bundle sia completo, rifiuta symlink/file modificabili da gruppo o altri,
@@ -259,7 +253,7 @@ cambiate. Non esegue apt, non modifica firewall/SSH/repository Docker, non
 tocca il Caddyfile live, non riavvia container o servizi e conserva
 `/etc/mifp/{config,secrets}.env`, `/opt/mifp/.env`, release/upgrade state, DB,
 dati e backup.
-Se cambia il template Caddy, il comando lascia intenzionalmente invariata la
+Se cambia il template Caddy o il routing generato da `deploy.sh`, il comando lascia intenzionalmente invariata la
 configurazione live e segnala di revisionarla e applicarla esplicitamente con
 `sudo mifpctl configure --section web` (che può riavviare l'app in esecuzione).
 Una nuova Compose entra invece in vigore solo al successivo deploy/restart

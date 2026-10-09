@@ -1835,7 +1835,7 @@ def _refresh_env(tmp_path: Path, bundle: Path) -> tuple[dict[str, str], Path, Pa
     backup = tmp_path / "installed" / "backups"
     backup.mkdir()
     (backup / "marker").write_text("backup-preserved\n", encoding="utf-8")
-    (config / "config.env").write_text("ENVIRONMENT=production\nDOMAIN=mifp.eu\nWWW_DOMAIN=www.mifp.eu\nIMAGE_REPOSITORY=ghcr.io/example/mifp\nADMIN_USERNAME=admin\n", encoding="utf-8")
+    (config / "config.env").write_text("ENVIRONMENT=production\nDOMAIN=mifp.eu\nWWW_DOMAIN=www.mifp.eu\nEVENTS_PUBLISH_BACKEND=local-vps\nEVENTS_PUBLIC_BASE_URL=https://events.mifp.eu\nIMAGE_REPOSITORY=ghcr.io/example/mifp\nADMIN_USERNAME=admin\n", encoding="utf-8")
     (config / "secrets.env").write_text("SECRET_KEY=0123456789abcdef0123456789abcdef\nADMIN_PASSWORD_HASH=pbkdf2:sha256:600000$abcd$abcd\n", encoding="utf-8")
 
     bin_dir = tmp_path / "refresh-bin"
@@ -1986,3 +1986,80 @@ def test_host_tool_refresh_rejects_invalid_bundle(tmp_path: Path, failure: str) 
     assert (home / ".env").read_text(encoding="utf-8") == "runtime-preserved\n"
     if failure == "group-writable":
         assert "File bundle modificabile da gruppo/altri" in result.stderr
+
+
+def test_host_tool_refresh_warns_on_routing_generator_change(tmp_path: Path) -> None:
+    bundle = tmp_path / "deploy-bundle"
+    shutil.copytree(ROOT / "deploy", bundle)
+    env, home, _config = _refresh_env(tmp_path, bundle)
+
+    def refresh() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(bundle / "refresh-host-tools.sh")],
+            env=env, text=True, capture_output=True, check=False,
+        )
+
+    first = refresh()
+    assert first.returncode == 0, first.stdout + first.stderr
+    unchanged = refresh()
+    assert unchanged.returncode == 0, unchanged.stdout + unchanged.stderr
+    assert "REVIEW REQUIRED" not in unchanged.stdout
+    assert "ACTION REQUIRED" not in unchanged.stdout
+
+    with (bundle / "deploy.sh").open("a", encoding="utf-8") as handle:
+        handle.write("\n# Updated events routing generator\n")
+    changed = refresh()
+    assert changed.returncode == 0, changed.stdout + changed.stderr
+    assert "REVIEW REQUIRED: deploy.sh changed" in changed.stdout
+    assert "routing changes require explicit application" in changed.stdout
+    assert "Caddy template changed" not in changed.stdout
+    assert "reload caddy" not in Path(env["REFRESH_COMMAND_LOG"]).read_text()
+
+
+def test_ordinary_image_update_preserves_events_configuration_and_live_caddy(tmp_path: Path) -> None:
+    env, home = _env(tmp_path)
+    _run(env, "first-deploy", "sha-a")
+    config = Path(env["MIFP_CONFIG_DIR"]) / "config.env"
+    config.write_text(config.read_text().replace(
+        "https://events.vpsbox.home.arpa", "https://events.mifp.eu"
+    ))
+    caddy = Path(env["MIFP_CADDY_CONFIG"])
+    caddy.write_text("events.mifp.eu { respond 200 }\n")
+    before_config = config.read_bytes()
+    before_caddy = caddy.read_bytes()
+
+    result = _run(dict(env, LATEST_DIGEST_NUM="2"), "update")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert config.read_bytes() == before_config
+    assert caddy.read_bytes() == before_caddy
+    assert "EVENTS_PUBLISH_BACKEND=local-vps" in config.read_text()
+
+
+@pytest.mark.skipif(shutil.which("rsync") is None, reason="rsync is not installed")
+def test_documented_transfer_normalizes_writable_checkout_permissions(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir(mode=0o777)
+    (source / "bootstrap-vps.sh").write_text("#!/bin/bash\nexit 0\n")
+    (source / "bootstrap-vps.sh").chmod(0o777)
+    (source / "nested").mkdir(mode=0o777)
+    (source / "nested" / "config").write_text("example\n")
+    (source / "link").symlink_to(source / "bootstrap-vps.sh")
+    inbox = tmp_path / "inbox"
+    staging = tmp_path / "staging"
+    for destination in (inbox, staging):
+        destination.mkdir(mode=0o700)
+    for origin, destination, owner_args in (
+        (source, inbox, []),
+        (inbox, staging, [f"--chown={os.getuid()}:{os.getgid()}"]),
+    ):
+        subprocess.run(
+            ["rsync", "-rtp", *owner_args, "--chmod=D700,F600",
+             f"{origin}/", f"{destination}/"],
+            check=True, capture_output=True, text=True,
+        )
+        assert stat.S_IMODE(destination.stat().st_mode) == 0o700
+        assert not (destination / "link").exists()
+        for path in destination.rglob("*"):
+            assert stat.S_IMODE(path.stat().st_mode) == (0o700 if path.is_dir() else 0o600)
+    assert (staging / "bootstrap-vps.sh").read_bytes() == (source / "bootstrap-vps.sh").read_bytes()

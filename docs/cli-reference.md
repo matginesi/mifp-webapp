@@ -131,18 +131,14 @@ attivo e, quando cambia, riusa il motore di `deploy`. Il comando esplicito
 disponibile soltanto per compatibilità operativa.
 
 `mifpctl update` aggiorna esclusivamente l'immagine applicativa. Per aggiornare
-il wrapper e gli strumenti installati sotto `/opt/mifp`, copia manualmente
-l'intero `deploy/` in `/tmp/mifp-deploy/` e usa:
-
-```bash
-sudo bash /tmp/mifp-deploy/refresh-host-tools.sh
-sudo mifpctl config-check
-sudo mifpctl security-check
-```
+il wrapper e gli strumenti installati sotto `/opt/mifp`, segui il
+[trasferimento sicuro con staging root-owned](deployment/vps-installation.md#host-tools-refresh).
+Il workflow normalizza i permessi durante la copia e avvia il refresh soltanto
+dallo staging root; non eseguire direttamente il bundle dell’operatore.
 
 Il refresh non cambia segreti/stato/dati e non riavvia l'applicazione. Il
 bootstrap completo resta riservato alla prima installazione o a provisioning
-host esplicitamente documentato. Se segnala un template Caddy cambiato,
+host esplicitamente documentato. Se segnala modifiche al template Caddy o al generatore in `deploy.sh`,
 revisionarlo e applicarlo con `sudo mifpctl configure --section web` (può
 riavviare l'app); una Compose aggiornata attende il successivo deploy/restart
 esplicito.

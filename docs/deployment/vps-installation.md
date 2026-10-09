@@ -445,20 +445,49 @@ un hostname errato.
 
 ## 4. Aggiornamenti successivi
 
+<a id="host-tools-refresh"></a>
+
 ### 4.1 Strumenti host da `deploy/`
 
 Gli strumenti host e l'immagine applicativa hanno cicli distinti. Quando cambia
 `deploy/`, copia il bundle completo dalla workstation e usa il refresh ristretto:
 
-```bash
-# workstation, dalla root del repository
-rsync -a --delete deploy/ OPERATOR@VPS:/tmp/mifp-deploy/
+Il trasferimento usa un ingresso privato dell'operatore e uno staging nuovo,
+root-owned sotto `/root`. Servono SSH, sudo e rsync su entrambe le macchine.
+Usare un checkout/release verificato: i permessi non attestano la provenienza.
+Non eseguire il refresh direttamente dalla directory scrivibile dall'operatore.
 
-# VPS già inizializzata
-sudo bash /tmp/mifp-deploy/refresh-host-tools.sh
-sudo mifpctl config-check
-sudo mifpctl security-check
+```bash
+# TUXEDO, dalla root del repository; sostituire OPERATOR@VPS
+# Conservare il percorso stampato per il passo successivo.
+ssh OPERATOR@VPS 'mktemp -d /tmp/mifp-deploy-incoming.XXXXXXXX'
+# Sostituire XXXXXXXX con il suffisso effettivamente restituito.
+rsync -rtp --chmod=D700,F600 deploy/ OPERATOR@VPS:/tmp/mifp-deploy-incoming.XXXXXXXX/
 ```
+
+Solo dopo che rsync è terminato con successo, collegarsi alla VPS e copiare
+nell'area root. I permessi vengono impostati durante la copia, indipendentemente
+da quelli del checkout TUXEDO; non occorre alcun chmod correttivo. Il primo
+trasferimento non conserva symlink, device o file speciali; il refresh verifica
+comunque tutti i file richiesti prima di installarli.
+
+```bash
+# VPS già inizializzata, nella stessa sessione shell
+incoming=/tmp/mifp-deploy-incoming.XXXXXXXX
+staging=$(sudo mktemp -d /root/mifp-deploy.XXXXXXXX) &&
+  sudo rsync -rtp --chown=root:root --chmod=D700,F600 "$incoming/" "$staging/" &&
+  sudo bash "$staging/refresh-host-tools.sh" &&
+  sudo mifpctl config-check &&
+  sudo mifpctl security-check
+```
+
+Le directory create da mktemp hanno modo 0700; nello staging i file sono
+root:root 0600 e le directory root:root 0700. Lo script si avvia tramite bash;
+l'installazione imposta poi i modi eseguibili previsti. La catena `&&` interrompe
+il workflow al primo errore. In caso di errore non aggiornare l'applicazione:
+correggere la causa e ripartire con ingresso e staging nuovi. Al termine, le due
+directory temporanee possono essere rimosse dopo aver verificato i loro percorsi;
+non contengono dati runtime, ma soltanto il bundle trasferito.
 
 Il refresh valida completezza e sintassi del bundle, installa atomicamente dove
 possibile, rifiuta secret Compose `environment:` incompatibili con il rootfs
@@ -470,10 +499,25 @@ stato release/upgrade, DB, dati e backup. Anche su host creati col workflow
 precedente si esegue direttamente lo script del nuovo bundle copiato; non serve
 prima installarlo. Usa ancora `bootstrap-vps.sh` soltanto per il provisioning
 iniziale o quando una modifica documentata richiede provisioning host.
-Se il template Caddy è cambiato, il refresh non lo applica live: dopo la
+Il routing eventi è generato da `deploy.sh`, oltre al template `Caddyfile`.
+Il refresh segnala modifiche al template e richiede revisione quando cambia
+`deploy.sh`; non applica nessuno dei due live: dopo la
 revisione usa esplicitamente `sudo mifpctl configure --section web` (può
 riavviare l'app). Le modifiche Compose attendono il successivo deploy/restart
 applicativo esplicito.
+
+Il refresh e i normali `mifpctl update`/`restart` conservano
+`EVENTS_PUBLISH_BACKEND=local-vps`, `EVENTS_PUBLIC_BASE_URL` e il Caddyfile live:
+`events.mifp.eu` resta servito sulla stessa VPS. Non rieseguire il bootstrap
+per un aggiornamento ordinario.
+
+L’applicazione Caddy è un passaggio distinto e intenzionale: rivedere template,
+generatore e configurazione salvata, poi eseguire
+`sudo mifpctl configure --section web`, mantenendo dominio eventi e backend
+esistenti alle richieste interattive. Il comando rigenera il Caddyfile gestito,
+lo valida e ricarica Caddy; può anche riavviare l’app. Verificare prima eventuali
+personalizzazioni live: la rigenerazione le può sostituire.
+Un semplice aggiornamento Docker non applica nuove regole Caddy.
 
 ### 4.2 Immagine applicativa
 
