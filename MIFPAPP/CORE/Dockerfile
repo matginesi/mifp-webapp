@@ -29,13 +29,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH"
 
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
        ca-certificates fonts-dejavu-core libjpeg62-turbo libopenjp2-7 libpcre2-8-0 \
     && rm -rf /var/lib/apt/lists/*
 # DejaVu provides deterministic embedded Unicode fonts for the ReportLab
 # institutional-document renderer; the image libraries support local assets.
-# libpcre2-8-0 remains explicit so the pinned base image receives the current
-# security-patched Bookworm candidate during the image build.
+# Upgrade inherited Bookworm packages too (including perl-base): installing
+# application libraries alone leaves vulnerable packages from the pinned base.
+# Keep libpcre2-8-0 explicit as a runtime dependency.
 
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv

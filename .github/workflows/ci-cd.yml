@@ -257,6 +257,9 @@ jobs:
           load: true
           push: false
           tags: ${{ env.LOCAL_IMAGE }}
+          # Refresh inherited Debian packages on every release build. Keep the
+          # Python dependency builder cached; its inputs remain locked.
+          no-cache-filters: runtime
           cache-from: type=gha,scope=mifp
           cache-to: type=gha,mode=max,scope=mifp
 
