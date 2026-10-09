@@ -1,0 +1,5 @@
+registrations.csv
+.secret.php
+.rate-*.php
+proofs/*
+!proofs/.gitkeep

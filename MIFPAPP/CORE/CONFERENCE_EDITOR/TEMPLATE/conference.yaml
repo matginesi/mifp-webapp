@@ -1,0 +1,716 @@
+template:
+  name: MIFP Static Conference Template
+  version: 1.5
+  schema_version: '1'
+site:
+  language: en
+  title: NEW-CONFERENCE
+  short_name: NEW-CONFERENCE
+  year: TBC
+  base_url: TBC
+  description: TBC
+  keywords: TBC
+  author: MIFP — Mediterranean Institute of Fundamental Physics
+  favicon: favicon.ico
+  social_image: assets/hero/hero-placeholder.svg
+  footer: MIFP · Matteo Ginesi 2026
+  version: 1.5
+documents:
+  certificates:
+    signature_columns: 2
+    signatures:
+      - title: Conference Chairman
+        name: TBC
+        affiliation: TBC
+      - title: Scientific Chairman
+        name: TBC
+        affiliation: TBC
+conference:
+  full_name: TBC
+  acronym: NEW-CONFERENCE
+  start_date: ''
+  end_date: ''
+  date_label: TBC
+  city: TBC
+  country: TBC
+  venue: TBC
+  address: TBC
+  timezone: TBC
+  email: TBC
+  phone: TBC
+  contact_name: TBC
+  registration_url: regform/
+  emergency_contact: TBC
+labels:
+  register: Register
+  more_information: More information
+  open_map: Open map
+  privacy: 'Privacy & Cookies'
+  pdf: PDF
+  address: Address
+  location: Location
+  date: Date
+  time: Time
+  meeting_point: Meeting point
+  contact: Contact
+  download: Download
+  accept: OK
+appearance:
+  default_theme: graphite
+  default_palette: mifp
+  remember_preferences: true
+  max_content_width: 1080px
+  sidebar_width: 260px
+  themes:
+    - id: midnight
+      label: Midnight
+      color_scheme: dark
+      bg: '#080c18'
+      bg_alt: '#0d1225'
+      bg_card: '#10162b'
+      nav_bg: '#0b1020'
+      nav_hover: '#151c33'
+      border: '#1b2540'
+      border_light: '#283555'
+      text: '#d9e0ef'
+      text_muted: '#8f9bb2'
+      text_dim: '#5d6981'
+      text_heading: '#ffffff'
+    - id: graphite
+      label: Graphite
+      color_scheme: dark
+      bg: '#111315'
+      bg_alt: '#171a1e'
+      bg_card: '#1d2126'
+      nav_bg: '#14171a'
+      nav_hover: '#23282e'
+      border: '#2a3037'
+      border_light: '#39414a'
+      text: '#e0e3e6'
+      text_muted: '#9aa2aa'
+      text_dim: '#69727b'
+      text_heading: '#ffffff'
+    - id: paper
+      label: Paper
+      color_scheme: light
+      bg: '#f5f7fb'
+      bg_alt: '#ffffff'
+      bg_card: '#f0f3f8'
+      nav_bg: '#ffffff'
+      nav_hover: '#eef2f7'
+      border: '#dde3ec'
+      border_light: '#cbd4e1'
+      text: '#263246'
+      text_muted: '#637086'
+      text_dim: '#929cac'
+      text_heading: '#111827'
+  palettes:
+    - id: mifp
+      label: MIFP
+      primary: '#b5122b'
+      secondary: '#13213c'
+    - id: emerald
+      label: Emerald
+      primary: '#00d4aa'
+      secondary: '#0088cc'
+    - id: ocean
+      label: Ocean
+      primary: '#28b6e8'
+      secondary: '#4169e1'
+    - id: ruby
+      label: Ruby
+      primary: '#e45868'
+      secondary: '#a83f73'
+    - id: amber
+      label: Amber
+      primary: '#e8a838'
+      secondary: '#c86f2e'
+    - id: violet
+      label: Violet
+      primary: '#a98bff'
+      secondary: '#6c63ff'
+    - id: slate
+      label: Slate
+      primary: '#9aa8b8'
+      secondary: '#697b91'
+  component_radius: 8px
+  panel_radius: 10px
+  control_radius: 6px
+runtime:
+  debug: true
+  log_level: info
+  debug_log_level: debug
+  log_prefix: MIFP
+  log_buffer_entries: 800
+  people_csv: data/people.csv
+  program_csv: data/program.csv
+  ui_kit_enabled: true
+security:
+  allow_external_assets: false
+layout:
+  footer_enabled: true
+assets:
+  logo: assets/branding/conference_logo.svg
+  logo_large: assets/branding/conference_logo_white.svg
+  organizer_logo: assets/branding/MIFP_logo.png
+  venue_logo: assets/branding/venue_logo.svg
+  hero_image: assets/hero/hero-placeholder.svg
+  school_image: assets/misc/placeholder.svg
+  people_directory: assets/people
+  people_fallback: assets/people/no_face.jpg
+  abstracts_pdf: ''
+  social_cover: assets/social/social-placeholder.svg
+  social_gallery_1: assets/social/social-placeholder.svg
+  social_gallery_2: assets/social/social-placeholder.svg
+  favicon: favicon.ico
+  program_pdf: ''
+navigation:
+  - label: Home
+    file: index.html
+    enabled: true
+  - label: Program
+    file: program.html
+    section: program
+    enabled: true
+  - label: Speakers
+    file: speakers.html
+    section: people
+    enabled: true
+  - label: Venue
+    file: venue.html
+    section: venue
+    enabled: true
+  - label: Accommodation
+    file: accommodation.html
+    section: accommodation
+    enabled: true
+  - label: Social Program
+    file: social_program.html
+    section: social_program
+    enabled: true
+  - label: Travel
+    file: travel.html
+    section: travel
+    enabled: true
+  - label: 'Privacy & Cookies'
+    file: privacy.html
+    section: privacy
+    enabled: true
+hero:
+  enabled: true
+  background_image_enabled: true
+  background_image: assets/hero/hero-placeholder.svg
+  background_position: center
+  overlay_strength: 0.58
+  show_logo: true
+  eyebrow: TBC
+  title: NEW-CONFERENCE
+  subtitle: TBC
+  meta: TBC
+  school_label: ''
+  primary_button_label: Registration
+  primary_button_href: registration.html
+  secondary_button_label: View Program
+  secondary_button_href: program.html
+  description: TBC
+home_intro:
+  enabled: true
+  label: The Conference
+  title: TBC
+  paragraphs:
+    - TBC
+  links: '[]'
+quantum_school:
+  enabled: false
+  label: School
+  title: TBC
+  intro: TBC
+  image: assets/misc/placeholder.svg
+  image_caption: TBC
+  topics: '[]'
+  gallery_enabled: false
+  images: '[]'
+statistics:
+  enabled: false
+  items:
+    - value: TBC
+      label: Participants
+    - value: TBC
+      label: Speakers
+    - value: TBC
+      label: Countries
+important_dates:
+  enabled: true
+  label: Timeline
+  title: Important Dates
+  items:
+    - date: TBC
+      description: TBC
+registration:
+  enabled: false
+  unavailable_url: registration-tbd.html
+  unavailable:
+    label: Registration
+    title: Registration TBC
+    message: Registration details for NEW-CONFERENCE are TBC.
+    note: TBC
+    button_label: Back to conference
+    button_url: index.html
+  label: Registration
+  title: Registration
+  intro: TBC
+  registration_url: regform/
+  registration_button_label: Open registration form
+  plan_button_label: Registration
+  open_in_new_tab: false
+  early_bird_label: Early bird deadline
+  early_bird_deadline: TBC
+  regular_from: TBC
+  refund_deadline: TBC
+  tax_note: TBC
+  plans:
+    - id: participant
+      name: Participant
+      early_price: TBC
+      late_price: TBC
+      features:
+        - Conference
+        - Coffee Breaks
+        - Lunches
+        - Excursion
+        - Gala Dinner
+        - Welcome Cocktail
+        - Conference Kit
+        - Registration
+    - id: student
+      name: Student
+      early_price: TBC
+      late_price: TBC
+      features:
+        - Conference
+        - Coffee Breaks
+        - Lunches
+        - Excursion
+        - Gala Dinner
+        - Welcome Cocktail
+        - Conference Kit
+        - Registration
+    - id: accompanying
+      name: Accompanying
+      early_price: TBC
+      late_price: TBC
+      features:
+        - Excursion
+        - Gala Dinner
+        - Welcome Cocktail
+  payment:
+    enabled: false
+    label: Payment
+    title: 'Payment methods & instructions'
+    intro: TBC
+    url: TBC
+    button_label: Open ER Global payment website
+    instructions_note: TBC
+  payment_methods:
+    - title: Credit Card
+      steps:
+        - TBC
+    - title: Bank Transfer
+      steps:
+        - TBC
+      fields:
+        - label: Beneficiary
+          value: Er Global Communication srl
+        - label: Bank
+          value: Banca di Credito Cooperativo di Roma
+        - label: IBAN
+          value: IT 80 N 08327 03245 000000001882
+        - label: SWIFT
+          value: ICRAITRRROM
+      note: 'A bank fee of 4% is applied to the transaction.'
+  provider: ER Global Communication
+  provider_note: ER GLOBAL COMMUNICATION SRL assumes no responsibility for services not explicitly listed.
+  guide_title: 'Registration & Payment Guide'
+  guide_steps:
+    - Select the appropriate registration category.
+    - Complete payment through ER Global Communication by credit card or bank transfer.
+    - Open the NEW-CONFERENCE registration page.
+    - Enter the requested participant information and attach proof of payment (JPG or PDF).
+  show_navigation_cta: true
+  nav_label: Register
+  topbar_label: Register
+  section_anchor: registration-plans
+  warnings:
+    - Payments with bon de commande cannot be accepted.
+    - Registration reductions for short stay are not available.
+  important_notes:
+    - 'All accompanying persons must be registered in advance to ensure efficient organization. Unregistered accompanying persons cannot take part in the excursion, conference/social dinner or welcome cocktail.'
+    - All presenting authors and non-presenting attendees are expected to obtain funding for both registration fees and travel expenses through their sponsoring organizations.
+    - 'The registration fee model covers session attendance, conference materials, lunches and coffee breaks, together with the conference dinner and excursion when these activities are confirmed for NEW-CONFERENCE.'
+    - NEW-CONFERENCE attendance is planned as in-person only. No remote presentation option is planned.
+    - 'Final TBC fees, deadlines, social activities and any accommodation arrangements remain TBC until explicitly confirmed on this website.'
+  home_compact: false
+  plans_enabled: true
+  warnings_enabled: true
+  warnings_title: Important registration conditions
+  warnings_intro: Please read these conditions before registering.
+  important_note_title: Important note
+  plans_title: Registration Plans
+people:
+  enabled: true
+  categories:
+    - Speaker
+    - Lecturer
+    - Committee
+    - Organizer
+    - Presenter
+    - Other
+  show_country: true
+  filter_enabled: true
+  show_empty_groups: false
+  page_label: People
+  page_title: People
+  search_placeholder: 'Search people…'
+  auto_groups: true
+  groups:
+    - title: Invited Speakers
+      role: Invited Speaker
+      style: cards
+      enabled: true
+    - title: Speakers
+      role: Speaker
+      style: cards
+      enabled: true
+    - title: Organizing Committee
+      role: Organizing Committee
+      style: list
+      enabled: true
+    - title: Program Committee
+      role: Program Committee
+      style: list
+      enabled: true
+    - title: Local Organizers
+      role: Local Organizer
+      style: list
+      enabled: true
+program:
+  enabled: true
+  item_types:
+    - registration
+    - welcome
+    - opening
+    - school
+    - session
+    - plenary
+    - invited
+    - talk
+    - oral
+    - poster
+    - break
+    - lunch
+    - social
+    - dinner
+    - excursion
+    - closing
+  label: Program
+  title: NEW-CONFERENCE Program
+  intro: TBC
+  chair_label: Chair
+  empty_message: Program TBC.
+  download:
+    enabled: true
+    mode: generated
+    label: Download program PDF
+    local_file: assets/documents/program.pdf
+    local_filename: NEW-CONFERENCE-program.pdf
+    generated_filename: NEW-CONFERENCE-program.pdf
+  pdf:
+    enabled: true
+    filename: NEW-CONFERENCE-program.pdf
+    title: NEW-CONFERENCE
+    subtitle: TBC
+    footer: NEW-CONFERENCE · MIFP
+    colors:
+      red: '#b5122b'
+      navy: '#13213c'
+      black: '#101010'
+    logos:
+      organizer: assets/branding/MIFP_logo.png
+      conference: assets/branding/conference_logo.svg
+  resources_enabled: false
+  resources_label: Conference documents
+  tabs_enabled: true
+  calendar_enabled: true
+  calendar_label: Add to calendar
+  calendar_filename: NEW-CONFERENCE-program.ics
+  resources: '[]'
+venue:
+  enabled: true
+  label: Venue
+  title: Venue
+  intro: TBC
+  name: TBC
+  address: TBC
+  map_enabled: false
+  map_url: TBC
+  map_embed_url: ''
+  gallery_enabled: true
+  gallery_label: Venue gallery
+  gallery_initial: 0
+  images:
+    - src: assets/venue/venue-placeholder.svg
+      alt: Venue placeholder
+      caption: TBC
+accommodation:
+  enabled: true
+  label: Accommodation
+  title: Accommodation
+  intro: TBC
+  warning: TBC
+  items: '[]'
+social_program:
+  enabled: true
+  label: Social Program
+  title: Social Program
+  intro: TBC
+  items: '[]'
+  gallery_enabled: false
+  images: '[]'
+travel:
+  enabled: true
+  label: Travel
+  title: Travel Information
+  intro: TBC
+  sections:
+    - icon: ''
+      title: TBC
+      text: TBC
+organizers:
+  enabled: true
+  label: Institutions
+  title: Organizing Institutions
+  intro: TBC
+  items:
+    - name: MIFP
+      short_name: Organizing Institution
+      logo: assets/branding/MIFP_logo.png
+      url: 'https://www.mifp.eu'
+    - name: TBC
+      short_name: Hosting Institution
+      logo: assets/branding/venue_logo.svg
+      url: '#'
+privacy:
+  enabled: true
+  show_banner: true
+  storage_key: mifp-conference-privacy
+  banner_text: 'This site does not use analytics, advertising or marketing cookies. The registration form uses only a strictly necessary security session cookie. This notice is informational: no optional-cookie consent is requested. Closing it stores only a local browser preference.'
+  page_label: 'Legal & privacy'
+  page_title: 'Privacy & Cookies'
+  intro: This reusable privacy page must be reviewed for NEW-CONFERENCE before publication.
+  sections:
+    - title: Data Controller
+      paragraphs:
+        - MIFP – Mediterranean Institute of Fundamental Physics
+        - TBC
+        - Privacy contact — TBC
+    - title: Information processed
+      paragraphs:
+        - 'Browsing the public conference pages does not require an account and the site does not include advertising, analytics or profiling scripts.'
+        - 'If you use the registration form, MIFP processes the information you submit, which may include your name, contact details, affiliation, country, travel or attendance information, registration category, dietary information when provided, and proof of payment. The web server may also create ordinary technical and security logs.'
+        - Please provide only information that is necessary for participation. Dietary or accessibility notes should be limited to what the organisers need to arrange the event.
+    - title: Purposes and legal bases
+      paragraphs:
+        - 'Registration data is used to process your participation, verify registration and payment information, communicate with you about NEW-CONFERENCE, organise event logistics, prepare participant materials or certificates, and meet applicable administrative, accounting or legal obligations.'
+        - 'Depending on the processing activity, the legal basis is the performance of a contract or steps requested before entering into a contract, compliance with legal obligations, and the legitimate interests of the organisers in operating and securing the event. Where a specific activity requires consent, that consent will be requested separately.'
+    - title: 'Cookies & local storage'
+      paragraphs:
+        - 'The public conference pages do not set analytics, advertising, profiling or marketing cookies, and no third-party tracking pixels are loaded.'
+        - 'The PHP registration form uses a strictly necessary session cookie only to maintain the secure form session and CSRF protection. It is not used for advertising or profiling. The cookie is configured with HttpOnly and SameSite=Strict; Secure is enabled when the site is served over HTTPS.'
+        - 'Because the site does not set optional analytics or marketing cookies, there is no Accept/Reject consent banner for optional cookies. The privacy notice is informational rather than a request for tracking consent.'
+        - 'Dismissing the privacy notice stores a local browser preference. When interface preferences are enabled, localStorage may also remember the selected theme or palette. These browser-only preferences are not used to identify you or track you across websites. You can remove them at any time by clearing this site’s browser data.'
+    - title: Recipients and service providers
+      paragraphs:
+        - 'Registration information is accessible only to the organisers and, where necessary for registration or payment administration, ER GLOBAL COMMUNICATION SRL and service providers involved in hosting, email delivery, venue, catering or event logistics. Data is shared only to the extent necessary for those purposes.'
+        - 'External services reached through links, such as payment providers, travel services, Google Maps or other third-party websites, operate under their own privacy and cookie policies. Google Maps is not embedded by this template; directions open only after an explicit click.'
+    - title: Retention and security
+      paragraphs:
+        - 'Personal data is kept only for as long as necessary to administer the conference and for any applicable accounting, legal or record-keeping requirements. Payment or accounting records may need to be retained for longer where required by law.'
+        - 'The registration form uses CSRF protection, secure session-cookie settings, validation, rate limiting and restricted upload handling. No internet service can guarantee absolute security, so unnecessary sensitive information should not be submitted.'
+    - title: Your rights
+      paragraphs:
+        - 'Where the GDPR applies, you may request access, rectification, erasure, restriction or portability of your personal data, and you may object to processing based on legitimate interests. Where processing is based on consent, you may withdraw that consent without affecting earlier lawful processing.'
+        - 'Requests can be sent to TBC. You also have the right to lodge a complaint with the competent data-protection authority, including the Italian Garante per la protezione dei dati personali where applicable.'
+    - title: Contact
+      paragraphs:
+        - Privacy questions and data-subject requests — TBC
+seo:
+  robots: 'noindex,nofollow'
+  schema_organizer: MIFP
+  title: 'NEW-CONFERENCE | TBC'
+  description: TBC
+  keywords: TBC
+  theme_color: '#13213c'
+  og_type: website
+  twitter_card: summary
+organization:
+  name: Mediterranean Institute of Fundamental Physics
+  short_name: MIFP
+  description: TBC
+  address: TBC
+  phone: TBC
+  email: TBC
+  website: 'https://www.mifp.eu'
+  website_label: www.mifp.eu
+  logo: assets/branding/MIFP_logo.png
+at_glance:
+  enabled: true
+  label: Conference Information
+  title: At a Glance
+  items:
+    - label: Dates
+      value: TBC
+    - label: Location
+      value: TBC
+    - label: Format
+      value: TBC
+  actions:
+    - label: Registration information
+      href: registration.html
+      style: primary
+    - label: Program
+      href: program.html
+      style: outline
+home_venue:
+  enabled: true
+  label: Venue
+  title: Location
+  name: TBC
+  image: assets/venue/venue-placeholder.svg
+  description: TBC
+  stats:
+    - value: TBC
+      label: City
+    - value: TBC
+      label: Country
+    - value: TBC
+      label: Address
+  address: TBC
+  map_url: TBC
+  map_enabled: false
+  map_embed_url: ''
+  gallery_link_enabled: true
+  gallery_link_label: 'Venue details & gallery'
+  gallery_link_href: venue.html
+  gallery_enabled: true
+  gallery_label: Venue gallery
+  gallery_initial: 0
+  images:
+    - src: assets/venue/venue-placeholder.svg
+      alt: Venue placeholder
+      caption: TBC
+home_program:
+  enabled: true
+  label: Schedule
+  title: Program
+  description: TBC
+  resources:
+    - badge: Program
+      title: Scientific Program
+      description: TBC
+      target: program.html
+      label: Open Program
+home_speakers:
+  enabled: true
+  label: Speakers
+  title: Invited Speakers
+  intro: TBC
+  button_label: View speakers
+  button_href: speakers.html
+home_venue_accommodation:
+  enabled: true
+  label: Practical Information
+  title: 'Venue & Accommodation'
+  intro: TBC
+  venue_button_label: Venue details
+  venue_button_href: venue.html
+  accommodation_button_label: Accommodation
+  accommodation_button_href: accommodation.html
+home_visa:
+  enabled: true
+  label: Travel Documents
+  title: Visa Information
+  intro: TBC
+  button_label: Travel information
+  button_href: travel.html
+home_social:
+  enabled: true
+  label: Social Program
+  title: Social Program
+  intro: TBC
+  button_label: View Social Program
+  button_href: social_program.html
+  preview_enabled: false
+  preview_count: 0
+  gallery_enabled: false
+  gallery_label: Social gallery
+  gallery_initial: 0
+abstract_submission:
+  enabled: true
+  label: Abstract Submission
+  title: Abstract Submission
+  intro: TBC
+  email: TBC
+  deadline: TBC
+  oral_title: Oral Presentations
+  oral_text: TBC
+  poster_title: Poster Presentations
+  poster_text: TBC
+  template_enabled: false
+  template_title: Abstract Template
+  template_text: TBC
+  template_file: ''
+  template_label: Download Template
+  template_format: DOCX
+sponsor_packages:
+  enabled: false
+  label: Support
+  title: Sponsor Packages
+  intro: TBC
+  contact_email: TBC
+  packages: '[]'
+  custom_title: Sponsorship
+  custom_text: TBC
+committee:
+  enabled: true
+  label: People
+  title: Committee
+  intro: Committee membership for NEW-CONFERENCE is TBC.
+  featured_roles:
+    - group: Organizing Committee
+      roles:
+        - Organizing Committee
+    - group: Program Committee
+      roles:
+        - Program Committee
+    - group: Local Organizers
+      roles:
+        - Local Organizer
+footer:
+  enabled: true
+  show_description: true
+  show_contact: true
+  show_links: true
+countdown:
+  enabled: true
+  show_on_page: true
+  show_in_sidebar: true
+  label: Countdowns
+  title: NEW-CONFERENCE Countdown
+  note: Dates are TBC.
+  update_interval_seconds: 1
+  urgent_within_days: 7
+  items: '[]'
+back_to_top:
+  enabled: true
+  show_after_px: 320
+  label: Back to top

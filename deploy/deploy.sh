@@ -210,7 +210,7 @@ assert_events_root_approval() {
 }
 
 sync_events_php_lifecycle() {
-  local backend="$1" version service pool candidate backup changed=0 had_old=0
+  local backend="$1" version service pool candidate backup changed=0 had_old=0 registrations_write=0
   if [[ "$backend" != "local-vps" ]]; then
     service="$(events_php_service || true)"
     if [[ -z "$service" ]]; then
@@ -261,6 +261,7 @@ sync_events_php_lifecycle() {
   [[ -e "$EVENTS_PHP_STATE" ]] || install -o root -g root -m 0644 /dev/null "$EVENTS_PHP_STATE"
   [[ -e "$EVENTS_PHP_INCLUDE" ]] || install -o root -g caddy -m 0644 /dev/null "$EVENTS_PHP_INCLUDE"
   candidate="$(mktemp "$PHP_POOL_DIR/.mifp-events.XXXXXX")"
+  [[ "$(config_cli get REGISTRATIONS_DASHBOARD_WRITE_ENABLED)" != "true" ]] || registrations_write=1
   cat > "$candidate" <<EOF_PHP_POOL
 [mifp-events]
 user = $EVENTS_PHP_USER
@@ -282,6 +283,7 @@ security.limit_extensions = .php
 php_admin_value[sendmail_path] = "/usr/bin/msmtp --file=$PHP_MAIL_RELAY_CONFIG --account=default -t"
 env[MIFP_EVENTS_PRIVATE_DIR] = $EVENTS_PRIVATE_DIR
 env[MIFP_REGISTRATION_READ_GROUP] = 1
+env[MIFP_REGISTRATION_WRITE_GROUP] = $registrations_write
 env[MIFP_REGISTRATION_DIR] = $EVENTS_PRIVATE_DIR/registrations
 env[MIFP_UPLOAD_DIR] = $EVENTS_PRIVATE_DIR/uploads
 php_admin_value[open_basedir] = $root:$EVENTS_PRIVATE_DIR:/tmp
@@ -570,16 +572,20 @@ prepare_compose_secrets() {
 
 compose_with_image() {
   local image="$1"; shift
-  local registrations_gid="" extra_compose=()
+  local registrations_gid="" registrations_write=false registrations_read_only=true extra_compose=()
   if [[ "$(config_cli get REGISTRATIONS_DASHBOARD_ENABLED)" == "true" && "$(config_cli get EVENTS_PUBLISH_BACKEND)" == "local-vps" ]]; then
     registrations_gid="$(id -g "$EVENTS_PHP_USER")"
     extra_compose=(-f "$MIFP_HOME/compose.registrations.yaml")
+    if [[ "$(config_cli get REGISTRATIONS_DASHBOARD_WRITE_ENABLED)" == "true" ]]; then
+      registrations_write=true; registrations_read_only=false
+    fi
   fi
   prepare_compose_secrets
   MIFP_IMAGE="$image" MIFP_DATA_DIR="$DATA_DIR" MIFP_SECRETS_DIR="$SECRET_MATERIAL_DIR" \
     EVENTS_PUBLICATION_POLICY="$EVENTS_PUBLICATION_POLICY" \
     MIFP_DEPLOY_CONTRACT="$DEPLOY_CONTRACT_VERSION" \
     MIFP_REGISTRATIONS_GID="$registrations_gid" MIFP_REGISTRATIONS_PRIVATE_DIR="$EVENTS_PRIVATE_DIR" \
+    MIFP_REGISTRATIONS_WRITE_ENABLED="$registrations_write" MIFP_REGISTRATIONS_READ_ONLY="$registrations_read_only" \
     "${COMPOSE_BASE[@]}" "${extra_compose[@]}" "$@"
 }
 
@@ -2731,7 +2737,11 @@ case "$command" in
     python3 "$MIFP_HOME/registration-tools.py" "$1" --resolve-receipt "$2" --channel "$3" --not-accepted --confirm "$1" --requests "$DATA_DIR/conferences/.registrations-admin/requests" --private "$EVENTS_PRIVATE_DIR" --backups "$MIFP_HOME/registration-backups" --allowlist "$EVENTS_PHP_STATE" ;;
   registrations-access) shift;
     [[ $# -eq 1 ]] || die "Uso: mifpctl registrations-access EVENT"
-    python3 "$MIFP_HOME/registration-tools.py" "$1" --grant-read --confirm "$1" --php-uid "$(id -u "$EVENTS_PHP_USER")" --php-gid "$(id -g "$EVENTS_PHP_USER")" --requests "$DATA_DIR/conferences/.registrations-admin/requests" --private "$EVENTS_PRIVATE_DIR" --backups "$MIFP_HOME/registration-backups" --allowlist "$EVENTS_PHP_STATE" ;;
+    registration_access_args=()
+    if [[ "$(config_cli get REGISTRATIONS_DASHBOARD_WRITE_ENABLED)" == "true" ]]; then
+      registration_access_args=(--writable --public-root "$(config_cli get EVENTS_LOCAL_ROOT)")
+    fi
+    python3 "$MIFP_HOME/registration-tools.py" "$1" --grant-read "${registration_access_args[@]}" --confirm "$1" --php-uid "$(id -u "$EVENTS_PHP_USER")" --php-gid "$(id -g "$EVENTS_PHP_USER")" --requests "$DATA_DIR/conferences/.registrations-admin/requests" --private "$EVENTS_PRIVATE_DIR" --backups "$MIFP_HOME/registration-backups" --allowlist "$EVENTS_PHP_STATE" ;;
   registrations-request) shift;
     [[ $# -ge 1 ]] || die "Uso: mifpctl registrations-request ID [--confirm EVENT --approve SHA256] [--organizer-to EMAIL] [--restore]"
     registration_args=("$1"); shift

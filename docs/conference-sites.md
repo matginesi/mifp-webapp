@@ -2,12 +2,12 @@
 
 ## Responsabilità
 
-La webapp MIFP non deve diventare un secondo editor di conferenze.
+L’Editor integrato crea e modifica i contenuti; Conference sites valida, importa e pubblica i pacchetti.
 
 - `events` è il catalogo istituzionale: titolo, date, descrizione, relazioni e URL pubblico.
 - `conference_sites` è il record operativo del microsito: path pubblico, origine del pacchetto,
   versione, checksum e stato di deploy.
-- `mifp-conference-editor` è l'authoring tool per i nuovi micrositi.
+- [Conference Editor](conference-editor.md), accessibile dalla dashboard, è l’authoring tool canonico.
 
 Il collegamento è `conference_sites.event_id -> events.id` (`ON DELETE SET NULL`). Il vincolo
 univoco impedisce che lo stesso evento istituzionale venga collegato per errore a due micrositi.

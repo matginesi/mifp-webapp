@@ -1567,6 +1567,8 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .table-card { max-width: 100%; min-width: 0; overflow: hidden; }
 .data-scroll { display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: auto; -webkit-overflow-scrolling: touch; max-height: 70vh; }
 .data-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .78rem; }
+.registrations-table { min-width: 54rem; }
+.registrations-table th:first-child { width: 4rem; }
 .data-table th, .data-table td { min-width: 0; }
 .data-table thead th {
   position: sticky; top: 0; z-index: 2;
@@ -1592,6 +1594,7 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   white-space: nowrap;
 }
 .data-table tbody tr { transition: background-color .15s ease; }
+.registrations-table tbody td { white-space: normal; overflow-wrap: anywhere; }
 .data-table tbody tr:hover { background: var(--surface-2); }
 .data-table tbody tr.record-row { cursor: pointer; }
 .data-table tbody tr.record-row.is-selected { background: var(--accent-subtle); }
@@ -5599,4 +5602,28 @@ textarea:focus-visible { outline: 0; }.dash-empty-state,.empty-state{
   .recipient-file-tools { grid-template-columns:1fr; }
   .recipient-file-tools .btn { width:100%; }
   .poll-activity-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+
+/* Registration review uses the shared cards, fields, pagination and charts. */
+.registrations-workspace { display: grid; gap: var(--dashboard-gap); min-width: 0; }
+.registrations-workspace > .overview-grid { margin-bottom: 0; }
+.registrations-filter-grid,
+.registrations-operation-grid { align-items: end; padding: .8rem; }
+.registrations-filter-actions,
+.registrations-operation-intro { grid-column: 1 / -1; margin: 0; }
+.registrations-operations { border-top: 1px solid var(--border-soft); }
+.registrations-operations > summary { padding: .8rem; cursor: pointer; font-size: .78rem; font-weight: 650; }
+.registrations-operation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); border: 0; margin: 0; }
+.registrations-operation-grid > .btn { justify-self: start; }
+.registrations-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--dashboard-gap); }
+.registrations-chart-grid details { overflow-x: auto; }
+.registrations-chart-grid details th { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 1199px) {
+  .registrations-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 767px) {
+  .registrations-filter-grid,
+  .registrations-operation-grid,
+  .registrations-chart-grid { grid-template-columns: minmax(0, 1fr); }
+  .registrations-workspace .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -28,6 +28,7 @@ IMPORT_DATA/
 NEW_IMPORT_DATA/
 
 # Persistent application data (never source code)
+/CONFERENCES/
 # MIFPAPP/DATABASE/
 *.db
 *.db-shm

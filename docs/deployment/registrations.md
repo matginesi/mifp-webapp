@@ -1,5 +1,8 @@
 # Registrazioni e affidabilità email
 
+Per questa release seguire prima il [runbook aggiornamento RegForm ed Editor](regform-dashboard-update.md).
+L’Editor canonico è ora integrato nella dashboard: il sibling non è una dipendenza runtime.
+
 ## Confini e autorità
 
 La dashboard espone **Conference sites → Registrations** agli amministratori
@@ -14,21 +17,22 @@ Stati, note, archivio e storico essenziale stanno nel piccolo sidecar SQLite
 `/opt/mifp/data/conferences/.registrations-admin/registrations-admin.sqlite3`.
 Questa directory è privata e rientra nel backup esistente di `conferences/`.
 L'archiviazione è un metadato reversibile: conserva iscrizione e allegati.
-Gli export CSV/XLSX includono i risultati filtrati e i metadati amministrativi;
+Gli export CSV/XLSX includono i risultati filtrati e i metadati amministrativi; Word/PDF includono la lista e copie delle ricevute. Ogni export richiede password e POST con CSRF;
 le celle vengono protette dalla formula injection. I download degli allegati
 sono autenticati, non hanno filename scelti dal client e non sono cacheabili.
 CSV malformati, receipt duplicati, symlink e percorsi ambigui bloccano la lettura.
 
-Il container riceve **solo due bind mount in sola lettura**, registrazioni e
+Per impostazione predefinita il container riceve **due bind mount in sola lettura**, registrazioni e
 upload, attraverso `compose.registrations.yaml`, selezionato esplicitamente da
 `mifpctl` quando `REGISTRATIONS_DASHBOARD_ENABLED=true` e il backend è `local-vps`.
 Il gruppo supplementare è quello dell'utente PHP; consente di leggere file
 `0640` in directory `0750`, ma il mount impedisce scritture. Non vengono montati
 `/etc/msmtprc`, credenziali, sessioni, socket host o l'intero albero privato.
-Gli altri backend mantengono i mount e il comportamento ordinari. Se lo storage
+La [cancellazione protetta dalla dashboard](regform-dashboard-update.md#cancellazione-dalla-dashboard-ed-export-protetti) richiede un opt-in separato alla scrittura dei soli due mount e un runtime PHP aggiornato; senza opt-in nulla cambia. Gli altri backend mantengono i mount e il comportamento ordinari. Se lo storage
 non è collegato, la dashboard indica indisponibilità; non presenta dati vuoti
 come prova che non esistano iscrizioni. Anche le installazioni locali possono
-configurare `REGISTRATIONS_PRIVATE_ROOT` su storage sintetico accessibile.
+usare la cartella privata automatica descritta sotto, o configurare
+`REGISTRATIONS_PRIVATE_ROOT` per un archivio esistente.
 
 ## Difetti email confermati e significato degli stati
 
@@ -88,7 +92,7 @@ dalla configurazione canonica; non richiedono copie manuali dei segreti.
    non modifica il pool PHP live e non riavvia l'app.
 2. Revocare il modulo prima della sostituzione:
    `sudo mifpctl events-php-disable PLMCN-2027/regform`.
-   Non procedere se revoca/reload fallisce. Anche la pulizia dei dati esige
+   Non procedere se revoca/reload fallisce. Anche la pulizia **host** dei dati esige
    che non esistano autorizzazioni attive per quella chiave di storage.
 3. Dopo il refresh, applicare la configurazione host revisionata con
    `sudo mifpctl host-apply all`, quindi `sudo mifpctl mail-diagnose`.
@@ -145,6 +149,79 @@ dalla configurazione canonica; non richiedono copie manuali dei segreti.
    `registrations/` e dotfile. I dati privati non richiedono alcun routing Caddy.
    Un'eventuale applicazione di nuovi template/routing Caddy resta un'operazione
    distinta: `sudo mifpctl host-apply web`, dopo revisione.
+
+## Registrazioni in locale: cartella privata automatica
+
+Con `FLASK_ENV=development`, senza override, la pagina usa automaticamente
+`CONFERENCES_DIR/.registrations-private/`. Con `./mifp local` corrisponde a
+`MIFPAPP/DATABASE/conferences/.registrations-private/`; con Docker locale è
+`/app/data/conferences/.registrations-private/`, sul volume dati già esistente.
+Vengono create soltanto directory private `0700`, mai record sintetici o CSV.
+Nessuna API o sincronizzazione è necessaria.
+
+I file hanno questa struttura:
+
+```text
+.registrations-private/
+  registrations/EVENTO/registrations.csv
+  uploads/EVENTO/proof-REG-....png
+```
+
+La pagina indica esplicitamente che sta mostrando dati locali, separati dalla
+VPS. Un elenco vuoto riguarda soltanto la cartella locale. Importare WEBSITE/INFO
+non importa iscrizioni. Una copia autorizzata dei file esistenti può essere
+collocata qui, preservandone struttura e permessi; la lettura ordinaria non riscrive il CSV; import e cancellazioni richiedono
+l’abilitazione esplicita della scrittura. I dati restano esclusi da Git e dai pacchetti WEBSITE.
+
+Flask non esegue PHP: questa semplificazione rende disponibile la gestione
+dei file locali, non avvia un server PHP. Se si collauda già il RegForm con PHP
+locale, impostare `MIFP_REGISTRATION_DIR` sulla sottocartella `registrations`
+e `MIFP_UPLOAD_DIR` su `uploads` di questa stessa cartella privata. Non usare
+la document root pubblica come destinazione degli invii.
+
+`REGISTRATIONS_PRIVATE_ROOT` resta un override per un archivio esistente. In
+produzione non viene creata una cartella vuota di ripiego: si leggono gli stessi
+file PHP già presenti sulla VPS tramite i mount esistenti, read-only per
+default e scrivibili solo con l’opt-in documentato. Non occorre
+spostarli. Senza accesso configurato, l'elenco spiega la situazione (200), mentre
+download e modifiche rimangono indisponibili (503).
+
+Un percorso già configurato ma mancante resta un vero errore 503
+(`not_connected`); permessi insufficienti restano `permission_denied`.
+
+## Dashboard nuovamente in 503 dopo un invio
+
+Se `registrations-access` risolve il problema ma il successivo invio lo
+reintroduce, verificare sia il PHP pubblicato sia il pool attivo. Il regform
+precedente può ripristinare `0700` sulle directory e `0600` sul CSV; il solo
+collegamento Compose non corregge questo comportamento.
+
+Controlli in sola lettura, senza stampare dati o credenziali:
+
+```bash
+sudo stat -c '%a %U:%G %n' \
+  /srv/mifp-events-private/registrations/PLMCN-2027 \
+  /srv/mifp-events-private/registrations/PLMCN-2027/registrations.csv
+sudo grep -nF 'MIFP_REGISTRATION_READ_GROUP' \
+  /srv/mifp-events/PLMCN-2027/regform/src/bootstrap.php
+sudo grep -nF 'env[MIFP_REGISTRATION_READ_GROUP]' \
+  /etc/php/8.3/fpm/pool.d/mifp-events.conf
+```
+
+Servono entrambi: il PHP deve usare il flag per mantenere directory `0750` e
+CSV/allegati `0640`, e il pool deve esporre il flag con valore `1`. Il sorgente
+aggiornato nell'Editor non aggiorna automaticamente il WEBSITE sulla VPS.
+
+Se manca il supporto nel PHP, esportare dall'Editor il WEBSITE con
+`regform/index.php` e `regform/src/bootstrap.php` aggiornati. Seguire la
+procedura sopra: backup, revoca PHP, sostituzione revisionata del WEBSITE,
+`host-apply php` se necessario, preparazione accesso e nuova approvazione.
+Se manca solo il flag nel pool, non serve ripubblicare: applicare esplicitamente
+`sudo mifpctl host-apply php` dal bundle aggiornato, poi predisporre l'accesso
+a PHP revocato e riabilitarlo. Non correggere PHP direttamente mentre è
+autorizzato e non usare chmod ricorsivi o una correzione periodica dei permessi.
+Verificare la persistenza dei modi con dati sintetici nel runtime di test;
+non creare ulteriori iscrizioni reali per diagnosticare il problema.
 
 ## Richieste, retry, cancellazione e recupero
 
@@ -277,3 +354,14 @@ Il testo privacy cita MIFP, ER GLOBAL COMMUNICATION SRL e il riferimento
 finalità, condizioni di registrazione e durata di conservazione di CSV,
 ricevute, note amministrative, email e backup. La correzione tecnica non
 sostituisce queste decisioni e non introduce testi legali o prezzi definitivi.
+
+
+### Ripristino manuale dalla dashboard
+
+L'export **Recovery ZIP + originals** e **Import registrations** sono azioni
+separate dall'import WEBSITE/INFO. Lo ZIP conserva CSV e ricevute originali
+soltanto nel download richiesto dall'operatore, senza backup automatici sul
+server. L'import richiede password, conferma, alert amministratore e gli stessi
+permessi di scrittura previsti per la cancellazione; aggiunge record mancanti
+senza sovrascrivere quelli esistenti o inviare email ai partecipanti.
+Vedere la [procedura e i limiti](regform-dashboard-update.md#export-e-import-manuale-delle-registrazioni).

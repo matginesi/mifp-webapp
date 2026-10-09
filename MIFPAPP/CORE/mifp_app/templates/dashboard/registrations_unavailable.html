@@ -1,0 +1,37 @@
+{% extends 'dashboard/layout.html' %}
+{% from 'dashboard/_components.html' import page_header %}
+{% block page_title %}Registrations · {{ 'not configured' if reason == 'not_configured' else 'unavailable' }}{% endblock %}
+{% block content %}
+{% call page_header('Conference site', 'Registration data not configured' if reason == 'not_configured' else 'Registrations temporarily unavailable', site.title) %}
+<a class="btn btn-outline" href="{{ url_for('dashboard.conference_edit',site_id=site.id) }}">Back to conference site</a>
+{% endcall %}
+<section class="panel">
+{% if reason == 'not_configured' %}
+<h2>Where are the registrations?</h2>
+<p>The public PHP form saves registrations in a private CSV file and keeps uploaded attachments outside the public website. This MIFP instance has no access to that registration archive configured.</p>
+<p>Importing a WEBSITE or INFO package does not import registrations. A local MIFP instance does not automatically connect to the VPS or download its registration data.</p>
+<p>Production access must be enabled for the PHP form's existing private files. You can continue managing the conference website without connecting registration data.</p>
+<p>The registrations on the server have not been checked or changed. This page cannot determine how many exist.</p>
+{% elif reason == 'permission_denied' %}
+<h2>Registration files cannot be read</h2>
+<p>Registration storage is unavailable: the application cannot read the private files. No registration was changed.</p>
+<p>If this follows a new submission, the host operator must check both the published RegForm runtime and the PHP-FPM read-group setting. Preparing permissions once does not update an older form.</p>
+{% elif reason == 'busy' %}
+<h2>Registration files are busy</h2>
+<p>The registration repository is busy. Wait a few seconds and reload this page. No data was changed.</p>
+{% elif reason == 'not_connected' %}
+<h2>The configured registration archive is unavailable</h2>
+<p>A private registration archive is configured, but its directory could not be found. Check that the configured directory and its mount are available. No registration was changed.</p>
+{% elif reason == 'invalid_data' %}
+<h2>Registration files failed validation</h2>
+<p>The registration CSV or storage layout failed validation. Host review is required; no records were changed or skipped.</p>
+{% else %}
+<h2>Registration data is unavailable</h2>
+<p>Private storage or administrative metadata could not be accessed. Host review is required. No registration was changed.</p>
+{% endif %}
+{% if status != 200 %}
+<p>Diagnostic code: <code>{{ reason }}</code>. HTTP {{ status }}. Request ID: <code>{{ g.request_id }}</code>. Include it when asking for assistance.</p>
+<a class="btn btn-primary" href="{{ request.path }}">Try again</a>
+{% endif %}
+</section>
+{% endblock %}

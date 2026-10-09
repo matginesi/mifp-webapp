@@ -17,7 +17,7 @@ from TESTS.webapp.test_events_caddy_runtime import _serve, events_runtime  # noq
 
 @pytest.fixture
 def plmcn_source():
-    default = Path(__file__).resolve().parents[3] / "mifp-conference-editor/PLMCN-2027"
+    default = Path(__file__).resolve().parents[2] / "MIFPAPP/CORE/CONFERENCE_EDITOR/TEMPLATE"
     source = Path(os.environ.get("MIFP_TEST_PLMCN_SOURCE", str(default)))
     if not (source / "regform/index.php").is_file():
         pytest.skip("Set MIFP_TEST_PLMCN_SOURCE to the PLMCN-2027 WEBSITE source")
@@ -55,11 +55,16 @@ def test_real_form_closed_sessions_and_oversized_request(events_runtime, plmcn_s
     public_site = runtime["public"] / "PLMCN-2027"
     shutil.copytree(plmcn_source / "regform", public_site / "regform", dirs_exist_ok=True)
     shutil.copyfile(plmcn_source / "conference.yaml", public_site / "conference.yaml")
+    conference = public_site / "conference.yaml"
+    conference.write_text(re.sub(r"(?m)^registration:\n  enabled: false", "registration:\n  enabled: true", conference.read_text()))
     settings = public_site / "regform/settings.yaml"
     # Admission settings belong to the authoritative event package. Close only
     # this disposable copy and request 16 MiB to exercise the runtime clamp.
     synthetic_settings = re.sub(r"(submit_enabled:\s*)true", r"\1false", settings.read_text())
     synthetic_settings = re.sub(r"(max_upload_mb:\s*)\d+", r"\g<1>16", synthetic_settings)
+    synthetic_settings = synthetic_settings.replace("reply_to_email: TBC", "reply_to_email: synthetic@example.invalid")
+    synthetic_settings = synthetic_settings.replace("from_email: TBC", "from_email: synthetic@example.invalid")
+    synthetic_settings = synthetic_settings.replace("admin_emails:\n      - TBC", "admin_emails:\n      - synthetic@example.invalid")
     settings.write_text(synthetic_settings)
     assert _run(runtime["env"], "events-php-enable", "PLMCN-2027/regform", check=False).returncode == 0
     with _serve(runtime) as request:

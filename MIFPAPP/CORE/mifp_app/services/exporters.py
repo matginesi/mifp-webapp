@@ -17,6 +17,7 @@ import csv
 import io
 import json
 import re
+from html import escape
 from datetime import datetime
 from typing import Any
 
@@ -358,7 +359,7 @@ _PDF_KEY_COLUMNS = {
 }
 
 
-def rows_to_pdf(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
+def rows_to_pdf(rows: list[dict[str, Any]], title: str = "Export", *, proofs: list[dict] | None = None) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -407,6 +408,12 @@ def rows_to_pdf(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
     pdf_body = "Helvetica"
     pdf_body_bold = "Helvetica-Bold"
     pdf_body_italic = "Helvetica-Oblique"
+    if proofs is not None:
+        # Match institutional PDFs and preserve international participant names.
+        from .institutional_pdf import _register_fonts
+        fonts = _register_fonts()
+        pdf_display, pdf_body = fonts.serif_bold, fonts.sans
+        pdf_body_bold, pdf_body_italic = fonts.sans_bold, fonts.sans_italic
 
     # ── Custom styles ──
     title_style = ParagraphStyle(
@@ -441,7 +448,7 @@ def rows_to_pdf(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
 
     # ── Title block ──
     elements.append(Paragraph("MIFP", title_style))
-    elements.append(Paragraph(title, h2_style))
+    elements.append(Paragraph(escape(title), h2_style))
     elements.append(Paragraph(
         f"Exported: {datetime.now():%Y-%m-%d %H:%M}  ·  {len(rows)} records",
         subtitle_style,
@@ -459,7 +466,7 @@ def rows_to_pdf(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
         header_row = [Paragraph(_column_label(c), header_style) for c in cols]
         data = [header_row]
         for row in rows[:_ROW_LIMITS["pdf"]]:
-            data_row = [Paragraph(_sanitize_cell(row.get(c))[:200], cell_style) for c in cols]
+            data_row = [Paragraph(escape(_sanitize_cell(row.get(c))[:200]), cell_style) for c in cols]
             data.append(data_row)
 
         # Column widths
@@ -536,6 +543,26 @@ def rows_to_pdf(rows: list[dict[str, Any]], title: str = "Export") -> bytes:
             # Add spacer between chunks (except last)
             if chunk_end < total_data_rows:
                 elements.append(Spacer(1, 8 * mm))
+
+    # Registration documents include inert rendered copies, never PDF scripts.
+    if proofs:
+        from reportlab.platypus import Image, PageBreak
+        from PIL import Image as PILImage
+        for proof in proofs:
+            for index, payload in enumerate(proof["images"] or [None], 1):
+                elements.append(PageBreak())
+                elements.append(Paragraph("Proof of payment", title_style))
+                elements.append(Paragraph(escape(proof["reference"]), h2_style))
+                elements.append(Paragraph(escape(proof["filename"]), subtitle_style))
+                if payload is None:
+                    elements.append(Paragraph(escape(proof["notice"]), cell_style))
+                else:
+                    elements.append(Paragraph(f"Page {index} of {len(proof['images'])}", subtitle_style))
+                    with PILImage.open(io.BytesIO(payload)) as image:
+                        ratio = min((page_size[0] - 3.6 * cm) / image.width,
+                                    (doc.height - 120) / image.height)
+                        elements.append(Image(io.BytesIO(payload), width=image.width * ratio,
+                                              height=image.height * ratio))
 
     # ── Page number footer ──
     def add_page_footer(canvas, doc):

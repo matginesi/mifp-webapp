@@ -32,6 +32,7 @@ def test_dashboard_uses_bounded_page_specific_modules_without_build_step():
         "notifications.js",
         "polls.js",
         "recipient-files.js",
+        "registrations.js",
         "safety-operations.js",
         "send-confirmation.js",
         "site-copy.js",
@@ -225,8 +226,14 @@ def test_repository_keeps_one_readme_and_no_orphan_database_tools():
         and ".venv" not in path.parts
         and ".pytest_cache" not in path.parts
         and runtime_event_sites not in path.parents
+        and ROOT / "CONFERENCES" not in path.parents
+        and not path.relative_to(ROOT).parts[0].startswith(".mifp-test-runtime.")
     ]
-    assert readmes == [ROOT / "README.md"]
+    # These are payload documentation for exported sites, not competing repo
+    # entry points. Keep them in the canonical Editor scaffold.
+    editor_template = CORE / "CONFERENCE_EDITOR/TEMPLATE"
+    assert set(readmes) == {ROOT / "README.md", editor_template / "README.md",
+                            editor_template / "regform/README.md"}
 
     assert sorted(path.name for path in (ROOT / "tools").iterdir() if path.is_file()) == [
         "check_repo_hygiene.py",

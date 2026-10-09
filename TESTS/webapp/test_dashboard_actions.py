@@ -1629,6 +1629,9 @@ def test_log_export_and_cleanup_actions(app, client):
 MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.registration_detail",
     "dashboard.registrations_request",
+    "dashboard.registrations_export",
+    "dashboard.registrations_delete",
+    "dashboard.registrations_import",
     "dashboard.archive_cancel_job",
     "dashboard.archive_detach",
     "dashboard.archive_import",

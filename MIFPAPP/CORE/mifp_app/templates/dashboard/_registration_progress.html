@@ -1,0 +1,5 @@
+{% from "dashboard/_components.html" import operation_totem %}
+<section id="registrationOperation" class="panel" hidden aria-live="polite" aria-busy="false" aria-label="Registration operation">
+{{ operation_totem('bi-file-earmark-check', 'registrationOperationTitle', 'Registration operation', meta_id='registrationOperationMeta', meta='Waiting', state_id='registrationOperationState', state_label='Ready', totem_id='registrationOperationTotem') }}
+<div class="import-progress-bar mt-3" role="progressbar" aria-label="Registration operation progress" aria-valuemin="0" aria-valuemax="100"><span></span></div>
+</section>

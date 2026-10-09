@@ -21,6 +21,7 @@ function initCharts() {
   var canvases = document.querySelectorAll('canvas[data-chart]');
   if (!canvases.length) return;
   if (!window.Chart) {
+    window.MIFPLog?.warn('charts.library_unavailable', { charts: canvases.length });
     canvases.forEach(function (canvas) { showChartFallback(canvas, 'Chart.js non caricato.'); });
     return;
   }
@@ -107,7 +108,8 @@ function initCharts() {
       });
       canvas.dataset.chartReady = '1';
     } catch (err) {
-      showChartFallback(canvas, 'Grafico non renderizzato: ' + err.message);
+      window.MIFPLog?.error('charts.render_failed', { type: type, error_type: err.name || 'Error' });
+      showChartFallback(canvas, 'Grafico non disponibile.');
     }
   });
 }

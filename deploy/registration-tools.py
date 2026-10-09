@@ -406,6 +406,18 @@ def grant_read(args):
     with opened(args.allowlist) as allowlist:
         if any(line.strip('/').split('/')[-2:] == [event, 'regform'] for line in allowlist.read(1024 * 1024).decode().splitlines()):
             raise ValueError('Revoke PHP authorization before changing access')
+    writable = getattr(args, 'writable', False)
+    if writable:
+        if not args.public_root:
+            raise ValueError('Published event root required for write access')
+        # The host reviews the deployed runtime, never a claim sent by Flask.
+        with opened(args.public_root / event / 'regform' / 'src' / 'bootstrap.php') as source:
+            if b'function registration_file_mode()' not in source.read(1024 * 1024):
+                raise ValueError('Update the published PHP runtime before granting write access')
+        with opened(args.public_root / event / 'regform' / 'index.php') as source:
+            runtime = source.read(1024 * 1024)
+            if b'.operations.lock' not in runtime or b'$registrationOperationLock' not in runtime:
+                raise ValueError('Published PHP must coordinate registration operations')
     with opened(args.private / 'registrations' / event / 'registrations.csv') as stream:
         _, rows = rows_from(stream.read(LIMIT + 1))
     # Validate every target before changing permissions. Never recurse into
@@ -428,13 +440,13 @@ def grant_read(args):
                 raise ValueError('Unexpected PHP storage group')
     for target in targets:
         with opened(target) as stream:
-            os.fchmod(stream.fileno(), 0o640)
+            os.fchmod(stream.fileno(), 0o660 if writable else 0o640)
     for tree in ('registrations', 'uploads'):
         for target in (args.private / tree, args.private / tree / event):
             with directory(target) as fd:
                 if os.fstat(fd).st_gid != args.php_gid:
                     raise ValueError('Unexpected PHP storage directory group')
-                os.fchmod(fd, 0o750)
+                os.fchmod(fd, 0o2770 if writable and target.name == event else 0o750)
     with directory(args.private / 'registrations' / event) as parent:
         fd = os.open('.operations.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o640, dir_fd=parent)
         try:
@@ -442,9 +454,10 @@ def grant_read(args):
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                 raise ValueError('Unsafe operation lock')
             os.fchown(fd, args.php_uid, args.php_gid)
+            os.fchmod(fd, 0o660 if writable else 0o640)
         finally:
             os.close(fd)
-    print('Read-only dashboard access prepared for this conference; PHP remains revoked')
+    print(('Read/write' if writable else 'Read-only') + ' dashboard access prepared for this conference; PHP remains revoked')
 
 
 
@@ -494,6 +507,8 @@ def main():
     parser.add_argument('--channel')
     parser.add_argument('--not-accepted', action='store_true')
     parser.add_argument('--grant-read', action='store_true')
+    parser.add_argument('--writable', action='store_true')
+    parser.add_argument('--public-root', type=Path)
     parser.add_argument('--php-uid', type=int)
     parser.add_argument('--php-gid', type=int)
     parser.add_argument('--restore', action='store_true')

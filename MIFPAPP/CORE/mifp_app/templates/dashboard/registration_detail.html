@@ -1,16 +1,29 @@
 {% extends "dashboard/layout.html" %}
 {% from "dashboard/_components.html" import page_header %}
 {% block page_title %}Registration {{ row.receipt_id }}{% endblock %}
+{% block extra_js %}<script src="{{ url_for('static',filename='js/dashboard/registrations.js',v=static_version) }}" defer></script>{% endblock %}
 {% block content %}
 {% call page_header('Registrations', row.receipt_id, 'Saved submission and separate operator metadata.') %}{% endcall %}
 <p><a href="{{ url_for('dashboard.registrations',site_id=site.id) }}">Back to registrations</a></p>
-<dl>{% for key,value in row.items() if key not in ['admin_status','internal_note','archived','notifications'] %}<dt>{{ key|replace('_',' ') }}</dt><dd>{{ value or '—' }}</dd>{% endfor %}</dl>
+{% include "dashboard/_registration_progress.html" %}
+<div class="row g-4"><section class="col-12 col-lg-7 panel"><h2>Saved submission</h2><dl class="row">{% for key,value in row.items() if key not in ['admin_status','internal_note','archived','notifications','potential_duplicates'] %}<dt class="col-5">{{ key|replace('_',' ') }}</dt><dd class="col-7 text-break">{{ value or '—' }}</dd>{% endfor %}</dl></section><section class="col-12 col-lg-5 panel"><h2>Administrative review</h2>
+{% if row.proof_file and row.proof_file.lower().endswith(('.png','.jpg','.jpeg')) %}<details><summary>Preview payment receipt</summary><img class="img-fluid" alt="Uploaded payment receipt" loading="lazy" src="{{ url_for('dashboard.registration_proof',site_id=site.id,receipt=row.receipt_id,preview=1) }}"></details>{% endif %}
 {% if row.proof_file %}<p><a class="btn btn-outline" href="{{ url_for('dashboard.registration_proof',site_id=site.id,receipt=row.receipt_id) }}">Download payment receipt</a></p>{% endif %}
 <p>Organizer notification: {{ notifications.organizers }} · Participant confirmation: {{ notifications.participant }}. Accepted by the relay does not prove delivery.</p>
 <form method="post"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-<label>Status<select class="form-select" name="status">{% for status in statuses %}<option {% if row.admin_status==status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select></label>
-<label>Internal notes<textarea class="form-control" name="note" maxlength="4000" rows="5">{{ row.internal_note }}</textarea></label>
-<label><input type="checkbox" name="archived" value="1" {% if row.archived %}checked{% endif %}> Archived</label>
+<label class="d-block mb-3">Status<select class="form-select" name="status">{% for status in statuses %}<option {% if row.admin_status==status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select></label>
+<label class="d-block mb-3">Internal notes<textarea class="form-control" name="note" maxlength="4000" rows="5">{{ row.internal_note }}</textarea></label>
+<label class="d-block mb-3"><input type="checkbox" name="archived" value="1" {% if row.archived %}checked{% endif %}> Archived</label>
 <button class="btn btn-primary">Save administrative metadata</button></form>
-<h2>History</h2><ul>{% for timestamp,actor,operation in history %}<li>{{ timestamp }} · {{ actor }} · {{ operation }}</li>{% else %}<li>No administrative changes.</li>{% endfor %}</ul>
+{% if write_enabled %}
+<details class="mt-3"><summary>Delete this registration</summary>
+<form method="post" action="{{ url_for('dashboard.registrations_delete',site_id=site.id) }}" class="mt-3" data-no-spinner="1" data-registration-operation="mutation">
+<input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><input type="hidden" name="receipt" value="{{ row.receipt_id }}">
+<p class="text-muted small">Deletes this saved record and payment proof. No automatic recovery copy is created. An administrator alert must be accepted before deletion.</p>
+<label class="field mb-3">Administrator password<input type="password" class="form-control" name="password" required autocomplete="current-password"></label>
+<label class="field mb-3">Confirm conference key: {{ event }}<input class="form-control" name="confirm" required autocomplete="off"></label>
+<button class="btn btn-outline-danger" type="submit">Delete registration</button>
+</form></details>
+{% endif %}
+</section></div><section class="panel"><h2>History</h2><ul>{% for timestamp,actor,operation in history %}<li>{{ timestamp }} · {{ actor }} · {{ operation }}</li>{% else %}<li>No administrative changes.</li>{% endfor %}</ul></section>
 {% endblock %}

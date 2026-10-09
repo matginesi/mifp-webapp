@@ -9,6 +9,7 @@ Per avviare il progetto, partire dal [README principale](../README.md).
 - [Schema database e lifecycle](database-schema.md)
 - [Formato di import](import-format.md)
 - [Gestione dei conference sites](conference-sites.md)
+- [Conference Editor integrato](conference-editor.md)
 - [Istruzioni per l'estrazione JSONL](scraping_prompt.txt)
 
 ## Deployment e manutenzione
@@ -19,6 +20,7 @@ Per avviare il progetto, partire dal [README principale](../README.md).
 - [Installazione VPS e VM locale](deployment/vps-installation.md)
 - [Micrositi, routing e autorizzazioni PHP](deployment/conference-microsites.md)
 - [Registrazioni e affidabilità email](deployment/registrations.md)
+- [Aggiornamento RegForm, dashboard ed Editor sulla VPS](deployment/regform-dashboard-update.md)
 - [Backup e ripristino](deployment/backups.md)
 - [Hardening](deployment/hardening.md)
 - [Riferimento deployment](../DEPLOYMENT.md)

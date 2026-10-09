@@ -15,6 +15,7 @@ MarkupSafe==3.0.3
 openpyxl==3.1.5
 packaging==26.2
 pillow==12.3.0
+pypdfium2==5.14.0
 PyYAML==6.0.3
 python-docx==1.2.0
 python-dotenv==1.2.3

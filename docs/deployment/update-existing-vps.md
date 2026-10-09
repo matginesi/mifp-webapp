@@ -1,5 +1,9 @@
 # Aggiornare la VPS MIFP esistente
 
+Per l’integrazione Editor e la correzione persistente del 503 registrazioni,
+usare il [runbook specifico](regform-dashboard-update.md), che include anche
+l’aggiornamento esplicito del WEBSITE. Questa guida copre l’aggiornamento host.
+
 Procedura per la VPS Ubuntu 24.04 che serve già `mifp.eu` ed
 `events.mifp.eu`, con PHP-FPM 8.3 e publisher `local-vps`. Non eseguire
 `bootstrap-vps.sh`, `init`, importazioni o ripubblicazioni per questo aggiornamento.

@@ -194,6 +194,8 @@ def registration_client(tmp_path, storage):
     init_database(database)
     app.config.update(TESTING=True, DATABASE_PATH=database, CONFERENCES_DIR=tmp_path / 'conferences',
                       REGISTRATIONS_PRIVATE_ROOT=str(storage[0]), CSRF_ENABLED=True)
+    from werkzeug.security import generate_password_hash
+    app.config['ADMIN_PASSWORD_HASH'] = generate_password_hash('synthetic-operation-password', method='pbkdf2:sha256:1000')
     with connect(database) as conn:
         conn.execute("INSERT INTO conference_sites(slug,title,public_path) VALUES(?,?,?)", ('synthetic', 'Synthetic event', EVENT))
         conn.commit()
@@ -219,11 +221,11 @@ def test_dashboard_auth_filters_export_detail_and_csrf(registration_client):
     assert b'no-store' in result.headers['Cache-Control'].encode()
     assert client.get(base + '/registrations/' + ID).status_code == 200
     assert client.get(base + '/registrations/' + ID + '/proof').data == b'%PDF-synthetic'
-    exported = client.get(base + '/registrations-export/csv')
+    exported = client.post(base + '/registrations-export/csv', data={'_csrf_token': 'synthetic-csrf', 'password': 'synthetic-operation-password'})
     assert b"'=1+1" in exported.data
     from openpyxl import load_workbook
-    workbook = load_workbook(io.BytesIO(client.get(base + '/registrations-export/xlsx').data))
-    assert workbook.active.cell(2, 3).data_type != 'f'
+    workbook = load_workbook(io.BytesIO(client.post(base + '/registrations-export/xlsx', data={'_csrf_token': 'synthetic-csrf', 'password': 'synthetic-operation-password'}).data))
+    assert workbook.active.cell(5, 3).data_type != 'f'
     assert client.post(base + '/registrations/' + ID, data={'status': 'confirmed'}).status_code == 400
     authenticate(client)  # Failed CSRF requests rotate the session token.
     assert client.post(base + '/registrations/' + ID, data={'status': 'confirmed', '_csrf_token': 'synthetic-csrf'}).status_code == 302
@@ -235,7 +237,7 @@ def test_dashboard_requests_require_confirmation_and_known_notifications(registr
     app, client = registration_client
     authenticate(client)
     endpoint = '/dashboard/conference-sites/1/registrations-request'
-    data = {'_csrf_token': 'synthetic-csrf', 'receipt': ID, 'action': 'delete', 'confirm': 'wrong'}
+    data = {'_csrf_token': 'synthetic-csrf', 'receipt': ID, 'action': 'delete', 'confirm': 'wrong', 'password': 'synthetic-operation-password'}
     assert client.post(endpoint, data=data).status_code == 400
     data.update(confirm=EVENT, action='retry', channel='participant')
     assert client.post(endpoint, data=data).status_code == 409
@@ -243,7 +245,7 @@ def test_dashboard_requests_require_confirmation_and_known_notifications(registr
     assert client.post(endpoint, data=data).status_code == 302
     assert read_records(Path(app.config['REGISTRATIONS_PRIVATE_ROOT']), EVENT)
     app.config['REGISTRATIONS_PRIVATE_ROOT'] = ''
-    assert client.get('/dashboard/conference-sites/1/registrations').status_code == 503
+    assert client.get('/dashboard/conference-sites/1/registrations').status_code == 200
 
 
 def test_host_cleanup_rejects_symlink_in_privileged_source(storage, tmp_path):

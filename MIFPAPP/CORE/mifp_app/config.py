@@ -160,6 +160,7 @@ class Config:
         str(RUNTIME_CONFIG_DIR / "banner_settings.json"),
     )
     REGISTRATIONS_PRIVATE_ROOT = os.getenv("REGISTRATIONS_PRIVATE_ROOT", "")
+    REGISTRATIONS_WRITE_ENABLED = os.getenv("REGISTRATIONS_WRITE_ENABLED", "0").lower() in {"1", "true"}
 
     CONFERENCES_DIR = _path_from_config(
         "conferences_dir", "CONFERENCES_DIR", "../DATABASE/conferences"

@@ -52,6 +52,7 @@
       <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.institutional' }}" href="{{ url_for('dashboard.institutional') }}" title="Institutional pages"><i class="bi bi-file-text" aria-hidden="true"></i><span>Institutional</span></a>
       <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.institutional_privacy' }}" href="{{ url_for('dashboard.institutional_privacy') }}" title="Privacy and cookie policies"><i class="bi bi-shield-check" aria-hidden="true"></i><span>Privacy &amp; Policies</span></a>
       <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.institutional_cookie' }}" href="{{ url_for('dashboard.institutional_cookie') }}" title="Cookie banner"><i class="bi bi-cookie" aria-hidden="true"></i><span>Cookie banner</span></a>
+      <a class="sidebar-link" href="{{ url_for('dashboard.conference_editor') }}" title="Conference Editor"><i class="bi bi-pencil-square" aria-hidden="true"></i><span>Conference Editor</span></a>
       <p class="sidebar-label">Notification</p>
       <a class="sidebar-link {{ 'is-active' if current_endpoint == 'dashboard.notifications' }}" href="{{ url_for('dashboard.notifications') }}" title="Email"><i class="bi bi-envelope" aria-hidden="true"></i><span>Email</span></a>
       <a class="sidebar-link {{ 'is-active' if current_endpoint.startswith('dashboard.poll') }}" href="{{ url_for('dashboard.polls') }}" title="Polls"><i class="bi bi-ui-checks-grid" aria-hidden="true"></i><span>Polls</span></a>

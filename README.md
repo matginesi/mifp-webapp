@@ -269,6 +269,7 @@ Git, vanno rimossi separatamente con una riscrittura controllata della history.
 ```text
 SCRAPERS/            acquisizione + package importabili
 MIFPAPP/CORE/        runtime Flask / contesto Docker
+  CONFERENCE_EDITOR/ sorgenti, asset e template dell'Editor integrato
 MIFPAPP/DATABASE/    storage e builder locali
 TESTS/               test
 deploy/              bootstrap e operatore VPS
@@ -280,6 +281,7 @@ docs/                documentazione corrente
 - [Indice della documentazione](docs/INDEX.md)
 - [Schema database e lifecycle](docs/database-schema.md)
 - [Gestione Conference](docs/conference-sites.md)
+- [Conference Editor integrato e logging](docs/conference-editor.md)
 - [Formato di import](docs/import-format.md)
 - [Riferimento CLI](docs/cli-reference.md)
 - [Avvio su una VPS nuova](docs/DEPLOY_NEW_VPS.md)

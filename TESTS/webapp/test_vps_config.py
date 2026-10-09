@@ -817,3 +817,11 @@ def test_migration_preserves_legacy_mail_and_remote_publisher_settings(tmp_path)
     assert store.values()['EVENTS_REMOTE_HOST'] == 'remote.example.invalid'
     assert store.values()['EVENTS_REMOTE_ROOT'] == '/conferences'
     assert store.values()['EVENTS_LOCAL_ROOT'] == '/srv/custom-events'
+
+
+def test_registration_write_access_is_an_explicit_validated_boolean():
+    module = _module()
+    assert module.normalize_value('REGISTRATIONS_DASHBOARD_WRITE_ENABLED', 'TRUE') == 'true'
+    assert module.normalize_value('REGISTRATIONS_DASHBOARD_WRITE_ENABLED', 'false') == 'false'
+    with pytest.raises(ValueError):
+        module.normalize_value('REGISTRATIONS_DASHBOARD_WRITE_ENABLED', 'enabled')

@@ -1,6 +1,6 @@
 """Read host-owned submissions; store only operator metadata and explicit requests.
 
-No write operation in this module touches the PHP registration repository.
+No write operation in this module touches existing PHP registration records.
 """
 from __future__ import annotations
 
@@ -12,8 +12,10 @@ import os
 import re
 import sqlite3
 import stat
+import time
+from collections import Counter
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,6 +25,32 @@ RECEIPT = re.compile(r"REG-[0-9]{8}-[A-F0-9]{8}\Z")
 MAX_CSV_BYTES = 32 * 1024 * 1024
 
 
+def prepare_local_archive(conferences: Path) -> Path:
+    """Prepare private development directories, never records or host storage."""
+    conferences = Path(conferences)
+    conferences.mkdir(mode=0o700, parents=True, exist_ok=True)
+    parent = os.open(conferences, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        try:
+            os.mkdir('.registrations-private', mode=0o700, dir_fd=parent)
+        except FileExistsError:
+            pass
+        root = os.open('.registrations-private', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        try:
+            for name in ('registrations', 'uploads'):
+                try:
+                    os.mkdir(name, mode=0o700, dir_fd=root)
+                except FileExistsError:
+                    pass
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
+                os.close(child)
+        finally:
+            os.close(root)
+    finally:
+        os.close(parent)
+    return conferences / '.registrations-private'
+
+
 def component(value: str) -> str:
     if not KEY.fullmatch(value) or value in {".", ".."}:
         raise ValueError("Invalid private storage identifier.")
@@ -30,29 +58,60 @@ def component(value: str) -> str:
 
 
 @contextmanager
-def private_file(root: Path, *parts: str):
-    """Open using directory descriptors: no symlink or traversal at any level."""
+def private_directory(root: Path, *parts: str):
+    """Keep a validated directory descriptor for race-safe file operations."""
     root = Path(root)
     if not root.is_absolute():
         raise ValueError("Private storage must use an absolute path.")
     fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
-        for part in (*root.parts[1:], *parts[:-1]):
+        for part in (*root.parts[1:], *parts):
             component(part)
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             os.close(fd)
             fd = child
-        leaf = component(parts[-1])
-        file_fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
-        stream = os.fdopen(file_fd, "rb")
-        try:
-            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                raise ValueError("Private storage entry is not a regular file.")
-            yield stream
-        finally:
-            stream.close()
+        yield fd
     finally:
         os.close(fd)
+
+
+@contextmanager
+def private_file(root: Path, *parts: str, writable=False):
+    """No symlink, traversal, device or hard link at any level."""
+    with private_directory(root, *parts[:-1]) as parent:
+        fd = os.open(component(parts[-1]), (os.O_RDWR if writable else os.O_RDONLY)
+                     | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    with os.fdopen(fd, "r+b" if writable else "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError("Private storage entry must be a regular file without hard links.")
+        yield stream
+
+
+def proof_filename(row):
+    name = row.get("proof_file", "")
+    if name:
+        suffix = name.rsplit(".", 1)[-1]
+        if suffix not in {"pdf", "jpg", "jpeg", "png"} or name != f"proof-{row['receipt_id']}.{suffix}":
+            raise ValueError("Invalid proof filename.")
+    return name
+
+
+@contextmanager
+def registration_lock(stream, exclusive=False):
+    deadline = time.monotonic() + 1.0
+    while True:
+        try:
+            fcntl.flock(stream, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+    try:
+        yield
+    finally:
+        fcntl.flock(stream, fcntl.LOCK_UN)
 
 
 def event_key(public_path: str) -> str:
@@ -62,12 +121,21 @@ def event_key(public_path: str) -> str:
 
 def read_records(root: Path, event: str) -> list[dict]:
     component(event)
+    # A missing mount is not an empty conference. Only an absent per-event CSV
+    # below connected storage may mean that no registrations have been saved.
+    for directory in (root, root / "registrations"):
+        if not stat.S_ISDIR(directory.lstat().st_mode):
+            raise ValueError("Registration storage is not a directory.")
     try:
         with private_file(root, "registrations", event, "registrations.csv") as stream:
-            fcntl.flock(stream, fcntl.LOCK_SH)
-            payload = stream.read(MAX_CSV_BYTES + 1)
+            with registration_lock(stream):
+                payload = stream.read(MAX_CSV_BYTES + 1)
     except FileNotFoundError:
         return []
+    return parse_records(payload)
+
+
+def parse_records(payload):
     if len(payload) > MAX_CSV_BYTES:
         raise ValueError("Registration CSV exceeds the supported size.")
     try:
@@ -191,19 +259,65 @@ def filtered(records: list[dict], values) -> list[dict]:
         if query and not any(query in row.get(key, "").casefold() for key in ("first_name", "last_name", "email", "receipt_id")):
             continue
         if any(values.get(field) and row.get(key, "") != values[field] for field, key in (
-                ("status", "admin_status"), ("type", "registration_type"), ("payment", "payment_method"))):
+                ("status", "admin_status"), ("type", "registration_type"), ("payment", "payment_method"),
+                ("country", "country"), ("affiliation", "affiliation"))):
+            continue
+        if values.get("duplicates") == "1" and row.get("potential_duplicates", 0) < 2:
             continue
         if values.get("from") and row["submitted_at"][:10] < values["from"]:
             continue
         if values.get("to") and row["submitted_at"][:10] > values["to"]:
             continue
-        if row["archived"] and values.get("archived") != "1":
+        if row.get("archived", False) and values.get("archived") != "1":
             continue
         rows.append(row)
     sort = values.get("sort", "submitted_at")
     if sort not in {"submitted_at", "first_name", "last_name", "receipt_id", "admin_status"}:
         sort = "submitted_at"
     return sorted(rows, key=lambda row: row.get(sort, "").casefold(), reverse=values.get("order", "desc") == "desc")
+
+
+def mark_potential_duplicates(records: list[dict]) -> list[dict]:
+    """Same nonempty email is a review hint, never proof of a duplicate."""
+    counts = Counter(row.get("email", "").strip().casefold() for row in records if row.get("email", "").strip())
+    return [dict(row, potential_duplicates=counts.get(row.get("email", "").strip().casefold(), 0)) for row in records]
+
+
+def registration_summary(records: list[dict], today=None) -> dict:
+    today = today or datetime.now(timezone.utc).date()
+    days, weeks = Counter(), Counter()
+    recent, invalid_dates, proof_count, proof_bytes, known_sizes = 0, 0, 0, 0, 0
+    for row in records:
+        try:
+            stamp = datetime.fromisoformat(row.get("submitted_at", "").replace("Z", "+00:00"))
+            day = stamp.astimezone(timezone.utc).date() if stamp.tzinfo else stamp.date()
+            days[day.isoformat()] += 1
+            weeks[(day - timedelta(days=day.weekday())).isoformat()] += 1
+            recent += today - timedelta(days=6) <= day <= today
+        except ValueError:
+            invalid_dates += 1
+        if row.get("proof_file", "").strip():
+            proof_count += 1
+            try:
+                size = int(row.get("proof_size_bytes", ""))
+                if size >= 0:
+                    proof_bytes += size
+                    known_sizes += 1
+            except (TypeError, ValueError):
+                pass
+    def distribution(field):
+        counts = Counter(row.get(field, "").strip() or "Not provided" for row in records)
+        top = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        if len(top) > 8:
+            top = top[:8] + [("Other entries (combined)", sum(count for _, count in top[8:]))]
+        return top
+    return dict(total=len(records), recent=recent, invalid_dates=invalid_dates,
+                proof_count=proof_count, proof_bytes=proof_bytes, known_sizes=known_sizes,
+                potential_duplicates=sum(row.get("potential_duplicates", 0) > 1 for row in records),
+                charts=[("Daily submissions (UTC)", sorted(days.items())),
+                        ("Weekly submissions (Monday, UTC)", sorted(weeks.items())),
+                        ("Registration type", distribution("registration_type")),
+                        ("Country", distribution("country")), ("Affiliation", distribution("affiliation"))])
 
 
 def spreadsheet_safe(value) -> str:

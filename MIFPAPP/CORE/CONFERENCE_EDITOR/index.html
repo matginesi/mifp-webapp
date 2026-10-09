@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en" data-mifp-log-level="{{ 'debug' if config.DEBUG else 'warn' }}">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>MIFP Conference Editor</title>
+  <meta name="description"
+    content="Offline-first editor for reusable MIFP conference websites, people, programs, badges and certificates.">
+  <meta name="theme-color" content="#111111">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="MIFP Conference Editor">
+  <meta property="og:description"
+    content="Offline-first, file-based conference website editor with People, Program, assets, badges and certificates.">
+  <script nonce="{{ csp_nonce }}">
+    // Local/static deployment guard: when a server rewrites a directory URL without
+    // a trailing slash to index.html, relative assets can resolve one level too high.
+    // Normalize the URL before loading CSS/JS so assets always resolve from this folder.
+    (function () {
+      if (!/^https?:$/.test(location.protocol)) return;
+      var path = location.pathname || '/';
+      var last = path.slice(path.lastIndexOf('/') + 1);
+      var looksLikeFile = /\.[A-Za-z0-9]{1,8}$/.test(last);
+      if (path !== '/' && !path.endsWith('/') && !looksLikeFile) {
+        location.replace(path + '/' + location.search + location.hash);
+      }
+    }());
+  </script>
+  <link rel="stylesheet" href="./assets/css/base.css?v=1.23.4">
+  <link rel="stylesheet" href="./assets/css/layout.css?v=1.23.4">
+  <link rel="stylesheet" href="./assets/css/components.css?v=1.23.4">
+  <link rel="stylesheet" href="./assets/css/responsive.css?v=1.23.4">
+  <script src="{{ logger_url }}"></script>
+</head>
+
+<body data-dashboard-view="dashboard.conference_editor">
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">M</div>
+        <div>
+          <div class="brand-title">MIFP Conference Editor</div>
+          <div class="brand-subtitle">offline workspace</div>
+        </div>
+      </div>
+      <div id="globalSearch" class="global-search">
+        <div class="global-search-input-wrap">
+          <input id="globalSearchInput" type="search" placeholder="Search pages, sections, settings…" autocomplete="off"
+            spellcheck="false" aria-label="Global editor search" aria-autocomplete="list"
+            aria-controls="globalSearchResults" aria-expanded="false">
+          <kbd class="global-search-shortcut">Ctrl K</kbd>
+        </div>
+        <div id="globalSearchResults" class="global-search-results hidden" role="listbox" aria-label="Search results">
+        </div>
+      </div>
+      <div class="top-actions">
+        <span class="version-badge">Editor 1.23.4</span>
+        <span id="saveState" class="save-state neutral">No project open</span>
+        <button id="previewSiteBtn" class="button ghost" type="button" disabled>Preview site</button>
+        <button id="exportZipBtn" class="button ghost" type="button" disabled title="Export the complete conference website/project">Export site ZIP</button>
+        <button id="exportMifpZipTopBtn" class="button" type="button" disabled title="Export conference INFO ZIP for the MIFP webapp">Export MIFP ZIP</button>
+        <button id="saveAllBtn" class="button primary" type="button" disabled>Save all</button>
+      </div>
+    </header>
+
+    <aside class="sidebar" aria-label="Editor navigation">
+      <div class="workspace-box">
+        <div class="eyebrow">Conference</div>
+        <div id="workspaceName" class="workspace-name">No folder selected</div>
+        <div id="projectName" class="project-name">No conference open</div>
+        <div class="button-stack">
+          <button id="openWorkspaceBtn" class="button primary" type="button">Open conference</button>
+          <button id="openFolderCopyBtn" class="button" type="button" title="Use the compatible folder picker. Changes stay in this session; export a ZIP to save them.">Open folder copy</button>
+          <button id="importZipBtn" class="button" type="button">Import ZIP</button>
+          <button id="newConferenceBtn" class="button" type="button">New conference</button>
+          <input id="folderFallbackInput" type="file" webkitdirectory multiple hidden>
+          <input id="projectZipInput" type="file" accept=".zip,application/zip" hidden>
+        </div>
+        <div id="projectPickerWrap" class="project-picker hidden"><label for="projectPicker">Conference</label><select
+            id="projectPicker"></select></div>
+      </div>
+      <nav class="nav-list">
+        <button class="nav-item active" data-view="overview" type="button">Overview</button>
+        <button class="nav-item" data-view="settings" type="button">Content Editor</button>
+        <button class="nav-item" data-view="regform" type="button">Regform</button>
+        <button class="nav-item" data-view="assets" type="button">Assets</button>
+        <button class="nav-item" data-view="dates" type="button">Important Dates</button>
+        <button class="nav-item" data-view="checks" type="button">Content Check</button>
+        <button class="nav-item" data-view="mifp-export" type="button">MIFP Webapp Export</button>
+        <button class="nav-item" data-view="people" type="button">People</button>
+        <button class="nav-item" data-view="program" type="button">Program</button>
+        <button class="nav-item" data-view="documents" type="button">Badges & Certificates</button>
+        <button class="nav-item" data-view="yaml" type="button">Raw YAML</button>
+        <button class="nav-item" data-view="logs" type="button">Logs</button>
+      </nav>
+      <div class="sidebar-footer">Matteo Ginesi · 2026 · MIFP</div>
+    </aside>
+
+    <main class="main">
+      <section class="view active" data-view-panel="overview">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Conference workspace</div>
+            <h1>Overview</h1>
+            <p>Manage configuration, assets, people and program from one local editor.</p>
+          </div>
+          <div class="page-actions"><button id="openSiteBtn" class="button ghost" type="button" disabled>Preview
+              site</button></div>
+        </div>
+        <div id="welcomePanel" class="empty-state">
+          <div>
+            <h2>Open, import or create a conference</h2>
+            <p>Open an existing conference folder/workspace, import a complete conference ZIP, or create a clean conference
+              from the bundled template. New conferences start with placeholder-only content, empty People and an empty Program.</p>
+            <div class="inline-actions"><button id="welcomeOpenBtn" class="button primary" type="button">Open
+                conference</button><button id="welcomeImportZipBtn" class="button" type="button">Import ZIP</button><button id="welcomeNewBtn" class="button" type="button">New conference</button></div>
+          </div>
+        </div>
+        <div id="overviewContent" class="hidden">
+          <div id="overviewCards" class="stat-grid"></div>
+          <div class="panel-grid three">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Current project</div>
+                  <h2>Files</h2>
+                </div>
+              </div>
+              <dl id="overviewFiles" class="definition-list"></dl>
+            </section>
+            <section class="panel release-panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Versioning</div>
+                  <h2>Release</h2>
+                </div><strong id="releaseVersionLabel" class="release-version">—</strong>
+              </div>
+              <div class="compact-fields">
+                <label>Status<select id="releaseStatus">
+                    <option value="draft">draft</option>
+                    <option value="review">review</option>
+                    <option value="published">published</option>
+                  </select></label>
+                <label>Version<input id="releaseVersion" type="text" placeholder="1.0.0"></label>
+                <label class="full">Release note<input id="releaseNote" type="text" placeholder="What changed?"></label>
+              </div>
+              <div class="inline-actions tight"><button id="bumpPatchBtn" class="button ghost" type="button">+
+                  Patch</button><button id="bumpMinorBtn" class="button ghost" type="button">+ Minor</button><button
+                  id="bumpMajorBtn" class="button ghost" type="button">+ Major</button><button id="saveVersionBtn"
+                  class="button" type="button">Save version</button></div>
+              <div id="versionHistory" class="version-history"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Workflow</div>
+                  <h2>Publish</h2>
+                </div>
+              </div>
+              <ol class="workflow-list">
+                <li>Update YAML sections.</li>
+                <li>Replace assets and faces.</li>
+                <li>Import/edit People and Program.</li>
+                <li>Bump conference version.</li>
+                <li>Export the complete conference ZIP.</li>
+              </ol>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" data-view-panel="settings">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">conference.yaml</div>
+            <h1>Content Editor</h1>
+            <p>Edit the public conference website page by page. Registration here means the public
+              <code>registration.html</code> content; PHP form settings live in the separate Regform page.</p>
+          </div>
+          <div class="page-actions"><button id="saveYamlFromSettingsBtn" class="button primary" type="button"
+              disabled>Save conference.yaml</button></div>
+        </div>
+        <div id="settingsEmpty" class="empty-state compact">
+          <h2>No conference loaded</h2>
+        </div>
+        <div id="settingsWorkbench" class="settings-workbench hidden">
+          <aside class="settings-sections">
+            <div class="eyebrow settings-nav-eyebrow">Website pages</div><input id="settingsSectionSearch" type="search"
+              placeholder="Find page or section…">
+            <div id="settingsSectionNav"></div>
+          </aside>
+          <section class="settings-editor">
+            <div id="settingsSectionHead" class="settings-section-head"></div>
+            <div id="settingsForm" class="settings-layout"></div>
+            <section class="section-raw-panel hidden" aria-hidden="true">
+              <div class="section-raw-head">
+                <div>
+                  <div class="eyebrow">Selected section</div>
+                  <h3>Section YAML</h3>
+                  <p>Edit only the current top-level section without opening the full YAML file.</p>
+                </div>
+                <div class="inline-actions"><button id="applySectionYamlBtn" class="button" type="button">Apply section
+                    YAML</button></div>
+              </div>
+              <div id="sectionYamlStatus" class="validation-bar neutral">Section YAML synchronized</div>
+              <textarea id="sectionYamlEditor" class="section-yaml-editor" wrap="soft" spellcheck="false"
+                aria-label="Current YAML section editor"></textarea>
+            </section>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" data-view-panel="regform">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">regform/settings.yaml</div>
+            <h1>Regform</h1>
+            <p>Dedicated settings for the separate PHP registration module: availability, confirmation email,
+              sender/reply-to, organizer recipients, fields, uploads, rate limits and storage.</p>
+          </div>
+          <div class="page-actions"><button id="saveRegformBtn" class="button primary" type="button" disabled>Save
+              regform/settings.yaml</button></div>
+        </div>
+        <div id="regformEmpty" class="empty-state compact">
+          <h2>No conference loaded</h2>
+        </div>
+        <div id="regformContent" class="hidden">
+          <section class="settings-editor regform-page-editor">
+            <div id="regformSectionHead" class="settings-section-head"></div>
+            <div id="regformForm" class="settings-layout"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" data-view-panel="assets">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Local assets</div>
+            <h1>Assets</h1>
+            <p>Preview, add, replace and safely remove files inside the conference assets directory.</p>
+          </div>
+          <div class="page-actions"><button id="cleanUnusedAssetsBtn" class="button ghost danger" type="button" disabled>Clean unused assets</button><button id="refreshAssetsBtn" class="button" type="button" disabled>Refresh</button>
+          </div>
+        </div>
+        <div id="assetsEmpty" class="empty-state compact">
+          <h2>No conference loaded</h2>
+        </div>
+        <div id="assetsContent" class="hidden">
+          <section class="toolbar panel flat"><label class="grow">Filter<input id="assetSearch" type="search"
+                placeholder="logo, people, venue…"></label><label class="grow">Target path<input id="assetTargetPath"
+                type="text" placeholder="assets/branding/logo.svg"></label><button id="assetChooseBtn" class="button"
+              type="button">Add / replace</button><input id="assetFileInput" type="file" hidden></section>
+          <div id="assetGrid" class="asset-grid"></div>
+        </div>
+      </section>
+
+
+      <section class="view" data-view-panel="dates">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">conference.yaml · important_dates</div>
+            <h1>Important Dates</h1>
+            <p>Edit the dates shown on the conference website with real date controls, descriptions and optional notes.
+            </p>
+          </div>
+          <div class="page-actions"><button id="saveDatesBtn" class="button primary" type="button" disabled>Save
+              dates</button></div>
+        </div>
+        <div id="datesEditor"></div>
+      </section>
+
+      <section class="view" data-view-panel="checks">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Editorial QA</div>
+            <h1>TBD / TBC Check</h1>
+            <p>Find unresolved placeholders across conference.yaml, People and Program, then jump directly to the source
+              that needs attention.</p>
+          </div>
+          <div class="page-actions"><button id="refreshChecksBtn" class="button" type="button" disabled>Refresh
+              check</button></div>
+        </div>
+        <div id="checksEditor"></div>
+      </section>
+
+      <section class="view" data-view-panel="mifp-export">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">mifp-content · format v1</div>
+            <h1>MIFP Webapp Export</h1>
+            <p>Create a strict <code>records.jsonl</code> event record and a self-contained <code>MIFP_IMPORT.zip</code>
+              accepted by the MIFP webapp importer. This export is separate from the complete conference website ZIP.</p>
+          </div>
+          <div class="page-actions"><button id="refreshMifpExportBtn" class="button ghost" type="button" disabled>Refresh</button><button
+              id="exportMifpJsonlBtn" class="button" type="button" disabled>Export JSONL</button><button
+              id="exportMifpZipBtn" class="button primary" type="button" disabled>Export MIFP ZIP</button></div>
+        </div>
+        <div id="mifpExportEditor"></div>
+      </section>
+
+      <section class="view" data-view-panel="people">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">People spreadsheet</div>
+            <h1>Speakers & People</h1>
+            <p>Categories, roles and face images are linked directly to <code>assets/people/</code>. CSV and Excel XLSX
+              import/export are supported, with automatic column matching and multi-role editing.</p>
+          </div>
+          <div class="page-actions"><button id="savePeopleBtn" class="button primary" type="button" disabled>Save
+              people.csv</button></div>
+        </div>
+        <div id="peopleEditor"></div>
+      </section>
+
+      <section class="view" data-view-panel="program">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Program spreadsheet</div>
+            <h1>Program</h1>
+            <p>Manage a flat, flexible schedule with dates, item types and details. Import/export CSV or Excel XLSX; no
+              graph IDs or parent/child editing.</p>
+          </div>
+          <div class="page-actions"><button id="saveProgramBtn" class="button primary" type="button" disabled>Save
+              program.csv</button></div>
+        </div>
+        <div id="programEditor"></div>
+      </section>
+
+
+      <section class="view" data-view-panel="documents">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Printable documents</div>
+            <h1>Badges & Certificates</h1>
+            <p>Create batches from People using the conference data and the bundled DOCX reference templates. Badge
+              sheets are automatically centered on A4 with optional cut lines.</p>
+          </div>
+        </div>
+        <div id="documentsEditor"></div>
+      </section>
+
+      <section class="view" data-view-panel="yaml">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Advanced configuration</div>
+            <h1>Raw YAML</h1>
+            <p>Full source editor. Structured edits normalize YAML formatting but preserve all parsed data.</p>
+          </div>
+          <div class="page-actions"><button id="validateYamlBtn" class="button" type="button"
+              disabled>Validate</button><button id="downloadYamlBtn" class="button ghost" type="button"
+              disabled>Download</button><button id="saveYamlBtn" class="button primary" type="button" disabled>Save
+              YAML</button></div>
+        </div>
+        <div id="yamlEmpty" class="empty-state compact">
+          <h2>No conference loaded</h2>
+        </div>
+        <div id="yamlEditorWrap" class="yaml-wrap hidden">
+          <div id="yamlStatus" class="validation-bar neutral">YAML not modified</div><textarea id="yamlEditor"
+            wrap="soft" spellcheck="false" aria-label="conference.yaml editor"></textarea>
+        </div>
+      </section>
+
+      <section class="view" data-view-panel="logs">
+        <div class="page-head">
+          <div>
+            <div class="eyebrow">Diagnostics</div>
+            <h1>Logs</h1>
+            <p>Local editor events only.</p>
+          </div>
+          <div class="page-actions"><button id="clearLogsBtn" class="button ghost" type="button">Clear</button></div>
+        </div>
+        <div id="logList" class="log-list"></div>
+      </section>
+    </main>
+
+    <div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="true"></div>
+    <div id="totemBackdrop" class="totem-backdrop hidden" role="presentation">
+      <section class="totem" role="alertdialog" aria-modal="true" aria-labelledby="totemTitle"
+        aria-describedby="totemMessage">
+        <div class="totem-accent" aria-hidden="true"></div>
+        <div class="totem-content">
+          <div id="totemEyebrow" class="eyebrow">MIFP Editor</div>
+          <h2 id="totemTitle">Confirm action</h2>
+          <p id="totemMessage"></p><label id="totemInputWrap" class="totem-input hidden"><span>Value</span><input
+              id="totemInput" type="text" autocomplete="off"></label>
+          <div class="totem-actions"><button id="totemCancelBtn" class="button ghost"
+              type="button">Cancel</button><button id="totemConfirmBtn" class="button primary"
+              type="button">Continue</button></div>
+        </div>
+      </section>
+    </div>
+    <div id="modalBackdrop" class="modal-backdrop hidden" role="presentation">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="modal-head">
+          <h2 id="modalTitle">Dialog</h2><button id="modalClose" class="icon-button" type="button"
+            aria-label="Close">×</button>
+        </div>
+        <div id="modalBody" class="modal-body"></div>
+      </div>
+    </div>
+  </div>
+  <script src="./assets/js/lib/yaml-lite.js?v=1.23.4"></script>
+  <script src="./assets/js/lib/csv.js?v=1.23.4"></script>
+  <script src="./assets/js/lib/zip-lite.js?v=1.23.4"></script>
+  <script src="./assets/js/lib/mifp-export.js?v=1.23.4"></script>
+  <script src="./assets/js/lib/xlsx-lite.js?v=1.23.4"></script>
+  <script src="./assets/js/lib/document-tools.js?v=1.23.4"></script>
+  <script src="./assets/js/editor/app.js?v=1.23.4"></script>
+</body>
+
+</html>

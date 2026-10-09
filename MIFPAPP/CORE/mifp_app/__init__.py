@@ -515,6 +515,14 @@ def create_app():
         if nonce:
             csp = csp.replace("script-src 'self'", f"script-src 'self' 'nonce-{nonce}'", 1)
             csp = csp.replace("style-src-elem 'self'", f"style-src-elem 'self' 'nonce-{nonce}'", 1)
+        if request.endpoint == "dashboard.conference_editor_preview":
+            # This trusted shell confines imported code to an iframe without
+            # allow-same-origin. Preview scripts may use local blobs, not the
+            # network or authenticated dashboard endpoints.
+            csp = ("default-src 'none'; script-src 'self' blob: data: 'unsafe-inline'; "
+                   "style-src 'self' blob: data: 'unsafe-inline'; img-src blob: data:; "
+                   "font-src blob: data:; connect-src blob:; frame-src blob:; "
+                   "object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
         response.headers["Content-Security-Policy"] = csp
         response.headers.setdefault("Permissions-Policy", app.config.get("PERMISSIONS_POLICY", "geolocation=(), microphone=(), camera=(), interest-cohort=()"))
         response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")

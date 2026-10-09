@@ -372,6 +372,9 @@ class ConsoleFormatter(logging.Formatter):
             request_bits += f" {float(duration):.0f} ms"
         message = str(redact(record.getMessage())).replace("\r", " ").replace("\n", " ")
         line = f"{timestamp} {level} {component:<18} {request_bits or message}"
+        event = getattr(record, "event", None)
+        if event:
+            line += "  event=" + str(redact(event)).replace("\r", " ").replace("\n", " ")[:120]
         if request_bits and message and message.lower() not in {"request completed", "request"}:
             line += f"  {message}"
         request_id = getattr(record, "request_id", None)

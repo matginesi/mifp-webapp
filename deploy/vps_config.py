@@ -31,7 +31,7 @@ PUBLIC_KEYS = (
     "REGISTRY", "DNS_PROVIDER", "DNS_EXPECTED_IPV4",
     "DNS_EXPECTED_IPV6", "MAIL_PROVIDER", "SMTP_HOST", "SMTP_PORT",
     "SMTP_SECURITY", "SMTP_USERNAME", "SMTP_FROM_ADDRESS", "SMTP_FROM_NAME", "MAIL_TO",
-    "REGISTRATIONS_DASHBOARD_ENABLED", "BACKUP_ENABLED", "BACKUP_LOCAL_RETENTION", "RESTIC_REPOSITORY",
+    "REGISTRATIONS_DASHBOARD_ENABLED", "REGISTRATIONS_DASHBOARD_WRITE_ENABLED", "BACKUP_ENABLED", "BACKUP_LOCAL_RETENTION", "RESTIC_REPOSITORY",
     "ADMIN_USERNAME",
 )
 SECRET_KEYS = ("SECRET_KEY", "ADMIN_PASSWORD_HASH", "SMTP_PASSWORD", "RESTIC_PASSWORD", "EVENTS_REMOTE_PASSWORD")
@@ -526,7 +526,7 @@ def normalize_value(key: str, value: str) -> str:
         raise ValueError("SMTP_SECURITY must be tls, starttls or none")
     elif key in {"SMTP_FROM_ADDRESS", "MAIL_TO"} and value and not EMAIL_RE.fullmatch(value):
         raise ValueError(f"invalid email address for {key}")
-    elif key == "REGISTRATIONS_DASHBOARD_ENABLED":
+    elif key in {"REGISTRATIONS_DASHBOARD_ENABLED", "REGISTRATIONS_DASHBOARD_WRITE_ENABLED"}:
         if value.lower() not in {"true", "false"}:
             raise ValueError(f"{key} must be true or false")
         return value.lower()

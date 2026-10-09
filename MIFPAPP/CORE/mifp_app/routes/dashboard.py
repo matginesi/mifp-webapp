@@ -657,6 +657,7 @@ from . import (  # noqa: E402,F401
     dashboard_assets,
     dashboard_conferences,
     dashboard_registrations,
+    dashboard_editor,
     dashboard_content,
     dashboard_control,
     dashboard_data_quality,
