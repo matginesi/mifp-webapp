@@ -238,7 +238,8 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
     conference_page = client.get("/dashboard/conferences").get_data(as_text=True)
     assert "Website published" in conference_page
     assert "Open" in conference_page
-    assert "PHP 1 / host status unavailable" in conference_page
+    assert "1 PHP file" in conference_page
+    assert "PHP execution not verified" in conference_page
     assert "PHP 1 / disabled" not in conference_page
     assert "hosted separately from the MIFP VPS" not in conference_page
     previous_backend = app.config["EVENTS_PUBLISH_BACKEND"]
@@ -246,7 +247,7 @@ def test_plmcn_reference_packages_validate_and_combined_import(app, client):
     vps_page = client.get("/dashboard/conferences").get_data(as_text=True)
     assert "Caddy on the same VPS" in vps_page
     assert "Local development publisher" not in vps_page
-    assert "PHP 1 / host status unavailable" in vps_page
+    assert "1 PHP file" in vps_page
     app.config["EVENTS_PUBLISH_BACKEND"] = previous_backend
     assert "sudo mifpctl events-php-enable PLMCN-2027/regform" in conference_page
     assert "Import WEBSITE / INFO" in conference_page

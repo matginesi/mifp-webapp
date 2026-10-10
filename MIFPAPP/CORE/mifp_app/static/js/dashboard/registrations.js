@@ -17,10 +17,11 @@
     meta.textContent = detail;
     totem.dataset.state = tone;
     state.textContent = tone === 'working' ? 'Working' : tone === 'success' ? 'Completed' : 'Failed';
-    bar.classList.toggle('is-loading', tone === 'working' && percent === undefined);
-    if (percent === undefined) bar.removeAttribute('aria-valuenow');
-    else bar.setAttribute('aria-valuenow', String(percent));
-    bar.querySelector('span').style.width = (percent || 0) + '%';
+    window.MIFPUI.setProgressBar(bar, bar.querySelector('span'), null, percent || 0);
+    if (percent === undefined) {
+      bar.removeAttribute('aria-valuenow');
+      bar.classList.toggle('is-loading', tone === 'working');
+    }
   }
 
   document.addEventListener('submit', async function (event) {

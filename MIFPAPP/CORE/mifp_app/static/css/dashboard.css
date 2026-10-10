@@ -1567,8 +1567,6 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
 .table-card { max-width: 100%; min-width: 0; overflow: hidden; }
 .data-scroll { display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: auto; -webkit-overflow-scrolling: touch; max-height: 70vh; }
 .data-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .78rem; }
-.registrations-table { min-width: 54rem; }
-.registrations-table th:first-child { width: 4rem; }
 .data-table th, .data-table td { min-width: 0; }
 .data-table thead th {
   position: sticky; top: 0; z-index: 2;
@@ -1594,7 +1592,6 @@ textarea:disabled { color: var(--text-3); background: var(--surface-3); border-c
   white-space: nowrap;
 }
 .data-table tbody tr { transition: background-color .15s ease; }
-.registrations-table tbody td { white-space: normal; overflow-wrap: anywhere; }
 .data-table tbody tr:hover { background: var(--surface-2); }
 .data-table tbody tr.record-row { cursor: pointer; }
 .data-table tbody tr.record-row.is-selected { background: var(--accent-subtle); }
@@ -5604,26 +5601,40 @@ textarea:focus-visible { outline: 0; }.dash-empty-state,.empty-state{
   .poll-activity-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 
-/* Registration review uses the shared cards, fields, pagination and charts. */
+/* Native disclosures share compact spacing across filters and operations. */
+.dashboard-disclosure { border-top: 1px solid var(--border-soft); }
+.dashboard-disclosure > summary { padding: .45rem .6rem; cursor: pointer; color: var(--text-2); font-size: .75rem; font-weight: 650; }
+.stats-chart-wrap--compact { height: 11rem; }
+
+/* Registration-specific rules are layout and mobile table behavior only. */
 .registrations-workspace { display: grid; gap: var(--dashboard-gap); min-width: 0; }
-.registrations-workspace > .overview-grid { margin-bottom: 0; }
-.registrations-filter-grid,
-.registrations-operation-grid { align-items: end; padding: .8rem; }
-.registrations-filter-actions,
+.registrations-workspace > .stats-summary { margin: 0; }
+.registrations-workspace .form-control, .registrations-workspace .form-select { min-width: 0; }
+.registrations-filter-bar { display: block; margin: 0; padding: 0; }
+.registrations-filter-grid { align-items: end; padding: .6rem; grid-template-columns: minmax(10rem, 2fr) repeat(3, minmax(0, 1fr)) auto; }
+.registrations-operation-grid { align-items: end; padding: .6rem; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 0; margin: 0; }
 .registrations-operation-intro { grid-column: 1 / -1; margin: 0; }
-.registrations-operations { border-top: 1px solid var(--border-soft); }
-.registrations-operations > summary { padding: .8rem; cursor: pointer; font-size: .78rem; font-weight: 650; }
-.registrations-operation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); border: 0; margin: 0; }
 .registrations-operation-grid > .btn { justify-self: start; }
-.registrations-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--dashboard-gap); }
-.registrations-chart-grid details { overflow-x: auto; }
-.registrations-chart-grid details th { white-space: normal; overflow-wrap: anywhere; }
+.registrations-table .status-badge { white-space: normal; }
+.registrations-table thead th { white-space: normal; overflow-wrap: anywhere; }
+.registrations-table th:first-child { width: 2.5rem; }
+.registrations-table tbody td { white-space: normal; overflow-wrap: anywhere; }
+.registrations-workspace .stats-panel details { overflow-x: auto; }
+.registrations-workspace .stats-panel details th { white-space: normal; overflow-wrap: anywhere; }
 @media (max-width: 1199px) {
   .registrations-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .registrations-filter-grid > .hero-actions { grid-column: 1 / -1; }
 }
 @media (max-width: 767px) {
-  .registrations-filter-grid,
-  .registrations-operation-grid,
-  .registrations-chart-grid { grid-template-columns: minmax(0, 1fr); }
-  .registrations-workspace .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .registrations-operation-grid { grid-template-columns: minmax(0, 1fr); }
+  .registrations-workspace .stats-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Preserve every column and native table semantics in labeled mobile rows. */
+  .registrations-table thead { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .registrations-table, .registrations-table tbody { display: block; }
+  .registrations-table tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: .45rem; border-bottom: 1px solid var(--border); }
+  .registrations-table tbody td { display: block; max-width: none; border: 0; padding: .3rem; }
+  .registrations-table td::before { content: attr(data-label); display: block; color: var(--text-3); font-size: .65rem; font-weight: 700; margin-bottom: .15rem; }
+  .registrations-table td:first-child { grid-column: 1 / -1; }
+  .registrations-table td:first-child::before { display: inline; margin-right: .5rem; }
+  .registrations-table td:nth-child(2), .registrations-table td:nth-child(3), .registrations-table td:nth-child(6) { grid-column: 1 / -1; }
 }

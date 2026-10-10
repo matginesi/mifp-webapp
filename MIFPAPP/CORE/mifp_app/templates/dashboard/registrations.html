@@ -1,103 +1,107 @@
 {% extends "dashboard/layout.html" %}
-{% from "dashboard/_components.html" import page_header %}
+{% from "dashboard/_components.html" import page_header, empty_state, status_badge %}
 {% block page_title %}Registrations · {{ site.title }}{% endblock %}
 {% block vendor_scripts %}<script src="{{ url_for('static',filename='js/vendor/chart.umd.js') }}" defer></script>{% endblock %}
 {% block extra_js %}<script src="{{ url_for('static',filename='js/dashboard/stats.js') }}" defer></script><script src="{{ url_for('static',filename='js/dashboard/registrations.js',v=static_version) }}" defer></script>{% endblock %}
 {% block content %}
-{% call page_header('Conference site', 'Registrations · ' ~ (site.acronym or site.title), 'Review saved submissions and administrative states. Summaries follow the current filters.') %}
+{% call page_header('Conference site', 'Registrations · ' ~ (site.acronym or site.title), count ~ ' matching / ' ~ total ~ ' saved · metrics follow filters') %}
+<a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.conference_sites') }}">Conference sites</a>
 <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.conference_edit',site_id=site.id) }}">Conference site</a>
 {% endcall %}
 <div class="registrations-workspace">
 {% include "dashboard/_registration_progress.html" %}
 {% if local_archive %}
-<p class="alert alert-info" role="status">You are viewing local registration files, separate from the VPS. No production registrations are downloaded or synchronized. An empty list means this local archive has no registrations.</p>
+<p class="alert alert-info" role="status">Viewing local registration files, separate from the VPS. No automatic synchronization.</p>
 {% endif %}
-<section class="stats-summary overview-grid" aria-label="Registration summary">
-{% for label,value,help in [('Matching registrations',summary.total,'Saved records matching filters'),('Last 7 days',summary.recent,'UTC, including today'),('With attachments',summary.proof_count,'Recorded attachments; not a payment verification'),('Potential duplicates',summary.potential_duplicates,'Same email; manual review required')] %}
+<section class="stats-summary" aria-label="Registration summary">
+{% for label,value,help in [('Matching registrations',summary.total,'Of ' ~ total ~ ' saved records'),('Last 7 days',summary.recent,'UTC, including today'),('With attachments',summary.proof_count,'Attachment recorded; payment not verified'),('Potential duplicates',summary.potential_duplicates,'Same email; manual review required')] %}
 <article class="stats-metric"><span>{{ label }}</span><strong>{{ value }}</strong><small>{{ help }}</small></article>
 {% endfor %}
 </section>
-<aside class="alert text-muted small mb-0" aria-label="Operational information">
-<p class="mb-2">Host PHP approval and live submission opening cannot be verified from this dashboard. Review the published form settings and host authorization separately.</p>
-<p class="mb-0">“Accepted” means accepted by the mail transport, not confirmed delivery. Old registrations may have no notification state.</p>
-</aside>
-<section class="table-card" aria-labelledby="registration-filters-heading">
-<div class="panel-head"><div><h2 id="registration-filters-heading">Filter registrations</h2><p>Search saved submissions and refine the results below.</p></div></div>
-<form class="inline-form-grid registrations-filter-grid" method="get" aria-label="Registration filters">
-<label class="field">Search<input class="form-control form-control-sm" name="q" value="{{ request.args.get('q','') }}" placeholder="Name, email or receipt ID"></label>
+<form class="toolbar registrations-filter-bar" method="get" aria-label="Registration filters">
+<div class="inline-form-grid registrations-filter-grid">
+<label class="field">Search<input class="form-control form-control-sm" type="search" name="q" value="{{ request.args.get('q','') }}" placeholder="Name, email or receipt ID"></label>
+<label class="field">Status<select class="form-select form-select-sm" name="status"><option value="">All</option>{% for value in statuses %}<option {% if request.args.get('status')==value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
 <label class="field">From<input class="form-control form-control-sm" type="date" name="from" value="{{ request.args.get('from','') }}"></label>
 <label class="field">To<input class="form-control form-control-sm" type="date" name="to" value="{{ request.args.get('to','') }}"></label>
-{% for name, label, options in [('status','Status',statuses), ('type','Type',types), ('payment','Payment',payments), ('country','Country',countries), ('affiliation','Affiliation',affiliations)] %}
+<div class="hero-actions"><button class="btn btn-primary btn-sm">Apply filters</button><a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.registrations',site_id=site.id) }}">Reset</a></div>
+</div>
+<details class="dashboard-disclosure" {% if request.args.get('type') or request.args.get('payment') or request.args.get('country') or request.args.get('affiliation') or request.args.get('archived') or request.args.get('duplicates') or request.args.get('sort') or request.args.get('order') == 'asc' %}open{% endif %}>
+<summary>Advanced filters &amp; sorting</summary>
+<div class="inline-form-grid registrations-operation-grid">
+{% for name, label, options in [('type','Type',types), ('payment','Payment',payments), ('country','Country',countries), ('affiliation','Affiliation',affiliations)] %}
 <label class="field">{{ label }}<select class="form-select form-select-sm" name="{{ name }}"><option value="">All</option>{% for value in options %}<option {% if request.args.get(name)==value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
 {% endfor %}
 <label class="field">Sort<select class="form-select form-select-sm" name="sort">{% for field in ['submitted_at','first_name','last_name','receipt_id','admin_status'] %}<option value="{{ field }}" {% if request.args.get('sort','submitted_at')==field %}selected{% endif %}>{{ field|replace('_',' ') }}</option>{% endfor %}</select></label>
 <label class="field">Order<select class="form-select form-select-sm" name="order"><option value="desc">Descending</option><option value="asc" {% if request.args.get('order')=='asc' %}selected{% endif %}>Ascending</option></select></label>
 <label class="form-check"><input type="checkbox" name="archived" value="1" {% if request.args.get('archived')=='1' %}checked{% endif %}> Include archived</label>
 <label class="form-check"><input type="checkbox" name="duplicates" value="1" {% if request.args.get('duplicates')=='1' %}checked{% endif %}> Potential duplicates only</label>
-<div class="hero-actions registrations-filter-actions"><button class="btn btn-primary btn-sm">Apply filters</button> <a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.registrations',site_id=site.id) }}">Reset</a></div>
+</div></details>
 </form>
-</section>
 <section class="table-card" aria-labelledby="registration-results-heading">
 <div class="panel-head"><div><h2 id="registration-results-heading">Saved registrations</h2><p>{{ count }} matching / {{ total }} saved.</p></div>
-<span class="text-muted small">Password required for every export</span></div>
-<details class="registrations-operations">
+<span class="text-muted small">Select rows for protected operations</span></div>
+<p class="hero-actions text-muted small px-2 py-1 mb-0">All saved records: {% for status, value in counters.items() %}<span>{{ status }}: <strong>{{ value }}</strong></span>{% endfor %}</p>
+<div class="data-scroll" tabindex="0" role="region" aria-label="Registration table"><table class="data-table registrations-table" role="table"><caption class="visually-hidden">Saved registrations matching current filters</caption>
+<thead><tr><th scope="col"><span class="visually-hidden">Select</span></th><th scope="col">Receipt / date</th><th scope="col">Name</th><th scope="col">Type / payment</th><th scope="col">Status</th><th scope="col">Email notifications</th></tr></thead>
+<tbody>{% for row in rows %}<tr>
+<td data-label="Select"><input type="checkbox" name="receipt" form="registrationBulkOperation" value="{{ row.receipt_id }}" aria-label="Select {{ row.receipt_id }}"></td>
+<td data-label="Receipt / date"><a href="{{ url_for('dashboard.registration_detail',site_id=site.id,receipt=row.receipt_id) }}">{{ row.receipt_id }}</a><small class="d-block text-muted small mt-1">{{ row.submitted_at }}</small></td>
+<td data-label="Participant"><strong>{{ row.last_name }}, {{ row.first_name }}</strong><span class="d-block text-muted small mt-1">{{ row.email }}</span>{% if row.potential_duplicates>1 %}<br><span class="status-badge status-warning">Same email on {{ row.potential_duplicates }} records</span>{% endif %}</td>
+<td data-label="Type / payment">{{ row.registration_type }}<span class="d-block text-muted small mt-1">{{ row.payment_method }}</span></td><td data-label="Status">{{ status_badge(row.admin_status, 'success' if row.admin_status == 'confirmed' else 'neutral') }}{% if row.archived %}<span class="cell-text">Archived</span>{% endif %}</td>
+<td data-label="Email notifications">Organizers: {{ row.notifications.organizers }}<br>Participant: {{ row.notifications.participant }}</td>
+</tr>{% else %}<tr><td colspan="6">{{ empty_state('No matching registrations.', 'Adjust filters or reset to view all saved records.') }}</td></tr>{% endfor %}</tbody></table></div>
+<nav class="pagination-nav px-3" aria-label="Registration pages"><span>Page {{ page }} / {{ pages }}</span><div class="hero-actions"> {% if page>1 %}<a href="{{ url_for('dashboard.registrations',site_id=site.id,**dict(request.args,page=page-1)) }}" class="btn btn-outline btn-sm">Previous</a>{% endif %} {% if page<pages %}<a href="{{ url_for('dashboard.registrations',site_id=site.id,**dict(request.args,page=page+1)) }}" class="btn btn-outline btn-sm">Next</a>{% endif %}</div></nav>
+<details class="dashboard-disclosure registrations-operations">
 <summary>Export filtered registrations</summary>
-<form method="post" class="hero-actions p-3" aria-label="Registration export" data-no-spinner="1" data-registration-operation="export">
+<form method="post" class="hero-actions p-2" aria-label="Registration export" data-no-spinner="1" data-registration-operation="export">
 <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
 <label class="field">Administrator password<input type="password" name="password" class="form-control form-control-sm" required autocomplete="current-password"></label>
 {% for fmt,label in [('csv','CSV'),('xlsx','Excel'),('docx','Word + receipts'),('pdf','PDF + receipts'),('zip','Recovery ZIP + originals')] %}
 <button class="btn btn-outline btn-sm" type="submit" formaction="{{ url_for('dashboard.registrations_export',site_id=site.id,fmt=fmt) }}?{{ request.query_string.decode()|e }}">{{ label }}</button>
 {% endfor %}
-<p class="text-muted small w-100 mb-0">CSV and Excel contain the filtered list. Word and PDF append copies of payment proofs with receipt and participant references. Missing or unreadable files are identified in the document. Recovery ZIP preserves the original CSV values and receipt files for import; missing originals block ZIP export. Use CSV/Excel for spreadsheets; the raw recovery CSV is intended for import.</p>
+<p class="text-muted small w-100 mb-0">Password required. CSV/Excel: filtered list. Word/PDF: list and receipt copies, with unreadable files flagged. Recovery ZIP: original values and receipts for import; missing originals block export.</p>
 </form></details>
 {% if write_enabled %}
-<details class="registrations-operations"><summary>Import registrations</summary>
+<details class="dashboard-disclosure registrations-operations"><summary>Import registrations</summary>
 <form method="post" enctype="multipart/form-data" action="{{ url_for('dashboard.registrations_import',site_id=site.id) }}" class="inline-form-grid registrations-operation-grid" data-no-spinner="1" data-registration-operation="import" aria-label="Registration import">
 <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-<p class="registrations-operation-intro text-muted small">Adds missing registrations without overwriting existing records. Conflicting IDs or receipts are rejected. Use Recovery ZIP to restore original receipts; CSV alone requires referenced receipts to exist. No participant emails are sent. Limit: 5,000 records, 96 MiB.</p>
-<label class="field">CSV or recovery ZIP<input type="file" name="registrations_file" class="form-control" accept=".csv,.zip" required></label>
-<label class="field">Administrator password<input type="password" name="password" class="form-control" required autocomplete="current-password"></label>
-<label class="field">Confirm conference key <strong>{{ (site.public_path or site.slug).rstrip('/').split('/')[-1] }}</strong><input name="confirm" class="form-control" required autocomplete="off"></label>
-<button class="btn btn-primary" type="submit">Import registrations</button>
+<p class="registrations-operation-intro text-muted small">Adds missing records; conflicts are rejected. Recovery ZIP includes originals; CSV requires receipts already stored. No participant emails. Maximum 5,000 records / 96 MiB.</p>
+<label class="field">CSV or recovery ZIP<input type="file" name="registrations_file" class="form-control form-control-sm" accept=".csv,.zip" required></label>
+<label class="field">Administrator password<input type="password" name="password" class="form-control form-control-sm" required autocomplete="current-password"></label>
+<label class="field">Confirm conference key <strong>{{ (site.public_path or site.slug).rstrip('/').split('/')[-1] }}</strong><input name="confirm" class="form-control form-control-sm" required autocomplete="off"></label>
+<button class="btn btn-primary btn-sm" type="submit">Import registrations</button>
 </form></details>
 {% endif %}
-<p class="hero-actions text-muted small px-3 py-2 mb-0">Status totals for all saved records: {% for status, value in counters.items() %}<span>{{ status }}: <strong>{{ value }}</strong></span>{% endfor %}</p>
-<form method="post" action="{{ url_for('dashboard.registrations_request',site_id=site.id) }}" data-no-spinner="1" data-registration-operation="mutation">
+<form method="post" action="{{ url_for('dashboard.registrations_request',site_id=site.id) }}" data-no-spinner="1" data-registration-operation="mutation" id="registrationBulkOperation">
 <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-<div class="data-scroll" tabindex="0" role="region" aria-label="Registration table, scroll horizontally for all columns"><table class="data-table registrations-table"><caption class="visually-hidden">Saved registrations matching current filters</caption>
-<thead><tr><th scope="col">Select</th><th scope="col">Receipt / date</th><th scope="col">Name</th><th scope="col">Type / payment</th><th scope="col">Status</th><th scope="col">Email notifications</th></tr></thead>
-<tbody>{% for row in rows %}<tr>
-<td><input type="checkbox" name="receipt" value="{{ row.receipt_id }}" aria-label="Select {{ row.receipt_id }}"></td>
-<td><a href="{{ url_for('dashboard.registration_detail',site_id=site.id,receipt=row.receipt_id) }}">{{ row.receipt_id }}</a><small class="d-block text-muted small mt-1">{{ row.submitted_at }}</small></td>
-<td><strong>{{ row.last_name }}, {{ row.first_name }}</strong><span class="d-block text-muted small mt-1">{{ row.email }}</span>{% if row.potential_duplicates>1 %}<br><span class="status-badge status-warning">Same email on {{ row.potential_duplicates }} records</span>{% endif %}</td>
-<td>{{ row.registration_type }}<span class="d-block text-muted small mt-1">{{ row.payment_method }}</span></td><td>{{ row.admin_status }}{% if row.archived %} · archived{% endif %}</td>
-<td>Organizers: {{ row.notifications.organizers }}<br>Participant: {{ row.notifications.participant }}</td>
-</tr>{% else %}<tr><td colspan="6">No matching registrations.</td></tr>{% endfor %}</tbody></table></div>
-<nav class="pagination-nav px-3" aria-label="Registration pages"><span>Page {{ page }} / {{ pages }}</span><div class="hero-actions"> {% if page>1 %}<a href="{{ url_for('dashboard.registrations',site_id=site.id,**dict(request.args,page=page-1)) }}" class="btn btn-outline btn-sm">Previous</a>{% endif %} {% if page<pages %}<a href="{{ url_for('dashboard.registrations',site_id=site.id,**dict(request.args,page=page+1)) }}" class="btn btn-outline btn-sm">Next</a>{% endif %}</div></nav>
-<details class="registrations-operations"><summary>Delete registrations or recover notifications</summary>
+<details class="dashboard-disclosure registrations-operations"><summary>Delete registrations or recover notifications</summary>
 <fieldset class="inline-form-grid registrations-operation-grid"><legend class="visually-hidden">Protected registration operations</legend>
-<p class="registrations-operation-intro text-muted small">Select one or more rows above. Deletion removes saved records and their payment proofs, creates no automatic recovery copy and requires an administrator email alert before proceeding.</p>
-<label class="field">Administrator password<input type="password" class="form-control" name="password" required autocomplete="current-password"></label>
-<label class="field">Confirm conference key <strong>{{ (site.public_path or site.slug).rstrip('/').split('/')[-1] }}</strong><input class="form-control" name="confirm" required autocomplete="off"></label>
+<p class="registrations-operation-intro text-muted small">Select rows above. Deletion removes records and receipts without an automatic recovery copy. An administrator email alert is required.</p>
+<label class="field">Administrator password<input type="password" class="form-control form-control-sm" name="password" required autocomplete="current-password"></label>
+<label class="field">Confirm conference key <strong>{{ (site.public_path or site.slug).rstrip('/').split('/')[-1] }}</strong><input class="form-control form-control-sm" name="confirm" required autocomplete="off"></label>
 <label class="form-check"><input type="checkbox" name="all" value="1"> Delete all registrations in this conference (including archived records; ignores filters and selection)</label>
-<div>{% if write_enabled %}<button class="btn btn-outline-danger" type="submit" name="action" value="delete" formaction="{{ url_for('dashboard.registrations_delete',site_id=site.id) }}">Delete registrations</button>{% else %}<p class="text-muted small">Direct deletion is disabled. Explicit host write authorization is required.</p>{% endif %}</div>
-<label class="field">Notification channel<select name="channel" class="form-select"><option value="organizers">Organizers</option><option value="participant">Participant</option></select></label>
-<button class="btn btn-outline" type="submit" name="action" value="retry">Request host approval</button>
-<p class="registrations-operation-intro text-muted small">Notification retries still require explicit host approval. No participant notification is resent by this page.</p>
+<div>{% if write_enabled %}<button class="btn btn-outline-danger btn-sm" type="submit" name="action" value="delete" formaction="{{ url_for('dashboard.registrations_delete',site_id=site.id) }}">Delete registrations</button>{% else %}<p class="text-muted small">Direct deletion is disabled. Explicit host write authorization is required.</p>{% endif %}</div>
+<label class="field">Notification channel<select name="channel" class="form-select form-select-sm"><option value="organizers">Organizers</option><option value="participant">Participant</option></select></label>
+<button class="btn btn-outline btn-sm" type="submit" name="action" value="retry">Request host approval</button>
+<p class="registrations-operation-intro text-muted small">Recovery requires host approval; this page does not resend participant emails.</p>
 </fieldset></details></form>
 </section>
 <section aria-label="Registration analysis">
-<div class="section-heading"><h2>Analysis of matching registrations</h2></div>
-<p class="text-muted small">{{ summary.invalid_dates }} records excluded from time charts because the date is unavailable or invalid. Time charts show periods with submissions. Attachment sizes are known for {{ summary.known_sizes }} files: {{ summary.proof_bytes }} bytes recorded.</p>
-<div class="registrations-chart-grid">
+<div class="panel-head px-0"><h2>Analysis of matching registrations</h2></div>
+<p class="text-muted small mb-2">{{ summary.invalid_dates }} invalid dates excluded · active periods only · {{ summary.known_sizes }} attachment sizes known ({{ summary.proof_bytes }} bytes).</p>
+<div class="stats-grid-secondary">
 {% for title,items in summary.charts %}
 <section class="stats-panel"><h3>{{ title }}</h3>
 {% if items %}
-<div class="stats-chart-wrap"><canvas data-chart="{{ 'line' if loop.index<=2 else 'bar' }}" data-chart-label="Registrations" data-labels='{{ items|map(attribute=0)|list|tojson|forceescape }}' data-values='{{ items|map(attribute=1)|list|tojson|forceescape }}' aria-label="{{ title }}" role="img"></canvas></div>
+<div class="stats-chart-wrap stats-chart-wrap--compact"><canvas data-chart="{{ 'line' if loop.index<=2 else 'bar' }}" data-chart-label="Registrations" data-labels='{{ items|map(attribute=0)|list|tojson|forceescape }}' data-values='{{ items|map(attribute=1)|list|tojson|forceescape }}' aria-label="{{ title }}" role="img"></canvas></div>
 <details><summary>View chart data</summary><table class="data-table"><caption class="visually-hidden">{{ title }}</caption><thead><tr><th scope="col">Group</th><th scope="col">Registrations</th></tr></thead><tbody>{% for label,value in items %}<tr><th scope="row">{{ label }}</th><td>{{ value }}</td></tr>{% endfor %}</tbody></table></details>
 {% else %}<p>No data available for these filters.</p>{% endif %}
 </section>
 {% endfor %}
 </div></section>
+<details class="dashboard-disclosure"><summary>Operational notes</summary>
+<div class="p-2 text-muted small"><p>PHP execution and submission opening are not verified here. Check host authorization and the published settings separately.</p><p class="mb-0">Notification “accepted” means mail transport acceptance, not delivery. Older records may have no notification state.</p></div>
+</details>
 </div>
 {% endblock %}

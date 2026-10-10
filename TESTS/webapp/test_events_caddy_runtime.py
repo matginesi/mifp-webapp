@@ -202,3 +202,55 @@ def test_fpm_enforces_versioned_upload_and_post_limits(events_runtime):
         assert status == 200 and json.loads(body)["upload_error"] is None
         assert not list((runtime["private"] / "registrations").rglob("*"))
         assert not list((runtime["private"] / "uploads").rglob("*"))
+
+
+def test_static_archive_urls_resources_collision_and_no_php(events_runtime, tmp_path):
+    """Disposable archive fixture only; never imports a real historical backup."""
+    from mifp_app.services.event_site_publisher import LocalEventSitePublisher, PublicationError
+    import pytest
+    runtime = events_runtime
+    # Mixed case and spelling survive publication and direct Caddy routing.
+    slug = 'STATIC-Archive_Fixture'
+    source = tmp_path/'sanitized'
+    (source/'assets').mkdir(parents=True)
+    (source/'papers').mkdir()
+    (source/'regform').mkdir()
+    (source/'index.htm').write_text('<a href="papers/program.html">Program</a><img src="assets/logo.svg">')
+    (source/'papers/program.html').write_text('<a href="../index.htm">Home</a>')
+    (source/'assets/logo.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg"></svg>')
+    (source/'assets/site.css').write_text('body{color:black}')
+    (source/'assets/site.js').write_text('document.documentElement.dataset.archive="true";')
+    (source/'regform/index.html').write_text('<p>Registration closed. Archive for consultation.</p>')
+    publisher = LocalEventSitePublisher(runtime['public'])
+    publisher.publish(source, slug, replace=False, keep_rollback=True)
+    with pytest.raises(PublicationError, match='Destination already exists'):
+        publisher.publish(source, slug, replace=False, keep_rollback=True)
+    # Simulate unsanitized files already on disk to verify host denial, not only
+    # ZIP validation. The static archive procedure itself excludes these files.
+    target = runtime['public']/slug
+    for relative, value in [('regform/index.php', "<?php echo 'MUST-NOT-EXECUTE';"),
+                            ('regform/registrations/registrations.csv', 'PRIVATE'),
+                            ('private/uploads/receipt.pdf', 'PRIVATE'), ('private/sessions/state', 'PRIVATE'),
+                            ('.env', 'PRIVATE')]:
+        entry = target/relative
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        entry.write_text(value)
+    with _serve(runtime) as request:
+        for path, expected in [('', 'papers/program.html'), ('papers/program.html', '../index.htm'),
+                               ('assets/logo.svg', '<svg'), ('assets/site.css', 'color:black'),
+                               ('assets/site.js', 'dataset.archive'), ('regform/', 'Registration closed')]:
+            status, body, _ = request(f'/{slug}/{path}')
+            assert status == 200 and expected in body
+        for path in ['regform/index.php', 'regform/index.php/anything',
+                     'regform/registrations/registrations.csv', 'private/uploads/receipt.pdf',
+                     'private/sessions/state', '.env']:
+            status, body, _ = request(f'/{slug}/{path}')
+            assert status == 404
+            assert 'MUST-NOT-EXECUTE' not in body and 'PRIVATE' not in body and '<?php' not in body
+        status, body, _ = request(f'/{slug}/regform/index.html', b'email=synthetic%40example.invalid')
+        # Caddy serves the same static bytes for POST; no submission handler runs.
+        assert status == 200 and body == (source/'regform/index.html').read_text()
+        assert not list(runtime['private'].rglob('registrations.csv'))
+        assert request('/PLMCN-2027/')[1] == 'static-conference'
+    assert (target/'index.htm').read_bytes() == (source/'index.htm').read_bytes()
+    assert not list(runtime['public'].glob(f'.{slug}.stage-*'))

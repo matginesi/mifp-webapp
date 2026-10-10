@@ -1,29 +1,58 @@
 {% extends "dashboard/layout.html" %}
-{% from "dashboard/_components.html" import page_header %}
+{% from "dashboard/_components.html" import page_header, section_header, status_badge, empty_state %}
 {% block page_title %}Registration {{ row.receipt_id }}{% endblock %}
 {% block extra_js %}<script src="{{ url_for('static',filename='js/dashboard/registrations.js',v=static_version) }}" defer></script>{% endblock %}
 {% block content %}
-{% call page_header('Registrations', row.receipt_id, 'Saved submission and separate operator metadata.') %}{% endcall %}
-<p><a href="{{ url_for('dashboard.registrations',site_id=site.id) }}">Back to registrations</a></p>
+{% call page_header('Registrations', row.last_name ~ ', ' ~ row.first_name, row.receipt_id ~ ' · ' ~ (site.acronym or site.title)) %}
+<a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.registrations',site_id=site.id) }}">Back to registrations</a>
+<a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.conference_edit',site_id=site.id) }}">Conference site</a>
+{% endcall %}
+<div class="registrations-workspace">
 {% include "dashboard/_registration_progress.html" %}
-<div class="row g-4"><section class="col-12 col-lg-7 panel"><h2>Saved submission</h2><dl class="row">{% for key,value in row.items() if key not in ['admin_status','internal_note','archived','notifications','potential_duplicates'] %}<dt class="col-5">{{ key|replace('_',' ') }}</dt><dd class="col-7 text-break">{{ value or '—' }}</dd>{% endfor %}</dl></section><section class="col-12 col-lg-5 panel"><h2>Administrative review</h2>
-{% if row.proof_file and row.proof_file.lower().endswith(('.png','.jpg','.jpeg')) %}<details><summary>Preview payment receipt</summary><img class="img-fluid" alt="Uploaded payment receipt" loading="lazy" src="{{ url_for('dashboard.registration_proof',site_id=site.id,receipt=row.receipt_id,preview=1) }}"></details>{% endif %}
-{% if row.proof_file %}<p><a class="btn btn-outline" href="{{ url_for('dashboard.registration_proof',site_id=site.id,receipt=row.receipt_id) }}">Download payment receipt</a></p>{% endif %}
-<p>Organizer notification: {{ notifications.organizers }} · Participant confirmation: {{ notifications.participant }}. Accepted by the relay does not prove delivery.</p>
-<form method="post"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
-<label class="d-block mb-3">Status<select class="form-select" name="status">{% for status in statuses %}<option {% if row.admin_status==status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select></label>
-<label class="d-block mb-3">Internal notes<textarea class="form-control" name="note" maxlength="4000" rows="5">{{ row.internal_note }}</textarea></label>
-<label class="d-block mb-3"><input type="checkbox" name="archived" value="1" {% if row.archived %}checked{% endif %}> Archived</label>
-<button class="btn btn-primary">Save administrative metadata</button></form>
+<div class="control-two-column">
+<section class="table-card">
+{% call section_header('Saved submission') %}{{ status_badge(row.admin_status, 'success' if row.admin_status == 'confirmed' else 'neutral') }}{% endcall %}
+{% set participant = ['first_name','last_name','email','affiliation','country','address'] %}
+{% set registration = ['submitted_at','registration_type','payment_method','arrival_date','departure_date','tshirt_size','dietary_choice','dietary_notes','privacy_accepted'] %}
+{% for title, keys in [('Participant',participant),('Registration',registration)] %}
+<div class="p-2"><h3 class="small fw-bold">{{ title }}</h3><dl class="import-review">
+{% for key in keys if key in row %}<dt>{{ key|replace('_',' ')|capitalize }}</dt><dd>{{ row[key] or '—' }}</dd>{% endfor %}
+</dl></div>
+{% endfor %}
+<details class="dashboard-disclosure"><summary>Additional saved fields</summary><dl class="import-review p-2">
+{% for key,value in row.items() if key not in participant + registration + ['admin_status','internal_note','archived','notifications','potential_duplicates'] %}
+<dt>{{ key|replace('_',' ')|capitalize }}</dt><dd>{{ value or '—' }}</dd>
+{% endfor %}</dl></details>
+</section>
+<section class="table-card">
+{% call section_header('Administrative review') %}{% endcall %}
+<form method="post" class="p-2"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+<label class="field mb-2">Status<select class="form-select form-select-sm" name="status" aria-label="Status">{% for status in statuses %}<option {% if row.admin_status==status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select></label>
+<label class="field mb-2">Internal notes<textarea class="form-control form-control-sm" name="note" maxlength="4000" rows="3">{{ row.internal_note }}</textarea></label>
+<div class="hero-actions"><label class="form-check mb-0"><input type="checkbox" name="archived" value="1" {% if row.archived %}checked{% endif %}> Archived</label><button class="btn btn-primary btn-sm">Save administrative metadata</button></div>
+</form>
+<div class="p-2">
+{% if row.proof_file %}<a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.registration_proof',site_id=site.id,receipt=row.receipt_id) }}">Download payment receipt</a>{% else %}<span class="text-muted small">No payment receipt recorded.</span>{% endif %}
+{% if row.proof_file and row.proof_file.lower().endswith(('.png','.jpg','.jpeg')) %}<details class="dashboard-disclosure"><summary>Preview payment receipt</summary><img class="img-fluid" alt="Uploaded payment receipt" loading="lazy" src="{{ url_for('dashboard.registration_proof',site_id=site.id,receipt=row.receipt_id,preview=1) }}"></details>{% endif %}
+<dl class="import-review mt-2"><dt>Organizer notification</dt><dd>{{ notifications.organizers }}</dd><dt>Participant confirmation</dt><dd>{{ notifications.participant }}</dd></dl>
+<p class="text-muted small mb-0 mt-2">Transport acceptance does not confirm delivery.</p>
+</div>
+</section>
+</div>
+<section class="table-card">
+{% call section_header('History') %}{% endcall %}
+{% if history %}<div class="data-scroll"><table class="data-table"><thead><tr><th scope="col">Time</th><th scope="col">Operator</th><th scope="col">Change</th></tr></thead><tbody>{% for timestamp,actor,operation in history %}<tr><td>{{ timestamp }}</td><td>{{ actor }}</td><td class="text-break text-wrap">{{ operation }}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}{{ empty_state('No administrative changes.') }}{% endif %}
+</section>
 {% if write_enabled %}
-<details class="mt-3"><summary>Delete this registration</summary>
-<form method="post" action="{{ url_for('dashboard.registrations_delete',site_id=site.id) }}" class="mt-3" data-no-spinner="1" data-registration-operation="mutation">
+<details class="table-card dashboard-disclosure"><summary>Delete this registration</summary>
+<form method="post" action="{{ url_for('dashboard.registrations_delete',site_id=site.id) }}" class="inline-form-grid registrations-operation-grid" data-no-spinner="1" data-registration-operation="mutation">
 <input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><input type="hidden" name="receipt" value="{{ row.receipt_id }}">
-<p class="text-muted small">Deletes this saved record and payment proof. No automatic recovery copy is created. An administrator alert must be accepted before deletion.</p>
-<label class="field mb-3">Administrator password<input type="password" class="form-control" name="password" required autocomplete="current-password"></label>
-<label class="field mb-3">Confirm conference key: {{ event }}<input class="form-control" name="confirm" required autocomplete="off"></label>
-<button class="btn btn-outline-danger" type="submit">Delete registration</button>
+<p class="registrations-operation-intro text-muted small">Deletes this record and receipt without an automatic recovery copy. An administrator email alert is required.</p>
+<label class="field">Administrator password<input type="password" class="form-control form-control-sm" name="password" required autocomplete="current-password"></label>
+<label class="field">Confirm conference key: {{ event }}<input class="form-control form-control-sm" name="confirm" required autocomplete="off"></label>
+<button class="btn btn-outline-danger btn-sm" type="submit">Delete registration</button>
 </form></details>
 {% endif %}
-</section></div><section class="panel"><h2>History</h2><ul>{% for timestamp,actor,operation in history %}<li>{{ timestamp }} · {{ actor }} · {{ operation }}</li>{% else %}<li>No administrative changes.</li>{% endfor %}</ul></section>
+</div>
 {% endblock %}

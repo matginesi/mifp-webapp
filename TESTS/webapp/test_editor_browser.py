@@ -180,7 +180,8 @@ def test_registration_table_charts_and_filters_are_responsive(browser_page, edit
         page.screenshot(path=str(tmp_path/f'registrations-{width}.png'),full_page=True)
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), width
         if width == 320:
-            assert page.locator('.data-scroll').evaluate('(e)=>e.scrollWidth>e.clientWidth')
+            assert page.locator('.data-scroll').evaluate('(e)=>e.scrollWidth<=e.clientWidth')
+            expect(page.locator('.registrations-table td[data-label="Email notifications"]')).to_be_visible()
         operations = page.locator('.registrations-operations').filter(has=page.get_by_text('Delete registrations or recover notifications', exact=True))
         operations.locator('summary').click()
         expect(page.get_by_role('button', name='Request host approval')).to_be_visible()
@@ -398,7 +399,7 @@ def test_registration_deletion_totem_does_not_repeat_request(browser_page, edito
     form.locator('input[name="password"]').fill('synthetic-operation-password')
     form.locator('input[name="confirm"]').fill('SYNTHETIC-2027')
     if not detail:
-        form.locator('input[name="receipt"]').first.check()
+        page.locator('input[name="receipt"][form="registrationBulkOperation"]').first.check()
     # Stop navigation after the application handler: inspect submission state
     # without holding a browser navigation open or mutating registration data.
     page.evaluate('''()=>{
