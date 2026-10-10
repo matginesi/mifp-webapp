@@ -2737,9 +2737,9 @@ case "$command" in
     python3 "$MIFP_HOME/registration-tools.py" "$1" --resolve-receipt "$2" --channel "$3" --not-accepted --confirm "$1" --requests "$DATA_DIR/conferences/.registrations-admin/requests" --private "$EVENTS_PRIVATE_DIR" --backups "$MIFP_HOME/registration-backups" --allowlist "$EVENTS_PHP_STATE" ;;
   registrations-access) shift;
     [[ $# -eq 1 ]] || die "Uso: mifpctl registrations-access EVENT"
-    registration_access_args=()
+    registration_access_args=(--public-root "$(config_cli get EVENTS_LOCAL_ROOT)")
     if [[ "$(config_cli get REGISTRATIONS_DASHBOARD_WRITE_ENABLED)" == "true" ]]; then
-      registration_access_args=(--writable --public-root "$(config_cli get EVENTS_LOCAL_ROOT)")
+      registration_access_args+=(--writable)
     fi
     python3 "$MIFP_HOME/registration-tools.py" "$1" --grant-read "${registration_access_args[@]}" --confirm "$1" --php-uid "$(id -u "$EVENTS_PHP_USER")" --php-gid "$(id -g "$EVENTS_PHP_USER")" --requests "$DATA_DIR/conferences/.registrations-admin/requests" --private "$EVENTS_PRIVATE_DIR" --backups "$MIFP_HOME/registration-backups" --allowlist "$EVENTS_PHP_STATE" ;;
   registrations-request) shift;

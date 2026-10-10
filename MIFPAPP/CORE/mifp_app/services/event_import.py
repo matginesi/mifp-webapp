@@ -587,6 +587,7 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
     summary: dict[str, Any] = {"website": "skipped", "metadata": "skipped", "destination": destination}
     site_id: int | None = None
     committed = False
+    previous_site = None
     try:
         if publish_website:
             stage = Path(tempfile.mkdtemp(prefix="mifp-event-site-"))
@@ -654,6 +655,8 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
                 "SELECT * FROM conference_sites WHERE event_id=? OR slug=? ORDER BY event_id IS NULL, id LIMIT 1",
                 (event_id, slug),
             ).fetchone()
+            if existing_site and existing_site["deploy_status"] == "published" and existing_site["public_path"] == destination:
+                previous_site = dict(existing_site)
             source_version = inspection.website.version if inspection.website else inspection.info.version
             package_sha256 = inspection.website.sha256 if inspection.website else inspection.info.sha256
             # Only a successfully published WEBSITE has a matching publisher
@@ -722,10 +725,21 @@ def apply_import(conn, inspection: Inspection, website_path: Path | None, info_p
                 publisher.publish(stage, destination, replace=replace, keep_rollback=keep_rollback)
             except Exception as exc:
                 safe_error = str(exc) if isinstance(exc, PublicationError) else f"Publication failed ({type(exc).__name__})."
-                conn.execute(
-                    "UPDATE conference_sites SET deploy_status='failed',publication_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (safe_error[:500], site_id),
-                )
+                if previous_site and isinstance(exc, PublicationError) and exc.unchanged:
+                    # Keep the last successful package and its rollback manifest.
+                    # INFO is a separate operation and was already committed.
+                    columns = [key for key in previous_site if key not in {"id", "updated_at", "publication_error"}]
+                    conn.execute(
+                        "UPDATE conference_sites SET " + ",".join(f"{key}=?" for key in columns)
+                        + ",publication_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (*[previous_site[key] for key in columns],
+                         ("Latest attempt failed; last published website retained. " + safe_error)[:500], site_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE conference_sites SET deploy_status='failed',publication_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (safe_error[:500], site_id),
+                    )
                 conn.commit()
                 raise PublicationError(safe_error) from None
             conn.execute(

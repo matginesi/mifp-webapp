@@ -25,7 +25,7 @@ PHP = os.environ.get('MIFP_TEST_PHP', shutil.which('php') or '')
 pytestmark = pytest.mark.skipif(not PHP, reason='PHP CLI required')
 
 
-@pytest.mark.parametrize('read_group,write_group,dir_mode,file_mode', [('1','0',0o750,0o640), ('0','0',0o700,0o600), ('1','1',0o770,0o660)])
+@pytest.mark.parametrize('read_group,write_group,dir_mode,file_mode', [('1','0',0o750,0o640), ('0','0',0o700,0o600), ('1','1',0o2770,0o660), ('0','1',0o2770,0o660)])
 def test_parallel_csv_writers_and_read_group_survive_later_writes(tmp_path, read_group, write_group, dir_mode, file_mode):
     storage = tmp_path / 'registrations' / 'SYNTHETIC-2027'
     storage.mkdir(parents=True)
@@ -43,12 +43,12 @@ persist_submission_csv($argv[2], ['receipt_id'=>$argv[3],'submitted_at'=>'2026-1
     assert all(result.returncode == 0 for result in results), results
     records = read_records(tmp_path, 'SYNTHETIC-2027')
     assert len(records) == 20 and len({r['receipt_id'] for r in records}) == 20
-    assert storage.stat().st_mode & 0o777 == dir_mode
+    assert storage.stat().st_mode & 0o7777 == dir_mode
     assert (storage/'registrations.csv').stat().st_mode & 0o777 == file_mode
 
 
-@pytest.mark.parametrize('write_group', ['0', '1'])
-def test_http_upload_email_failure_replay_and_later_read_access(tmp_path, write_group):
+@pytest.mark.parametrize('read_group,write_group', [('0', '0'), ('1', '0'), ('0', '1'), ('1', '1')])
+def test_http_upload_email_failure_replay_and_later_read_access(tmp_path, read_group, write_group):
     organizer = 'synthetic@example.invalid'
     site = tmp_path / 'SYNTHETIC-2027'
     shutil.copytree(EDITOR_ROOT/'TEMPLATE', site)
@@ -69,7 +69,7 @@ def test_http_upload_email_failure_replay_and_later_read_access(tmp_path, write_
     uploads = private/'uploads'
     records.mkdir(); uploads.mkdir()
     env = dict(os.environ, MIFP_REGISTRATION_DIR=str(records), MIFP_UPLOAD_DIR=str(uploads),
-               MIFP_REGISTRATION_READ_GROUP='1', MIFP_REGISTRATION_WRITE_GROUP=write_group, PHP_CLI_SERVER_WORKERS='4')
+               MIFP_REGISTRATION_READ_GROUP=read_group, MIFP_REGISTRATION_WRITE_GROUP=write_group, PHP_CLI_SERVER_WORKERS='4')
     with socket.socket() as sock:
         sock.bind(('127.0.0.1',0))
         port = sock.getsockname()[1]
@@ -113,11 +113,17 @@ def test_http_upload_email_failure_replay_and_later_read_access(tmp_path, write_
             assert len(list(uploads.rglob('proof-*.png'))) == 1
             # Even subsequent GETs must not restore modes that hide the CSV.
             client.open(url,timeout=3).read()
-            assert (records/'SYNTHETIC-2027').stat().st_mode & 0o777 == (0o770 if write_group == '1' else 0o750)
-            assert (records/'SYNTHETIC-2027/registrations.csv').stat().st_mode & 0o777 == (0o660 if write_group == '1' else 0o640)
-            assert (records/'SYNTHETIC-2027/.operations.lock').stat().st_mode & 0o777 == (0o660 if write_group == '1' else 0o640)
+            assert (records/'SYNTHETIC-2027').stat().st_mode & 0o777 == (0o770 if write_group == '1' else (0o750 if read_group == '1' else 0o700))
+            assert (records/'SYNTHETIC-2027/registrations.csv').stat().st_mode & 0o777 == (0o660 if write_group == '1' else (0o640 if read_group == '1' else 0o600))
+            assert (records/'SYNTHETIC-2027/.operations.lock').stat().st_mode & 0o777 == (0o660 if write_group == '1' else (0o640 if read_group == '1' else 0o600))
             notification_files = list((records/'SYNTHETIC-2027').glob('*.notifications.json'))
             assert len(notification_files) == 1
+            expected = 0o660 if write_group == '1' else (0o640 if read_group == '1' else 0o600)
+            for resource in [*notification_files, *records.rglob('*.notifications.lock'), *uploads.rglob('proof-*.png')]:
+                assert resource.stat().st_mode & 0o7777 == expected
+            if write_group == '1':
+                assert (records/'SYNTHETIC-2027').stat().st_mode & 0o2000
+                assert (uploads/'SYNTHETIC-2027').stat().st_mode & 0o2000
             notification = json.loads(notification_files[0].read_text())
             assert notification['participant']['status'] == 'unknown'
             assert notification['organizers']['status'] == ('unknown' if organizer != 'TBC' else 'pending')
@@ -130,3 +136,29 @@ def test_http_upload_email_failure_replay_and_later_read_access(tmp_path, write_
         log.seek(0)
         text = log.read()
         assert 'PHP Fatal' not in text
+
+
+@pytest.mark.parametrize('resource', ['directory', 'csv'])
+def test_failed_permissions_stop_before_appending(tmp_path, resource):
+    storage = tmp_path/'registrations'/'SYNTHETIC-2027'
+    storage.mkdir(parents=True, mode=0o700)
+    csv_path = storage/'registrations.csv'
+    csv_path.write_text('original bytes')
+    csv_path.chmod(0o600)
+    if resource == 'csv':
+        storage.chmod(0o750)
+    script = tmp_path/'permissions.php'
+    script.write_text("""<?php
+require $argv[1];
+try {
+    persist_submission_csv($argv[2], ['receipt_id'=>'REG-20261009-00000001']);
+    exit(2);
+} catch (Throwable $e) { echo get_class($e); }
+""")
+    env = dict(os.environ, MIFP_REGISTRATION_READ_GROUP='1', MIFP_REGISTRATION_WRITE_GROUP='0')
+    result = subprocess.run([PHP, '-d', 'disable_functions=chmod', str(script),
+                             str(EDITOR_ROOT/'TEMPLATE/regform/src/bootstrap.php'), str(storage)],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0
+    assert result.stdout in {'Error', 'RuntimeException'}
+    assert csv_path.read_text() == 'original bytes'

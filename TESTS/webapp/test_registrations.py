@@ -382,3 +382,30 @@ def test_corrupted_cleanup_backup_cannot_restore(storage, tmp_path):
     with pytest.raises(ValueError, match='integrity'):
         host.restore(args)
     assert read_records(private, EVENT) == []
+
+
+@pytest.mark.parametrize('writable', [False, True])
+def test_host_initializes_removed_event_storage_without_dummy_records(storage, tmp_path, writable):
+    import shutil
+    private, row = storage
+    host = host_module()
+    args = host_args(tmp_path, private, row)
+    args.request = EVENT
+    args.php_uid, args.php_gid = os.getuid(), os.getgid()
+    args.writable = writable
+    args.public_root = tmp_path/'published'
+    source = args.public_root/EVENT/'regform/src'
+    source.mkdir(parents=True)
+    (source/'bootstrap.php').write_text('function registration_file_mode()')
+    (source.parent/'index.php').write_text('$registrationOperationLock .operations.lock')
+    args.allowlist.write_text('')
+    for tree in ('registrations', 'uploads'):
+        shutil.rmtree(private/tree/EVENT)
+    host.grant_read(args)
+    host.grant_read(args)
+    assert read_records(private, EVENT) == []
+    assert not (private/'registrations'/EVENT/'registrations.csv').exists()
+    for tree in ('registrations', 'uploads'):
+        directory = private/tree/EVENT
+        assert directory.stat().st_mode & 0o7777 == (0o2770 if writable else 0o750)
+    assert (private/'registrations'/EVENT/'.operations.lock').stat().st_mode & 0o777 == (0o660 if writable else 0o640)

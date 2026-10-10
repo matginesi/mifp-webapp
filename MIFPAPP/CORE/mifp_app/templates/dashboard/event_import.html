@@ -86,6 +86,9 @@
     <section class="wizard-panel event-import-panel" data-wizard-panel="3">
       {% if inspection.website %}
       <div class="event-import-intro"><h2>Website destination</h2><p>The public address comes from <code>EVENTS_PUBLIC_BASE_URL</code>. Publication credentials and the remote filesystem root remain separate.</p></div>
+      <div class="event-import-note" role="status" data-destination-warning data-existing-destinations='{{ existing_destinations|tojson }}'>
+        Destination availability is advisory; the publisher checks again. Deleting a dashboard entry does not delete its public website.
+      </div>
       <div class="wizard-field-grid">
         <label class="field"><span>Events host</span><input class="form-control" value="{{ inspection.events_host }}" readonly></label>
         <label class="field"><span>Destination path</span><input class="form-control" name="destination" value="{{ inspection.destination }}" required pattern="[A-Za-z0-9][A-Za-z0-9._~\x2D]*(/[A-Za-z0-9][A-Za-z0-9._~\x2D]*){0,3}" data-destination></label>
@@ -108,7 +111,8 @@
         <fieldset><legend>Website package</legend>
           {% if inspection.website %}
           <p class="setting-fact"><span>Action</span><strong>Publish {{ inspection.website.files }} validated file(s)</strong></p>
-          <label class="field"><span>Existing destination</span><select class="form-select" name="existing_mode"><option value="reject">Reject if exists — default</option><option value="replace">Replace/update atomically</option></select></label>
+          <label class="field"><span>Existing destination</span><select class="form-select" name="existing_mode"><option value="reject">First publication — reject if destination exists</option><option value="replace">Atomic replace/update — explicit replacement</option></select></label>
+          <p>For an existing destination, deliberately select atomic replace/update. Keep the rollback copy to restore the previous website. A host operator must revoke approved RegForm PHP before replacement; publishing never enables PHP.</p>
           <label class="check-row"><input type="checkbox" name="keep_rollback" value="1" checked><span><strong>Keep rollback copy</strong><small>Retains the previous version beside this conference only.</small></span></label>
           {% else %}
           <p class="setting-fact"><span>Action</span><strong>None — no WEBSITE package supplied</strong></p>

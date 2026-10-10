@@ -20,6 +20,10 @@ from uuid import uuid4
 class PublicationError(RuntimeError):
     """A safe, operator-facing publication failure without secret details."""
 
+    def __init__(self, message: str, *, unchanged: bool = False):
+        super().__init__(message)
+        self.unchanged = unchanged
+
 
 @dataclass(frozen=True)
 class PublisherStatus:
@@ -56,6 +60,10 @@ class EventSitePublisher:
         self, source: Path, destination: str, *, replace: bool, keep_rollback: bool
     ) -> None:
         raise NotImplementedError
+
+    def destination_exists(self, destination: str) -> bool | None:
+        """Advisory only; remote backends may not know until publication."""
+        return None
 
     def restore_previous(self, destination: str) -> None:
         raise PublicationError("This publication backend has no retained rollback copy.")
@@ -99,6 +107,13 @@ class LocalEventSitePublisher(EventSitePublisher):
             raise ValueError("Publication destination escapes the local publisher root.") from exc
         return target
 
+    def destination_exists(self, destination: str) -> bool | None:
+        try:
+            target = self._target(destination)
+            return target.exists()
+        except (OSError, ValueError):
+            return None
+
     @contextmanager
     def _publication_guard(self, destination: str):
         if self.backend != "local-vps":
@@ -111,20 +126,21 @@ class LocalEventSitePublisher(EventSitePublisher):
         try:
             lock = (self.policy_root / "lock").open("rb")
         except OSError as exc:
-            raise PublicationError("VPS PHP publication policy unavailable; ask an operator to refresh host tools.") from exc
+            raise PublicationError("VPS PHP publication policy unavailable; ask an operator to refresh host tools.", unchanged=True) from exc
         with lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
                 prefixes = (self.policy_root / "protected-paths").read_text().splitlines()
                 prefixes = [safe_publication_path(prefix) for prefix in prefixes]
             except (OSError, ValueError) as exc:
-                raise PublicationError("VPS PHP publication policy unavailable or invalid; publication blocked.") from exc
+                raise PublicationError("VPS PHP publication policy unavailable or invalid; publication blocked.", unchanged=True) from exc
             if any(path == prefix or path.startswith(prefix + "/")
                    or prefix.startswith(path + "/")
                    for path in (relative, resolved) for prefix in prefixes):
                 raise PublicationError(
                     "Publication overlaps an approved PHP path. An operator must first run "
-                    "mifpctl events-php-disable EVENTO/regform, then publish and review before enabling PHP again."
+                    "mifpctl events-php-disable EVENTO/regform, then publish and review before enabling PHP again.",
+                    unchanged=True
                 )
             yield
 
@@ -143,7 +159,7 @@ class LocalEventSitePublisher(EventSitePublisher):
         if target.exists() and (target.is_symlink() or not target.is_dir()):
             raise PublicationError("Existing publication destination is unsafe.")
         if target.exists() and not replace:
-            raise PublicationError("Destination already exists; select atomic replace/update.")
+            raise PublicationError("Destination already exists; select atomic replace/update. Deleting a dashboard entry does not delete the public website.", unchanged=True)
         stage = target.parent / f".{target.name}.stage-{uuid4().hex}"
         rollback = target.parent / f".{target.name}.rollback"
         old_rollback = target.parent / f".{target.name}.rollback-old-{uuid4().hex}"
@@ -158,14 +174,14 @@ class LocalEventSitePublisher(EventSitePublisher):
                 target.rename(rollback)
                 moved_old = True
             stage.rename(target)
-        except Exception:
+        except Exception as exc:
             if target.exists() and moved_old:
                 shutil.rmtree(target, ignore_errors=True)
             if moved_old and rollback.exists() and not target.exists():
                 rollback.rename(target)
             if old_rollback.exists() and not rollback.exists():
                 old_rollback.rename(rollback)
-            raise
+            raise PublicationError("Website publication failed; the previous public tree was preserved.", unchanged=True) from exc
         finally:
             shutil.rmtree(stage, ignore_errors=True)
         # The switch is complete. Cleanup failure must never remove the new

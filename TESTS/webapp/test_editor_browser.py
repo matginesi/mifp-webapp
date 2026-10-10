@@ -301,6 +301,18 @@ def test_open_authorized_local_conference_folder(browser_page, tmp_path, mode):
         # The Editor logger redacts details before they enter this panel.
         pytest.fail(page.locator('#logList').inner_text())
     expect(page.locator('#projectName')).to_contain_text(root.name)
+    if mode == 'compatible':
+        with page.expect_popup() as popup:
+            page.locator('#previewSiteBtn').click()
+        preview = popup.value
+        link = preview.frame_locator('iframe').get_by_role('link', name='Download Template', exact=True)
+        expect(link).to_be_visible(timeout=15000)
+        expect(preview.frame_locator('iframe').locator('.submission-template .resource-badge')).to_have_text('DOC')
+        with preview.expect_download() as download:
+            link.click()
+        document = tmp_path/'downloaded-template.doc'
+        download.value.save_as(document)
+        assert document.read_bytes() == (root/'assets/documents/PLMCN-2027_Abstract_Template.doc').read_bytes()
 
 
 @pytest.mark.parametrize('failure', ['cancelled', 'denied', 'empty'])
@@ -447,3 +459,114 @@ def test_registration_zip_download_and_import_from_dashboard(browser_page, edito
     expect(page.get_by_text('Imported 0 registrations; skipped 1 identical records; restored 0 receipts. No participant emails were sent.', exact=True)).to_be_visible()
     assert len(read_records(Path(app.config['REGISTRATIONS_PRIVATE_ROOT']), 'SYNTHETIC-2027')) == 1
     assert [alert['event'] for alert in alerts] == ['registrations.import_authorized', 'registrations.import_completed']
+
+
+
+def test_divergent_runtime_review_and_export_preserve_customizations(browser_page, tmp_path):
+    from playwright.sync_api import expect
+    page, _, origin = browser_page
+    output = io.BytesIO()
+    custom = b"<?php // intentional synthetic customization\n"
+    with ZipFile(io.BytesIO(synthetic_archive())) as source, ZipFile(output, 'w', ZIP_DEFLATED) as archive:
+        settings = source.read('SYNTHETIC-2027/regform/settings.yaml')
+        for name in source.namelist():
+            archive.writestr(name, custom if name.endswith('regform/src/mailer.php') else source.read(name))
+    page.goto(origin + '/dashboard/conference-editor/')
+    page.locator('#projectZipInput').set_input_files(dict(name='synthetic.zip', mimeType='application/zip', buffer=output.getvalue()))
+    expect(page.locator('#exportZipBtn')).to_be_enabled()
+    page.locator('[data-view="regform"]').click()
+    dialogs = []
+    def accept(dialog):
+        dialogs.append(dialog.message)
+        dialog.accept()
+    page.on('dialog', accept)
+    with page.expect_download() as download:
+        page.get_by_role('button', name='Review RegForm runtime', exact=True).click()
+    review = tmp_path/'review.zip'
+    download.value.save_as(review)
+    with ZipFile(review) as archive:
+        assert set(archive.namelist()) == {'current/regform/src/mailer.php', 'canonical/regform/src/mailer.php'}
+        assert archive.read('current/regform/src/mailer.php') == custom
+        assert archive.read('canonical/regform/src/mailer.php') != custom
+    assert 'possibly intentional customizations' in dialogs[-1]
+    # Save All must not turn a comparison into an edit.
+    page.locator('#saveAllBtn').click()
+    with page.expect_download() as download:
+        page.locator('#exportZipBtn').click()
+    website = tmp_path/'website.zip'
+    download.value.save_as(website)
+    assert 'Export these project files unchanged?' in dialogs[-1]
+    with ZipFile(website) as archive:
+        assert archive.read('SYNTHETIC-2027/regform/src/mailer.php') == custom
+        assert archive.read('SYNTHETIC-2027/regform/settings.yaml') == settings
+    # Reopening the exported state still detects exactly the same customization.
+    page.locator('#projectZipInput').set_input_files(website)
+    page.locator('[data-view="regform"]').click()
+    with page.expect_download() as download:
+        page.get_by_role('button', name='Review RegForm runtime', exact=True).click()
+    assert download.value.suggested_filename == 'regform-runtime-review.zip'
+
+
+def test_import_wizard_warns_for_host_only_destination(browser_page, editor_client, tmp_path):
+    from playwright.sync_api import expect
+    from TESTS.webapp.test_event_import_wizard import _website
+    app, _ = editor_client
+    app.config['EVENTS_PUBLISH_BACKEND'] = 'local'
+    app.config['EVENTS_LOCAL_ROOT'] = str(tmp_path/'public')
+    site = tmp_path/'public'/'BROWSER-2027'
+    site.mkdir(parents=True)
+    (site/'index.html').write_text('previous website')
+    page, _, origin = browser_page
+    page.goto(origin + '/dashboard/conferences/import')
+    page.locator('[name="website_package"]').set_input_files(dict(
+        name='browser_WEBSITE.zip', mimeType='application/zip', buffer=_website(root='BROWSER-2027')))
+    page.locator('[data-upload-form] button[type=submit]').click()
+    page.locator('[data-wizard-panel="2"] [data-wizard-next]').click()
+    expect(page.locator('[data-destination-warning]')).to_contain_text('Destination already exists')
+    expect(page.locator('[data-destination-warning]')).to_contain_text('does not delete its public website')
+    page.locator('[data-wizard-panel="3"] [data-wizard-next]').click()
+    expect(page.locator('[name="existing_mode"]')).to_have_value('reject')
+    page.locator('[name="existing_mode"]').select_option('replace')
+    expect(page.locator('[name="existing_mode"]')).to_have_value('replace')
+    expect(page.locator('[data-wizard-panel="4"]')).to_contain_text('must revoke approved RegForm PHP')
+    assert (site/'index.html').read_text() == 'previous website'
+
+
+def test_offline_runtime_comparison_requires_explicit_unverified_export(browser_page, tmp_path):
+    from playwright.sync_api import expect
+    page, _, origin = browser_page
+    page.goto(origin + '/dashboard/conference-editor/')
+    page.locator('#projectZipInput').set_input_files(dict(name='synthetic.zip', mimeType='application/zip', buffer=synthetic_archive()))
+    expect(page.locator('#exportZipBtn')).to_be_enabled()
+    page.route('**/templates/conference-template.zip', lambda route: route.abort())
+    messages = []
+    def accept(dialog):
+        messages.append(dialog.message)
+        dialog.accept()
+    page.on('dialog', accept)
+    with page.expect_download() as download:
+        page.locator('#exportZipBtn').click()
+    assert 'Export current project files without runtime verification?' in messages[-1]
+    target = tmp_path/'website.zip'
+    download.value.save_as(target)
+    with ZipFile(target) as archive, ZipFile(io.BytesIO(synthetic_archive())) as source:
+        assert archive.read('SYNTHETIC-2027/regform/src/bootstrap.php') == source.read('SYNTHETIC-2027/regform/src/bootstrap.php')
+
+
+
+def test_content_check_detects_broken_document_reference(browser_page):
+    from playwright.sync_api import expect
+    page, _, origin = browser_page
+    output = io.BytesIO()
+    with ZipFile(io.BytesIO(synthetic_archive())) as source, ZipFile(output, 'w', ZIP_DEFLATED) as archive:
+        for name in source.namelist():
+            data = source.read(name)
+            if name.endswith('conference.yaml'):
+                data = __import__('re').sub(rb'(?m)^  template_file:.*$', b'  template_file: assets/documents/missing-template.docx', data)
+            archive.writestr(name, data)
+    page.goto(origin + '/dashboard/conference-editor/')
+    page.locator('#projectZipInput').set_input_files(dict(name='synthetic.zip', mimeType='application/zip', buffer=output.getvalue()))
+    expect(page.locator('#exportZipBtn')).to_be_enabled()
+    page.locator('[data-view="checks"]').click()
+    expect(page.locator('.check-list')).to_contain_text('Missing asset')
+    expect(page.locator('.check-list')).to_contain_text('assets/documents/missing-template.docx')

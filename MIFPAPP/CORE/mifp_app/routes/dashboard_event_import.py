@@ -34,13 +34,15 @@ def _package_paths(stage: Path) -> tuple[Path | None, Path | None, dict]:
     return (website if website.is_file() else None, info if info.is_file() else None, meta)
 
 
-def _existing_destinations() -> list[str]:
+def _existing_destinations(destination: str = "") -> list[str]:
     with connect(current_app.config["DATABASE_PATH"]) as conn:
-        return [
-            str(row[0]) for row in conn.execute(
-                "SELECT public_path FROM conference_sites WHERE TRIM(public_path)<>'' ORDER BY public_path"
-            ).fetchall()
-        ]
+        paths = {str(row[0]) for row in conn.execute(
+            "SELECT public_path FROM conference_sites WHERE TRIM(public_path)<>''"
+        ).fetchall()}
+    # Inspect only the validated package destination, never enumerate host trees.
+    if destination and publisher_from_config(current_app.config).destination_exists(destination):
+        paths.add(destination)
+    return sorted(paths)
 
 
 @bp.get("/conferences/import")
@@ -102,7 +104,7 @@ def event_import_validate():
             "dashboard/event_import.html",
             inspection=inspection,
             token=token,
-            existing_destinations=_existing_destinations(),
+            existing_destinations=_existing_destinations(inspection.destination),
             publisher_status=publisher_from_config(current_app.config).status(),
         )
     except Exception as exc:

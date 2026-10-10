@@ -418,11 +418,37 @@ def grant_read(args):
             runtime = source.read(1024 * 1024)
             if b'.operations.lock' not in runtime or b'$registrationOperationLock' not in runtime:
                 raise ValueError('Published PHP must coordinate registration operations')
-    with opened(args.private / 'registrations' / event / 'registrations.csv') as stream:
-        _, rows = rows_from(stream.read(LIMIT + 1))
+    csv_path = args.private / 'registrations' / event / 'registrations.csv'
+    try:
+        with opened(csv_path) as stream:
+            _, rows = rows_from(stream.read(LIMIT + 1))
+        targets = [csv_path]
+    except FileNotFoundError:
+        # Initialization is an explicit host operation against a published
+        # runtime, never a Flask fallback or a dummy registration/CSV.
+        public_root = getattr(args, 'public_root', None)
+        if not public_root:
+            raise ValueError('Published event root required to initialize empty storage')
+        with opened(public_root / event / 'regform' / 'src' / 'bootstrap.php') as source:
+            if b'function registration_file_mode()' not in source.read(1024 * 1024):
+                raise ValueError('Update the published PHP runtime before initializing storage')
+        rows, targets = [], []
+        for tree in ('registrations', 'uploads'):
+            with directory(args.private / tree) as parent:
+                if os.fstat(parent).st_gid != args.php_gid:
+                    raise ValueError('Unexpected PHP storage directory group')
+                try:
+                    os.mkdir(event, mode=0o700, dir_fd=parent)
+                except FileExistsError:
+                    pass
+                else:
+                    child = os.open(event, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+                    try:
+                        os.fchown(child, args.php_uid, args.php_gid)
+                    finally:
+                        os.close(child)
     # Validate every target before changing permissions. Never recurse into
     # sessions, temporary files, arbitrary names or other event directories.
-    targets = [args.private / 'registrations' / event / 'registrations.csv']
     for row in rows:
         if proof_name(row):
             targets.append(args.private / 'uploads' / event / proof_name(row))
@@ -434,6 +460,11 @@ def grant_read(args):
             except FileNotFoundError:
                 continue
             targets.append(target)
+    for tree in ('registrations', 'uploads'):
+        for target in (args.private / tree, args.private / tree / event):
+            with directory(target) as fd:
+                if os.fstat(fd).st_gid != args.php_gid:
+                    raise ValueError('Unexpected PHP storage directory group')
     for target in targets:
         with opened(target) as stream:
             if os.fstat(stream.fileno()).st_gid != args.php_gid:

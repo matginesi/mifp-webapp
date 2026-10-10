@@ -110,8 +110,10 @@ def test_local_publish_and_republish_preserve_previous_on_failed_copy(tmp_path, 
         raise OSError("interrupted copy")
 
     monkeypatch.setattr("mifp_app.services.event_site_publisher.shutil.copytree", interrupted)
-    with pytest.raises(OSError, match="interrupted"):
+    with pytest.raises(PublicationError, match="previous public tree was preserved") as error:
         publisher.publish(tmp_path / "v1", "Event-2027", replace=True, keep_rollback=True)
+    assert error.value.unchanged
+    assert (root / ".Event-2027.rollback/index.html").read_text() == "v1"
     assert (root / "Event-2027/index.html").read_text() == "v2"
 
 
@@ -286,7 +288,7 @@ def test_failed_vps_replacement_after_revocation_keeps_php_unapproved(tmp_path, 
                 raise OSError("interrupted switch")
             return rename(path, target)
         monkeypatch.setattr(Path, "rename", interrupted)
-    with pytest.raises(OSError, match="interrupted"):
+    with pytest.raises(PublicationError, match="previous public tree was preserved") as error:
         publisher.publish(new, "Event", replace=True, keep_rollback=True)
     assert (root / "Event/index.php").read_text() == "<?php echo 'old';"
     assert (policy / "protected-paths").read_text() == ""

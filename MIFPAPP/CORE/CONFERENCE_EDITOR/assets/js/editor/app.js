@@ -1542,6 +1542,11 @@
     titleWrap.append(title, note);
     const code = document.createElement('code'); code.textContent = 'regform/settings.yaml';
     els.regformSectionHead.append(titleWrap, code);
+    const runtimeReview = button('Review RegForm runtime', 'button');
+    runtimeReview.addEventListener('click', reviewRegformRuntime);
+    const runtimeNote = document.createElement('p');
+    runtimeNote.textContent = 'Existing PHP is preserved. Compare standard files with the bundled template before publication; differences may be customizations. WEBSITE export checks again.';
+    titleWrap.append(runtimeNote, runtimeReview);
 
     const availabilityCard = div('page-section-card regform-availability-card');
     const availabilityHead = div('page-section-head');
@@ -3689,6 +3694,55 @@
     }
   }
 
+  // A difference may be a customization, so review bytes rather than guessing
+  // runtime versions or replacing user PHP. The bundle is same-origin and cached
+  // in memory; comparison/download never uploads or writes project files.
+  const REGFORM_RUNTIME_FILES = ['index.php', 'src/bootstrap.php', 'src/index.php',
+    'src/mailer.php', 'registrations/index.php', 'assets/form.js', 'assets/styles.css']
+    .map(path => 'regform/' + path);
+  let canonicalRegformBundle;
+  async function compareRegformRuntime(entries) {
+    if (!canonicalRegformBundle) {
+      canonicalRegformBundle = loadBundledConferenceTemplateEntries().catch(error => {
+        canonicalRegformBundle = null;
+        throw error;
+      });
+    }
+    const canonical = await canonicalRegformBundle;
+    const current = new Map(entries.map(entry => [entry.path, entry.data]));
+    const differences = [];
+    for (const path of REGFORM_RUNTIME_FILES) {
+      const expected = canonical.get(path);
+      if (!expected) throw new Error('Canonical runtime unavailable: ' + path);
+      const actual = current.get(path);
+      const a = actual ? new Uint8Array(await actual.arrayBuffer()) : null;
+      const b = new Uint8Array(await expected.arrayBuffer());
+      if (!a || a.length !== b.length || a.some((value, index) => value !== b[index])) {
+        differences.push({ path, actual, expected });
+      }
+    }
+    return differences;
+  }
+
+  async function reviewRegformRuntime() {
+    try {
+      const differences = await compareRegformRuntime(await collectProjectEntriesForExport());
+      if (!differences.length) { toast('Standard RegForm runtime matches the bundled template.', 'success'); return; }
+      const message = 'Divergent or missing standard runtime files (possibly intentional customizations):\n'
+        + differences.map(item => item.path).join('\n')
+        + '\n\nDownload current and canonical copies for review? No project files will change. '
+        + 'Preserve settings.yaml, branding and custom PHP. Back up the project before manually merging reviewed changes, then reopen it.';
+      if (!window.confirm(message)) return;
+      const entries = [];
+      for (const item of differences) {
+        if (item.actual) entries.push({path:'current/' + item.path, data:item.actual});
+        entries.push({path:'canonical/' + item.path, data:item.expected});
+      }
+      downloadBlob('regform-runtime-review.zip', await window.ZipLite.createBlob(entries));
+      toast('Review copies downloaded. Project unchanged; merge explicitly in your local sources.', 'success');
+    } catch (error) { toast('Runtime comparison unavailable: ' + error.message, 'error'); }
+  }
+
   async function exportProjectZip() {
     if (!state.config) return;
     if (state.sectionYamlDirty && !applySectionYamlFromEditor()) return;
@@ -3697,6 +3751,17 @@
     try {
       assertNoServerMailTransportInWebsiteConfig();
       const entries = await collectProjectEntriesForExport();
+      let differences;
+      try { differences = await compareRegformRuntime(entries); }
+      catch (error) {
+        // Offline export still preserves the actual project. Never imply that
+        // a comparison succeeded when the application bundle is unavailable.
+        if (!window.confirm('RegForm runtime comparison unavailable. The bundled template could not be loaded. Export current project files without runtime verification?')) return;
+        differences = [];
+      }
+      if (differences.length && !window.confirm('RegForm runtime differs from the bundled template:\n'
+          + differences.map(item => item.path).join('\n')
+          + '\nThese may be intentional customizations or older code. Use Regform → Review runtime to compare. Export these project files unchanged?')) return;
       await assertPublishableWebsiteEntries(entries);
       const version = normalizeSemver(els.releaseVersion.value || state.version.version || '1.0.0');
       const blob = await window.ZipLite.createBlob(entries, { root: state.projectName });
@@ -4195,12 +4260,17 @@
 
   function collectPlaceholderIssues() {
     const issues = [];
+    const assetPaths = new Set(state.assets.map(asset => asset.path));
     function walk(value, parts) {
       if (typeof value === 'string') {
         const token = placeholderToken(value);
         const leaf=String(parts[parts.length-1]||'');
         const technicalPath=/(?:file|path|url|href|filename|target|image|logo|icon)$/i.test(leaf);
         const purePlaceholder=/^(?:TBC|TBD|TBA|TODO|\?\?\?)$/i.test(value.trim());
+        const assetPath = value.trim().replace(/^\.\//, '').split(/[?#]/)[0];
+        if (technicalPath && assetPath.startsWith('assets/') && !assetPaths.has(assetPath)) {
+          issues.push({ source:'conference.yaml', kind:'config', path:parts.map((part,index)=>typeof part==='number'?'['+part+']':(index?'.':'')+part).join(''), pathParts:parts.slice(), value, token:'Missing asset' });
+        }
         if (token && (!technicalPath || purePlaceholder)) issues.push({ source:'conference.yaml', kind:'config', path:parts.map((part,index)=>typeof part==='number'?'['+part+']':(index?'.':'')+part).join(''), pathParts:parts.slice(), value, token });
         return;
       }
@@ -4279,7 +4349,8 @@
     const summary=div('check-summary-grid');
     const counts=new Map(); allIssues.forEach((i)=>counts.set(i.token,(counts.get(i.token)||0)+1));
     const stat=(value,label)=>{const node=div('check-stat'),strong=document.createElement('strong'),span=document.createElement('span');strong.textContent=String(value);span.textContent=label;node.append(strong,span);return node;};
-    summary.append(stat(allIssues.length,'unresolved placeholders'));
+    summary.append(stat(allIssues.length,'content issues'));
+    summary.append(stat(counts.get('Missing asset')||0,'missing assets'));
     ['TBC','TBD','TBA','TODO'].forEach((token)=>summary.append(stat(counts.get(token)||0,token)));
     shell.append(summary);
 

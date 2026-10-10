@@ -695,3 +695,55 @@ def test_import_cannot_replace_php_with_existing_host_approval(app, tmp_path):
         assert "events-php-disable" in site["publication_error"]
     assert (regform / "index.php").read_text() == "<?php echo 'approved old version';"
     assert (policy / "protected-paths").read_text() == "PLMCN-2027/regform\n"
+
+
+@pytest.mark.parametrize('failure', ['reject', 'copy', 'switch'])
+def test_failed_attempt_preserves_last_successful_package_and_rollback(app, tmp_path, monkeypatch, failure):
+    website = tmp_path/'web.zip'
+    publisher = LocalEventSitePublisher(Path(app.config['EVENTS_LOCAL_ROOT']))
+    with _conn(app) as conn:
+        def publish(version, replace):
+            website.write_bytes(_website(version=version))
+            inspection = inspect_packages(conn, website, None, assets_dir=app.config['ASSETS_DIR'])
+            return apply_import(conn, inspection, website, None, publisher=publisher,
+                                conferences_root=app.config['CONFERENCES_DIR'], assets_dir=app.config['ASSETS_DIR'],
+                                destination='PLMCN-2027', publish_website=True, import_metadata=False,
+                                replace=replace, keep_rollback=True, public_base_url='https://events.test')
+        publish('1.0.0', False)
+        publish('1.0.1', True)
+        before = dict(conn.execute('SELECT * FROM conference_sites').fetchone())
+        if failure == 'copy':
+            def fail(*args, **kwargs):
+                raise OSError('synthetic private detail')
+            monkeypatch.setattr('mifp_app.services.event_site_publisher.shutil.copytree', fail)
+        if failure == 'switch':
+            rename = Path.rename
+            def fail(path, target):
+                if '.stage-' in path.name:
+                    raise OSError('synthetic private detail')
+                return rename(path, target)
+            monkeypatch.setattr(Path, 'rename', fail)
+        with pytest.raises(PublicationError):
+            publish('1.0.2', failure != 'reject')
+        after = dict(conn.execute('SELECT * FROM conference_sites').fetchone())
+        for key in before.keys() - {'publication_error', 'updated_at'}:
+            assert before[key] == after[key], key
+        assert 'last published website retained' in after['publication_error']
+        assert 'synthetic private detail' not in after['publication_error']
+        assert publisher.destination_exists('PLMCN-2027') is True
+        assert (publisher.root/'PLMCN-2027/conference.version.json').read_text().find('1.0.1') >= 0
+        assert (publisher.root/'.PLMCN-2027.rollback/conference.version.json').read_text().find('1.0.0') >= 0
+
+
+def test_wizard_detects_host_only_destination(app, client):
+    root = Path(app.config['EVENTS_LOCAL_ROOT'])/'PLMCN-2027'
+    root.mkdir(parents=True)
+    (root/'index.html').write_text('existing public website')
+    response = client.post('/dashboard/conferences/import/validate', data={
+        'website_package': (io.BytesIO(_website()), 'website.zip'),
+    }, content_type='multipart/form-data')
+    assert response.status_code == 200
+    assert 'data-existing-destinations=\'["PLMCN-2027"]\'' in response.text
+    assert 'Deleting a dashboard entry does not delete' in response.text
+    assert 'Atomic replace/update' in response.text
+    assert (root/'index.html').read_text() == 'existing public website'

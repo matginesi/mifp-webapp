@@ -640,7 +640,7 @@ function ensure_storage(string $path)
     if (!is_dir($path) && !mkdir($path, 0700, true) && !is_dir($path)) {
         throw new RuntimeException('Registration storage could not be created.');
     }
-    @chmod($path, getenv('MIFP_REGISTRATION_WRITE_GROUP') === '1' ? 02770 : (getenv('MIFP_REGISTRATION_READ_GROUP') === '1' ? 0750 : 0700));
+    apply_registration_mode($path, getenv('MIFP_REGISTRATION_WRITE_GROUP') === '1' ? 02770 : (getenv('MIFP_REGISTRATION_READ_GROUP') === '1' ? 0750 : 0700));
     if (!is_writable($path)) {
         throw new RuntimeException('Registration storage is not writable.');
     }
@@ -1004,6 +1004,17 @@ function registrations_csv_path(string $storagePath): string
     return $storagePath . DIRECTORY_SEPARATOR . 'registrations.csv';
 }
 
+// Verify the effective mode: failed chmod must never advertise shared access.
+function apply_registration_mode(string $path, int $mode): void
+{
+    clearstatcache(true, $path);
+    if (is_link($path)) throw new RuntimeException('Unsafe registration resource.');
+    if ((fileperms($path) & 07777) === $mode) return;
+    if (!@chmod($path, $mode)) throw new RuntimeException('Registration permissions could not be applied.');
+    clearstatcache(true, $path);
+    if ((fileperms($path) & 07777) !== $mode) throw new RuntimeException('Registration permissions could not be verified.');
+}
+
 function registration_file_mode(): int
 {
     return getenv('MIFP_REGISTRATION_WRITE_GROUP') === '1' ? 0660
@@ -1028,7 +1039,8 @@ function store_proof_of_payment(string $uploadStoragePath, array $upload, string
     if (!move_uploaded_file((string)$upload['tmp_path'], $destination)) {
         throw new RuntimeException('Proof of payment could not be stored.');
     }
-    @chmod($destination, registration_file_mode());
+    try { apply_registration_mode($destination, registration_file_mode()); }
+    catch (Throwable $e) { @unlink($destination); throw $e; }
 
     $stored = $upload;
     $stored['tmp_path'] = $destination;
@@ -1062,6 +1074,7 @@ function persist_submission_csv(string $storagePath, array $record)
         throw new RuntimeException('Registration CSV could not be opened.');
     }
     try {
+        apply_registration_mode($path, registration_file_mode());
         if (!flock($fp, LOCK_EX)) {
             throw new RuntimeException('Registration CSV lock failed.');
         }
@@ -1081,7 +1094,6 @@ function persist_submission_csv(string $storagePath, array $record)
         if (!fflush($fp) || (function_exists('fsync') && !fsync($fp))) {
             throw new RuntimeException('Registration CSV could not be synchronized.');
         }
-        @chmod($path, registration_file_mode());
         flock($fp, LOCK_UN);
     } finally {
         fclose($fp);
@@ -1109,11 +1121,12 @@ function registration_notification(string $storagePath, string $receiptId, strin
         throw new RuntimeException('Unsafe notification state.');
     }
     $lock = fopen($lockPath, 'c+b');
-    if ($lock !== false) chmod($lockPath, registration_file_mode());
+
     if ($lock === false || !flock($lock, LOCK_EX)) {
         throw new RuntimeException('Notification lock unavailable.');
     }
     try {
+        apply_registration_mode($lockPath, registration_file_mode());
         $state = is_file($path) ? json_decode((string)file_get_contents($path), true, 16, JSON_THROW_ON_ERROR) : [];
         $previous = $state[$channel]['status'] ?? 'pending';
         if (!in_array($previous, ['pending', 'failed'], true)) {
@@ -1131,7 +1144,7 @@ function registration_notification(string $storagePath, string $receiptId, strin
                         throw new RuntimeException('Notification state could not be saved.');
                     }
                 } finally { fclose($fp); }
-                chmod($temp, registration_file_mode());
+                apply_registration_mode($temp, registration_file_mode());
                 if (!rename($temp, $path)) throw new RuntimeException('Notification state could not be installed.');
                 sync_registration_directory($storagePath);
             } finally { if (is_file($temp)) unlink($temp); }
@@ -1167,7 +1180,7 @@ function initialize_registration_notifications(string $storagePath, string $rece
         if (fwrite($fp, $payload) !== strlen($payload) || !fflush($fp) || (function_exists('fsync') && !fsync($fp))) {
             throw new RuntimeException('Notification initialization failed.');
         }
-        chmod($path, registration_file_mode());
+        apply_registration_mode($path, registration_file_mode());
     } finally { fclose($fp); }
     sync_registration_directory($storagePath);
 }

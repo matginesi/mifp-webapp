@@ -44,6 +44,13 @@
     const value = `${preview.dataset.host}/${path}/`;
     preview.textContent = value;
     if (review) review.textContent = value;
+    const warning = wizard.querySelector('[data-destination-warning]');
+    if (warning) {
+      const existing = JSON.parse(warning.dataset.existingDestinations || '[]');
+      warning.textContent = existing.includes(path)
+        ? 'Destination already exists or is recorded in the dashboard. Select atomic replace/update in Settings to replace it deliberately. Deleting a dashboard entry does not delete its public website. Revoke approved RegForm PHP first.'
+        : 'Destination availability is advisory; the publisher checks again, including host-only destinations. First publication rejects existing files. Select atomic replace/update deliberately if replacing a website; revoke approved RegForm PHP first.';
+    }
   }
   destination?.addEventListener('input', updatePreview);
   wizard.querySelector('[data-existing-path]')?.addEventListener('change', (event) => {
@@ -63,5 +70,6 @@
     if (!event.currentTarget.reportValidity()) return;
     show(6);
   });
+  updatePreview();
   show(step);
 })();

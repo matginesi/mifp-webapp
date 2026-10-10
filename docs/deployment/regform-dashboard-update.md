@@ -39,8 +39,12 @@ pubblicazioni o modifiche delle autorizzazioni durante la procedura.
    `registrations/index.php`, `assets/form.js`, `assets/styles.css`.
    Rivedere eventuali personalizzazioni; non sostituire `settings.yaml`,
    destinatari, prezzi, privacy, asset o lo stato di apertura concordato.
-   La copia originale dell'Editor non aggiorna automaticamente il PHP di un
-   WEBSITE già aperto e non contiene il precedente comando aggiunto per farlo.
+   L'Editor conserva il PHP del progetto. **Regform → Review RegForm runtime**
+   confronta sette file standard con il template e scarica soltanto le copie
+   divergenti (`current/` e `canonical/`), senza sostituire alcun sorgente. Una
+   differenza può essere intenzionale: fare il merge locale dopo backup e
+   riaprire il progetto. L'export WEBSITE richiede conferma per le divergenze.
+   Il confronto usa solo il bundle dell'applicazione, nessun servizio esterno.
    Aprire i sorgenti aggiornati da **Dashboard → Conference Editor**, assegnare
    una nuova versione tecnica ed esportare **WEBSITE**. INFO non serve per
    questa correzione e non va importato implicitamente.
@@ -57,7 +61,12 @@ pubblicazioni o modifiche delle autorizzazioni durante la procedura.
    non sostituire il WEBSITE. `host-apply php` non modifica il Caddyfile o le
    credenziali SMTP, e conserva le altre autorizzazioni.
 6. Dalla dashboard **Conference sites**, sostituire esplicitamente il WEBSITE
-   con il nuovo ZIP, usando validazione e rollback esistenti. PHP resta revocato.
+   con il nuovo ZIP. In **Settings → Existing destination** scegliere deliberatamente
+   **Atomic replace/update** e conservare **Keep rollback copy**. Il default
+   **First publication** rifiuta una destinazione esistente, anche quando la sua
+   riga dashboard è stata eliminata. L'eliminazione della riga non cancella il sito.
+   Il wizard segnala anche la destinazione rilevata sul filesystem VPS; per FTPS
+   la verifica definitiva resta quella del publisher. PHP resta revocato.
    Non sovrascrivere script direttamente sotto una allowlist attiva.
 7. Predisporre la lettura del CSV/allegati esistenti e ricreare il container:
 
@@ -65,24 +74,34 @@ pubblicazioni o modifiche delle autorizzazioni durante la procedura.
    sudo mifpctl registrations-access PLMCN-2027
    sudo mifpctl config-set REGISTRATIONS_DASHBOARD_ENABLED true
    sudo mifpctl restart
-   sudo mifpctl mail-diagnose
    ```
 
    Il helper cambia selettivamente i modi, non i contenuti. Non eseguire
    chmod ricorsivi. Per un evento senza CSV non creare una registrazione fittizia:
-   verificare prima lo storage vuoto e lasciare che il runtime aggiornato crei
-   il CSV al primo invio reale autorizzato.
+   `registrations-access` ora inizializza le sole directory dell'evento e il lock
+   quando il runtime pubblicato è aggiornato, con PHP revocato e radici private
+   già predisposte. Questo copre le directory PLMCN-2027 rimosse durante la
+   diagnosi. Non crea CSV né iscrizioni; il CSV nasce al primo invio reale.
+   Un mount mancante o un gruppo errato resta un errore, senza ripiego vuoto.
 8. Verificare i file pubblicati e la lettura dashboard:
 
    ```bash
    sudo grep -nF 'MIFP_REGISTRATION_READ_GROUP' /srv/mifp-events/PLMCN-2027/regform/src/bootstrap.php
+   sudo grep -nF 'function apply_registration_mode' /srv/mifp-events/PLMCN-2027/regform/src/bootstrap.php
    sudo stat -c '%a %U:%G %n' \
      /srv/mifp-events-private/registrations/PLMCN-2027 \
-     /srv/mifp-events-private/registrations/PLMCN-2027/registrations.csv
+     /srv/mifp-events-private/uploads/PLMCN-2027 \
+     /srv/mifp-events-private/registrations/PLMCN-2027/.operations.lock
+   if sudo test -f /srv/mifp-events-private/registrations/PLMCN-2027/registrations.csv; then
+     sudo stat -c '%a %U:%G %n' /srv/mifp-events-private/registrations/PLMCN-2027/registrations.csv
+   fi
    ```
 
-   Attesi directory `750`, CSV `640`, owner/gruppo `mifp-events`. Aprire la
-   pagina Registrations autenticata: deve mostrare i dati, senza modificarli.
+   In sola lettura: directory `750`, CSV/lock `640`, owner/gruppo `mifp-events`.
+   Con opt-in scrittura già attivo: directory evento `2770`, CSV/lock `660`. Aprire la
+   pagina Registrations autenticata: deve mostrare i dati o uno stato vuoto valido
+   se non esistono invii, senza modificarli. Un 503 richiede codice diagnostico
+   e request ID: controllare mount, GID supplementare e permessi di attraversamento.
 9. Solo dopo revisione del codice e verifiche riuscite, riabilitare il modulo:
 
    ```bash
@@ -188,9 +207,9 @@ La root del container resta read-only e il processo resta non-root.
 
 Dopo backup, refresh host tools e aggiornamento Docker descritti sopra:
 
-1. Nei sorgenti locali del WEBSITE aggiornare **anche nell'altro progetto
-   Editor** `TEMPLATE/regform/index.php` e `TEMPLATE/regform/src/bootstrap.php`
-   dalle copie versionate in `MIFPAPP/CORE/CONFERENCE_EDITOR/TEMPLATE/regform/`.
+1. Nei sorgenti locali del WEBSITE confrontare `regform/index.php` e
+   `regform/src/bootstrap.php` con le copie versionate in
+   `MIFPAPP/CORE/CONFERENCE_EDITOR/TEMPLATE/regform/`.
    Per PLMCN-2027 applicare le stesse modifiche al suo `regform/`, preservando
    personalizzazioni, impostazioni e dati. L'Editor conserva i file di un
    progetto esistente: aprirlo ed esportarlo non aggiorna automaticamente il PHP.
@@ -216,8 +235,8 @@ Dopo backup, refresh host tools e aggiornamento Docker descritti sopra:
    Il helper rifiuta l'accesso in scrittura se PHP non è revocato o il runtime
    pubblicato non contiene supporto ai permessi e lock delle operazioni.
    Ripetere `registrations-access` per ogni evento che deve essere scrivibile;
-   non eseguire chmod ricorsivi. Se non esiste ancora il CSV, non creare una
-   registrazione fittizia: attendere un invio reale autorizzato prima del helper.
+   non eseguire chmod ricorsivi. Se il CSV non esiste, il helper prepara directory
+   e lock senza creare record fittizi; attendere poi un invio reale autorizzato.
 4. Verificare senza creare nuove iscrizioni o inviare email di test:
 
    ```bash
@@ -230,6 +249,7 @@ Dopo backup, refresh host tools e aggiornamento Docker descritti sopra:
    ```
 
    Attesi directory evento `2770`, CSV/lock `660`, gruppo `mifp-events`.
+   Se il CSV non esiste, ometterlo dallo `stat`: non è richiesto per lo stato vuoto.
    Controllare lettura ed export nella dashboard. Solo dopo la revisione:
 
    ```bash
@@ -309,3 +329,39 @@ registrare dati dei partecipanti.
 WEBSITE/INFO continua a non importare iscrizioni: questa è un'azione separata
 ed esplicita nella pagina Registrations. Word/PDF restano documenti di
 consultazione; il ripristino con originali richiede Recovery ZIP.
+
+
+## Ambito della release e stato di pubblicazione
+
+Aggiornare gli strumenti host versionati (`deploy/deploy.sh` e
+`deploy/registration-tools.py`) tramite il refresh del passo 2: supportano ora
+l'inizializzazione esplicita di un evento senza CSV. Aggiornare anche Docker:
+include Editor, template canonico e correzioni del publisher/dashboard grazie
+al `COPY CONFERENCE_EDITOR` già presente. Non sono necessarie modifiche Dockerfile,
+Compose, CI, schema DB, SMTP o DNS. Il pool deve avere READ_GROUP=1; WRITE_GROUP=1
+solo con opt-in amministrativo alla scrittura. `host-apply php` deriva questi
+valori dalla configurazione esistente: non editare manualmente il pool.
+
+I sorgenti `CONFERENCES/PLMCN-2027/` sono locali e ignorati da Git, quindi non
+entrano nell'immagine. Sono stati corretti i due PHP comuni e il riferimento
+al documento DOC effettivamente presente (senza conversione/rename binario).
+Conservare questi sorgenti ed esportare il WEBSITE corretto separatamente.
+Il rilascio Docker **non aggiorna** il PHP sotto `/srv/mifp-events`:
+è obbligatoria la pubblicazione WEBSITE del passo 6. INFO non aggiorna il runtime.
+Prima di importare verificare nello ZIP `regform/src/bootstrap.php` le funzioni
+`registration_file_mode` e `apply_registration_mode`, e `regform/index.php`
+l'uso di `apply_registration_mode` per `.operations.lock`. Confrontare i file
+con i sorgenti revisionati, non solo la presenza delle stringhe.
+
+Revoca PHP, sostituzione WEBSITE, ripristino accesso e verifiche devono avvenire
+prima della riapprovazione. Non cambiare `submit_enabled` per questa correzione.
+Non ripetere `mail-diagnose` per provare consegne: non servono invii sintetici VPS.
+
+Un tentativo locale/VPS rifiutato, o fallito con ripristino confermato dal publisher,
+mantiene la versione pubblicata e il suo manifest/rollback, mostrando separatamente
+l'errore dell'ultimo tentativo. Per un nuovo sito resta `failed`; per guasti con
+esito remoto incerto non si dichiara preservata la pubblicazione. INFO è una
+transazione indipendente già confermata prima dell'I/O: se fornito nello stesso
+import può risultare aggiornato anche con WEBSITE fallito. Verificare entrambi
+gli esiti, quindi ritentare il solo WEBSITE quando INFO non deve cambiare.
+Non eliminare righe o ripristinare DB per aggirare un conflitto di destinazione.

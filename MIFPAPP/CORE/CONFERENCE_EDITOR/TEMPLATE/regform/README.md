@@ -133,3 +133,11 @@ for read-only dashboard access. Without this host opt-in, shared-hosting storage
 keeps 0600 / 0700. SMTP credentials remain entirely outside WEBSITE exports.
 When available, fsync synchronizes persisted data before transport attempts;
 PHP 7.4 retains the portable fflush path without requiring newer runtime APIs.
+
+Explicit `MIFP_REGISTRATION_WRITE_GROUP=1` takes precedence and selects setgid
+2770 event directories and 0660 CSV, proofs, operation/notification locks and
+notification state. READ_GROUP alone never grants group write. Permission changes
+are verified; failure stops persistence before appending the CSV. GET requests
+retain the selected directory policy. Notification failure after persistence
+never removes the committed registration. Existing private storage requires the
+host's explicit `registrations-access` operation with PHP revoked.

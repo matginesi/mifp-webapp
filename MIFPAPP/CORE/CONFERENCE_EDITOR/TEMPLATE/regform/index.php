@@ -99,7 +99,7 @@ if ($fatalError === null && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $operationLockPath = $storagePath . DIRECTORY_SEPARATOR . '.operations.lock';
             if (is_link($operationLockPath)) throw new RuntimeException('Unsafe operation lock.');
             $registrationOperationLock = fopen($operationLockPath, 'c+b');
-            if ($registrationOperationLock !== false) chmod($operationLockPath, registration_file_mode());
+            if ($registrationOperationLock !== false) apply_registration_mode($operationLockPath, registration_file_mode());
             if ($registrationOperationLock === false || !flock($registrationOperationLock, LOCK_EX)) {
                 throw new RuntimeException('Registration repository is busy.');
             }
