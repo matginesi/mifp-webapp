@@ -529,8 +529,8 @@ def log_event_throttled(
     key = f"{logger.name}:{event}:{throttle_key}"
     now = time.monotonic()
     with _throttled_events_lock:
-        previous = _throttled_events.get(key, 0.0)
-        if now - previous < max(0.0, float(interval_seconds)):
+        previous = _throttled_events.get(key)
+        if previous is not None and now - previous < max(0.0, float(interval_seconds)):
             return False
         if key not in _throttled_events and len(_throttled_events) >= _MAX_THROTTLED_EVENT_KEYS:
             oldest = min(_throttled_events, key=_throttled_events.get)

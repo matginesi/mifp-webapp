@@ -65,18 +65,86 @@ def test_metric_flusher_start_is_singleton_under_concurrency(monkeypatch):
     assert len(started) == 1
 
 
-def test_throttled_event_registry_is_bounded(monkeypatch):
+@pytest.fixture
+def throttle_clock(monkeypatch):
     import mifp_app.utils.logger as logger_module
 
+    clock = [0.0]
     monkeypatch.setattr(logger_module, "_throttled_events", {})
+    monkeypatch.setattr(logger_module.time, "monotonic", lambda: clock[0])
+    return logger_module, clock
+
+
+@pytest.mark.parametrize("start", [0.0, 30.0])
+def test_throttling_first_event_and_interval_boundaries(throttle_clock, caplog, start):
+    logger_module, clock = throttle_clock
+    clock[0] = start
+    logger = logging.getLogger("throttle-semantics-test")
+    caplog.set_level(logging.WARNING, logger=logger.name)
+
+    def emit(key="same"):
+        return logger_module.log_event_throttled(
+            logger, "runtime.degraded", "degraded fallback", interval_seconds=60, throttle_key=key
+        )
+
+    assert emit() is True
+    assert emit() is False
+    clock[0] = start + 59.5
+    assert emit() is False
+    assert emit("new") is True
+    clock[0] = start + 60
+    assert emit() is True
+    assert len(caplog.records) == 3
+    assert all(record.levelno == logging.WARNING for record in caplog.records)
+
+
+def test_zero_interval_keeps_emitting_at_clock_zero(throttle_clock, caplog):
+    logger_module, _clock = throttle_clock
+    logger = logging.getLogger("zero-throttle-test")
+    caplog.set_level(logging.WARNING, logger=logger.name)
+    for _ in range(3):
+        assert logger_module.log_event_throttled(
+            logger, "runtime.degraded", "degraded fallback", interval_seconds=0
+        ) is True
+    assert len(caplog.records) == 3
+
+
+@pytest.mark.parametrize("start", [0.0, 30.0])
+def test_throttling_at_low_uptime_writes_one_jsonl_record(throttle_clock, tmp_path, start):
+    logger_module, clock = throttle_clock
+    clock[0] = start
+    logger_module.setup_logging(tmp_path, "DEBUG", json_logs=True, output="files")
+    try:
+        logger = logger_module.get_logger("runtime")
+        first = logger_module.log_event_throttled(logger, "runtime.degraded", "degraded fallback")
+        second = logger_module.log_event_throttled(logger, "runtime.degraded", "degraded fallback")
+    finally:
+        logger_module.shutdown_logging()
+
+    assert first is True
+    assert second is False
+    records = [json.loads(line) for line in (tmp_path / "mifp_app.jsonl").read_text().splitlines()]
+    assert len(records) == 1
+    assert records[0]["event"] == "runtime.degraded"
+    assert records[0]["message"] == "degraded fallback"
+    assert records[0]["level"] == "WARNING"
+
+
+def test_throttled_event_registry_is_bounded(throttle_clock):
+    logger_module, clock = throttle_clock
     logger = logging.getLogger("bounded-throttle-test")
     logger.addHandler(logging.NullHandler())
     for index in range(logger_module._MAX_THROTTLED_EVENT_KEYS + 20):
+        clock[0] = float(index)
         logger_module.log_event_throttled(
             logger, "bounded", "test", throttle_key=str(index), interval_seconds=0
         )
 
     assert len(logger_module._throttled_events) == logger_module._MAX_THROTTLED_EVENT_KEYS
+    assert set(logger_module._throttled_events) == {
+        f"{logger.name}:bounded:{index}"
+        for index in range(20, logger_module._MAX_THROTTLED_EVENT_KEYS + 20)
+    }
 
 
 def test_audit_log_does_not_include_sensitive_keys(tmp_path):
