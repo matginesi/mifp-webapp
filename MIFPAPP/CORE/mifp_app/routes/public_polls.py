@@ -29,7 +29,6 @@ def respond():
 
 @bp.post("/respond/exchange")
 def respond_exchange():
-    request.max_content_length = 4096
     if not ip_rate_allowed(
         "poll_token_exchange",
         get_client_ip(),
@@ -68,7 +67,6 @@ def respond_poll_data():
 
 @bp.post("/respond/submit")
 def respond_submit():
-    request.max_content_length = 512 * 1024
     access = session.get("poll_access")
     payload = request.get_json(silent=True)
     if not isinstance(access, dict) or not isinstance(payload, dict):

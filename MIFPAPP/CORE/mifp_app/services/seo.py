@@ -140,7 +140,7 @@ def _settings_lastmod(conn, keys: tuple[str, ...]) -> str | None:
 
 
 def _static_lastmods(conn) -> dict[str, str | None]:
-    members_updated = _max_timestamp(conn, "SELECT MAX(updated_at) FROM members WHERE is_active=1")
+    members_updated = _max_timestamp(conn, "SELECT MAX(updated_at) FROM members WHERE is_active=1 AND review_status='published'")
     events_updated = _max_timestamp(
         conn,
         "SELECT MAX(e.updated_at) FROM events e WHERE COALESCE(e.review_status,'draft')='published'",

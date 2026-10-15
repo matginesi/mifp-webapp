@@ -185,7 +185,7 @@ def _is_tmpfs(path) -> bool:
 def create_app():
     import logging
 
-    from flask import Flask, flash, g, jsonify, redirect, render_template, request, session, url_for
+    from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, session, url_for
     from werkzeug.exceptions import HTTPException
     from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -247,6 +247,37 @@ def create_app():
     app.register_blueprint(dashboard_bp)
     from .commands import events_republish_all
     app.cli.add_command(events_republish_all)
+
+    @app.before_request
+    def limit_public_request_body():
+        # Apply the limit before CSRF can parse request.form. A signed admin
+        # session grants the large upload limit only on dashboard endpoints,
+        # with the same expiration semantics as login_required.
+        if session.get("admin_logged_in") and str(request.endpoint or "").startswith("dashboard."):
+            login_at = float(session.get("admin_login_at", 0) or 0)
+            max_age = int(app.config.get("ADMIN_SESSION_HOURS", 8)) * 3600
+            if not login_at or time.time() - login_at <= max_age:
+                return None
+        public_limit = {
+            "public.respond_exchange": 4096,
+            "public.respond_submit": 512 * 1024,
+        }.get(request.endpoint, int(app.config["PUBLIC_MAX_CONTENT_LENGTH"]))
+        global_limit = request.max_content_length
+        request.max_content_length = min(global_limit, public_limit) if global_limit is not None else public_limit
+        g.public_request_body_limited = True
+        if request.content_length is not None and request.content_length > request.max_content_length:
+            abort(413)
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            # Read through Werkzeug's bounded stream before parsing, including
+            # chunked bodies (Gunicorn sets wsgi.input_terminated). Caching
+            # preserves form/JSON parsing and prevents ignored multipart tails
+            # from bypassing the body limit.
+            body = request.get_data(cache=True)
+            # LimitedStream.readall may stop exactly at the limit without
+            # probing EOF. With no declared length, fail closed at that
+            # boundary instead of accepting a possibly truncated form.
+            if request.content_length is None and len(body) >= request.max_content_length:
+                abort(413)
 
     app.before_request(maintenance_gate)
 
@@ -657,7 +688,8 @@ def create_app():
     @app.errorhandler(413)
     def too_large(exc):
         rid = getattr(g, "request_id", "-")
-        max_mb = app.config.get("MAX_CONTENT_LENGTH", 32 * 1024 * 1024) // (1024 * 1024)
+        max_bytes = request.max_content_length
+        max_mb = max_bytes // (1024 * 1024)
         content_length = request.content_length
         app.logger.warning(
             "request rejected: payload too large path=%s bytes=%s max_mb=%s request_id=%s",
@@ -669,7 +701,7 @@ def create_app():
             severity="warning",
             path=request.path,
             request_bytes=content_length,
-            max_bytes=app.config.get("MAX_CONTENT_LENGTH"),
+            max_bytes=max_bytes,
             request_id=rid,
         )
         if request.path == "/dashboard/data-portability/import":
@@ -679,18 +711,21 @@ def create_app():
                 category="admin",
                 outcome="failure",
                 request_bytes=content_length,
-                max_bytes=app.config.get("MAX_CONTENT_LENGTH"),
+                max_bytes=max_bytes,
                 request_id=rid,
             )
         message = (
             f"This upload exceeds the {max_mb} MB limit. "
             "Select the files together from Data portability: the dashboard will upload large packages sequentially."
         )
+        if getattr(g, "public_request_body_limited", False):
+            message = f"This request exceeds the {max_bytes // 1024} KiB limit."
         if wants_json_response():
             return jsonify({
                 'error': 'file_too_large',
                 'message': message,
                 'max_mb': max_mb,
+                'max_bytes': max_bytes,
                 'request_id': rid,
             }), 413
         return render_template("errors/error.html", code=413, title="File Too Large",

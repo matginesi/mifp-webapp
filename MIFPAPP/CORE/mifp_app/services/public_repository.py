@@ -1021,8 +1021,8 @@ def get_home_context(conn, media_url: MediaUrl) -> dict[str, Any]:
         "manifesto": get_public_page(conn, "manifesto"),
         "total_events": int(conn.execute(f"SELECT COUNT(*) FROM events WHERE {PUBLIC_REVIEW_FILTER}").fetchone()[0] or 0),
         "total_news": int(conn.execute(f"SELECT COUNT(*) FROM news WHERE {PUBLIC_REVIEW_FILTER}").fetchone()[0] or 0),
-        "member_count": int(conn.execute("SELECT COUNT(*) FROM members WHERE is_active=1").fetchone()[0] or 0),
-        "country_count": int(conn.execute("SELECT COUNT(DISTINCT country) FROM members WHERE is_active=1 AND country IS NOT NULL AND country != ''").fetchone()[0] or 0),
+        "member_count": int(conn.execute("SELECT COUNT(*) FROM members WHERE is_active=1 AND review_status='published'").fetchone()[0] or 0),
+        "country_count": int(conn.execute("SELECT COUNT(DISTINCT country) FROM members WHERE is_active=1 AND review_status='published' AND country IS NOT NULL AND country != ''").fetchone()[0] or 0),
         "sponsors": list_home_sponsors(conn, media_url),
         "sponsor_how_to": get_sponsor_how_to_page(conn),
         "site_settings": {r["key"]: r["value"] for r in settings_rows},
@@ -1036,7 +1036,7 @@ def list_member_roles(conn) -> list[dict[str, Any]]:
             """
             SELECT r.id, r.name, r.label, COUNT(m.id) AS member_count
             FROM roles r
-            LEFT JOIN members m ON m.role_id=r.id AND m.is_active=1
+            LEFT JOIN members m ON m.role_id=r.id AND m.is_active=1 AND m.review_status='published'
             GROUP BY r.id
             ORDER BY r.label ASC
             """
@@ -1045,7 +1045,7 @@ def list_member_roles(conn) -> list[dict[str, Any]]:
 
 
 def list_members_page(conn, media_url: MediaUrl, search: str | None, role_filter: str | None, page: int, per_page: int) -> dict[str, Any]:
-    where_parts = ["m.is_active=1"]
+    where_parts = ["m.is_active=1", "m.review_status='published'"]
     params: list[Any] = []
     if search:
         where_parts.append("(m.display_name LIKE ? OR m.first_name LIKE ? OR m.last_name LIKE ? OR m.affiliation LIKE ? OR m.country LIKE ? OR m.field LIKE ?)")

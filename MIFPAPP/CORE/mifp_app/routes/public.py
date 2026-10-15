@@ -18,6 +18,7 @@ from flask import (
     url_for,
 )
 from werkzeug.exceptions import HTTPException
+from markupsafe import escape
 
 from ..db.connection import connect, connect_readonly, write_transaction
 from ..services.institutional_pdf import render_institutional_pdf
@@ -56,12 +57,12 @@ bp = Blueprint("public", __name__)
 _MD_DIR = Path(__file__).resolve().parent.parent.parent  # MIFPAPP/CORE/
 
 def _markdown_html(raw: str | None) -> str | None:
+    if not raw:
+        return None
     try:
         import markdown as md_lib
     except ImportError:
-        return raw
-    if not raw:
-        return None
+        return str(escape(raw))
     return sanitize_html(md_lib.markdown(raw, extensions=["fenced_code", "tables", "nl2br"]))
 
 
@@ -337,7 +338,7 @@ def about():
     db_path = current_app.config["DATABASE_PATH"]
     with connect_readonly(db_path) as conn:
         stats = {
-            "members": conn.execute("SELECT COUNT(*) FROM members WHERE is_active=1").fetchone()[0],
+            "members": conn.execute("SELECT COUNT(*) FROM members WHERE is_active=1 AND review_status='published'").fetchone()[0],
             "events": conn.execute("SELECT COUNT(*) FROM events WHERE review_status='published'").fetchone()[0],
             "news": conn.execute("SELECT COUNT(*) FROM news WHERE review_status='published'").fetchone()[0],
             "publications": conn.execute("SELECT COUNT(*) FROM publications WHERE review_status='published'").fetchone()[0],
@@ -397,7 +398,7 @@ def research():
         ]
         members_by_country = [
             dict(r) for r in conn.execute(
-                "SELECT NULLIF(TRIM(country), '') AS country, COUNT(*) AS total FROM members WHERE is_active=1 AND country IS NOT NULL AND TRIM(country) != '' AND country != 'Unknown' GROUP BY country ORDER BY total DESC LIMIT 10"
+                "SELECT NULLIF(TRIM(country), '') AS country, COUNT(*) AS total FROM members WHERE is_active=1 AND review_status='published' AND country IS NOT NULL AND TRIM(country) != '' AND country != 'Unknown' GROUP BY country ORDER BY total DESC LIMIT 10"
             ).fetchall()
         ]
         member_profile = conn.execute(
@@ -405,7 +406,7 @@ def research():
             SELECT COUNT(*) AS active_members,
                    COUNT(DISTINCT NULLIF(TRIM(country), '')) AS represented_countries
             FROM members
-            WHERE is_active=1
+            WHERE is_active=1 AND review_status='published'
             """
         ).fetchone()
         published_total = conn.execute(

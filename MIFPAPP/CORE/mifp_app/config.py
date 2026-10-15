@@ -233,6 +233,8 @@ class Config:
         os.getenv('MAX_UPLOAD_FILE_BYTES', str(1024 * 1024 * 1024))
     )
     MAX_CONTENT_LENGTH = int(os.getenv('MAX_CONTENT_LENGTH_MB', '1032')) * 1024 * 1024
+    # Public forms contain text only; large bodies belong to authenticated dashboard uploads.
+    PUBLIC_MAX_CONTENT_LENGTH = 64 * 1024
     FLASK_HOST = os.getenv('FLASK_HOST', '127.0.0.1')
     FLASK_PORT = int(os.getenv('FLASK_PORT', '8000'))
     SITE_DEFAULTS = dict(_cfg("site_defaults", {}))
