@@ -1,15 +1,18 @@
 """Shared-link polls: Aruba sends the invitation; MIFP only records answers."""
 from __future__ import annotations
 
-import re
+import hashlib
 import secrets
 import threading
 import time
 from collections import deque
 
-from flask import Response, abort, current_app, flash, make_response, redirect, render_template, request, url_for
+from flask import Response, abort, current_app, flash, make_response, redirect, render_template, request, session, url_for
+
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from ..services import simple_polls as store
+from ..services import poll_yaml
 from ..utils.security import admin_password_matches, get_client_ip
 from ..utils.logger import audit_log
 from .auth import login_required
@@ -52,6 +55,7 @@ def _questions_from_form():
         values.append({"question": label, "type": request.form.get(f"q_{index}_type"),
                        "required": bool(request.form.get(f"q_{index}_required")),
                        "options": [x.strip() for x in options if x.strip()],
+                       "dates": request.form.get(f"q_{index}_dates", "").splitlines(),
                        "style": request.form.get(f"q_{index}_style", "single_line"),
                        "yes_label": request.form.get(f"q_{index}_yes_label", "Yes"),
                        "no_label": request.form.get(f"q_{index}_no_label", "No")})
@@ -74,6 +78,61 @@ def simple_poll_create():
     except store.SurveyError as exc:
         flash(str(exc), "error")
         return redirect(url_for("dashboard.simple_polls"))
+
+
+def _yaml_signer():
+    return URLSafeTimedSerializer(current_app.secret_key, salt="mifp-poll-yaml-import-v1")
+
+
+def _import_session_binding():
+    return hashlib.sha256(session["_csrf_token"].encode()).hexdigest()
+
+
+@dashboard_bp.post("/polls-simple/import-yaml")
+@login_required
+def simple_poll_import_yaml():
+    try:
+        upload = request.files.get("yaml_file")
+        if not upload or not upload.filename or not upload.filename.lower().endswith((".yaml", ".yml")):
+            raise store.SurveyError("Choose a .yaml or .yml file")
+        template = poll_yaml.load_template(upload.stream.read(poll_yaml.MAX_YAML_BYTES + 1))
+        confirmation = _yaml_signer().dumps({"template": template, "session": _import_session_binding()})
+        return render_template("dashboard/polls_yaml_import.html", template=template["poll"], confirmation=confirmation)
+    except store.SurveyError as exc:
+        flash(str(exc), "error")
+        return render_template("dashboard/polls_yaml_import.html", template=None, confirmation=None), 400
+
+
+@dashboard_bp.post("/polls-simple/import-yaml/confirm")
+@login_required
+def simple_poll_import_confirm():
+    try:
+        token = request.form.get("confirmation", "")
+        if len(token) > poll_yaml.MAX_YAML_BYTES * 2:
+            raise store.SurveyError("Invalid import confirmation")
+        pending = _yaml_signer().loads(token, max_age=1800)
+        if not secrets.compare_digest(pending["session"], _import_session_binding()):
+            raise store.SurveyError("Import preview belongs to another administrator session")
+        if request.form.get("confirm_import") != "yes":
+            raise store.SurveyError("Confirm creation of a new draft after reviewing the preview")
+        poll = poll_yaml.create_draft(_base(), pending["template"])
+    except (BadSignature, store.SurveyError) as exc:
+        flash(str(exc) if isinstance(exc, store.SurveyError) else "Import preview expired or invalid; upload the YAML again.", "error")
+        return render_template("dashboard/polls_yaml_import.html", template=None, confirmation=None), 400
+    audit_log("poll.simple.imported", "new draft created from YAML", category="poll", poll_id=poll["id"])
+    flash("YAML imported as a new draft. Review and confirm privacy before publishing.", "success")
+    return redirect(url_for("dashboard.simple_poll_detail", poll_id=poll["id"]))
+
+
+@dashboard_bp.get("/polls-simple/<poll_id>/export.yaml")
+@login_required
+def simple_poll_export_yaml(poll_id):
+    try:
+        return Response(poll_yaml.export_template(_base(), poll_id), mimetype="application/yaml", headers={
+            "Content-Disposition": 'attachment; filename="mifp-poll-template.yaml"', "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff"})
+    except store.SurveyError:
+        abort(404)
 
 
 @dashboard_bp.get("/polls-simple/<poll_id>")
@@ -185,7 +244,12 @@ def simple_survey_submit(poll_id, key):
     answers = {}
     for question in poll["questions"]:
         field = "q_" + question["id"]
-        answers[question["id"]] = request.form.getlist(field) if question["type"] == "multiple_choice" else request.form.get(field, "")
+        if question["type"] == "date_availability":
+            answers[question["id"]] = {
+                name[len(field) + 1:]: request.form.get(name) if len(request.form.getlist(name)) == 1 else request.form.getlist(name)
+                for name in request.form if name.startswith(field + "_")}
+        else:
+            answers[question["id"]] = request.form.getlist(field) if question["type"] == "multiple_choice" else request.form.get(field, "")
     identity = {name: request.form.get(name, "") for name in ("first_name", "last_name", "email")}
     try:
         store.submit(_base(), poll_id, key, request_id=request.form.get("submission_id", ""),

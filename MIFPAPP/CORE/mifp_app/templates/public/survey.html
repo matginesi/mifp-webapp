@@ -7,6 +7,7 @@
   <meta name="robots" content="noindex, nofollow">
   <title>{{ poll.title if poll else 'Unavailable' }} — MIFP Survey</title>
   <link href="{{ url_for('static', filename='css/survey-simple.css', v=static_version) }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/poll-availability.css', v=static_version) }}" rel="stylesheet">
 </head>
 <body>
 <main class="survey-shell">
@@ -50,6 +51,16 @@
           {% endif %}
         {% elif q.type == 'date' %}
           <input aria-label="{{ q.question }}" name="{{ field }}" type="date" value="{{ values.get(field, '') if values else '' }}" {% if q.required %}required{% endif %}>
+        {% elif q.type == 'date_availability' %}
+          <p class="survey-muted">{{ 'Choose Yes, Maybe or No for every date.' if q.required else 'Choose your availability for each date. Skip means unanswered.' }}</p>
+          <table class="poll-availability"><caption>{{ q.question }}</caption>
+            <thead><tr><th scope="col">Date</th>{% for label in (['Yes', 'Maybe', 'No'] if q.required else ['Yes', 'Maybe', 'No', 'Skip']) %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
+            <tbody>{% for day in q.dates %}<tr><th scope="row">{{ day }}</th>
+              {% set date_field = field ~ '_' ~ day %}
+              {% for value, label in ([('yes', 'Yes'), ('maybe', 'Maybe'), ('no', 'No')] if q.required else [('yes', 'Yes'), ('maybe', 'Maybe'), ('no', 'No'), ('', 'Unanswered')]) %}
+              <td><label><input type="radio" name="{{ date_field }}" value="{{ value }}" aria-label="{{ day }}: {{ label }}" {% if q.required %}required{% endif %} {% if (values.get(date_field, '') if values else '') == value %}checked{% endif %}></label></td>
+              {% endfor %}</tr>{% endfor %}</tbody>
+          </table>
         {% elif q.type == 'yes_no' %}
           {% for value, name in [('yes', q.get('yes_label', 'Yes')), ('no', q.get('no_label', 'No'))] %}
           <label class="survey-choice"><input type="radio" name="{{ field }}" value="{{ value }}" {% if values and values.get(field) == value %}checked{% endif %} {% if q.required %}required{% endif %}> {{ name }}</label>

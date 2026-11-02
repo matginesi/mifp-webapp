@@ -1,0 +1,40 @@
+{% extends 'dashboard/layout.html' %}
+{% from 'dashboard/_components.html' import page_header %}
+{% block page_title %}Import Poll YAML{% endblock %}
+{% block content %}
+{{ page_header('Notifications', 'Import Poll YAML', 'Review a reusable template before creating a new draft.') }}
+{% if template %}
+<section class="control-panel p-3">
+  <h2>{{ template.title }}</h2>
+  <p>{{ template.description }}</p>
+  <p>Response mode: <strong>{{ template.response_mode|title }}</strong> · {{ template.questions|length }} questions</p>
+  <p role="status">This will create a new draft. Existing polls and responses are unaffected. Imported privacy information is unverified and must be reviewed and confirmed before publication. This preview expires after 30 minutes.</p>
+  {% for question in template.questions %}
+  <article class="poll-question-editor p-3">
+    <h3>{{ loop.index }}. {{ question.question }}</h3>
+    <p>{{ question.type|replace('_', ' ')|title }} · {{ 'Required' if question.required else 'Optional' }}</p>
+    {% if question.type == 'date_availability' %}
+    <p>{{ 'Answer every date.' if question.required else 'Dates may be left unanswered.' }} Choices: Yes / Maybe / No.</p>
+    <ul>{% for day in question.dates %}<li>{{ day }}</li>{% endfor %}</ul>
+    {% elif question.type in ['single_choice', 'multiple_choice'] %}
+    <ul>{% for option in question.options %}<li>{{ option }}</li>{% endfor %}</ul>
+    {% elif question.type == 'yes_no' %}<p>{{ question.yes_label }} / {{ question.no_label }}</p>
+    {% elif question.type == 'text' %}<p>{{ question.style|replace('_', ' ')|title }}</p>{% endif %}
+  </article>
+  {% endfor %}
+  {% if template.privacy %}
+  <h3>Imported privacy information — unverified</h3>
+  <dl>{% for key, value in template.privacy.items() if key != 'confirmed' %}<dt>{{ key|replace('_', ' ')|title }}</dt><dd>{{ value or 'Not supplied' }}</dd>{% endfor %}</dl>
+  {% endif %}
+  <form method="post" action="{{ url_for('dashboard.simple_poll_import_confirm') }}">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="confirmation" value="{{ confirmation }}">
+    <label class="field"><span><input type="checkbox" name="confirm_import" value="yes" required> I have reviewed this template and want to create a new draft.</span></label>
+    <button type="submit" class="btn btn-primary">Create new draft</button>
+    <a href="{{ url_for('dashboard.simple_polls') }}" class="btn btn-ghost">Cancel</a>
+  </form>
+</section>
+{% else %}
+<p>No draft was created. <a href="{{ url_for('dashboard.simple_polls') }}">Return to Polls and choose another YAML file</a>.</p>
+{% endif %}
+{% endblock %}

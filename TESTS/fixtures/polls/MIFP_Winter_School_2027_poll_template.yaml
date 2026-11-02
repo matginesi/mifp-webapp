@@ -1,0 +1,34 @@
+# MIFP Polls — example import template (schema proposal).
+# This file is not supported until the YAML importer and date_availability type
+# have been implemented and deployed. It contains no respondent data or secrets.
+schema_version: 1
+poll:
+  title: "MIFP Winter School 2027 — Interest and Availability"
+  description: >-
+    MIFP is preparing the Winter School on Artificial Intelligence for
+    Science and Technology, scheduled for 21–28 February 2027 in
+    Tsaghkadzor, Armenia. This short survey helps estimate interest and
+    availability. It is not a registration or a commitment to participate.
+  response_mode: anonymous
+  questions:
+    - type: single_choice
+      question: "Would you be interested in attending the Winter School?"
+      required: true
+      options:
+        - "Yes, I am interested"
+        - "Maybe, depending on the programme and practical arrangements"
+        - "No, I am not interested"
+
+    - type: date_availability
+      question: "On which days might you be available?"
+      required: false
+      dates:
+        - "2027-02-21"
+        - "2027-02-22"
+        - "2027-02-23"
+        - "2027-02-24"
+        - "2027-02-25"
+        - "2027-02-26"
+        - "2027-02-27"
+        - "2027-02-28"
+      # For each day the participant can choose Yes, Maybe, No or leave it blank.

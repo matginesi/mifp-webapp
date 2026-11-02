@@ -1,5 +1,6 @@
 {% extends 'dashboard/layout.html' %}
 {% from 'dashboard/_components.html' import page_header %}
+{% block extra_css %}<link href="{{ url_for('static', filename='css/poll-availability.css', v=static_version) }}" rel="stylesheet">{% endblock %}
 {% block page_title %}Polls{% endblock %}
 {% block content %}
 {{ page_header('Notifications', 'Polls', 'Create questionnaires and collect responses through a shared link.') }}
@@ -20,6 +21,15 @@
       </select></label>
       <div class="inline-actions"><button class="btn btn-primary btn-sm" type="submit">Create Poll</button><button class="btn btn-ghost btn-sm" type="button" data-poll-new-cancel>Cancel</button></div>
     </form>
+    <details class="poll-yaml-import">
+      <summary>Import YAML</summary>
+      <form method="post" enctype="multipart/form-data" action="{{ url_for('dashboard.simple_poll_import_yaml') }}">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+        <label class="field"><span>Poll template (.yaml / .yml, max 1 MiB)</span><input class="form-control form-control-sm" type="file" name="yaml_file" accept=".yaml,.yml" required></label>
+        <button class="btn btn-outline btn-sm" type="submit">Preview import</button>
+        <small>Creates a new draft after confirmation.</small>
+      </form>
+    </details>
     <div class="poll-list">
       {% for item in polls %}
       <a class="poll-list-item{{ ' is-active' if poll and item.id == poll.id }}" href="{{ url_for('dashboard.simple_poll_detail', poll_id=item.id) }}">
@@ -76,13 +86,14 @@
                 <div class="row g-2">
                   <div class="col-md-7"><label class="field"><span>Question</span><input class="form-control" name="q_{{ loop.index0 }}_question" required maxlength="300" value="{{ question.question }}"></label></div>
                   <div class="col-md-4"><label class="field"><span>Type</span><select class="form-select" name="q_{{ loop.index0 }}_type" data-question-type>
-                    {% for choice, label in [('yes_no','Yes / No'),('single_choice','Single choice'),('multiple_choice','Multiple choice'),('date','Date'),('text','Text')] %}
+                    {% for choice, label in [('yes_no','Yes / No'),('single_choice','Single choice'),('multiple_choice','Multiple choice'),('date','Date'),('date_availability','Date availability'),('text','Text')] %}
                     <option value="{{ choice }}" {% if question.type == choice %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}</select></label></div>
                   <div class="col-md-1 align-self-end"><button type="button" class="btn btn-outline-danger btn-sm" data-remove-question aria-label="Remove question">×</button></div>
                   <div class="col-12" data-question-options {% if question.type not in ['single_choice','multiple_choice'] %}hidden{% endif %}>
                     <label class="field"><span>Options — one per line</span><textarea name="q_{{ loop.index0 }}_options" class="form-control" rows="3">{% for option in question.get('options', []) %}{{ option.label }}{% if not loop.last %}{{ '\n' }}{% endif %}{% endfor %}</textarea></label>
                   </div>
+                  {% if question.type == 'date_availability' %}<div class="col-12"><label class="field"><span>Dates — one YYYY-MM-DD per line</span><textarea name="q_{{ loop.index0 }}_dates" class="form-control" rows="4">{{ question.dates|join('\n') }}</textarea></label></div>{% endif %}
                   <div class="col-md-6"><label class="field"><span>Yes label</span><input class="form-control" maxlength="80" name="q_{{ loop.index0 }}_yes_label" value="{{ question.get('yes_label', 'Yes') }}"></label></div>
                   <div class="col-md-6"><label class="field"><span>No label</span><input class="form-control" maxlength="80" name="q_{{ loop.index0 }}_no_label" value="{{ question.get('no_label', 'No') }}"></label></div>
                   <div class="col-12"><label class="field"><span>Text style</span><select name="q_{{ loop.index0 }}_style" class="form-select"><option value="single_line" {% if question.get('style', 'single_line') == 'single_line' %}selected{% endif %}>Single line</option><option value="multi_line" {% if question.get('style') == 'multi_line' %}selected{% endif %}>Multiple lines</option></select></label></div>
@@ -145,13 +156,16 @@
         {% for q in analysis.questions %}<h3 class="h6 mt-3">{{ loop.index }}. {{ q.question }}</h3>
         {% if q.type in ['single_choice', 'multiple_choice'] %}
           {% for opt in q.options %}<div class="d-flex justify-content-between border-bottom py-1"><span>{{ opt.label }}</span><strong>{{ q.counts.get(opt.id, 0) }}</strong></div>{% endfor %}
+        {% elif q.type == 'date_availability' %}
+          <table class="poll-availability"><caption>Responses by date</caption><thead><tr><th scope="col">Date</th>{% for label in ['Yes', 'Maybe', 'No', 'Unanswered'] %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
+          <tbody>{% for day in q.dates %}<tr><th scope="row">{{ day }}</th>{% for category in ['yes', 'maybe', 'no', 'unanswered'] %}<td>{{ q.date_counts[day][category] }}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
         {% elif q.type == 'yes_no' %}<p>{{ q.get('yes_label', 'Yes') }}: {{ q.counts.get('yes', 0) }} · {{ q.get('no_label', 'No') }}: {{ q.counts.get('no', 0) }}</p>
         {% else %}<p class="small text-muted">View answers in the administrator CSV export.</p>{% endif %}
         {% endfor %}
       </section>
     </section>
     <section class="poll-tab-panel" data-shared-poll-panel="export" hidden>
-      <section class="control-panel poll-section-card poll-privacy-pad"><h3>Poll exports</h3><p>Download the answers as CSV for analysis.</p><a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.simple_poll_export', poll_id=poll.id) }}"><i class="bi bi-filetype-csv" aria-hidden="true"></i> Download CSV</a></section>
+      <section class="control-panel poll-section-card poll-privacy-pad"><h3>Poll exports</h3><p>Download the answers as CSV for analysis.</p><a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.simple_poll_export', poll_id=poll.id) }}"><i class="bi bi-filetype-csv" aria-hidden="true"></i> Download CSV</a> <a class="btn btn-outline btn-sm" title="Export the last saved version without responses or secrets" href="{{ url_for('dashboard.simple_poll_export_yaml', poll_id=poll.id) }}">Export YAML</a></section>
     </section>
     <section class="poll-tab-panel" data-shared-poll-panel="clean" hidden>
       {% if poll.response_mode == 'identified' %}

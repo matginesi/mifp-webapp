@@ -1687,6 +1687,8 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.notifications_batch_audit",
     "dashboard.poll_retired",
     "dashboard.simple_poll_create",
+    "dashboard.simple_poll_import_yaml",
+    "dashboard.simple_poll_import_confirm",
     "dashboard.simple_poll_save",
     "dashboard.simple_poll_preview",
     "dashboard.simple_poll_delete",

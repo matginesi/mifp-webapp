@@ -251,6 +251,13 @@ def create_app():
 
     @app.before_request
     def limit_public_request_body():
+        if request.endpoint in {"dashboard.simple_poll_import_yaml", "dashboard.simple_poll_import_confirm"}:
+            # Bound multipart parsing and signed confirmation before CSRF reads
+            # request.form, including authenticated uploads.
+            import_limit = 2 * 1024 * 1024 + 65536
+            global_limit = request.max_content_length
+            request.max_content_length = min(global_limit, import_limit) if global_limit is not None else import_limit
+            request.max_form_memory_size = request.max_content_length
         # Apply the limit before CSRF can parse request.form. A signed admin
         # session grants the large upload limit only on dashboard endpoints,
         # with the same expiration semantics as login_required.

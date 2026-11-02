@@ -56,7 +56,8 @@
   var locked = form.dataset.questionsLocked === '1';
   var questions = JSON.parse(document.querySelector('#survey-question-data').textContent);
   var types = [['yes_no', 'Yes / No'], ['single_choice', 'Single choice'],
-    ['multiple_choice', 'Multiple choice'], ['date', 'Date'], ['text', 'Text']];
+    ['multiple_choice', 'Multiple choice'], ['date', 'Date'],
+    ['date_availability', 'Date availability'], ['text', 'Text']];
 
   function element(tag, className, text) {
     var item = document.createElement(tag);
@@ -195,7 +196,18 @@
       required.append(checked, copy);
       grid.append(labeled('Question', title), labeled('Response type', type), required);
       body.append(grid);
-      if (q.type === 'text') {
+      if (q.type === 'date_availability') {
+        var dates = element('textarea', 'form-control form-control-sm');
+        dates.rows = 4; dates.maxLength = 660; dates.disabled = locked;
+        dates.placeholder = '2027-01-11\n2027-01-12';
+        dates.value = (q.dates || []).join('\n');
+        dates.addEventListener('input', function () {
+          q.dates = dates.value.split(/\r?\n/).map(function (day) { return day.trim(); }).filter(Boolean);
+          renderPreview();
+        });
+        body.append(labeled('Dates (YYYY-MM-DD, one per line)', dates),
+          element('small', '', '1–60 distinct calendar dates. Required means every date needs an answer.'));
+      } else if (q.type === 'text') {
         var style = element('select', 'form-select form-select-sm');
         style.disabled = locked;
         [['single_line', 'Single line'], ['multi_line', 'Multiple lines']].forEach(function (item) {
@@ -248,6 +260,18 @@
           return false;
         }
         fields.append(hidden('q_' + i + '_options', labels.join('\n')));
+      }
+      if (q.type === 'date_availability') {
+        var days = q.dates || [];
+        if (!days.length || days.length > 60 || new Set(days).size !== days.length || days.some(function (day) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return true;
+          var parsed = new Date(day + 'T00:00:00Z');
+          return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== day;
+        })) {
+          window.alert('Question ' + (i + 1) + ': enter 1–60 different dates in YYYY-MM-DD format.');
+          return false;
+        }
+        fields.append(hidden('q_' + i + '_dates', days.join('\n')));
       }
       fields.append(hidden('q_' + i + '_question', q.question));
       fields.append(hidden('q_' + i + '_type', q.type));

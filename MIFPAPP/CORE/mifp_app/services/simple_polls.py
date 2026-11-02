@@ -23,7 +23,7 @@ from typing import Any, Iterator, Mapping
 ID = re.compile(r"^[a-f0-9]{32}$")
 KEY = re.compile(r"^[A-Za-z0-9_-]{32}$")
 MODES = {"anonymous", "identified"}
-TYPES = {"text", "yes_no", "single_choice", "multiple_choice", "date"}
+TYPES = {"text", "yes_no", "single_choice", "multiple_choice", "date", "date_availability"}
 BASES = {"consent", "legitimate_interest", "public_task", "contract"}
 
 
@@ -140,7 +140,10 @@ def _read_answers(directory: Path) -> list[dict]:
                 or not ID.fullmatch(item["request_id"])
                 or not isinstance(item.get("answers"), dict)
                 or not all(isinstance(k, str) and (isinstance(v, str) or
-                    (isinstance(v, list) and all(isinstance(x, str) for x in v)))
+                    (isinstance(v, list) and all(isinstance(x, str) for x in v)) or
+                    (isinstance(v, dict) and all(isinstance(d, str) and
+                     re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) and isinstance(a, str) and
+                     a in {"yes", "maybe", "no", ""} for d, a in v.items())))
                     for k, v in item["answers"].items())
                 or not isinstance(item.get("submitted_at"), str)
                 or not isinstance(item.get("privacy_version"), str)
@@ -189,6 +192,21 @@ def _date(value: str) -> str:
         raise SurveyError("Enter a valid date") from exc
 
 
+def _calendar_dates(values: Any) -> list[str]:
+    if not isinstance(values, list) or not 1 <= len(values) <= 60:
+        raise SurveyError("Date availability requires 1–60 distinct ISO calendar dates")
+    dates = []
+    for value in values:
+        # SafeLoader represents unquoted ISO YAML dates as datetime.date.
+        value = value.isoformat() if type(value) is date else value
+        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise SurveyError("Use calendar dates in YYYY-MM-DD format")
+        dates.append(_date(value))
+    if len(set(dates)) != len(dates):
+        raise SurveyError("Date availability dates must be distinct")
+    return dates
+
+
 def _normalize_questions(questions: Any) -> list[dict]:
     if not isinstance(questions, list) or not 1 <= len(questions) <= 30:
         raise SurveyError("A survey needs between 1 and 30 questions")
@@ -201,6 +219,8 @@ def _normalize_questions(questions: Any) -> list[dict]:
             raise SurveyError("Question text is required")
         kind = raw["type"]
         item = {"id": secrets.token_hex(8), "type": kind, "question": title, "required": bool(raw.get("required", False))}
+        if kind == "date_availability":
+            item["dates"] = _calendar_dates(raw.get("dates"))
         if kind == "text":
             style = str(raw.get("style") or "single_line")
             if style not in {"single_line", "multi_line"}:
@@ -335,6 +355,7 @@ def update(config_dir: Path | str, poll_id: str, raw: Mapping[str, Any]) -> dict
         candidate = _normalize_questions(raw.get("questions"))
         same_questions = len(candidate) == len(old_questions) and all(
             a["type"] == b["type"] and a["question"] == b["question"] and a["required"] == b["required"]
+            and a.get("dates", []) == b.get("dates", [])
             and a.get("style", "single_line") == b.get("style", "single_line")
             and a.get("yes_label", "Yes") == b.get("yes_label", "Yes")
             and a.get("no_label", "No") == b.get("no_label", "No")
@@ -384,7 +405,17 @@ def _validate_answers(poll: dict, raw: Mapping[str, Any]) -> dict:
         raise SurveyError("Unexpected answer fields")
     for q in poll["questions"]:
         val = raw.get(q["id"], [] if q["type"] == "multiple_choice" else "")
-        if q["type"] == "multiple_choice":
+        if q["type"] == "date_availability":
+            if val == "":
+                val = {}
+            if not isinstance(val, Mapping) or set(val) - set(q["dates"]):
+                raise SurveyError("Invalid date availability fields")
+            if any(not isinstance(v, str) or v not in {"yes", "maybe", "no", ""} for v in val.values()):
+                raise SurveyError("Choose Yes, Maybe or No for each date")
+            val = {day: val.get(day, "") for day in q["dates"]}
+            if q["required"] and not all(val.values()):
+                raise SurveyError("Please answer every date in required availability questions")
+        elif q["type"] == "multiple_choice":
             if not isinstance(val, list):
                 raise SurveyError("Invalid multiple-choice answer")
             allowed = {opt["id"] for opt in q["options"]}
@@ -462,6 +493,14 @@ def summary(config_dir: Path | str, poll_id: str) -> dict:
     poll, rows = results(config_dir, poll_id)
     questions = []
     for q in poll["questions"]:
+        if q["type"] == "date_availability":
+            totals = {day: {category: 0 for category in ("yes", "maybe", "no", "unanswered")} for day in q["dates"]}
+            for row in rows:
+                answer = row["answers"].get(q["id"], {})
+                for day in q["dates"]:
+                    totals[day][answer.get(day) or "unanswered"] += 1
+            questions.append({**q, "date_counts": totals})
+            continue
         counts = Counter()
         for row in rows:
             val = row["answers"].get(q["id"])
@@ -479,7 +518,10 @@ def _csv_cell(value: Any) -> str:
 
 def export_csv(config_dir: Path | str, poll_id: str) -> bytes:
     poll, rows = results(config_dir, poll_id)
-    fields = (["first_name", "last_name", "email"] if poll["response_mode"] == "identified" else []) + [q["question"] for q in poll["questions"]]
+    fields = (["first_name", "last_name", "email"] if poll["response_mode"] == "identified" else [])
+    for q in poll["questions"]:
+        fields.extend([f"{q['question']} [{day}]" for day in q["dates"]]
+                      if q["type"] == "date_availability" else [q["question"]])
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([_csv_cell(field) for field in fields])
@@ -487,6 +529,9 @@ def export_csv(config_dir: Path | str, poll_id: str) -> bytes:
         vals = ([row.get("first_name", ""), row.get("last_name", ""), row.get("email", "")] if poll["response_mode"] == "identified" else [])
         for q in poll["questions"]:
             val = row["answers"].get(q["id"], "")
+            if q["type"] == "date_availability":
+                vals.extend((val or {}).get(day, "") for day in q["dates"])
+                continue
             label_map = {x["id"]: x["label"] for x in q.get("options", [])}
             if isinstance(val, list):
                 val = ", ".join(label_map.get(v, v) for v in val)
