@@ -29,6 +29,14 @@ _logging_signature: tuple[Any, ...] | None = None
 _logging_pid: int | None = None
 _request_id: ContextVar[str] = ContextVar("request_id", default="-")
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+# Shared survey URLs contain bearer-style access keys in their path. Keep
+# these out of application/access/error logs and administrative notifications.
+_SURVEY_LINK_RE = re.compile(r"(?P<base>/survey/[a-f0-9]{32}/)[^/?#\s\"'<>]+")
+
+
+def safe_survey_path(value: str) -> str:
+    return _SURVEY_LINK_RE.sub(r"\g<base>[REDACTED_LINK]", value)
+
 _EMAIL_RE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
 _CREDENTIAL_RE = re.compile(r"\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 _AUTHORIZATION_VALUE_RE = re.compile(
@@ -179,7 +187,7 @@ def redact(value: Any, *, key: str | None = None, _depth: int = 0) -> Any:
     if value is None or isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, str):
-        text = _EMAIL_RE.sub("[REDACTED_EMAIL]", value[:4000])
+        text = safe_survey_path(_EMAIL_RE.sub("[REDACTED_EMAIL]", value[:4000]))
         text = _AUTHORIZATION_VALUE_RE.sub(r"\g<prefix>[REDACTED_CREDENTIAL]", text)
         text = _CREDENTIAL_RE.sub("[REDACTED_CREDENTIAL]", text)
         return _SECRET_VALUE_RE.sub(r"\g<prefix>[REDACTED]", text)
@@ -208,7 +216,7 @@ def _new_request_id(candidate: str | None = None) -> str:
 
 
 def _client_fingerprint() -> tuple[str | None, str | None]:
-    if not has_request_context():
+    if not has_request_context() or request.path.startswith("/survey/"):
         return None, None
     from .security import get_client_ip
 
@@ -253,11 +261,13 @@ class RequestContextFilter(logging.Filter):
         if has_request_context():
             record.endpoint = getattr(record, "endpoint", None) or request.endpoint
             record.method = getattr(record, "method", None) or request.method
-            record.path = getattr(record, "path", None) or request.path
-            record.actor = getattr(record, "actor", None) or session.get("admin_username")
+            record.path = safe_survey_path(getattr(record, "path", None) or request.path)
+            record.actor = None if request.path.startswith("/survey/") else (getattr(record, "actor", None) or session.get("admin_username"))
             raw_ip, hashed_ip = _client_fingerprint()
             record.client_ip = getattr(record, "client_ip", None) or raw_ip
             record.client_ip_hash = getattr(record, "client_ip_hash", None) or hashed_ip
+        if isinstance(record.path, str):
+            record.path = safe_survey_path(record.path)
         return True
 
 
@@ -314,7 +324,7 @@ class JsonFormatter(IsoFormatter):
             "function": record.funcName, "line": record.lineno,
             "request_id": getattr(record, "request_id", None),
             "endpoint": getattr(record, "endpoint", None), "method": getattr(record, "method", None),
-            "path": getattr(record, "path", None), "status": getattr(record, "status", None),
+            "path": redact(getattr(record, "path", None)), "status": getattr(record, "status", None),
             "duration_ms": getattr(record, "duration_ms", None), "actor": getattr(record, "actor", None),
             "client_ip": getattr(record, "client_ip", None),
             "client_ip_hash": getattr(record, "client_ip_hash", None),
@@ -625,7 +635,7 @@ def init_request_logging(app: Flask, db_path: str | None = None) -> None:
         if request.method not in {"GET", "HEAD"}:
             return
         path = request.path or "/"
-        if path == "/favicon.ico" or path.startswith(("/dashboard", "/login", "/static", "/media", "/health", "/ready")):
+        if path == "/favicon.ico" or path.startswith(("/dashboard", "/login", "/static", "/media", "/health", "/ready", "/survey/")):
             return
         # Honor a runtime-overridden DATABASE_PATH (e.g. tests that point the
         # app at a temporary database after create_app).
@@ -667,7 +677,7 @@ def init_request_logging(app: Flask, db_path: str | None = None) -> None:
         fields = {
             "endpoint": request.endpoint,
             "method": request.method,
-            "path": request.path,
+            "path": safe_survey_path(request.path),
             "status": response.status_code,
             "duration_ms": duration,
             "request_bytes": request.content_length,

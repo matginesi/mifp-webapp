@@ -205,6 +205,7 @@ def create_app():
         log_event_throttled,
         security_event,
         setup_logging,
+        safe_survey_path,
     )
     from .services.notifications import notify
     from .utils.security import get_client_ip, ip_rate_allowed
@@ -259,9 +260,10 @@ def create_app():
             if not login_at or time.time() - login_at <= max_age:
                 return None
         public_limit = {
-            "public.respond_exchange": 4096,
-            "public.respond_submit": 512 * 1024,
+            "public.simple_survey_submit": 2 * 1024 * 1024,
         }.get(request.endpoint, int(app.config["PUBLIC_MAX_CONTENT_LENGTH"]))
+        if request.endpoint == "public.simple_survey_submit":
+            request.max_form_memory_size = public_limit
         global_limit = request.max_content_length
         request.max_content_length = min(global_limit, public_limit) if global_limit is not None else public_limit
         g.public_request_body_limited = True
@@ -411,7 +413,10 @@ def create_app():
         # SameSite to protect. Requests without either header (non-browser
         # clients) still fall back to token validation alone.
         source = request.headers.get("Origin") or request.headers.get("Referer")
-        if source:
+        # Privacy-preserving survey forms can send Origin: null under
+        # no-referrer. They still require the signed cookie-bound CSRF token.
+        opaque_survey_origin = source == "null" and request.endpoint == "public.simple_survey_submit"
+        if source and not opaque_survey_origin:
             source_parts = urlsplit(source)
             expected_parts = urlsplit(request.host_url)
             if (
@@ -500,6 +505,10 @@ def create_app():
 
     @app.after_request
     def security_headers(response):
+        if request.path.startswith("/survey/"):
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["X-Robots-Tag"] = "noindex, nofollow"
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("X-Frame-Options", "DENY")
@@ -764,14 +773,14 @@ def create_app():
             body=(
                 "MIFP recorded an unhandled application error.\n\n"
                 f"Failure type: {type(exc).__name__}\n"
-                f"Route: {request.path}\n"
+                f"Route: {safe_survey_path(request.path)}\n"
                 f"Request ID: {rid}\n\n"
                 "The exception text is intentionally omitted from email. Review the server logs for details.\n"
             ),
             dedup_key=f"application_error:{error_key}",
             metadata={
                 "error_type": type(exc).__name__,
-                "path": request.path,
+                "path": safe_survey_path(request.path),
                 "request_id": rid,
             },
         )

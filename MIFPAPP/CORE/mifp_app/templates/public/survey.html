@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{{ poll.title if poll else 'Unavailable' }} — MIFP Survey</title>
+  <link href="{{ url_for('static', filename='css/survey-simple.css', v=static_version) }}" rel="stylesheet">
+</head>
+<body>
+<main class="survey-shell">
+  <header class="survey-head"><strong>MIFP</strong><span>Survey</span></header>
+  {% if unavailable %}
+  <section class="survey-card"><h1>Survey closed or unavailable</h1><p>This link may be invalid, the survey may have closed, or it may no longer be available. No response has been recorded by this request.</p></section>
+  {% elif success %}
+  <section class="survey-card survey-success" role="status">
+    <h1>Thank you</h1>
+    <p>Your submission has been processed. You may close this page.</p>
+    <p class="survey-muted">No account or login is required.</p>
+  </section>
+  {% else %}
+  <section class="survey-card">
+    {% if preview %}<p role="status"><strong>Administrator preview — responses are not saved.</strong></p>{% endif %}
+    <h1>{{ poll.title }}</h1>
+    {% if poll.description %}<p>{{ poll.description }}</p>{% endif %}
+    <p class="survey-muted">Deadline: {{ poll.deadline }} · {{ 'Anonymous survey — no name or email requested' if poll.response_mode == 'anonymous' else 'Identified survey — name and email requested but not verified' }}</p>
+    {% if error %}<p class="survey-error" role="alert">{{ error }}</p>{% endif %}
+    <form method="post" action="{{ url_for('public.simple_survey_submit', poll_id=poll.id, key=poll.key) }}">
+      <fieldset {% if preview %}disabled{% endif %} class="survey-fields">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="submission_id" value="{{ submission_id }}">
+      {% if poll.response_mode == 'identified' %}
+      <fieldset class="survey-question"><legend>Your details</legend>
+        <p class="survey-muted">These details are visible only to authorised MIFP administrators. The email is not verified.</p>
+        <label for="first_name">First name *</label><input id="first_name" name="first_name" required maxlength="120" value="{{ values.get('first_name', '') if values else '' }}" autocomplete="given-name">
+        <label for="last_name">Last name *</label><input id="last_name" name="last_name" required maxlength="120" value="{{ values.get('last_name', '') if values else '' }}" autocomplete="family-name">
+        <label for="email">Email *</label><input id="email" name="email" type="email" required maxlength="254" value="{{ values.get('email', '') if values else '' }}" autocomplete="email">
+      </fieldset>
+      {% endif %}
+      {% for q in poll.questions %}
+      {% set field = 'q_' ~ q.id %}
+      <fieldset class="survey-question">
+        <legend>{{ loop.index }}. {{ q.question }}{% if q.required %} <span aria-label="required">*</span>{% endif %}</legend>
+        {% if q.type == 'text' %}
+          {% if q.get('style', 'single_line') == 'multi_line' %}
+          <textarea aria-label="{{ q.question }}" name="{{ field }}" rows="3" maxlength="5000" {% if q.required %}required{% endif %}>{{ values.get(field, '') if values else '' }}</textarea>
+          {% else %}
+          <input type="text" aria-label="{{ q.question }}" name="{{ field }}" maxlength="5000" value="{{ values.get(field, '') if values else '' }}" {% if q.required %}required{% endif %}>
+          {% endif %}
+        {% elif q.type == 'date' %}
+          <input aria-label="{{ q.question }}" name="{{ field }}" type="date" value="{{ values.get(field, '') if values else '' }}" {% if q.required %}required{% endif %}>
+        {% elif q.type == 'yes_no' %}
+          {% for value, name in [('yes', q.get('yes_label', 'Yes')), ('no', q.get('no_label', 'No'))] %}
+          <label class="survey-choice"><input type="radio" name="{{ field }}" value="{{ value }}" {% if values and values.get(field) == value %}checked{% endif %} {% if q.required %}required{% endif %}> {{ name }}</label>
+          {% endfor %}
+        {% elif q.type in ['single_choice', 'multiple_choice'] %}
+          {% for opt in q.options %}
+          <label class="survey-choice"><input type="{{ 'checkbox' if q.type == 'multiple_choice' else 'radio' }}" name="{{ field }}" value="{{ opt.id }}" {% if values and opt.id in values.getlist(field) %}checked{% endif %} {% if q.required and q.type == 'single_choice' %}required{% endif %}> {{ opt.label }}</label>
+          {% endfor %}
+        {% endif %}
+      </fieldset>
+      {% endfor %}
+      <section class="survey-privacy" aria-label="Privacy information">
+        <h2>Privacy information</h2>
+        <p><strong>Controller:</strong> {{ poll.privacy.controller }} · <strong>Contact:</strong> <a href="mailto:{{ poll.privacy.contact }}">{{ poll.privacy.contact }}</a>.</p>
+        <p><strong>Purpose:</strong> {{ poll.privacy.purpose }}.</p>
+        {% if poll.response_mode == 'anonymous' %}
+        <p><strong>Data:</strong> Your responses only; no name or email is requested or stored with the survey responses. Avoid entering personal information in free-text answers. Technical data (such as IP addresses) may be processed by the hosting infrastructure to serve and protect this page; such data is not attached to survey answers. A strictly necessary security cookie protects form submission; no advertising or analytics cookies are used on this survey page.</p>
+        {% else %}
+        <p><strong>Data:</strong> Your first name, last name, self-declared email address, and answers. A strictly necessary security cookie protects submission; no analytics or advertising cookies are used. The identity is not verified. Access to submitted personal data through MIFP is restricted to authorised administrators.</p>
+        {% endif %}
+        <p><strong>Legal basis:</strong> {{ {'consent': 'Consent (Art. 6(1)(a) GDPR)', 'legitimate_interest': 'Legitimate interests (Art. 6(1)(f) GDPR)', 'public_task': 'Task carried out in the public interest (Art. 6(1)(e) GDPR)', 'contract': 'Contract or pre-contractual steps (Art. 6(1)(b) GDPR)'}.get(poll.privacy.legal_basis, poll.privacy.legal_basis) }}.</p>
+        {% if poll.privacy.legal_basis == 'legitimate_interest' %}<p><strong>Legitimate interest pursued:</strong> {{ poll.privacy.legitimate_interest }}.</p>{% endif %}
+        <p><strong>Recipients:</strong> {{ poll.privacy.recipients }}. <strong>International transfers:</strong> {{ poll.privacy.transfers }}.</p>
+        {% if poll.privacy.dpo %}<p><strong>Data protection officer:</strong> {{ poll.privacy.dpo }}.</p>{% endif %}
+        <p><strong>Retention:</strong> Until {{ poll.retention_until }}. MIFP is responsible for deleting the stored data within this period.</p>
+        <p>Participation is voluntary; if you do not submit, your answers will not be recorded. Anonymous answers cannot ordinarily be located later by participant identity. You may contact the controller to request access, rectification, erasure or other applicable rights, and lodge a complaint with the Italian Data Protection Authority. Where consent is the legal basis, you may withdraw it for the future. Where legitimate interests apply, you may object where provided by law. There is no automated decision-making through this survey.</p>
+        <p><a href="{{ url_for('public.privacy') }}" target="_blank" rel="noopener noreferrer">Read MIFP's full privacy policy</a>.</p>
+        {% if poll.privacy.legal_basis == 'consent' %}
+          <label class="survey-choice survey-consent"><input type="checkbox" name="processing_consent" value="yes" required> I consent to the processing described above for this survey.</label>
+        {% endif %}
+      </section>
+      <button class="survey-submit" type="submit">Submit response</button>
+      </fieldset>
+      <p class="survey-muted">Please submit only once. If the connection fails, retry from this page; the same submission will not be recorded twice. A new visit to a shared link cannot be used to authenticate a person or guarantee one response per person.</p>
+    </form>
+  </section>
+  {% endif %}
+  <footer class="survey-footer">Mediterranean Institute of Fundamental Physics · <a href="{{ url_for('public.privacy') }}">Privacy</a></footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{% extends 'dashboard/layout.html' %}
+{% from 'dashboard/_components.html' import page_header %}
+{% block page_title %}Legacy polls archive{% endblock %}
+{% block content %}
+{{ page_header('Notifications', 'Legacy polls archive', 'Read-only records from the retired invitation system.') }}
+<p>Read-only records from the retired personal invitation system. Existing data has been preserved. <a href="{{ url_for('dashboard.simple_polls') }}">Open Polls editor</a></p>
+{% for item in polls %}
+<p><a href="{{ url_for('dashboard.poll_detail', poll_id=item.id) }}">{{ item.title }}</a></p>
+{% else %}<p>No archived polls.</p>{% endfor %}
+{% if poll %}
+<section class="control-panel p-3"><h2>{{ poll.title }}</h2><p>{{ poll.description }}</p>
+{% for fmt in ['csv', 'xlsx', 'pdf'] %}<a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.poll_export', poll_id=poll.id, fmt=fmt) }}">Export {{ fmt|upper }}</a> {% endfor %}
+</section>
+{% endif %}
+{% endblock %}

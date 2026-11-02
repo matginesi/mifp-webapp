@@ -670,3 +670,6 @@ from . import (  # noqa: E402,F401
     dashboard_seo,
     dashboard_join,
 )
+
+# New lightweight shared-link surveys, isolated from legacy email campaigns.
+from . import simple_polls  # noqa: E402,F401

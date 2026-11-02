@@ -30,7 +30,7 @@ def test_dashboard_uses_bounded_page_specific_modules_without_build_step():
         "email-batch.js",
         "login.js",
         "notifications.js",
-        "polls.js",
+        "polls-simple.js",
         "recipient-files.js",
         "registrations.js",
         "safety-operations.js",
@@ -51,7 +51,7 @@ def test_dashboard_uses_bounded_page_specific_modules_without_build_step():
     assert "dashboard/core.js" in templates
     assert "dashboard/stats.js" in templates
     assert "dashboard/data-quality.js" in templates
-    assert "dashboard/polls.js" in templates
+    assert "dashboard/polls-simple.js" in templates
     assert "dashboard/recipient-files.js" in templates
 
 

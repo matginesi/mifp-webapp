@@ -447,112 +447,8 @@ def test_exports_use_current_revision_and_block_formula_injection(
     assert b"Helvetica" in pdf
 
 
-def test_poll_dashboard_and_public_token_exchange_flow(poll_app, monkeypatch) -> None:
-    from mifp_app.routes import dashboard_polls
-
-    runtime = Path(poll_app.config["RUNTIME_CONFIG_DIR"])
-    poll = open_poll(runtime)
-    invitation, token = create_sent_invitation(runtime, poll["id"])
-    dashboard_client = logged_in_client(poll_app)
-
-    assert (
-        poll_app.test_client().get("/dashboard/notifications/polls").status_code == 302
-    )
-    page = dashboard_client.get(f"/dashboard/notifications/polls/{poll['id']}")
-    assert page.status_code == 200
-    assert b"data-poll-editor" in page.data
-    assert (
-        b"Recipient file" not in page.data
-    )  # Poll recipients use the explicit CSV/XLSX control.
-    assert b"CSV / XLSX list" in page.data
-    assert b"data-recipient-source" in page.data
-    assert b"Single recipient" in page.data
-    assert b"Send poll" in page.data
-    assert b"Send test" not in page.data
-    assert b"Respondent session" in page.data
-    assert b"data-response-history" not in page.data  # no responses yet
-
-    sent = []
-    monkeypatch.setattr(
-        dashboard_polls, "send_mail", lambda _app, **kwargs: sent.append(kwargs) or True
-    )
-    invite = dashboard_client.post(
-        f"/dashboard/notifications/polls/{poll['id']}/invite",
-        json={"email": "person@example.org", "first_name": "Person", "password": "secret123"},
-    )
-    assert invite.status_code == 200
-    assert len(sent) == 1
-    assert "#p=" in sent[0]["body"] and "&t=" in sent[0]["body"]
-    assert sent[0]["privacy_safe_log"] is True
-    html_body = sent[0]["html_body"]
-    assert '<a href="' in html_body
-    assert "#p=" in html_body and "&amp;t=" in html_body
-    assert "display:inline-block" in html_body
-    assert 'bgcolor="' in html_body
-    assert "This message contains no open or click tracking." in html_body
-    assert (
-        "person@example.org"
-        not in (runtime / "polls" / poll["id"] / "invitations.json").read_text()
-    )
-
-    public_client = poll_app.test_client()
-    initial = public_client.get("/respond")
-    assert initial.status_code == 200
-    assert b'id="mainNav"' not in initial.data
-    assert initial.headers["Cache-Control"].startswith("no-store")
-    assert initial.headers["Referrer-Policy"] == "no-referrer"
-    assert initial.headers["X-Robots-Tag"] == "noindex, nofollow"
-    assert token.encode() not in initial.data
-    exchanged = public_client.post(
-        "/respond/exchange", json={"poll_id": poll["id"], "token": token}
-    )
-    assert exchanged.status_code == 200
-    loaded = public_client.get("/respond/poll")
-    assert loaded.status_code == 200
-    assert "token_hash" not in loaded.get_data(as_text=True)
-    submitted = public_client.post(
-        "/respond/submit", json={"answers": {poll["questions"][0]["id"]: "yes"}}
-    )
-    assert submitted.status_code == 200
-    exported = dashboard_client.get(
-        f"/dashboard/notifications/polls/{poll['id']}/export.pdf"
-    )
-    assert exported.status_code == 200
-    assert exported.mimetype == "application/pdf"
-    assert exported.headers["Cache-Control"] == "no-store, max-age=0"
-    assert exported.headers["X-Content-Type-Options"] == "nosniff"
-    with public_client.session_transaction() as public_session:
-        assert public_session.get("admin_logged_in") is None
-        access = public_session["poll_access"]
-        assert access["poll_id"] == poll["id"]
-        assert access["invitation_id"] == invitation["invitation_id"]
-        assert access["session_minutes"] == 60
-        assert access["issued_at"]
-        assert access["expires_at"]
 
 
-def test_public_poll_exchange_uses_existing_csrf_bootstrap(poll_app) -> None:
-
-    runtime = Path(poll_app.config["RUNTIME_CONFIG_DIR"])
-    poll = open_poll(runtime)
-    _invitation, token = create_sent_invitation(runtime, poll["id"])
-    poll_app.config["WTF_CSRF_ENABLED"] = True
-    client = poll_app.test_client()
-    page = client.get("/respond")
-    match = re.search(rb'data-csrf-token="([^"]+)"', page.data)
-    assert match
-    csrf = match.group(1).decode()
-
-    rejected = client.post(
-        "/respond/exchange", json={"poll_id": poll["id"], "token": token}
-    )
-    accepted = client.post(
-        "/respond/exchange",
-        json={"poll_id": poll["id"], "token": token},
-        headers={"X-CSRF-Token": csrf},
-    )
-    assert rejected.status_code == 400
-    assert accepted.status_code == 200
 
 
 def test_ephemeral_email_endpoint_personalizes_safely_without_history(
@@ -656,7 +552,7 @@ def test_client_recipient_parser_never_uses_web_storage_or_upload_field(poll_app
     ).read_text(encoding="utf-8")
     template = logged_in_client(poll_app).get("/dashboard/notifications/batch").get_data(as_text=True)
     poll_template = (
-        root / "MIFPAPP/CORE/mifp_app/templates/dashboard/polls.html"
+        root / "MIFPAPP/CORE/mifp_app/templates/dashboard/polls_simple.html"
     ).read_text(encoding="utf-8")
 
     assert "localStorage" not in parser + email_batch
@@ -667,7 +563,7 @@ def test_client_recipient_parser_never_uses_web_storage_or_upload_field(poll_app
     direct = logged_in_client(poll_app).get("/dashboard/notifications").get_data(as_text=True)
     assert "data-email-recipient-file" not in direct
     assert "data-recipient-template-download" in template
-    assert "data-recipient-template-download" in poll_template
+    assert "data-recipient-template-download" not in poll_template
     assert "downloadTemplate" in parser
     assert "email,first_name,last_name" in parser
     recipient_input = re.search(
@@ -700,112 +596,3 @@ def test_poll_invitation_email_uses_external_mifp_layout_without_tracking() -> N
     assert "Sent from the MIFP administrative dashboard" not in rendered
     assert "<script" not in rendered.lower()
     assert "<img" not in rendered.lower()
-
-
-
-@pytest.mark.parametrize("password", [None, "wrong-confirmation-secret", "secret123"])
-@pytest.mark.parametrize("configured_hash", ["valid", "", "malformed"])
-def test_poll_send_confirmation_fails_closed_before_creating_tokens(
-    poll_app, monkeypatch, password, configured_hash
-) -> None:
-    from mifp_app.routes import dashboard_polls
-    from mifp_app.services import polls
-
-    runtime = Path(poll_app.config["RUNTIME_CONFIG_DIR"])
-    poll = open_poll(runtime)
-    before = {path.name: path.read_bytes() for path in (runtime / "polls" / poll["id"]).iterdir() if path.is_file()}
-    if configured_hash != "valid":
-        poll_app.config["ADMIN_PASSWORD_HASH"] = configured_hash
-    delivered = []
-    monkeypatch.setattr(dashboard_polls, "send_mail", lambda *_a, **kw: delivered.append(kw) or True)
-    payload = {"email": "person@example.org"}
-    if password is not None:
-        payload["password"] = password
-    response = logged_in_client(poll_app).post(f"/dashboard/notifications/polls/{poll['id']}/invite", json=payload)
-    if password == "secret123" and configured_hash == "valid":
-        assert response.status_code == 200
-        assert len(delivered) == 1
-        assert "password" not in delivered[0]
-        assert "secret123" not in str(delivered[0])
-        assert polls.get_poll(runtime, poll["id"])["id"] == poll["id"]
-    else:
-        assert response.status_code == 403
-        assert response.get_json()["code"] == "admin_password_invalid"
-        assert delivered == []
-        after = {path.name: path.read_bytes() for path in (runtime / "polls" / poll["id"]).iterdir() if path.is_file()}
-        assert after == before
-    assert "wrong-confirmation-secret" not in response.get_data(as_text=True)
-    for key in ("LOG_DIR", "RUNTIME_CONFIG_DIR"):
-        for path in Path(poll_app.config[key]).rglob("*"):
-            if path.is_file():
-                assert b"wrong-confirmation-secret" not in path.read_bytes()
-
-
-def test_poll_invitation_confirmation_preserves_auth_and_csrf(poll_app, monkeypatch) -> None:
-    from mifp_app.routes import dashboard_polls
-
-    poll = open_poll(Path(poll_app.config["RUNTIME_CONFIG_DIR"]))
-    url = f"/dashboard/notifications/polls/{poll['id']}/invite"
-    delivered = []
-    monkeypatch.setattr(dashboard_polls, "send_mail", lambda *_a, **kw: delivered.append(kw) or True)
-    assert poll_app.test_client().post(url, json={"password": "secret123"}).status_code in {302, 401}
-    poll_app.config["WTF_CSRF_ENABLED"] = True
-    response = logged_in_client(poll_app).post(url, json={"email": "person@example.org", "password": "secret123"})
-    assert response.status_code == 400
-    assert delivered == []
-
-
-def test_poll_confirmation_accepts_the_same_password_as_login(poll_app, monkeypatch) -> None:
-    from mifp_app.routes import dashboard_polls
-
-    poll = open_poll(Path(poll_app.config['RUNTIME_CONFIG_DIR']), 'date')
-    sent = []
-    monkeypatch.setattr(dashboard_polls, 'send_mail', lambda *_a, **kw: sent.append(kw) or True)
-    client = poll_app.test_client()
-    login = client.post('/login', data={'login_username': 'admin', 'login_password': 'secret123'})
-    assert login.status_code == 302
-    denied = client.post(f"/dashboard/notifications/polls/{poll['id']}/invite", json={
-        'email': 'person@example.org', 'password': 'incorrect',
-    })
-    assert denied.status_code == 403
-    assert denied.get_json()['code'] == 'admin_password_invalid'
-    assert sent == []
-    accepted = client.post(f"/dashboard/notifications/polls/{poll['id']}/invite", json={
-        'email': 'person@example.org', 'password': 'secret123',
-    })
-    assert accepted.status_code == 200
-    assert len(sent) == 1
-    assert 'password' not in sent[0]
-
-
-def test_poll_retention_before_deadline_is_rejected_without_changing_poll(poll_app) -> None:
-    from mifp_app.services.polls import get_poll
-
-    runtime = Path(poll_app.config['RUNTIME_CONFIG_DIR'])
-    poll = open_poll(runtime)
-    submitted = {**poll, 'retention_until': '2000-01-01'}
-    response = logged_in_client(poll_app).post(f"/dashboard/notifications/polls/{poll['id']}", json=submitted)
-    assert response.status_code == 400
-    assert response.get_json()['error'] == 'Retention date cannot precede the deadline'
-    assert get_poll(runtime, poll['id']) == poll
-
-
-def test_poll_email_ignores_old_invitation_composer_settings(poll_app, monkeypatch):
-    from mifp_app.routes import dashboard_polls
-    from mifp_app.services.polls import save_poll
-
-    poll = open_poll(Path(poll_app.config["RUNTIME_CONFIG_DIR"]))
-    poll.update(invitation_subject="Obsolete subject", invitation_message="Obsolete message", invitation_cta="Obsolete button")
-    save_poll(poll_app.config["RUNTIME_CONFIG_DIR"], poll["id"], poll)
-    sent = []
-    monkeypatch.setattr(dashboard_polls, "send_mail", lambda _app, **kwargs: sent.append(kwargs) or True)
-    response = logged_in_client(poll_app).post(
-        f"/dashboard/notifications/polls/{poll['id']}/invite",
-        json={"email": "person@example.org", "first_name": "Ada", "password": "secret123"},
-    )
-    assert response.status_code == 200
-    assert sent[0]["subject"] == poll["title"]
-    assert "Hello Ada," in sent[0]["body"]
-    assert "Open poll:" in sent[0]["body"]
-    assert "#p=" in sent[0]["body"] and "&t=" in sent[0]["body"]
-    assert "Obsolete" not in sent[0]["body"] + sent[0]["html_body"] + sent[0]["subject"]

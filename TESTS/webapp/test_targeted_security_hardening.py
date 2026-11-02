@@ -254,8 +254,7 @@ def test_authenticated_dashboard_upload_keeps_large_limit(app):
     assert response.status_code == 413  # public routes stay bounded for admins too
 
 
-@pytest.mark.parametrize('path,limit', [('/respond/exchange', 4096),
-                                     ('/respond/submit', 512 * 1024)])
+@pytest.mark.parametrize('path,limit', [('/survey/' + 'a'*32 + '/' + 'b'*32, 2 * 1024 * 1024)])
 @pytest.mark.parametrize('terminated', [False, True])
 def test_poll_limits_apply_before_csrf_with_valid_json_token(app, monkeypatch, path, limit, terminated):
     from flask import Request
@@ -279,7 +278,7 @@ def test_poll_limits_apply_before_csrf_with_valid_json_token(app, monkeypatch, p
     assert response.json['max_bytes'] == limit
 
 
-@pytest.mark.parametrize('path', ['/respond/exchange', '/respond/submit'])
+@pytest.mark.parametrize('path', ['/survey/' + 'a'*32 + '/' + 'b'*32])
 def test_poll_without_length_or_termination_does_not_read_unbounded_stream(app, path):
     class Unreadable:
         def read(self, *args):
@@ -291,11 +290,10 @@ def test_poll_without_length_or_termination_does_not_read_unbounded_stream(app, 
                            headers={'X-CSRF-Token': token}, environ_overrides={
                                'CONTENT_LENGTH': None, 'wsgi.input': Unreadable(),
                            })
-    assert response.status_code == (400 if path.endswith('exchange') else 403)
+    assert response.status_code == 404
 
 
-@pytest.mark.parametrize('path,limit', [('/respond/exchange', 4096),
-                                     ('/respond/submit', 512 * 1024)])
+@pytest.mark.parametrize('path,limit', [('/survey/' + 'a'*32 + '/' + 'b'*32, 2 * 1024 * 1024)])
 def test_poll_limits_respect_lower_global_ceiling(app, path, limit):
     app.config['MAX_CONTENT_LENGTH'] = 2048
     client = app.test_client()
@@ -309,7 +307,7 @@ def test_poll_limits_respect_lower_global_ceiling(app, path, limit):
 def test_poll_submission_allowance_does_not_extend_to_other_endpoints(app):
     client = app.test_client()
     token = _token(client)
-    response = client.post('/respond/submit-extra', json={'padding': 'x' * 65536},
+    response = client.post('/survey-extra', json={'padding': 'x' * 65536},
                            headers={'X-CSRF-Token': token, 'Accept': 'application/json'})
     assert response.status_code == 413
     assert response.json['max_bytes'] == 65536
@@ -317,37 +315,32 @@ def test_poll_submission_allowance_does_not_extend_to_other_endpoints(app):
 
 @pytest.mark.parametrize('terminated', [False, True])
 def test_valid_poll_submission_above_64_kib_is_saved(app, terminated):
-    from mifp_app.services.polls import (create_poll, save_poll, create_invitation,
-                                       set_invitation_status, current_responses)
+    from urllib.parse import urlencode
+    from mifp_app.services import simple_polls as store
+    from TESTS.webapp.test_simple_polls import survey_config
 
     runtime = app.config['RUNTIME_CONFIG_DIR']
-    poll = create_poll(runtime, 'blank')
-    poll.update(status='open', questions=[{
-        'id': f'{index:016x}', 'type': 'text', 'question': f'Comment {index}',
-        'required': True, 'style': 'multi_line',
-    } for index in range(1, 15)])
-    poll = save_poll(runtime, poll['id'], poll)
-    invitation, invitation_token = create_invitation(runtime, poll['id'])
-    set_invitation_status(runtime, poll['id'], invitation['invitation_id'], 'sent')
+    poll = store.create(runtime)
+    cfg = survey_config()
+    cfg['questions'] = [{'type': 'text', 'question': f'Comment {i}', 'required': True,
+                          'style': 'multi_line'} for i in range(14)]
+    poll = store.update(runtime, poll['id'], cfg)
     client = app.test_client()
-    page = client.get('/respond')
-    token = re.search(rb'data-csrf-token="([^"]+)"', page.data).group(1).decode()
-    headers = {'X-CSRF-Token': token}
-    assert client.post('/respond/exchange', json={
-        'poll_id': poll['id'], 'token': invitation_token,
-    }, headers=headers).status_code == 200
+    csrf = _token(client)
     answers = {question['id']: 'x' * 5000 for question in poll['questions']}
-    body = json.dumps({'answers': answers}).encode()
-    assert 64 * 1024 < len(body) < 512 * 1024
+    payload = {'q_' + key: value for key, value in answers.items()}
+    payload['submission_id'] = 'a' * 32
+    body = urlencode(payload).encode()
+    assert 64 * 1024 < len(body) < 2 * 1024 * 1024
     overrides = {'CONTENT_LENGTH': None if terminated else str(len(body)),
                  'wsgi.input': io.BytesIO(body)}
     if terminated:
         overrides.update({'wsgi.input_terminated': True, 'HTTP_TRANSFER_ENCODING': 'chunked'})
-    response = client.open('/respond/submit', method='POST', content_type='application/json',
-                           headers=headers, environ_overrides=overrides)
+    response = client.open(f"/survey/{poll['id']}/{poll['key']}", method='POST',
+                           content_type='application/x-www-form-urlencoded',
+                           headers={'X-CSRF-Token': csrf}, environ_overrides=overrides)
     assert response.status_code == 200
-    assert response.json['ok'] is True
-    assert current_responses(runtime, poll['id'])[0]['answers'] == answers
+    assert store.results(runtime, poll['id'])[1][0]['answers'] == answers
 
 
 def test_expired_admin_session_keeps_public_limit_and_auth_handles_expiration(app):

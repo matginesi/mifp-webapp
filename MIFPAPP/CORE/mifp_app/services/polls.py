@@ -454,7 +454,7 @@ def current_responses(runtime_config_dir: Path | str, poll_id: str) -> list[dict
 
 def list_polls(runtime_config_dir: Path | str) -> list[dict[str, Any]]:
     root = _polls_root(runtime_config_dir)
-    cleanup_retention(runtime_config_dir)
+    # Archive reads must never purge existing personal-invitation data.
     result: list[dict[str, Any]] = []
     for directory in sorted(root.iterdir()):
         if not directory.is_dir() or not POLL_ID_RE.fullmatch(directory.name) or directory.is_symlink():

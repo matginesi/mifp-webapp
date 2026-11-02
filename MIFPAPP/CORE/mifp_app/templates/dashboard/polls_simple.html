@@ -1,0 +1,186 @@
+{% extends 'dashboard/layout.html' %}
+{% from 'dashboard/_components.html' import page_header %}
+{% block page_title %}Polls{% endblock %}
+{% block content %}
+{{ page_header('Notifications', 'Polls', 'Create questionnaires and collect responses through a shared link.') }}
+{% include 'dashboard/_notification_tabs.html' %}
+<p class="small"><a href="{{ url_for('dashboard.polls', archive='1') }}">Legacy polls archive (read only)</a></p>
+<div class="poll-workspace{{ ' has-editor' if poll else '' }}{{ ' is-empty' if not polls else '' }}">
+  <aside class="control-panel poll-selector" aria-label="Poll library">
+    <div class="panel-head">
+      <div><h2>Poll library</h2><p>Choose a questionnaire or start from an editable example.</p></div>
+      <button class="btn btn-primary btn-sm" type="button" data-poll-new-toggle aria-expanded="false"><i class="bi bi-plus-lg" aria-hidden="true"></i> New Poll</button>
+    </div>
+    <form class="poll-new-form" method="post" action="{{ url_for('dashboard.simple_poll_create') }}" data-poll-new-form hidden>
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <label class="field"><span>Starting point</span><select name="template" class="form-select form-select-sm">
+        <option value="blank">Blank poll</option><option value="attendance">Attendance confirmation</option>
+        <option value="availability">Event availability</option><option value="date">Choose a date</option>
+        <option value="location">Choose a location</option>
+      </select></label>
+      <div class="inline-actions"><button class="btn btn-primary btn-sm" type="submit">Create Poll</button><button class="btn btn-ghost btn-sm" type="button" data-poll-new-cancel>Cancel</button></div>
+    </form>
+    <div class="poll-list">
+      {% for item in polls %}
+      <a class="poll-list-item{{ ' is-active' if poll and item.id == poll.id }}" href="{{ url_for('dashboard.simple_poll_detail', poll_id=item.id) }}">
+        <span class="poll-list-title"><b>{{ item.title }}</b><small>{{ item.response_mode|title }} · {{ item.status|title }}</small></span>
+        <span class="status-chip status-{{ 'success' if item.status == 'open' else 'neutral' if item.status == 'closed' else 'warning' }}">{{ item.status|title }}</span>
+        <span class="poll-list-counts"><small><b>{{ item.response_count }}</b> responses</small><small><b>{{ item.questions|length }}</b> questions</small></span>
+        <small class="poll-list-deadline"><i class="bi bi-calendar3" aria-hidden="true"></i> {{ item.deadline or 'No deadline' }}</small>
+      </a>
+      {% else %}
+      <div class="poll-library-empty"><i class="bi bi-ui-checks-grid" aria-hidden="true"></i><div><h3>No polls yet</h3><p>Create a poll from scratch or start from an editable template.</p></div><small>Use the shared link in Aruba's mailing list; no recipient addresses are imported.</small></div>
+      {% endfor %}
+    </div>
+  </aside>
+  {% if poll %}
+  <main class="poll-editor" data-shared-poll-editor>
+    <header class="poll-editor-head">
+      <div class="poll-editor-identity"><span class="status-chip status-{{ 'success' if poll.status == 'open' else 'neutral' if poll.status == 'closed' else 'warning' }}">{{ poll.status|title }}</span><div><h2>{{ poll.title }}</h2><p>Shared-link questionnaire · Aruba handles distribution</p></div></div>
+      <div class="poll-editor-facts" aria-label="Poll summary"><span><b>{{ analysis.responses }}</b><small>Responses</small></span><span><b>{{ poll.questions|length }}</b><small>Questions</small></span><span><b>{{ poll.deadline or '—' }}</b><small>Deadline</small></span></div>
+      <button class="btn btn-primary btn-sm" type="submit" form="survey-editor-form"><i class="bi bi-check2" aria-hidden="true"></i> Save changes</button>
+    </header>
+    <div class="poll-tabs" role="tablist" aria-label="Poll sections">
+      <button type="button" role="tab" aria-selected="true" data-shared-poll-tab="editor"><i class="bi bi-pencil-square" aria-hidden="true"></i> Editor</button>
+      <button type="button" role="tab" aria-selected="false" data-shared-poll-tab="privacy"><i class="bi bi-shield-check" aria-hidden="true"></i> Privacy</button>
+      <button type="button" role="tab" aria-selected="false" data-shared-poll-tab="responses"><i class="bi bi-bar-chart" aria-hidden="true"></i> Responses <b>{{ analysis.responses }}</b></button>
+      <button type="button" role="tab" aria-selected="false" data-shared-poll-tab="export"><i class="bi bi-download" aria-hidden="true"></i> Export</button>
+      <button type="button" role="tab" aria-selected="false" data-shared-poll-tab="clean"><i class="bi bi-database-gear" aria-hidden="true"></i> Clean / Delete</button>
+    </div>
+    <form method="post" action="{{ url_for('dashboard.simple_poll_save', poll_id=poll.id) }}" id="survey-editor-form" data-questions-locked="{{ '1' if poll.status != 'draft' or analysis.responses or poll.collection_started else '0' }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <section class="poll-tab-panel is-active" data-shared-poll-panel="editor">
+        <div class="poll-editor-layout">
+          <div class="poll-editor-primary">
+            <section class="control-panel poll-settings-panel poll-section-card">
+              <div class="panel-head"><div><h3>Settings</h3><p>Set the question, deadline and response mode.</p></div></div>
+              <div class="poll-form-grid">
+                <label class="field poll-span-2"><span>Title</span><input class="form-control form-control-sm" name="title" maxlength="180" required value="{{ poll.title }}"></label>
+                <label class="field poll-span-2"><span>Description</span><textarea class="form-control form-control-sm" name="description" rows="3" maxlength="4000">{{ poll.description }}</textarea></label>
+                <label class="field"><span>Status</span><select class="form-select form-select-sm" name="status" aria-label="Status">{% for item in ['draft','open','closed'] %}<option value="{{ item }}" {{ 'selected' if poll.status == item }}>{{ item|title }}</option>{% endfor %}</select></label>
+                <label class="field"><span>Deadline</span><input class="form-control form-control-sm" type="date" name="deadline" value="{{ poll.deadline }}"></label>
+                <label class="field"><span>Response mode</span><select class="form-select form-select-sm" name="response_mode" aria-label="Response mode" {{ 'disabled' if poll.status != 'draft' or analysis.responses or poll.collection_started }}>
+                  <option value="anonymous" {{ 'selected' if poll.response_mode == 'anonymous' }}>Anonymous (default)</option><option value="identified" {{ 'selected' if poll.response_mode == 'identified' }}>Name + email (unverified)</option>
+                </select><small>The mode is frozen after publication.</small></label>
+                {% if poll.status != 'draft' or analysis.responses or poll.collection_started %}<input type="hidden" name="response_mode" aria-label="Response mode" value="{{ poll.response_mode }}">{% endif %}
+                <label class="field"><span>Retain data until</span><input class="form-control form-control-sm" type="date" name="retention_until" value="{{ poll.retention_until }}"></label>
+              </div>
+              <div class="control-note notification-compact-note"><i class="bi bi-shield-exclamation" aria-hidden="true"></i><div><b>Privacy first</b><span>Complete the Privacy tab before opening the survey; avoid sensitive personal data.</span></div></div>
+            </section>
+            <section class="control-panel poll-questions-panel poll-section-card">
+              <div class="panel-head"><div><h3>Questions</h3><p>Visual builder with the original question cards and controls.</p></div><button class="btn btn-outline btn-sm" type="button" id="survey-add-question" {{ 'disabled' if poll.status != 'draft' or analysis.responses or poll.collection_started }}><i class="bi bi-plus-lg" aria-hidden="true"></i> Add question</button></div>
+              <div id="survey-visual-questions" data-question-list aria-live="polite"></div>
+              <div id="survey-admin-questions" data-next-idx="{{ poll.questions|length }}" class="poll-nojs-fallback">
+              {% for question in poll.questions %}
+              <div class="border rounded p-3 mb-2" data-question-row>
+                <div class="row g-2">
+                  <div class="col-md-7"><label class="field"><span>Question</span><input class="form-control" name="q_{{ loop.index0 }}_question" required maxlength="300" value="{{ question.question }}"></label></div>
+                  <div class="col-md-4"><label class="field"><span>Type</span><select class="form-select" name="q_{{ loop.index0 }}_type" data-question-type>
+                    {% for choice, label in [('yes_no','Yes / No'),('single_choice','Single choice'),('multiple_choice','Multiple choice'),('date','Date'),('text','Text')] %}
+                    <option value="{{ choice }}" {% if question.type == choice %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}</select></label></div>
+                  <div class="col-md-1 align-self-end"><button type="button" class="btn btn-outline-danger btn-sm" data-remove-question aria-label="Remove question">×</button></div>
+                  <div class="col-12" data-question-options {% if question.type not in ['single_choice','multiple_choice'] %}hidden{% endif %}>
+                    <label class="field"><span>Options — one per line</span><textarea name="q_{{ loop.index0 }}_options" class="form-control" rows="3">{% for option in question.get('options', []) %}{{ option.label }}{% if not loop.last %}{{ '\n' }}{% endif %}{% endfor %}</textarea></label>
+                  </div>
+                  <div class="col-md-6"><label class="field"><span>Yes label</span><input class="form-control" maxlength="80" name="q_{{ loop.index0 }}_yes_label" value="{{ question.get('yes_label', 'Yes') }}"></label></div>
+                  <div class="col-md-6"><label class="field"><span>No label</span><input class="form-control" maxlength="80" name="q_{{ loop.index0 }}_no_label" value="{{ question.get('no_label', 'No') }}"></label></div>
+                  <div class="col-12"><label class="field"><span>Text style</span><select name="q_{{ loop.index0 }}_style" class="form-select"><option value="single_line" {% if question.get('style', 'single_line') == 'single_line' %}selected{% endif %}>Single line</option><option value="multi_line" {% if question.get('style') == 'multi_line' %}selected{% endif %}>Multiple lines</option></select></label></div>
+                  <div class="col-12"><label><input type="checkbox" name="q_{{ loop.index0 }}_required" {% if question.required %}checked{% endif %}> Required</label></div>
+                </div>
+              </div>
+              {% endfor %}
+              </div>
+              <div id="survey-visual-fields" hidden></div>
+            </section>
+          </div>
+          <aside class="poll-editor-delivery" aria-label="Shared link and status">
+            <section class="control-panel poll-section-card poll-shared-link-panel">
+              <div class="panel-head"><div><h3>Share poll</h3><p>Copy this link into the Aruba mailing list.</p></div></div>
+              <div class="poll-form-grid poll-share-grid">
+                {% if poll.status == 'open' %}
+                <label class="field poll-span-2"><span>Public survey link</span><input class="form-control form-control-sm" readonly data-poll-share-link value="{{ url_for('public.simple_survey_page', poll_id=poll.id, key=poll.key, _external=True) }}"></label>
+                <button class="btn btn-outline btn-sm poll-span-2" type="button" data-poll-copy-link><i class="bi bi-clipboard" aria-hidden="true"></i> Copy link</button>
+                {% else %}
+                <div class="poll-span-2"><p class="small text-muted">The public link becomes available after saving the survey as Open with its privacy information completed.</p></div>
+                {% endif %}
+                <small class="poll-span-2">MIFP does not send invitations or store the Aruba recipient list. Anyone possessing the shared link may submit a response.</small>
+              </div>
+            </section>
+          </aside>
+        </div>
+        <section class="control-panel poll-preview-panel poll-section-card">
+          <div class="panel-head"><div><h3>Respondent preview</h3><p>Live question preview. Review the full participant page and privacy notice before publishing.</p></div><button class="btn btn-outline btn-sm" type="submit" form="survey-editor-form" formaction="{{ url_for('dashboard.simple_poll_preview', poll_id=poll.id) }}" formtarget="_blank">Preview public page</button></div>
+          <div class="poll-preview-stage"><div class="poll-public-card" id="survey-visual-preview" data-poll-preview></div></div>
+        </section>
+      </section>
+      <section class="poll-tab-panel" data-shared-poll-panel="privacy" hidden>
+        <section class="control-panel poll-section-card">
+          <div class="panel-head"><div><h3>Privacy notice</h3><p>Information shown to respondents before submitting.</p></div></div>
+          <div class="poll-privacy-pad">
+            <p class="text-muted small">Verify the controller's official legal name and the GDPR legal basis. Publication requires confirmed, complete information and a defined retention date.</p>
+            <div class="row g-3">
+          <div class="col-md-6"><label class="field"><span>Data controller (official name)</span><input class="form-control" name="privacy_controller" maxlength="200" value="{{ poll.privacy.controller }}"></label></div>
+          <div class="col-md-6"><label class="field"><span>Privacy contact</span><input class="form-control" name="privacy_contact" type="email" maxlength="200" value="{{ poll.privacy.contact }}"></label></div>
+          <div class="col-12"><label class="field"><span>Purpose of this specific survey</span><textarea class="form-control" name="privacy_purpose" rows="2" maxlength="1000">{{ poll.privacy.purpose }}</textarea></label></div>
+          <div class="col-md-6"><label class="field"><span>GDPR legal basis</span><select name="privacy_legal_basis" class="form-select">
+            <option value="">Select after verification</option>
+            {% for choice, label in [('legitimate_interest','Legitimate interest (Art. 6(1)(f))'),('consent','Consent (Art. 6(1)(a))'),('public_task','Public interest task (Art. 6(1)(e))'),('contract','Contract / pre-contract (Art. 6(1)(b))')] %}
+            <option value="{{ choice }}" {% if poll.privacy.legal_basis == choice %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select></label></div>
+          <div class="col-md-6"><label class="field"><span>Data recipients and processors</span><textarea name="privacy_recipients" class="form-control" rows="2" maxlength="500">{{ poll.privacy.recipients }}</textarea></label></div>
+          <div class="col-md-6"><label class="field"><span>Legitimate interest pursued (if selected)</span><textarea name="privacy_legitimate_interest" class="form-control" rows="2" maxlength="500">{{ poll.privacy.legitimate_interest }}</textarea></label></div>
+          <div class="col-md-6"><label class="field"><span>International transfers / safeguards (or None)</span><textarea name="privacy_transfers" class="form-control" rows="2" maxlength="500">{{ poll.privacy.transfers }}</textarea></label></div>
+          <div class="col-12"><label class="field"><span>Data protection officer contact (if appointed)</span><input name="privacy_dpo" class="form-control" maxlength="200" value="{{ poll.privacy.dpo }}"></label></div>
+          <div class="col-12"><label class="d-flex gap-2"><input type="checkbox" name="privacy_confirmed" value="yes" {% if poll.privacy.confirmed %}checked{% endif %}> I have verified that the privacy notice, GDPR legal basis and data retention dates are accurate for this survey.</label></div>
+            </div>
+          </div>
+        </section>
+      </section>
+      <script type="application/json" id="survey-question-data">{{ poll.questions|tojson }}</script>
+    </form>
+    <section class="poll-tab-panel" data-shared-poll-panel="responses" hidden>
+      <section class="control-panel poll-section-card poll-privacy-pad"><h3>Responses</h3><p>{{ analysis.responses }} submissions recorded. Individual answers are available only in the admin CSV export.</p>
+
+        {% for q in analysis.questions %}<h3 class="h6 mt-3">{{ loop.index }}. {{ q.question }}</h3>
+        {% if q.type in ['single_choice', 'multiple_choice'] %}
+          {% for opt in q.options %}<div class="d-flex justify-content-between border-bottom py-1"><span>{{ opt.label }}</span><strong>{{ q.counts.get(opt.id, 0) }}</strong></div>{% endfor %}
+        {% elif q.type == 'yes_no' %}<p>{{ q.get('yes_label', 'Yes') }}: {{ q.counts.get('yes', 0) }} · {{ q.get('no_label', 'No') }}: {{ q.counts.get('no', 0) }}</p>
+        {% else %}<p class="small text-muted">View answers in the administrator CSV export.</p>{% endif %}
+        {% endfor %}
+      </section>
+    </section>
+    <section class="poll-tab-panel" data-shared-poll-panel="export" hidden>
+      <section class="control-panel poll-section-card poll-privacy-pad"><h3>Poll exports</h3><p>Download the answers as CSV for analysis.</p><a class="btn btn-outline btn-sm" href="{{ url_for('dashboard.simple_poll_export', poll_id=poll.id) }}"><i class="bi bi-filetype-csv" aria-hidden="true"></i> Download CSV</a></section>
+    </section>
+    <section class="poll-tab-panel" data-shared-poll-panel="clean" hidden>
+      {% if poll.response_mode == 'identified' %}
+      <section class="control-panel p-3 mb-3"><h2 class="h5">Erase an identified response</h2>
+        <p class="small text-muted">For valid privacy requests, remove the stored submission associated with a declared email. This does not remove external backup copies.</p>
+        <form method="post" action="{{ url_for('dashboard.simple_poll_erase_email', poll_id=poll.id) }}" data-poll-erase-form>
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+          <div class="row g-2"><div class="col-sm-6"><label class="field"><span>Email to erase</span><input type="email" name="email" class="form-control" required maxlength="254"></label></div>
+          <div class="col-sm-6"><label class="field"><span>Admin password</span><input type="password" name="admin_password" class="form-control" required autocomplete="current-password"></label></div></div>
+          <button class="btn btn-outline-danger btn-sm mt-2" type="submit">Erase email and its answer</button>
+        </form>
+      </section>
+      {% endif %}
+      <section class="control-panel p-3 mb-3"><h2 class="h5">Delete survey and data</h2>
+        <p class="small text-muted">This permanently removes this survey's JSON/JSONL files. Backups held separately are not affected.</p>
+        <form method="post" action="{{ url_for('dashboard.simple_poll_delete', poll_id=poll.id) }}" data-poll-delete-form>
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+          <label>Admin password <input class="form-control" name="admin_password" type="password" autocomplete="current-password" required></label>
+          <button class="btn btn-outline-danger mt-2" type="submit">Permanently delete</button>
+        </form>
+      </section>
+    </section>
+  </main>
+  {% else %}
+  <main class="control-panel poll-library-empty"><i class="bi bi-ui-checks-grid" aria-hidden="true"></i><h3>Select or create a poll</h3><p>Each poll has a single public link; share it using Aruba's mailing list.</p></main>
+  {% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/poll-renderer.js', v=static_version) }}" defer></script>
+<script src="{{ url_for('static', filename='js/dashboard/polls-simple.js', v=static_version) }}" defer></script>
+{% endblock %}
