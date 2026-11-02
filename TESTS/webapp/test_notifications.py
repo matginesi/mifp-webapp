@@ -796,9 +796,17 @@ def test_email_password_confirmation_preserves_auth_and_csrf(notification_app, m
 
 
 def test_batch_email_has_its_own_authenticated_tab(notification_app) -> None:
-    assert notification_app.test_client().get('/dashboard/notifications/batch').status_code == 302
+    routes = ('/dashboard/notifications', '/dashboard/polls-simple', '/dashboard/notifications/batch')
+    anonymous = notification_app.test_client()
+    for route in (*routes, '/dashboard/notifications/polls'):
+        response = anonymous.get(route)
+        assert response.status_code == 302
+        assert response.headers['Location'].startswith('/login?')
     client = _logged_in_client(notification_app)
-    for route in ('/dashboard/notifications', '/dashboard/notifications/polls', '/dashboard/notifications/batch'):
+    legacy = client.get('/dashboard/notifications/polls')
+    assert legacy.status_code == 302
+    assert legacy.headers['Location'] == '/dashboard/polls-simple'
+    for route in routes:
         page = client.get(route)
         assert page.status_code == 200
         assert b'href="/dashboard/notifications/batch"' in page.data
