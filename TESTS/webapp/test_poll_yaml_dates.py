@@ -57,6 +57,7 @@ def test_supplied_fixture_preview_confirm_export_preserves_existing_poll(poll_ap
     imported = store.get(base, pid)
     assert pid != existing['id'] and imported['key'] != existing['key']
     assert imported['status'] == 'draft' and imported['response_mode'] == 'anonymous'
+    assert imported['aggregate_only'] is False  # Legacy YAML omits this optional field.
     assert imported['questions'][1]['dates'] == [f'2027-02-{d}' for d in range(21, 29)]
     assert 'confirmed' not in imported['privacy']
     assert store.results(base, pid)[1] == []
@@ -67,7 +68,9 @@ def test_supplied_fixture_preview_confirm_export_preserves_existing_poll(poll_ap
     assert poll_yaml.load_template(exported.data) == poll_yaml.load_template(FIXTURE.read_bytes())
     assert not any(secret.encode() in exported.data for secret in (existing['id'], existing['key'], imported['id'], imported['key']))
     assert set(yaml.safe_load(exported.data)) == {'schema_version', 'poll'}
-    assert set(yaml.safe_load(exported.data)['poll']) == {'title', 'description', 'response_mode', 'questions', 'deadline', 'retention_until', 'privacy'}
+    exported_poll = yaml.safe_load(exported.data)['poll']
+    assert set(exported_poll) == {'title', 'description', 'response_mode', 'aggregate_only', 'questions', 'deadline', 'retention_until', 'privacy'}
+    assert exported_poll['aggregate_only'] is False
     assert app.test_client().get(f'/survey/{pid}/{imported["key"]}').status_code == 404
     assert app.test_client().get(f'/dashboard/polls-simple/{pid}/export.yaml').status_code == 302
 
