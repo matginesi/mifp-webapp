@@ -48,7 +48,7 @@ def test_canonical_privacy_original_editor_publish_without_profile_pages(auth_pa
         metadata.write_text(json.dumps(old));page.reload();page.wait_for_load_state('networkidle')
     page.get_by_role('tab',name='Privacy',exact=True).click()
     expect(page.locator('[data-anonymous-privacy-info]')).to_be_visible()
-    expect(page.locator('[data-anonymous-privacy-info]')).to_contain_text('does not guarantee effective anonymity')
+    expect(page.locator('[data-anonymous-privacy-info]')).to_contain_text('Aggregate counts only')
     expect(page.locator('[data-identified-privacy-info]')).to_be_hidden()
     if origin == 'blank':
         expect(page.locator('[name="privacy_controller"]')).to_have_value('Mediterranean Institute of Fundamental Physics (MIFP), Via Appia Nuova 31, 00047 Marino (Roma), Italy')
@@ -86,6 +86,7 @@ def test_canonical_privacy_original_editor_publish_without_profile_pages(auth_pa
     page.locator('[name="deadline"]').fill('2027-03-01')
     page.locator('[name="retention_until"]').fill('2027-05-01')
     if origin=='yaml':
+        page.locator('[name="aggregate_only"]').uncheck()
         page.locator('[name="response_mode"]').select_option('identified')
         page.get_by_role('tab',name='Privacy',exact=True).click()
         expect(page.locator('[data-anonymous-privacy-info]')).to_be_hidden()
@@ -121,9 +122,11 @@ def test_canonical_privacy_original_editor_publish_without_profile_pages(auth_pa
     participant=context.new_page();participant.goto(public_url)
     assert participant.locator('.survey-privacy').inner_html()==reviewed
     expect(participant.locator('[name="processing_consent"]')).to_have_count(0)
-    expect(participant.locator('.survey-privacy')).to_contain_text('independent of Aruba mailing-list processing')
-    if origin != 'yaml':
+    expect(participant.locator('.survey-privacy')).to_contain_text('mailing list membership is not verified' if origin == 'old-draft' else 'independent of Aruba mailing-list processing')
+    if origin == 'blank':
         expect(participant.locator('.survey-privacy')).to_contain_text('does not guarantee effective anonymity')
+    elif origin == 'old-draft':
+        expect(participant.locator('.survey-privacy')).to_contain_text('Aggregate responses')
     if origin=='yaml':
         participant.get_by_label('First name *',exact=True).fill('Synthetic')
         participant.get_by_label('Last name *',exact=True).fill('Respondent')

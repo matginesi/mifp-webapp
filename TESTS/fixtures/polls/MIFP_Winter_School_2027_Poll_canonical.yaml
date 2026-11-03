@@ -22,6 +22,7 @@ poll:
     email address.
 
   response_mode: "anonymous"
+  aggregate_only: true
 
   # To be agreed by the organisers. Format: YYYY-MM-DD.
   # Use a retention date AFTER the survey deadline.

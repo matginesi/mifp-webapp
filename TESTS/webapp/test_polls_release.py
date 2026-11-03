@@ -18,6 +18,8 @@ from mifp_app.services import simple_polls as store
 
 def form_data(config):
     data = {k: v for k, v in config.items() if k not in {'questions', 'privacy'}}
+    if 'aggregate_only' in data:
+        data['aggregate_only'] = 'yes' if data['aggregate_only'] else 'no'
     for k, v in config['privacy'].items():
         data['privacy_' + k] = 'yes' if k == 'confirmed' and v else v
     for i, q in enumerate(config['questions']):

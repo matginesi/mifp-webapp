@@ -114,6 +114,7 @@ def _read_config(directory: Path) -> dict:
                 or data.get("status") not in {"draft", "open", "closed"}
                 or not isinstance(data.get("questions"), list) or not data["questions"]
                 or not isinstance(data.get("privacy"), dict)
+                or not isinstance(data.get("aggregate_only", False), bool)
                 or not isinstance(data["privacy"].get("purpose"), str)
                 or not all(isinstance(data.get(k), str) for k in
                            ("title", "description", "deadline", "retention_until", "created_at"))
@@ -232,6 +233,23 @@ def adopt_previous_privacy(config_dir: Path | str, poll: dict, current: Mapping[
                               else values[key] or previous.get(key, "") for key in PRIVACY_LIMITS})
 
 
+def _validate_aggregate_notice(privacy: dict) -> None:
+    """An aggregate-only poll stores counts, not individual answer vectors.
+
+    The website's ordinary technical/security data remains governed separately
+    by the site's privacy notice.  Never apply this exception to row storage.
+    """
+    if not privacy["controller"] or not privacy["purpose"]:
+        raise SurveyError("privacy.controller and privacy.purpose are required")
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", privacy["contact"]):
+        raise SurveyError("privacy.contact: enter a valid contact email")
+
+
+def _aggregate_compatible(questions: list[dict]) -> bool:
+    # A free-text response, even without names, could include personal data.
+    return all(question["type"] != "text" for question in questions)
+
+
 def _validate_disclosures(privacy: dict) -> None:
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", privacy["contact"]):
         raise SurveyError("privacy.contact: enter a valid contact email")
@@ -316,7 +334,7 @@ def create(config_dir: Path | str, template: str = "blank", *, definition: Mappi
     poll_id = secrets.token_hex(16)
     value = {
         "id": poll_id, "key": secrets.token_urlsafe(24), "title": title, "description": description,
-        "status": "draft", "response_mode": "anonymous", "deadline": "", "retention_until": "",
+        "status": "draft", "response_mode": "anonymous", "aggregate_only": False, "deadline": "", "retention_until": "",
         "questions": _normalize_questions(questions),
         # Public institutional facts confirmed by the administrator. No legal
         # basis, recipients or transfer assessment is inferred from them.
@@ -330,7 +348,8 @@ def create(config_dir: Path | str, template: str = "blank", *, definition: Mappi
         # Import passes a validated reusable definition. Build its final Draft
         # before exposing any metadata; never persist an intermediate blank poll.
         value.update(title=_clean(definition["title"], 180), description=_clean(definition["description"], 4000),
-                     response_mode=definition["response_mode"], questions=_normalize_questions(definition["questions"]),
+                     response_mode=definition["response_mode"], aggregate_only=definition.get("aggregate_only", False),
+                     questions=_normalize_questions(definition["questions"]),
                      privacy=normalize_privacy(definition["privacy"]),
                      **{field: definition.get(field, "") for field in SCHEDULE_FIELDS})
     directory = _directory(config_dir, poll_id, create=True)
@@ -364,7 +383,8 @@ def list_all(config_dir: Path | str) -> list[dict]:
             try:
                 with _locked(directory):
                     poll = _read_config(directory)
-                    count = len(_read_answers(directory))
+                    count = (_read_aggregate(directory, poll)["responses"] if poll.get("aggregate_only")
+                         else len(_read_answers(directory)))
                 result.append({**poll, "response_count": count})
             except SurveyError:
                 # Keep corrupt polls visible to the administrator without
@@ -382,7 +402,13 @@ def update(config_dir: Path | str, poll_id: str, raw: Mapping[str, Any], *, vali
         if expected_revision is not None and expected_revision != existing.get("updated_at", existing["created_at"]):
             raise SurveyError("The draft changed. Preview and review it again")
         answers = _read_answers(directory)
+        existing_aggregate = _read_aggregate(directory, existing)["responses"] if existing.get("aggregate_only") else 0
         mode = str(raw.get("response_mode") or existing["response_mode"])
+        aggregate_only = raw.get("aggregate_only", existing.get("aggregate_only", False))
+        if not isinstance(aggregate_only, bool):
+            raise SurveyError("aggregate_only: expected true or false")
+        if aggregate_only and mode != "anonymous":
+            raise SurveyError("Aggregate-only storage is available only for anonymous polls")
         if mode not in MODES:
             raise SurveyError("Invalid response mode")
         status = str(raw.get("status") or existing["status"])
@@ -392,6 +418,8 @@ def update(config_dir: Path | str, poll_id: str, raw: Mapping[str, Any], *, vali
             raise SurveyError("A published survey cannot return to draft")
         if existing["status"] == "closed" and status == "open":
             raise SurveyError("Create a new survey instead of reopening a closed survey")
+        if existing["status"] != "draft" and aggregate_only != existing.get("aggregate_only", False):
+            raise SurveyError("Aggregate storage mode is frozen after publication")
         privacy_raw = raw.get("privacy") or {}
         if not isinstance(privacy_raw, Mapping):
             raise SurveyError("Invalid privacy configuration")
@@ -408,6 +436,9 @@ def update(config_dir: Path | str, poll_id: str, raw: Mapping[str, Any], *, vali
                 retention = _date(retention)
             except SurveyError as exc:
                 raise SurveyError(f"retention_until: {exc}") from exc
+        candidate = _normalize_questions(raw.get("questions"))
+        if aggregate_only and not _aggregate_compatible(candidate):
+            raise SurveyError("Aggregate-only storage cannot save free-text questions. Disable aggregate-only or remove text questions")
         if status == "open" and deadline and retention and retention < deadline:
             raise SurveyError("retention_until: retention must be later than the closing date")
         if status == "open":
@@ -417,23 +448,16 @@ def update(config_dir: Path | str, poll_id: str, raw: Mapping[str, Any], *, vali
                 raise SurveyError("A survey needs a future deadline")
             if retention and retention < _today():
                 raise SurveyError("retention_until: retention date must not be in the past")
-            try:
+            if aggregate_only:
+                _validate_aggregate_notice(privacy)
+            else:
                 _validate_disclosures(privacy)
-            except SurveyError as exc:
-                if mode == "anonymous":
-                    raise SurveyError(
-                        f"{exc}. No-name collection does not establish effective anonymisation of answers: "
-                        "text, answer combinations and timing may identify respondents. "
-                        "Review the response processing separately from Aruba mailing-list processing."
-                    ) from exc
-                raise
             if existing["status"] == "draft" and raw.get("notice_reviewed") is not True:
                 raise SurveyError("Review the complete notice and confirm publication")
             if not retention:
                 raise SurveyError("retention_until: specify the deletion date before publishing")
         old_questions = existing["questions"]
         # Compare semantic question content, preserving stable IDs when unchanged.
-        candidate = _normalize_questions(raw.get("questions"))
         same_questions = len(candidate) == len(old_questions) and all(
             a["type"] == b["type"] and a["question"] == b["question"] and a["required"] == b["required"]
             and a.get("dates", []) == b.get("dates", [])
@@ -447,16 +471,20 @@ def update(config_dir: Path | str, poll_id: str, raw: Mapping[str, Any], *, vali
             candidate = old_questions
         # Privacy can be strengthened but not silently rewritten after respondents consented / read it.
         privacy_changed = privacy != normalize_privacy(existing["privacy"]) or retention != existing["retention_until"]
-        if (answers or existing.get("collection_started")) and (mode != existing["response_mode"] or not same_questions or privacy_changed):
+        if (answers or existing_aggregate or existing.get("collection_started")) and (
+                mode != existing["response_mode"] or aggregate_only != existing.get("aggregate_only", False)
+                or not same_questions or privacy_changed):
             raise SurveyError("Mode, questions and privacy are locked after the first response. Create a new survey")
-        if existing["status"] != "draft" and (mode != existing["response_mode"] or not same_questions):
+        if existing["status"] != "draft" and (mode != existing["response_mode"] or
+                                                  aggregate_only != existing.get("aggregate_only", False) or not same_questions):
             raise SurveyError("Mode and questions are frozen once the survey is published")
         if existing["status"] != "draft" and (
                 privacy_changed or _clean(raw.get("title"), 180) != existing["title"]
                 or _clean(raw.get("description"), 4000) != existing["description"]):
             raise SurveyError("Published question context and privacy are frozen. Create a new survey")
         value = {**existing, "title": _clean(raw.get("title"), 180), "description": _clean(raw.get("description"), 4000), "status": status,
-                 "response_mode": mode, "deadline": deadline, "retention_until": retention, "questions": candidate,
+                 "response_mode": mode, "aggregate_only": aggregate_only,
+                 "deadline": deadline, "retention_until": retention, "questions": candidate,
                  "privacy": privacy, "updated_at": datetime.now(UTC).isoformat()}
         if existing["status"] == "draft":
             value.pop("privacy_source", None)
@@ -465,7 +493,8 @@ def update(config_dir: Path | str, poll_id: str, raw: Mapping[str, Any], *, vali
         if existing["status"] != "draft":
             value["privacy"] = existing["privacy"]
         if existing["status"] == "draft" and status == "open":
-            value["notice_snapshot"] = {"notice_version": 2, "privacy": dict(privacy),
+            value["notice_snapshot"] = {"notice_version": 3 if aggregate_only else 2,
+                "aggregate_only": aggregate_only, "privacy": dict(privacy),
                 "response_mode": mode, "retention_until": retention, "published_at": value["updated_at"]}
         value["privacy_version"] = (value["updated_at"] if privacy_changed or (existing["status"] == "draft" and status == "open") else
                                     existing.get("privacy_version", existing.get("updated_at", existing["created_at"])))
@@ -528,6 +557,53 @@ def _validate_answers(poll: dict, raw: Mapping[str, Any]) -> dict:
     return result
 
 
+def _empty_aggregate() -> dict:
+    return {"responses": 0, "seen_ids": [], "questions": {}}
+
+
+def _read_aggregate(directory: Path, poll: dict) -> dict:
+    path = directory / "aggregates.json"
+    if path.is_symlink():
+        raise SurveyError("Unsafe aggregate storage path")
+    try:
+        value = json.loads(path.read_text("utf-8"))
+    except FileNotFoundError:
+        # A missing file is normal before the first submission only.
+        if poll.get("collection_started"):
+            raise SurveyError("Aggregate counts unavailable; do not accept more submissions")
+        return _empty_aggregate()
+    except (ValueError, UnicodeError, OSError) as exc:
+        raise SurveyError("Aggregate counts unavailable") from exc
+    if (not isinstance(value, dict) or type(value.get("responses")) is not int
+            or value["responses"] < 0 or not isinstance(value.get("seen_ids"), list)
+            or len(value["seen_ids"]) != value["responses"]
+            or not all(isinstance(k, str) and ID.fullmatch(k) for k in value["seen_ids"])
+            or len(value["seen_ids"]) != len(set(value["seen_ids"]))
+            or not isinstance(value.get("questions"), dict)):
+        raise SurveyError("Corrupted aggregate counts; investigate before accepting submissions")
+    return value
+
+
+def _add_aggregate(poll: dict, state: dict, request_id: str, answers: dict) -> None:
+    state["seen_ids"].append(request_id)
+    state["responses"] += 1
+    for question in poll["questions"]:
+        qid, kind = question["id"], question["type"]
+        value = answers[qid]
+        row = state["questions"].setdefault(qid, {"answered": 0, "counts": {}, "date_counts": {}})
+        if kind == "date_availability":
+            row["answered"] += int(any(value.values()))
+            for day in question["dates"]:
+                category = value[day] or "unanswered"
+                bucket = row["date_counts"].setdefault(day, {})
+                bucket[category] = bucket.get(category, 0) + 1
+        else:
+            row["answered"] += int(bool(value))
+            for choice in (value if isinstance(value, list) else [value]):
+                if choice:
+                    row["counts"][choice] = row["counts"].get(choice, 0) + 1
+
+
 def submit(config_dir: Path | str, poll_id: str, key: str, *, request_id: str,
            answers: Mapping[str, Any], identity: Mapping[str, str] | None = None, consent: bool = False) -> bool:
     if not ID.fullmatch(request_id):
@@ -536,6 +612,20 @@ def submit(config_dir: Path | str, poll_id: str, key: str, *, request_id: str,
     with _locked(directory, exclusive=True):
         poll = _read_config(directory)
         _assert_public(poll, key)
+        if poll.get("aggregate_only"):
+            state = _read_aggregate(directory, poll)
+            _aggregate_summary(poll, state)  # fail closed on corrupted totals
+            if request_id in state["seen_ids"]:
+                return False
+            valid = _validate_answers(poll, answers)
+            if not poll.get("collection_started"):
+                # Initialise an empty durable aggregate before freezing the poll.
+                _atomic(directory / "aggregates.json", state)
+                poll["collection_started"] = True
+                _atomic(directory / "poll.json", poll)
+            _add_aggregate(poll, state, request_id, valid)
+            _atomic(directory / "aggregates.json", state)
+            return True
         saved = _read_answers(directory)
         if any(row["request_id"] == request_id for row in saved):
             # A previous append may have reached the page cache but failed
@@ -581,7 +671,66 @@ def results(config_dir: Path | str, poll_id: str) -> tuple[dict, list[dict]]:
 
 
 def summary(config_dir: Path | str, poll_id: str) -> dict:
-    return _summary(*results(config_dir, poll_id))
+    directory = _directory(config_dir, poll_id)
+    with _locked(directory):
+        poll = _read_config(directory)
+        if poll.get("aggregate_only"):
+            return _aggregate_summary(poll, _read_aggregate(directory, poll))
+        return _summary(poll, _read_answers(directory))
+
+
+def _aggregate_summary(poll: dict, state: dict) -> dict:
+    total = state["responses"]
+    percent = lambda count: round(count * 100 / total, 1) if total else 0.0
+    questions = []
+    expected_ids = {question["id"] for question in poll["questions"]}
+    if set(state["questions"]) != (expected_ids if total else set()):
+        raise SurveyError("Corrupted aggregate question counts")
+    for question in poll["questions"]:
+        saved = state["questions"].get(question["id"], {})
+        answered = saved.get("answered", 0)
+        if type(answered) is not int or not 0 <= answered <= total:
+            raise SurveyError("Corrupted aggregate question counts")
+        item = {**question, "answered": answered, "unanswered": total - answered,
+                "answered_percentage": percent(answered),
+                "unanswered_percentage": percent(total - answered)}
+        if question["type"] == "date_availability":
+            counts = {}
+            for day in question["dates"]:
+                raw = saved.get("date_counts", {}).get(day, {})
+                counts[day] = {category: raw.get(category, 0) for category in ("yes", "maybe", "no", "unanswered")}
+                if any(type(n) is not int or n < 0 for n in counts[day].values()) or sum(counts[day].values()) != total:
+                    raise SurveyError("Corrupted aggregate date counts")
+            item["date_counts"] = counts
+            item["date_percentages"] = {day: {k: percent(v) for k, v in vals.items()} for day, vals in counts.items()}
+            item["chart_labels"] = question["dates"]
+            item["chart_values"] = [total - counts[day]["unanswered"] for day in question["dates"]]
+        else:
+            raw = saved.get("counts", {})
+            if any(type(n) is not int or n < 0 for n in raw.values()):
+                raise SurveyError("Corrupted aggregate option counts")
+            if question["type"] in {"yes_no", "single_choice", "date"} and sum(raw.values()) != answered:
+                raise SurveyError("Corrupted aggregate option totals")
+            if question["type"] == "multiple_choice" and (sum(raw.values()) < answered or sum(raw.values()) > total * 30):
+                raise SurveyError("Corrupted aggregate option totals")
+            item["counts"] = raw
+            if question["type"] == "yes_no":
+                options = [{"id": "yes", "label": question.get("yes_label", "Yes")},
+                           {"id": "no", "label": question.get("no_label", "No")}]
+            elif question["type"] in {"single_choice", "multiple_choice"}:
+                options = question["options"]
+            elif question["type"] == "date":
+                options = [{"id": day, "label": day} for day in sorted(raw)]
+            else:
+                options = []
+            item["distribution"] = [{**option, "count": raw.get(option["id"], 0),
+                                     "percentage": percent(raw.get(option["id"], 0))} for option in options]
+            item["chart_labels"] = [option["label"] for option in options]
+            item["chart_values"] = [raw.get(option["id"], 0) for option in options]
+        questions.append(item)
+    return {"responses": total, "questions": questions, "activity": [], "activity_labels": [],
+            "activity_values": [], "answered": sum(q["answered"] for q in questions),
+            "unanswered": sum(q["unanswered"] for q in questions)}
 
 
 def _summary(poll: dict, rows: list[dict]) -> dict:
@@ -635,6 +784,16 @@ def _csv_cell(value: Any) -> str:
 
 
 def export_csv(config_dir: Path | str, poll_id: str) -> bytes:
+    poll = get(config_dir, poll_id)
+    if poll.get("aggregate_only"):
+        from .simple_poll_exports import _analysis_rows
+        output = io.StringIO()
+        writer = csv.writer(output)
+        columns = ["Question", "Metric", "Count", "Percent of submissions"]
+        writer.writerow(columns)
+        for line in _analysis_rows(summary(config_dir, poll_id)):
+            writer.writerow([_csv_cell(line[column]) for column in columns])
+        return ("\ufeff" + output.getvalue()).encode("utf-8")
     return _csv_bytes(*results(config_dir, poll_id))
 
 

@@ -83,6 +83,13 @@
                   <option value="anonymous" {{ 'selected' if poll.response_mode == 'anonymous' }}>Anonymous — no name or email</option><option value="identified" {{ 'selected' if poll.response_mode == 'identified' }}>Name + email (unverified)</option>
                 </select><small>The mode is frozen after publication.</small></label>{% if field_errors and 'response_mode' in field_errors %}<p class="text-danger">{{ field_errors }}</p>{% endif %}
                 {% if poll.status != 'draft' or analysis.responses or poll.collection_started %}<input type="hidden" name="response_mode" aria-label="Response mode" value="{{ poll.response_mode }}">{% endif %}
+                <div class="field poll-span-2"><label><input type="checkbox" name="aggregate_only" value="yes"
+                   {{ 'checked' if poll.get('aggregate_only', False) }}
+                   {{ 'disabled' if poll.status != 'draft' or analysis.responses or poll.collection_started }}>
+                   <strong>Aggregate counts only (recommended for anonymous availability polls)</strong></label>
+                   <small>Stores totals for each answer/date, not individual answer combinations or submission dates. No text questions; CSV/XLSX will contain aggregate results only. Technical web traffic remains covered by MIFP's site privacy policy.</small>
+                </div>
+                {% if poll.status != 'draft' or analysis.responses or poll.collection_started %}<input type="hidden" name="aggregate_only" value="{{ 'yes' if poll.get('aggregate_only', False) else 'no' }}">{% endif %}
                 <label class="field"><span>Retain data until</span><input class="form-control form-control-sm" type="date" aria-label="Retain data until" name="retention_until" value="{{ poll.retention_until }}"><small>Administrator deletion deadline; no automatic deletion is scheduled. Use Clean / Delete and handle exports/backups separately.</small></label>{% if field_errors and 'retention_until' in field_errors %}<p class="text-danger">{{ field_errors }}</p>{% endif %}
               </div>
               <div class="control-note notification-compact-note"><i class="bi bi-shield-exclamation" aria-hidden="true"></i><div><b>Privacy first</b><span>Set the survey purpose and retention, preview the notice, then publish; avoid sensitive personal data.</span></div></div>
@@ -126,7 +133,7 @@
         <section class="control-panel poll-section-card">
           <div class="panel-head"><div><h3>Privacy notice</h3><p>Information shown to respondents before submitting.</p></div></div>
           <div class="poll-privacy-pad">
-            <p data-anonymous-privacy-info {% if poll.response_mode != 'anonymous' %}hidden{% endif %}>No name, email, IP address, browser information or cookie value is stored with these answers. This does not guarantee effective anonymity: free text, distinctive answer combinations, submission day and journal order may allow identification or correlation with technical logs. Keep questions non-identifying. This implementation therefore retains applicable disclosure checks before publication. Aruba mailing-list processing is separate. <a href="{{ url_for('public.privacy') }}" target="_blank" rel="noopener noreferrer">MIFP Privacy Policy — technical website processing</a>.</p>
+            <p data-anonymous-privacy-info {% if poll.response_mode != 'anonymous' %}hidden{% endif %}>With <strong>Aggregate counts only</strong> enabled, the survey stores only per-option and per-date totals, plus unrelated random retry identifiers to prevent duplicate requests. No individual answer patterns or response timestamps are stored. Without this option, anonymous mode stores individual response rows and requires full applicable disclosures. Website technical/security processing is described in the <a href="{{ url_for('public.privacy') }}" target="_blank" rel="noopener noreferrer">MIFP Privacy Policy</a>.</p>
             <p data-identified-privacy-info {% if poll.response_mode != 'identified' %}hidden{% endif %}>Names and self-declared email addresses are stored with answers. Review the applicable GDPR disclosures below; the legal basis is never selected automatically. Institutional details are prefilled for new surveys and remain editable.</p>
             <div class="row g-3">
               <div class="col-12"><label class="field"><span>Purpose of this specific survey</span><textarea class="form-control" name="privacy_purpose" rows="2" maxlength="1000">{{ poll.privacy.purpose }}</textarea></label>{% if field_errors and 'purpose' in field_errors %}<p class="text-danger">{{ field_errors }}</p>{% endif %}</div>
@@ -134,7 +141,7 @@
             </div>
             <details {% if field_errors %}open{% endif %} class="mt-3">
               <summary>Privacy details</summary>
-              <p class="small">These disclosures belong to this survey and are prefilled from its YAML. Verify their accuracy and applicability before the final publication confirmation. Drafts may remain incomplete.</p>
+              <p class="small">For aggregate-only polls, the individual-answer GDPR fields below are not publication requirements; the controller, contact and purpose still need to be correct. For all other polls, verify the applicable disclosures. Drafts may remain incomplete.</p>
               <div class="row g-3">{% set privacy = poll.privacy %}{% include 'dashboard/_poll_privacy_fields.html' %}</div>
               <label class="field"><span>Additional disclosures (optional)</span><textarea class="form-control" name="privacy_additional_disclosures" maxlength="2000" rows="3">{{ poll.privacy.get('additional_disclosures', '') }}</textarea></label>
             </details>

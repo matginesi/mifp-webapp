@@ -33,17 +33,17 @@ def export_xlsx(config_dir, poll_id):
     from openpyxl.utils import get_column_letter
 
     poll, rows = store.results(config_dir, poll_id)
-    analysis = store._summary(poll, rows)
+    analysis = store.summary(config_dir, poll_id)
     book = Workbook()
     overview = book.active
     overview.title = 'Overview'
     for row in [('MIFP Poll report', ''), ('Title', poll['title']), ('Mode', poll['response_mode']),
-                ('Status', poll['status']), ('Deadline', poll['deadline']), ('Responses', len(rows)),
+                ('Status', poll['status']), ('Deadline', poll['deadline']), ('Responses', analysis['responses']),
                 ('Percentages', 'Denominator: all submissions. Multiple-choice percentages may total more than 100%.'),
-                ('Activity', 'Daily UTC totals; no additional respondent tracking.')]:
+                ('Activity', 'Not stored in aggregate-only mode.' if poll.get('aggregate_only') else 'Daily UTC totals; no additional respondent tracking.')]:
         overview.append([store._csv_cell(v) if isinstance(v, str) else v for v in row])
-    responses = book.create_sheet('Responses')
-    for row in csv.reader(io.StringIO(store._csv_bytes(poll, rows).decode('utf-8-sig'))):
+    responses = book.create_sheet('Counts' if poll.get('aggregate_only') else 'Responses')
+    for row in csv.reader(io.StringIO(store.export_csv(config_dir, poll_id).decode('utf-8-sig'))):
         responses.append(row)
     sheet = book.create_sheet('Analysis')
     headers = ['Question', 'Metric', 'Count', 'Percent of submissions']
@@ -68,8 +68,8 @@ def export_xlsx(config_dir, poll_id):
 
 def export_pdf(config_dir, poll_id):
     poll, rows = store.results(config_dir, poll_id)
-    analysis = store._summary(poll, rows)
-    report = [{'Question': 'Overview', 'Metric': 'Total submissions', 'Count': len(rows), 'Percent of submissions': ''},
+    analysis = store.summary(config_dir, poll_id)
+    report = [{'Question': 'Overview', 'Metric': 'Total submissions', 'Count': analysis['responses'], 'Percent of submissions': ''},
               {'Question': 'Percentages', 'Metric': 'All submissions are the denominator; multiple-choice percentages may total more than 100%.', 'Count': '', 'Percent of submissions': ''}]
     report.extend(_analysis_rows(analysis))
     report.extend({'Question': 'Daily activity (UTC)', 'Metric': item['date'], 'Count': item['count'],

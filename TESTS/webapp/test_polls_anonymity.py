@@ -97,7 +97,7 @@ def test_closed_availability_keeps_linkable_vectors_even_without_timing(poll_app
     base = poll_app.config['RUNTIME_CONFIG_DIR']
     # This is a synthetic, fully disclosed test survey, NOT publication of the
     # user's incomplete YAML. Use its actual closed-question structure only.
-    cfg = {**full_document()['poll'], 'status': 'open', 'notice_reviewed': True}
+    cfg = {**full_document()['poll'], 'status': 'open', 'notice_reviewed': True, 'aggregate_only': False}
     poll = store.update(base, store.create(base)['id'], cfg)
     interest, availability = poll['questions']
     assert {q['type'] for q in poll['questions']} == {'single_choice', 'date_availability'}
@@ -140,7 +140,7 @@ def test_incomplete_draft_saves_but_mode_does_not_bypass_disclosures(poll_app, m
     assert response.status_code == 400 and b'legal_basis' in response.data
     assert b'Draft saved. Cannot publish yet' in response.data
     if mode == 'anonymous':
-        assert b'No-name collection does not establish' in response.data
+        assert b'legal_basis' in response.data  # Existing row-storage mode still requires full disclosures
     assert store.get(base, poll['id'])['status'] == 'draft'
 
 

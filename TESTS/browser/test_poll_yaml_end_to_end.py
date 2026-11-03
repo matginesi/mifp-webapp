@@ -71,7 +71,7 @@ def test_winter_school_dashboard_import_export_reimport(auth_page, live_server, 
     _, second_definition = exported()
     assert second_definition == first_definition
     assert 'confirmed' not in second_definition['poll']['privacy']
-    assert set(second_definition['poll']) == {'title','description','response_mode','questions','privacy','deadline','retention_until'}
+    assert set(second_definition['poll']) == {'title','description','response_mode','aggregate_only','questions','privacy','deadline','retention_until'}
     page.goto(first)
     page.wait_for_load_state('networkidle')
     expect(page.get_by_label('Dates (YYYY-MM-DD, one per line)', exact=True)).to_have_value('\n'.join(f'2027-02-{d}' for d in range(21,29)))

@@ -9,6 +9,7 @@
   <h2>{{ template.title }}</h2>
   <p>{{ template.description }}</p>
   <p>Response mode: <strong>{{ template.response_mode|title }}</strong> · {{ template.questions|length }} questions</p>
+  {% if template.get("aggregate_only") %}<p><strong>Aggregate counts only:</strong> individual response rows and submission times will not be stored. Exports contain per-question totals.</p>{% endif %}
   <p>Deadline: {{ template.deadline or 'Not set' }} · Retain data until: {{ template.retention_until or 'Not set' }}</p>
   <p role="status">This will create a new draft. Existing polls and responses are unaffected. Imported privacy information is unverified and must be reviewed and confirmed before publication. This preview expires after 30 minutes.</p>
   {% for question in template.questions %}

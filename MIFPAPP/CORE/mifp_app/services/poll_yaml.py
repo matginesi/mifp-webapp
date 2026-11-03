@@ -48,7 +48,7 @@ def validate_template(raw: Any) -> dict:
     raw = _fields(raw, {"schema_version", "poll"}, "template")
     if type(raw.get("schema_version")) is not int or raw["schema_version"] != 1:
         raise store.SurveyError("Unsupported schema_version: expected integer 1")
-    raw = _fields(raw.get("poll"), {"title", "description", "response_mode", "questions", "privacy", "privacy_source", *store.SCHEDULE_FIELDS}, "poll")
+    raw = _fields(raw.get("poll"), {"title", "description", "response_mode", "questions", "privacy", "privacy_source", "aggregate_only", *store.SCHEDULE_FIELDS}, "poll")
     title = _text(raw.get("title"), 180, "poll.title")
     if not title:
         raise store.SurveyError("poll.title: non-empty text is required")
@@ -56,6 +56,11 @@ def validate_template(raw: Any) -> dict:
     mode = raw.get("response_mode", "anonymous")
     if not isinstance(mode, str) or mode not in store.MODES:
         raise store.SurveyError("poll.response_mode: expected anonymous or identified")
+    aggregate_only = raw.get("aggregate_only", False)
+    if type(aggregate_only) is not bool:
+        raise store.SurveyError("poll.aggregate_only: expected true or false")
+    if aggregate_only and mode != "anonymous":
+        raise store.SurveyError("poll.aggregate_only: requires anonymous response mode")
     questions = raw.get("questions")
     if not isinstance(questions, list) or not 1 <= len(questions) <= 30:
         raise store.SurveyError("poll.questions: expected a list of 1–30 questions")
@@ -82,8 +87,10 @@ def validate_template(raw: Any) -> dict:
             normalized.extend(store._normalize_questions([q]))
         except store.SurveyError as exc:
             raise store.SurveyError(f"{path}.{setting}: {exc}") from exc
+    if aggregate_only and not store._aggregate_compatible(normalized):
+        raise store.SurveyError("poll.aggregate_only: free-text questions cannot be stored as aggregate counts")
     value = {"title": title, "description": description, "response_mode": mode,
-             "questions": [_question_template(q) for q in normalized]}
+             "aggregate_only": aggregate_only, "questions": [_question_template(q) for q in normalized]}
     for field in store.SCHEDULE_FIELDS:
         day = raw.get(field, "")
         if day is None or day == "":
@@ -166,7 +173,7 @@ def load_template(payload: bytes) -> dict:
 def export_template(config_dir, poll_id: str) -> bytes:
     poll = store.get(config_dir, poll_id)
     template = {"schema_version": 1, "poll": {"title": poll["title"], "description": poll["description"],
-                "response_mode": poll["response_mode"],
+                "response_mode": poll["response_mode"], "aggregate_only": poll.get("aggregate_only", False),
                 **{field: poll.get(field, "") for field in store.SCHEDULE_FIELDS},
                 "privacy": {field: poll["privacy"].get(field, "") for field in PRIVACY_LIMITS},
                 "questions": [_question_template(q) for q in poll["questions"]]}}

@@ -18,7 +18,7 @@ EXAMPLE=Path(__file__).resolve().parents[1]/'fixtures/polls/MIFP_Winter_School_2
 def full_document(mode='anonymous'):
     doc=yaml.safe_load(EXAMPLE.read_bytes())
     # Complete synthetic legal facts test software; they are not MIFP declarations.
-    doc['poll'].update(response_mode=mode,deadline='2027-03-01',retention_until='2027-05-01')
+    doc['poll'].update(response_mode=mode,aggregate_only=(mode == 'anonymous'),deadline='2027-03-01',retention_until='2027-05-01')
     doc['poll']['privacy']={**survey_config(mode)['privacy'],
         'controller':'Synthetic Institute','contact':'privacy@example.org',
         'purpose':'Preliminary school interest','recipients':'Synthetic administrators',
@@ -79,10 +79,14 @@ def test_full_yaml_edit_refresh_review_publish_response_and_exports(poll_app,mod
         f'q_{availability["id"]}_2027-02-21':'maybe','first_name':'Test','last_name':'Person','email':'test@example.org'}
     assert public.post(public_url,data=payload).status_code==200
     assert public.post(public_url,data=payload).status_code==200
-    rows=store.results(base,pid)[1];assert len(rows)==1
-    assert ('email' in rows[0])==(mode=='identified')
-    assert not {'ip','user_agent'} & rows[0].keys()
-    assert rows[0]['privacy_version']==snapshot['published_at']
+    rows=store.results(base,pid)[1]
+    if mode=='identified':
+        assert len(rows)==1 and rows[0]['email']=='test@example.org'
+        assert not {'ip','user_agent'} & rows[0].keys()
+        assert rows[0]['privacy_version']==snapshot['published_at']
+    else:
+        assert rows==[] and store.summary(base,pid)['responses']==1
+        assert (base/'polls_v2'/pid/'answers.jsonl').read_bytes()==b''
     journal=(base/'polls_v2'/pid/'answers.jsonl').read_bytes()
     for fmt in ('csv','xlsx','pdf'):
         assert public.get(url+'/export.'+fmt).status_code==302
@@ -95,30 +99,33 @@ def test_full_yaml_edit_refresh_review_publish_response_and_exports(poll_app,mod
     assert store.get(base,pid)['notice_snapshot']==snapshot
 
 
-def test_real_winter_school_missing_legal_facts_save_as_draft_and_fail_precisely(poll_app):
+def test_winter_school_aggregate_only_can_publish_without_inventing_legal_facts(poll_app):
     base=poll_app.config['RUNTIME_CONFIG_DIR'];client=logged_in_client(poll_app)
     doc=yaml.safe_load(EXAMPLE.read_bytes());url=import_document(client,doc);pid=url.rsplit('/',1)[1]
     assert doc['poll']['privacy']['legal_basis']==doc['poll']['privacy']['transfers']==''
     cfg={**doc['poll'],'status':'draft','deadline':'2027-03-01','retention_until':'2027-05-01'}
     assert client.post(url+'/save',data=form_data(cfg)).status_code==302
-    assert store.get(base,pid)['privacy']['contact']=='secretary@mifp.eu'
-    response=client.post(url+'/save',data={**form_data(cfg),'action':'publish','privacy_confirmed':'yes','notice_reviewed':'true'})
-    assert response.status_code==400
-    assert b'Draft saved. Cannot publish yet' in response.data
-    assert b'legal_basis, transfers' in response.data
-    assert b'name="review"' not in response.data
+    assert store.get(base,pid)['aggregate_only'] is True
+    review=client.post(url+'/save',data={**form_data(cfg),'action':'publish'})
+    assert review.status_code==200 and b'Publish poll' in review.data
+    assert b'Aggregate responses' in review.data
+    published=client.post(url+'/publish',data={'review':token(review,'review')},follow_redirects=True)
+    assert published.status_code==200 and b'data-poll-share-link' in published.data
     saved=store.get(base,pid)
-    assert saved['status']=='draft' and 'notice_snapshot' not in saved
+    assert saved['notice_snapshot']['notice_version']==3
     assert saved['questions'][1]['dates']==[f'2027-02-{day}' for day in range(21,29)]
-    assert b'data-poll-share-link' not in client.get(url).data
-    journal=base/'polls_v2'/pid/'answers.jsonl'
-    assert journal.read_bytes()==b''
-    public=poll_app.test_client()
-    public_url=f'/survey/{pid}/{saved["key"]}'
-    assert public.get(public_url).status_code==404
-    assert public.post(public_url,data={'submission_id':'e'*32}).status_code==404
-    assert client.post(url+'/publish',data={'review':'not-an-authorised-review'}).status_code==400
-    assert journal.read_bytes()==b'' and store.get(base,pid)['status']=='draft'
+    assert (base/'polls_v2'/pid/'answers.jsonl').read_bytes()==b''
+    public=poll_app.test_client();url_public=f'/survey/{pid}/{saved["key"]}'
+    assert public.get(url_public).status_code==200
+    assert b'Legal basis for response processing:' not in public.get(url_public).data
+    interest, availability=saved['questions']
+    payload={'submission_id':'f'*32, f'q_{interest["id"]}':interest['options'][0]['id'],
+             f'q_{availability["id"]}_2027-02-21':'yes'}
+    assert public.post(url_public,data=payload).status_code==200
+    assert public.post(url_public,data=payload).status_code==200
+    assert store.summary(base,pid)['responses']==1
+    assert store.results(base,pid)[1]==[]
+    assert (base/'polls_v2'/pid/'answers.jsonl').read_bytes()==b''
 
 
 @pytest.mark.parametrize('kind',['custom','organisation'])

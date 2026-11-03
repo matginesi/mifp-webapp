@@ -3,17 +3,17 @@
     <article><span>Total submissions</span><b>{{ analysis.responses }}</b><small>{{ poll.response_mode|title }} mode</small></article>
     <article><span>Answered questions</span><b>{{ analysis.answered }}</b><small>Across all submissions</small></article>
     <article><span>Unanswered questions</span><b>{{ analysis.unanswered }}</b><small>Across all submissions</small></article>
-    <article><span>Active days</span><b>{{ analysis.activity|length }}</b><small>Daily UTC totals</small></article>
+    <article><span>Active days</span><b>{{ '—' if poll.get('aggregate_only') else analysis.activity|length }}</b><small>{{ 'Not recorded in aggregate-only mode' if poll.get('aggregate_only') else 'Daily UTC totals' }}</small></article>
   </div>
   <section class="control-panel poll-analysis-card">
-    <div class="panel-head"><div><h3>Response activity</h3><p>Daily UTC totals from existing submission dates. Anonymous responses have date-only timestamps.</p></div></div>
+    <div class="panel-head"><div><h3>Response activity</h3><p>{{ 'Individual response timestamps are not stored for aggregate-only polls.' if poll.get('aggregate_only') else 'Daily UTC totals from existing submission dates.' }}</p></div></div>
     <div class="poll-activity-body">
       {% if analysis.activity %}
       <div class="poll-activity-layout">
         <div class="poll-activity-chart poll-chart-frame"><canvas data-chart="line" data-labels='{{ analysis.activity_labels|tojson }}' data-values='{{ analysis.activity_values|tojson }}' data-chart-label="Submissions" role="img" aria-label="Daily submission counts"></canvas></div>
         <div class="poll-activity-table-wrap"><table class="poll-activity-table"><thead><tr><th scope="col">Date (UTC)</th><th scope="col">Submissions</th></tr></thead><tbody>{% for bucket in analysis.activity %}<tr><td>{{ bucket.date }}</td><td>{{ bucket.count }}</td></tr>{% endfor %}</tbody></table></div>
       </div>
-      {% else %}<p class="poll-activity-empty">Activity appears after the first submission.</p>{% endif %}
+      {% else %}<p class="poll-activity-empty">{{ 'Not collected in aggregate-only mode.' if poll.get('aggregate_only') else 'Activity appears after the first submission.' }}</p>{% endif %}
     </div>
   </section>
   <p class="small text-muted">Percentages use all {{ analysis.responses }} submissions as the denominator. A Date Availability question is answered when at least one date has a choice; its per-date table includes unanswered dates.</p>

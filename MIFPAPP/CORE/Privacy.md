@@ -30,7 +30,9 @@ The website also provides Polls for preliminary interest, availability and other
 
 ### Shared-link Polls
 
-Each survey displays its complete applicable privacy notice before submission: controller/contact, specific purpose, legal basis, recipients/processors, transfers and retention date, with legitimate-interest details and DPO contact where applicable. The administrator must complete the required disclosures and explicitly review the rendered notice before publishing; imported YAML and saved Drafts do not approve legal information. A snapshot of the published notice is retained with that survey.
+Each survey displays its applicable privacy information before submission. Surveys retaining individual responses present controller/contact, purpose, legal basis, recipients/processors, transfers and retention date, with legitimate-interest details and DPO contact where applicable. Aggregate-only surveys present the organiser, purpose, aggregate storage behaviour, retention information and the link to the website technical-processing policy. The administrator must complete the required disclosures and explicitly review the rendered notice before publishing; imported YAML and saved Drafts do not approve legal information. A snapshot of the published notice is retained with that survey.
+
+In **aggregate-only anonymous mode** (available for polls without free-text questions), Polls stores per-question and per-date counts instead of individual answers, answer combinations or submission times. A list of random retry identifiers is retained without any mapping to answer choices, to avoid duplicate counts after HTTP retries. Rare or unique categories in a very small respondent population can still permit inference about respondents; this option is not an unconditional legal guarantee of anonymisation. Website technical/security data is processed separately as described below. Aggregate-only reports and exports contain totals rather than individual response rows.
 
 In **anonymous mode**, Polls stores answers, a random request ID for safe retry handling, the calendar submission date and the notice-version reference. Names, email addresses, IP addresses and user-agent information are not attached to anonymous survey answers. Please do not volunteer identifying or sensitive information in free-text answers. In **identified mode**, Polls additionally requests first name, last name and self-declared email; identity and membership are not authenticated.
 
@@ -81,7 +83,8 @@ Personal data is processed for these purposes only:
 |------------|-------|
 | Reviewing a membership application and administering the resulting membership relationship | Steps taken at the applicant's request before entering into a membership relationship, and performance of that relationship (Article 6(1)(b) GDPR) |
 | Historical and imported institutional records of past MIFP activities | Legitimate interest in maintaining MIFP's institutional and scientific memory (Article 6(1)(f) GDPR) |
-| Polls responses, including interest and availability surveys | The specific basis selected and reviewed for that survey, displayed before submission; no automatic basis is inferred from membership or anonymous mode |
+| Individual Polls responses, where personal data may be processed | The specific basis selected and reviewed for that survey, displayed before submission; no basis is inferred from membership or anonymous mode |
+| Aggregate-only Polls results | Stored only as separate answer-option counts, without individual answer vectors; assess whether small-group results could remain identifiable. Website technical/security processing is described separately above |
 | Website security, rate limiting and technical logs | Legitimate interest in operating a secure service (Article 6(1)(f) GDPR) |
 | Legal, tax and accounting obligations | Legal obligation (Article 6(1)(c) GDPR) |
 

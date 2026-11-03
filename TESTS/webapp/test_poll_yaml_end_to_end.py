@@ -79,6 +79,7 @@ def test_all_supported_types_semantic_route_roundtrip(poll_app):
     document = yaml.safe_load(EXAMPLE.read_bytes())
     document['poll']['deadline'] = __import__('datetime').date(2027,2,28)
     document['poll']['retention_until'] = '2027-04-30'
+    document['poll']['aggregate_only'] = False  # Free-text questions need individual-row storage and full disclosures.
     document['poll']['questions'] += [
         {'type':'text','question':'Notes','style':'multi_line','required':False},
         {'type':'yes_no','question':'Attend?','yes_label':'Available','no_label':'Unavailable','required':False},

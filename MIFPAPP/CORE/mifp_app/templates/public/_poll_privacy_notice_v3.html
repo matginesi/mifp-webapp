@@ -1,0 +1,11 @@
+{# Aggregate-only answers: no raw individual responses or date/order correlation. #}
+<section class="survey-privacy" aria-label="Privacy information">
+  <h2>Privacy information</h2>
+  <p><strong>Organiser:</strong> {{ notice.privacy.controller }} · <strong>Contact:</strong> <a href="mailto:{{ notice.privacy.contact }}">{{ notice.privacy.contact }}</a>.</p>
+  <p><strong>Purpose:</strong> {{ notice.privacy.purpose }}.</p>
+  <p><strong>Aggregate responses:</strong> We record totals for each answer option and each date, not individual answers, answer combinations, names, email addresses or individual submission times. A randomly generated submission retry ID is retained separately from the answer totals solely to prevent duplicate saves after network errors; it is not an invitation ID and is not linked to a person's answers.</p>
+  <p>Participation is voluntary. Anyone with the shared link can submit; mailing list membership is not verified. Please do not provide identifying details. The data collected through this questionnaire is intended for aggregate organisational planning only. Very small groups or highly specific answer options may still make aggregate results identifying; the organiser should assess that risk.</p>
+  <p><strong>Technical website data:</strong> IP addresses and related network data may be processed by the website infrastructure to operate and secure the service. They are not stored with your survey answers. See the <a href="{{ url_for('public.privacy') }}" target="_blank" rel="noopener noreferrer">MIFP Privacy Policy</a> for the relevant data processing information.</p>
+  {% if notice.privacy.additional_disclosures %}<p>{{ notice.privacy.additional_disclosures }}</p>{% endif %}
+  <p><strong>Retention:</strong> The administrator must manually delete the aggregate survey data by {{ notice.retention_until }}. The administrator must also manage any exports and backups held separately. No automatic deletion is scheduled by this survey system.</p>
+</section>

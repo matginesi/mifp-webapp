@@ -163,6 +163,8 @@ def _editor_data():
         privacy = store.adopt_previous_privacy(_base(), saved, privacy)
     data = {key: request.form.get(key, "") for key in ("title", "description", "response_mode", *store.SCHEDULE_FIELDS)}
     data.update(questions=_questions_from_form(), privacy=privacy,
+                aggregate_only=(request.form.get("aggregate_only") == "yes" if saved["status"] == "draft"
+                                else saved.get("aggregate_only", False)),
                 status="closed" if request.form.get("action") == "close" else saved["status"])
     return data
 
@@ -235,7 +237,9 @@ def simple_poll_save(poll_id):
         # Preserve all posted legal facts on validation failure, never in cookies.
         if data is None:
             data = {key: request.form.get(key, saved.get(key, "")) for key in ("title", "description", "response_mode", *store.SCHEDULE_FIELDS)}
-            data.update(questions=_questions_from_form(),privacy={key:request.form.get(f"privacy_{key}",saved["privacy"].get(key,"")) for key in store.PRIVACY_LIMITS})
+            data.update(questions=_questions_from_form(),
+                        aggregate_only=request.form.get("aggregate_only") == "yes",
+                        privacy={key:request.form.get(f"privacy_{key}",saved["privacy"].get(key,"")) for key in store.PRIVACY_LIMITS})
         questions = []
         for index, question in enumerate(data["questions"]):
             old = saved["questions"][index] if index < len(saved["questions"]) else {}
