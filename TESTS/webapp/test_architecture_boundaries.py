@@ -204,13 +204,11 @@ def test_github_automation_is_main_only_and_has_no_branch_bots() -> None:
     assert "pull_request_target:" not in ci_text
     assert "workflow_dispatch:" in ci_text
 
-    # Retention maintenance is both operator-triggered and scheduled, but it
-    # only deletes old Actions history / package versions; it never mutates
-    # source branches, issues or pull requests.
+    # AGENTS.md requires explicit operator dispatch for maintenance. Publishing
+    # an image must not schedule deletion of package versions or Actions runs.
     assert "workflow_dispatch:" in cleanup_text
-    assert "workflow_run:" in cleanup_text
-    assert 'workflows: ["CI/CD"]' in cleanup_text
-    assert "schedule:" in cleanup_text
+    assert "workflow_run:" not in cleanup_text
+    assert "schedule:" not in cleanup_text
     assert "prune_ghcr_versions.py" in cleanup_text
     assert "prune_actions_runs.py" in cleanup_text
     assert "actions: write" in cleanup_text

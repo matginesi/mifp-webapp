@@ -47,7 +47,7 @@
             <thead><tr><th>Cookie</th><th>Set when</th><th>Purpose</th><th>Duration</th><th>Type</th></tr></thead>
             <tbody>
               <tr><td><code>mifp_admin_session</code></td><td>Only after a successful administrator login</td><td>Keeps the authenticated dashboard session valid; no personal data is stored in the cookie itself</td><td>Browser session cookie, with a server-side limit of 8 hours by default</td><td>Strictly necessary</td></tr>
-              <tr><td><code>mifp_csrf</code></td><td>Only on a page that renders a form protected against cross-site request forgery (currently <code>/join</code>, <code>/login</code> and the maintenance page)</td><td>Carries the random value that the submitted form's signed CSRF token is bound to, so the token cannot be replayed from another site</td><td>Up to 2 hours</td><td>Strictly necessary</td></tr>
+              <tr><td><code>mifp_csrf</code></td><td>Only on a page that renders a form protected against cross-site request forgery (including <code>/join</code>, public Polls forms at <code>/survey/...</code>, <code>/login</code> and the maintenance page)</td><td>Carries the random value that the submitted form's signed CSRF token is bound to, so the token cannot be replayed from another site</td><td>Up to 2 hours</td><td>Strictly necessary</td></tr>
             </tbody>
           </table>
           <p>Both cookies are <code>HttpOnly</code>, use <code>SameSite=Lax</code>, are scoped to the whole site, and are marked <code>Secure</code> on the production HTTPS deployment.</p>
@@ -72,12 +72,12 @@
           <p>The informational notice is not a consent mechanism. This website does not collect cookie consent because there is nothing optional to consent to. If optional cookies or other non-technical tracking tools are introduced, they will remain disabled until a valid consent mechanism and updated information are provided.</p>
 
           <h2>8. Managing cookies</h2>
-          <p>You can view, block and delete cookies through your browser settings. Blocking these cookies does not affect your ability to read the public website, but it will prevent the administrator dashboard from working and will make the membership application form fail its security check.</p>
+          <p>You can view, block and delete cookies through your browser settings. Blocking these cookies does not affect your ability to read the public website, but it will prevent the administrator dashboard from working and will make the membership application or a Polls form fail its security check.</p>
 
           <h2>9. Changes to this policy</h2>
           <p>Any changes to this Cookie Policy will be posted on this page. The date of the latest revision is indicated at the bottom of this document.</p>
 
-          <p class="policy-updated"><em>Last updated: September 2026</em></p>
+          <p class="policy-updated"><em>Last updated: 3 November 2026</em></p>
         </div>
       {% endif %}
     </article>

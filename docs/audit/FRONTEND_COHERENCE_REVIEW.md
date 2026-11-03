@@ -2,15 +2,15 @@
 
 Scope: the CSS/JS/logging coherence pass over the MIFP public site and
 dashboard. This is a **review of the work**, not a design proposal, and not a
-re-audit of the platform's security posture (that lives in
-[`audit/MIFP_PRODUCTION_SECURITY_AUDIT.md`](audit/MIFP_PRODUCTION_SECURITY_AUDIT.md)).
+re-audit of the platform's security posture (see the separate
+[targeted security hardening](MIFP_TARGETED_SECURITY_HARDENING_2026-10-15.md)).
 
 Everything below is stated as measured on the working tree, with the command
 that produced it. Where a number is a judgement call, it says so.
 
 Companion documents:
 
-* [`FRONTEND_STYLE_GUIDE.md`](FRONTEND_STYLE_GUIDE.md) — the rules a future
+* [`FRONTEND_STYLE_GUIDE.md`](../FRONTEND_STYLE_GUIDE.md) — the rules a future
   change must follow.
 * `TESTS/webapp/test_frontend_coherence.py` — the machine-checkable half of
   those rules.

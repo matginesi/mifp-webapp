@@ -16,11 +16,13 @@ def survey_config(mode="anonymous", kind="yes_no"):
     if kind == "multiple_choice":
         question["options"] = ["Monday", "Tuesday"]
     return {
-        "title": "Availability", "description": "Test event", "status": "open", "response_mode": mode,
+        "title": "Availability", "description": "Test event", "status": "open", "response_mode": mode, "notice_reviewed": True,
         "deadline": "2027-03-01", "retention_until": "2027-05-01", "questions": [question],
         "privacy": {"controller": "Example Institute", "contact": "secretary@mifp.eu", "purpose": "Coordinate dates",
-                    "legal_basis": "legitimate_interest", "recipients": "Authorised admin only", "transfers": "None", "legitimate_interest": "Event scheduling and capacity planning", "dpo": "", "confirmed": True},
+                    "legal_basis": "legitimate_interest", "recipients": "Authorised admin only", "transfers": "None", "legitimate_interest": "Event scheduling and capacity planning", "dpo": ""},
     }
+
+
 
 
 def test_anonymous_is_default_and_idempotent(tmp_path):
@@ -60,7 +62,7 @@ def test_privacy_configuration_required_to_publish(tmp_path):
     bad = survey_config()
     bad["privacy"]["legal_basis"] = "invalid"
     with pytest.raises(polls.SurveyError, match="legal basis"):
-        polls.update(tmp_path, poll["id"], bad)
+        polls.update(tmp_path, poll['id'], bad)
 
 
 def test_identified_is_self_declared_and_cannot_duplicate_email(tmp_path):

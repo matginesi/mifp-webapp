@@ -26,6 +26,13 @@ MODES = {"anonymous", "identified"}
 TYPES = {"text", "yes_no", "single_choice", "multiple_choice", "date", "date_availability"}
 BASES = {"consent", "legitimate_interest", "public_task", "contract"}
 
+PRIVACY_LIMITS = {
+    "controller": 200, "contact": 200, "purpose": 1000, "legal_basis": 80,
+    "recipients": 500, "transfers": 500, "legitimate_interest": 500, "dpo": 200,
+    "additional_disclosures": 2000,
+}
+SCHEDULE_FIELDS = ("deadline", "retention_until")
+
 
 class SurveyError(ValueError):
     pass
@@ -107,7 +114,7 @@ def _read_config(directory: Path) -> dict:
                 or data.get("status") not in {"draft", "open", "closed"}
                 or not isinstance(data.get("questions"), list) or not data["questions"]
                 or not isinstance(data.get("privacy"), dict)
-                or not {"controller", "contact", "purpose", "legal_basis", "recipients", "transfers", "confirmed"} <= data["privacy"].keys()
+                or not isinstance(data["privacy"].get("purpose"), str)
                 or not all(isinstance(data.get(k), str) for k in
                            ("title", "description", "deadline", "retention_until", "created_at"))
                 or not all(isinstance(q, dict) and isinstance(q.get("id"), str)
@@ -192,6 +199,51 @@ def _date(value: str) -> str:
         raise SurveyError("Enter a valid date") from exc
 
 
+def normalize_privacy(raw: Mapping[str, Any]) -> dict:
+    privacy = {}
+    for key, limit in PRIVACY_LIMITS.items():
+        try:
+            privacy[key] = _clean(raw.get(key), limit)
+        except SurveyError as exc:
+            raise SurveyError(f"privacy.{key}: maximum {limit} characters") from exc
+    if privacy["legal_basis"] and privacy["legal_basis"] not in BASES:
+        raise SurveyError("privacy.legal_basis: invalid legal basis; choose one of the listed bases")
+    return privacy
+
+
+def adopt_previous_privacy(config_dir: Path | str, poll: dict, current: Mapping[str, Any]) -> dict:
+    """Explicit, read-only recovery of old draft facts; never used by publication."""
+    if poll["status"] != "draft":
+        raise SurveyError("Published privacy is frozen")
+    values = normalize_privacy(current)
+    # Full historic custom notices are already the poll's own facts.
+    if any(values[key] for key in ("controller", "contact", "legal_basis", "recipients", "transfers")):
+        return values
+    path = Path(config_dir) / "polls_v2" / "privacy-profile.json"
+    if path.is_symlink():
+        raise SurveyError("Unsafe previous privacy settings path")
+    try:
+        previous = json.loads(path.read_text("utf-8"))["privacy"]
+        if not isinstance(previous, dict):
+            raise ValueError()
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise SurveyError("Previous privacy details unavailable; complete Privacy details in this editor") from exc
+    return normalize_privacy({key: values[key] if key in {"purpose", "additional_disclosures"}
+                              else values[key] or previous.get(key, "") for key in PRIVACY_LIMITS})
+
+
+def _validate_disclosures(privacy: dict) -> None:
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", privacy["contact"]):
+        raise SurveyError("privacy.contact: enter a valid contact email")
+    required = ("controller", "contact", "purpose", "legal_basis", "recipients", "transfers")
+    if not all(privacy[key] for key in required) or (
+            privacy["legal_basis"] == "legitimate_interest" and not privacy["legitimate_interest"]):
+        missing = [key for key in required if not privacy.get(key)]
+        if privacy["legal_basis"] == "legitimate_interest" and not privacy["legitimate_interest"]:
+            missing.append("legitimate_interest")
+        raise SurveyError("Complete privacy information: " + ", ".join(missing))
+
+
 def _calendar_dates(values: Any) -> list[str]:
     if not isinstance(values, list) or not 1 <= len(values) <= 60:
         raise SurveyError("Date availability requires 1–60 distinct ISO calendar dates")
@@ -243,7 +295,7 @@ def _normalize_questions(questions: Any) -> list[dict]:
     return out
 
 
-def create(config_dir: Path | str, template: str = "blank") -> dict:
+def create(config_dir: Path | str, template: str = "blank", *, definition: Mapping[str, Any] | None = None) -> dict:
     # Original editor starting points; each is a fully editable draft.
     examples = {
         "blank": ("New survey", "", [{"type": "yes_no", "question": "Will you attend?", "required": True}]),
@@ -262,24 +314,47 @@ def create(config_dir: Path | str, template: str = "blank") -> dict:
         raise SurveyError("Unknown poll starting point")
     title, description, questions = examples[template]
     poll_id = secrets.token_hex(16)
-    directory = _directory(config_dir, poll_id, create=True)
     value = {
         "id": poll_id, "key": secrets.token_urlsafe(24), "title": title, "description": description,
         "status": "draft", "response_mode": "anonymous", "deadline": "", "retention_until": "",
         "questions": _normalize_questions(questions),
-        "privacy": {"controller": "", "contact": "", "purpose": "", "legal_basis": "", "recipients": "", "transfers": "", "legitimate_interest": "", "dpo": "", "confirmed": False},
+        # Public institutional facts confirmed by the administrator. No legal
+        # basis, recipients or transfer assessment is inferred from them.
+        "privacy": normalize_privacy({
+            "controller": "Mediterranean Institute of Fundamental Physics (MIFP), Via Appia Nuova 31, 00047 Marino (Roma), Italy",
+            "contact": "secretary@mifp.eu",
+        }),
         "created_at": datetime.now(UTC).isoformat(),
     }
-    with _locked(directory, exclusive=True):
-        _atomic(directory / "poll.json", value)
-        (directory / "answers.jsonl").touch(mode=0o600)
+    if definition is not None:
+        # Import passes a validated reusable definition. Build its final Draft
+        # before exposing any metadata; never persist an intermediate blank poll.
+        value.update(title=_clean(definition["title"], 180), description=_clean(definition["description"], 4000),
+                     response_mode=definition["response_mode"], questions=_normalize_questions(definition["questions"]),
+                     privacy=normalize_privacy(definition["privacy"]),
+                     **{field: definition.get(field, "") for field in SCHEDULE_FIELDS})
+    directory = _directory(config_dir, poll_id, create=True)
+    try:
+        with _locked(directory, exclusive=True):
+            (directory / "answers.jsonl").touch(mode=0o600)
+            _atomic(directory / "poll.json", value)
+    except OSError:
+        # This ID was just created by this call. Roll back only that unpublished
+        # folder; no existing poll or response journal is touched.
+        with _locked(directory, exclusive=True, deleting=True):
+            shutil.rmtree(directory)
+        raise
     return value
 
 
 def get(config_dir: Path | str, poll_id: str) -> dict:
     directory = _directory(config_dir, poll_id)
     with _locked(directory):
-        return _read_config(directory)
+        poll = _read_config(directory)
+        if poll["status"] == "draft":
+            previous = "privacy_source" in poll or not set(PRIVACY_LIMITS) <= poll["privacy"].keys()
+            return {**poll, "privacy": normalize_privacy(poll["privacy"]), "needs_privacy_adoption": previous}
+        return poll
 
 
 def list_all(config_dir: Path | str) -> list[dict]:
@@ -300,10 +375,12 @@ def list_all(config_dir: Path | str) -> list[dict]:
     return sorted(result, key=lambda item: item["created_at"], reverse=True)
 
 
-def update(config_dir: Path | str, poll_id: str, raw: Mapping[str, Any]) -> dict:
+def update(config_dir: Path | str, poll_id: str, raw: Mapping[str, Any], *, validate_only: bool = False, expected_revision: str | None = None) -> dict:
     directory = _directory(config_dir, poll_id)
     with _locked(directory, exclusive=True):
         existing = _read_config(directory)
+        if expected_revision is not None and expected_revision != existing.get("updated_at", existing["created_at"]):
+            raise SurveyError("The draft changed. Preview and review it again")
         answers = _read_answers(directory)
         mode = str(raw.get("response_mode") or existing["response_mode"])
         if mode not in MODES:
@@ -318,38 +395,42 @@ def update(config_dir: Path | str, poll_id: str, raw: Mapping[str, Any]) -> dict
         privacy_raw = raw.get("privacy") or {}
         if not isinstance(privacy_raw, Mapping):
             raise SurveyError("Invalid privacy configuration")
-        privacy = {
-            "controller": _clean(privacy_raw.get("controller"), 200),
-            "contact": _clean(privacy_raw.get("contact"), 200),
-            "purpose": _clean(privacy_raw.get("purpose"), 1000),
-            "legal_basis": _clean(privacy_raw.get("legal_basis"), 80),
-            "recipients": _clean(privacy_raw.get("recipients"), 500),
-            "transfers": _clean(privacy_raw.get("transfers"), 500),
-            "legitimate_interest": _clean(privacy_raw.get("legitimate_interest"), 500),
-            "dpo": _clean(privacy_raw.get("dpo"), 200),
-            "confirmed": bool(privacy_raw.get("confirmed")),
-        }
-        if privacy["legal_basis"] and privacy["legal_basis"] not in BASES:
-            raise SurveyError("Invalid privacy legal basis")
+        privacy = normalize_privacy(privacy_raw)
         deadline = _clean(raw.get("deadline"), 10)
         retention = _clean(raw.get("retention_until"), 10)
         if deadline:
-            deadline = _date(deadline)
+            try:
+                deadline = _date(deadline)
+            except SurveyError as exc:
+                raise SurveyError(f"deadline: {exc}") from exc
         if retention:
-            retention = _date(retention)
-        if deadline and retention and retention < deadline:
-            raise SurveyError("Retention must be later than the closing date")
+            try:
+                retention = _date(retention)
+            except SurveyError as exc:
+                raise SurveyError(f"retention_until: {exc}") from exc
+        if status == "open" and deadline and retention and retention < deadline:
+            raise SurveyError("retention_until: retention must be later than the closing date")
         if status == "open":
             if mode == "anonymous" and privacy["legal_basis"] == "consent":
                 raise SurveyError("Anonymous surveys cannot use consent in this version: individual withdrawal is not supported")
             if not deadline or deadline < _today():
                 raise SurveyError("A survey needs a future deadline")
             if retention and retention < _today():
-                raise SurveyError("Retention date must not be in the past")
-            if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", privacy["contact"]):
-                raise SurveyError("Enter a valid privacy contact email")
-            if not retention or not all((privacy["controller"], privacy["contact"], privacy["purpose"], privacy["legal_basis"], privacy["recipients"], privacy["transfers"], privacy["confirmed"])) or (privacy["legal_basis"] == "legitimate_interest" and not privacy["legitimate_interest"]):
-                raise SurveyError("Complete and verify the privacy notice and retention date before opening")
+                raise SurveyError("retention_until: retention date must not be in the past")
+            try:
+                _validate_disclosures(privacy)
+            except SurveyError as exc:
+                if mode == "anonymous":
+                    raise SurveyError(
+                        f"{exc}. No-name collection does not establish effective anonymisation of answers: "
+                        "text, answer combinations and timing may identify respondents. "
+                        "Review the response processing separately from Aruba mailing-list processing."
+                    ) from exc
+                raise
+            if existing["status"] == "draft" and raw.get("notice_reviewed") is not True:
+                raise SurveyError("Review the complete notice and confirm publication")
+            if not retention:
+                raise SurveyError("retention_until: specify the deletion date before publishing")
         old_questions = existing["questions"]
         # Compare semantic question content, preserving stable IDs when unchanged.
         candidate = _normalize_questions(raw.get("questions"))
@@ -365,7 +446,7 @@ def update(config_dir: Path | str, poll_id: str, raw: Mapping[str, Any]) -> dict
         if same_questions:
             candidate = old_questions
         # Privacy can be strengthened but not silently rewritten after respondents consented / read it.
-        privacy_changed = privacy != existing["privacy"] or retention != existing["retention_until"]
+        privacy_changed = privacy != normalize_privacy(existing["privacy"]) or retention != existing["retention_until"]
         if (answers or existing.get("collection_started")) and (mode != existing["response_mode"] or not same_questions or privacy_changed):
             raise SurveyError("Mode, questions and privacy are locked after the first response. Create a new survey")
         if existing["status"] != "draft" and (mode != existing["response_mode"] or not same_questions):
@@ -377,11 +458,21 @@ def update(config_dir: Path | str, poll_id: str, raw: Mapping[str, Any]) -> dict
         value = {**existing, "title": _clean(raw.get("title"), 180), "description": _clean(raw.get("description"), 4000), "status": status,
                  "response_mode": mode, "deadline": deadline, "retention_until": retention, "questions": candidate,
                  "privacy": privacy, "updated_at": datetime.now(UTC).isoformat()}
-        value["privacy_version"] = (value["updated_at"] if privacy_changed else
+        if existing["status"] == "draft":
+            value.pop("privacy_source", None)
+            value.pop("privacy_profile_revision", None)
+            value.pop("organisation_revision", None)
+        if existing["status"] != "draft":
+            value["privacy"] = existing["privacy"]
+        if existing["status"] == "draft" and status == "open":
+            value["notice_snapshot"] = {"notice_version": 2, "privacy": dict(privacy),
+                "response_mode": mode, "retention_until": retention, "published_at": value["updated_at"]}
+        value["privacy_version"] = (value["updated_at"] if privacy_changed or (existing["status"] == "draft" and status == "open") else
                                     existing.get("privacy_version", existing.get("updated_at", existing["created_at"])))
         if not value["title"]:
             raise SurveyError("Survey title is required")
-        _atomic(directory / "poll.json", value)
+        if not validate_only:
+            _atomic(directory / "poll.json", value)
         return value
 
 
@@ -490,25 +581,52 @@ def results(config_dir: Path | str, poll_id: str) -> tuple[dict, list[dict]]:
 
 
 def summary(config_dir: Path | str, poll_id: str) -> dict:
-    poll, rows = results(config_dir, poll_id)
+    return _summary(*results(config_dir, poll_id))
+
+
+def _summary(poll: dict, rows: list[dict]) -> dict:
+    total = len(rows)
+    percent = lambda count: round(count * 100 / total, 1) if total else 0.0
     questions = []
     for q in poll["questions"]:
+        values = [row["answers"].get(q["id"]) for row in rows]
+        answered = sum(any(value.values()) if isinstance(value, dict) else bool(value) for value in values)
+        item = {**q, "answered": answered, "unanswered": total - answered,
+                "answered_percentage": percent(answered), "unanswered_percentage": percent(total - answered)}
         if q["type"] == "date_availability":
             totals = {day: {category: 0 for category in ("yes", "maybe", "no", "unanswered")} for day in q["dates"]}
-            for row in rows:
-                answer = row["answers"].get(q["id"], {})
+            for answer in values:
                 for day in q["dates"]:
-                    totals[day][answer.get(day) or "unanswered"] += 1
-            questions.append({**q, "date_counts": totals})
-            continue
-        counts = Counter()
-        for row in rows:
-            val = row["answers"].get(q["id"])
-            for v in (val if isinstance(val, list) else [val]):
-                if v:
-                    counts[v] += 1
-        questions.append({**q, "counts": dict(counts)})
-    return {"responses": len(rows), "questions": questions}
+                    totals[day][(answer or {}).get(day) or "unanswered"] += 1
+            item["date_counts"] = totals
+            item["date_percentages"] = {day: {key: percent(count) for key, count in counts.items()} for day, counts in totals.items()}
+            item["chart_labels"] = q["dates"]
+            item["chart_values"] = [total - totals[day]["unanswered"] for day in q["dates"]]
+        else:
+            counts = Counter()
+            for value in values:
+                for answer in (value if isinstance(value, list) else [value]):
+                    if answer:
+                        counts[answer] += 1
+            item["counts"] = dict(counts)
+            if q["type"] == "yes_no":
+                options = [{"id": "yes", "label": q.get("yes_label", "Yes")}, {"id": "no", "label": q.get("no_label", "No")}]
+            elif q["type"] in {"single_choice", "multiple_choice"}:
+                options = q["options"]
+            elif q["type"] == "date":
+                options = [{"id": day, "label": day} for day in sorted(counts)]
+            else:
+                options = []
+            item["distribution"] = [{**option, "count": counts[option["id"]], "percentage": percent(counts[option["id"]])} for option in options]
+            item["chart_labels"] = [option["label"] for option in options]
+            item["chart_values"] = [counts[option["id"]] for option in options]
+        questions.append(item)
+    activity = Counter(row["submitted_at"][:10] for row in rows)
+    return {"responses": total, "questions": questions,
+            "activity": [{"date": day, "count": count} for day, count in sorted(activity.items())],
+            "activity_labels": sorted(activity), "activity_values": [activity[day] for day in sorted(activity)],
+            "answered": sum(q["answered"] for q in questions),
+            "unanswered": sum(q["unanswered"] for q in questions)}
 
 
 def _csv_cell(value: Any) -> str:
@@ -517,7 +635,10 @@ def _csv_cell(value: Any) -> str:
 
 
 def export_csv(config_dir: Path | str, poll_id: str) -> bytes:
-    poll, rows = results(config_dir, poll_id)
+    return _csv_bytes(*results(config_dir, poll_id))
+
+
+def _csv_bytes(poll: dict, rows: list[dict]) -> bytes:
     fields = (["first_name", "last_name", "email"] if poll["response_mode"] == "identified" else [])
     for q in poll["questions"]:
         fields.extend([f"{q['question']} [{day}]" for day in q["dates"]]
@@ -611,7 +732,8 @@ def erase_identified_email(config_dir: Path | str, poll_id: str, email: str) -> 
 def cleanup_expired(config_dir: Path | str) -> int:
     """Delete surveys whose configured retention end date has passed.
 
-    Run daily from the deployment scheduler. Does not erase external backups.
+    Explicit maintenance command; no scheduler is installed by this module.
+    Does not erase external backups.
     """
     deleted = 0
     for directory in list(_root(config_dir).iterdir()):

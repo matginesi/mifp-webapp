@@ -1,0 +1,86 @@
+# MIFP Polls — Winter School 2027
+# Import this template as a NEW DRAFT in MIFP Polls.
+# Before publishing, complete/review all privacy fields and set the deadline
+# and retention date in the visual editor.
+# The YAML must NOT imply that the privacy notice was legally approved.
+
+schema_version: 1
+
+poll:
+  title: "MIFP Winter School 2027 — Interest and Availability"
+  description: >-
+    MIFP is preparing the Winter School on Artificial Intelligence for
+    Science and Technology, scheduled for 21–28 February 2027 in
+    Tsaghkadzor, Armenia.
+
+    We would appreciate your feedback on your interest and potential
+    availability. This short survey is intended solely for preliminary
+    organisational planning: it is not an event registration, a booking,
+    or a commitment to participate.
+
+    Please answer only once. The survey does not ask for your name or
+    email address.
+
+  response_mode: "anonymous"
+
+  # To be agreed by the organisers. Format: YYYY-MM-DD.
+  # Use a retention date AFTER the survey deadline.
+  deadline: ""
+  retention_until: ""
+
+  questions:
+    - type: "single_choice"
+      question: "Would you be interested in attending the MIFP Winter School 2027?"
+      required: true
+      options:
+        - "Yes, I am interested"
+        - "Maybe, depending on the programme and practical arrangements"
+        - "No, I am not interested"
+
+    - type: "date_availability"
+      question: "On which days could you potentially attend?"
+      required: false
+      dates:
+        - "2027-02-21"
+        - "2027-02-22"
+        - "2027-02-23"
+        - "2027-02-24"
+        - "2027-02-25"
+        - "2027-02-26"
+        - "2027-02-27"
+        - "2027-02-28"
+      # For each date: Yes / Maybe / No / no answer.
+      # No answer must NOT be interpreted as No.
+
+  privacy:
+    # Complete with the VERIFIED legal entity responsible for the survey.
+    controller: ""
+
+    # Existing public institutional contact for MIFP.
+    contact: "secretary@mifp.eu"
+
+    purpose: >-
+      Collect and analyse preliminary expressions of interest and
+      availability for the organisation of the MIFP Winter School on
+      Artificial Intelligence for Science and Technology, planned for
+      21–28 February 2027 in Tsaghkadzor, Armenia. Responses are used
+      for aggregate event-planning statistics, not registration.
+
+    # Select only after confirming the appropriate GDPR legal basis.
+    # The exact allowed values depend on the deployed Polls implementation.
+    legal_basis: ""
+
+    # Required only if legitimate interest is chosen as the legal basis.
+    legitimate_interest: ""
+
+    # Identify actual authorised recipients/processors after verification.
+    recipients: ""
+
+    # Document actual international transfers, or their verified absence.
+    transfers: ""
+
+    # Optional: complete only if there is a designated DPO/contact.
+    dpo: ""
+
+    # Imported privacy information is NEVER automatically approved.
+    confirmed: false

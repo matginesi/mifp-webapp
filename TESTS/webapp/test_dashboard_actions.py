@@ -1690,6 +1690,7 @@ MUTATING_DASHBOARD_ENDPOINTS = {
     "dashboard.simple_poll_import_yaml",
     "dashboard.simple_poll_import_confirm",
     "dashboard.simple_poll_save",
+    "dashboard.simple_poll_publish",
     "dashboard.simple_poll_preview",
     "dashboard.simple_poll_delete",
     "dashboard.simple_poll_erase_email",

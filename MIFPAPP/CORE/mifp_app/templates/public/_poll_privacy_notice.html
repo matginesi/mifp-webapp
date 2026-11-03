@@ -1,0 +1,6 @@
+{# Keep the renderer of already-published notices; Drafts preview the new one. #}
+{% if notice.get('notice_version', 1 if poll.notice_snapshot else 2) == 2 %}
+{% include 'public/_poll_privacy_notice_v2.html' %}
+{% else %}
+{% include 'public/_poll_privacy_notice_v1.html' %}
+{% endif %}

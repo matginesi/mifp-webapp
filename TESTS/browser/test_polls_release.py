@@ -1,5 +1,6 @@
 """Synthetic browser release smoke test using the isolated Flask server."""
 import re
+from TESTS.browser.poll_helpers import fill_privacy_details, publish
 import pytest
 
 from playwright.sync_api import expect
@@ -42,13 +43,9 @@ def test_original_editor_shared_link_and_mobile(auth_page, live_server, mode):
     page.get_by_label('Deadline', exact=True).fill('2027-03-01')
     page.get_by_label('Retain data until', exact=True).fill('2027-05-01')
     page.get_by_role('tab', name='Privacy', exact=True).click()
-    for name, value in [('privacy_controller', 'Synthetic Institute'), ('privacy_contact', 'privacy@example.org'),
-                        ('privacy_purpose', 'Synthetic testing'), ('privacy_recipients', 'Synthetic admin'),
-                        ('privacy_transfers', 'None'), ('privacy_legitimate_interest', 'Synthetic scheduling')]:
-        page.locator(f'[name="{name}"]').fill(value)
-    page.locator('[name="privacy_legal_basis"]').select_option('legitimate_interest')
-    page.locator('[name="privacy_confirmed"]').check()
-    page.get_by_role('button', name='Save changes', exact=True).click()
+    fill_privacy_details(page)
+    page.locator('[name="privacy_purpose"]').fill('Synthetic testing')
+    page.get_by_role('button', name='Save Draft', exact=True).click()
     page.wait_for_load_state('networkidle')
     expect(page.get_by_text('Survey saved.', exact=True)).to_be_visible()
     expect(cards).to_have_count(2)
@@ -60,9 +57,7 @@ def test_original_editor_shared_link_and_mobile(auth_page, live_server, mode):
     expect(preview.get_by_text('Administrator preview — responses are not saved.')).to_be_visible()
     expect(preview.get_by_role('button', name='Submit response')).to_be_disabled()
     preview.close()
-    page.get_by_label('Status', exact=True).select_option('open')
-    page.get_by_role('button', name='Save changes', exact=True).click()
-    page.wait_for_load_state('networkidle')
+    publish(page)
     link = page.locator('[data-poll-share-link]').input_value()
     page.context.grant_permissions(['clipboard-read', 'clipboard-write'])
     page.locator('[data-poll-copy-link]').click()

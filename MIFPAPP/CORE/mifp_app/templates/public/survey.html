@@ -72,26 +72,8 @@
         {% endif %}
       </fieldset>
       {% endfor %}
-      <section class="survey-privacy" aria-label="Privacy information">
-        <h2>Privacy information</h2>
-        <p><strong>Controller:</strong> {{ poll.privacy.controller }} · <strong>Contact:</strong> <a href="mailto:{{ poll.privacy.contact }}">{{ poll.privacy.contact }}</a>.</p>
-        <p><strong>Purpose:</strong> {{ poll.privacy.purpose }}.</p>
-        {% if poll.response_mode == 'anonymous' %}
-        <p><strong>Data:</strong> Your responses only; no name or email is requested or stored with the survey responses. Avoid entering personal information in free-text answers. Technical data (such as IP addresses) may be processed by the hosting infrastructure to serve and protect this page; such data is not attached to survey answers. A strictly necessary security cookie protects form submission; no advertising or analytics cookies are used on this survey page.</p>
-        {% else %}
-        <p><strong>Data:</strong> Your first name, last name, self-declared email address, and answers. A strictly necessary security cookie protects submission; no analytics or advertising cookies are used. The identity is not verified. Access to submitted personal data through MIFP is restricted to authorised administrators.</p>
-        {% endif %}
-        <p><strong>Legal basis:</strong> {{ {'consent': 'Consent (Art. 6(1)(a) GDPR)', 'legitimate_interest': 'Legitimate interests (Art. 6(1)(f) GDPR)', 'public_task': 'Task carried out in the public interest (Art. 6(1)(e) GDPR)', 'contract': 'Contract or pre-contractual steps (Art. 6(1)(b) GDPR)'}.get(poll.privacy.legal_basis, poll.privacy.legal_basis) }}.</p>
-        {% if poll.privacy.legal_basis == 'legitimate_interest' %}<p><strong>Legitimate interest pursued:</strong> {{ poll.privacy.legitimate_interest }}.</p>{% endif %}
-        <p><strong>Recipients:</strong> {{ poll.privacy.recipients }}. <strong>International transfers:</strong> {{ poll.privacy.transfers }}.</p>
-        {% if poll.privacy.dpo %}<p><strong>Data protection officer:</strong> {{ poll.privacy.dpo }}.</p>{% endif %}
-        <p><strong>Retention:</strong> Until {{ poll.retention_until }}. MIFP is responsible for deleting the stored data within this period.</p>
-        <p>Participation is voluntary; if you do not submit, your answers will not be recorded. Anonymous answers cannot ordinarily be located later by participant identity. You may contact the controller to request access, rectification, erasure or other applicable rights, and lodge a complaint with the Italian Data Protection Authority. Where consent is the legal basis, you may withdraw it for the future. Where legitimate interests apply, you may object where provided by law. There is no automated decision-making through this survey.</p>
-        <p><a href="{{ url_for('public.privacy') }}" target="_blank" rel="noopener noreferrer">Read MIFP's full privacy policy</a>.</p>
-        {% if poll.privacy.legal_basis == 'consent' %}
-          <label class="survey-choice survey-consent"><input type="checkbox" name="processing_consent" value="yes" required> I consent to the processing described above for this survey.</label>
-        {% endif %}
-      </section>
+      {% set notice = poll.notice_snapshot or poll %}
+      {% include 'public/_poll_privacy_notice.html' %}
       <button class="survey-submit" type="submit">Submit response</button>
       </fieldset>
       <p class="survey-muted">Please submit only once. If the connection fails, retry from this page; the same submission will not be recorded twice. A new visit to a shared link cannot be used to authenticate a person or guarantee one response per person.</p>

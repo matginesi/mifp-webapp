@@ -1,0 +1,26 @@
+{% for key, label, limit, multiline in [
+  ('controller','Data controller (official name)',200,false),
+  ('contact','Privacy contact',200,false),
+  ('legal_basis','GDPR legal basis',80,false),
+  ('recipients','Data recipients and processors',500,true),
+  ('legitimate_interest','Legitimate interest pursued (if selected)',500,true),
+  ('transfers','International transfers / safeguards (or None)',500,true),
+  ('dpo','Data protection officer contact (if appointed)',200,false)] %}
+<div class="col-md-6">
+  <label class="field"><span>{{ label }}</span>
+  {% if key == 'legal_basis' %}
+    <select name="privacy_legal_basis" class="form-select">
+      <option value="">Select after reviewing the processing</option>
+      {% for choice, text in [('legitimate_interest','Legitimate interest (Art. 6(1)(f))'),('consent','Consent (Art. 6(1)(a))'),('public_task','Public interest task (Art. 6(1)(e))'),('contract','Contract / pre-contract (Art. 6(1)(b))')] %}
+      <option value="{{ choice }}" {{ 'selected' if privacy.get(key) == choice }}>{{ text }}</option>
+      {% endfor %}
+    </select>
+  {% elif multiline %}
+    <textarea class="form-control" name="privacy_{{ key }}" maxlength="{{ limit }}" rows="2">{{ privacy.get(key, '') }}</textarea>
+  {% else %}
+    <input class="form-control" name="privacy_{{ key }}" type="{{ 'email' if key == 'contact' else 'text' }}" maxlength="{{ limit }}" value="{{ privacy.get(key, '') }}">
+  {% endif %}
+  </label>
+  {% if field_errors and key in field_errors %}<p class="text-danger">{{ field_errors }}</p>{% endif %}
+</div>
+{% endfor %}

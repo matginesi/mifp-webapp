@@ -11,10 +11,7 @@ from . import simple_polls as store
 MAX_YAML_BYTES = 1024 * 1024
 MAX_YAML_EVENTS = 6000
 MAX_YAML_DEPTH = 8
-PRIVACY_LIMITS = {
-    "controller": 200, "contact": 200, "purpose": 1000, "legal_basis": 80,
-    "recipients": 500, "transfers": 500, "legitimate_interest": 500, "dpo": 200,
-}
+PRIVACY_LIMITS = store.PRIVACY_LIMITS
 QUESTION_FIELDS = {
     "text": {"style"}, "yes_no": {"yes_label", "no_label"},
     "single_choice": {"options"}, "multiple_choice": {"options"},
@@ -26,13 +23,16 @@ def _fields(value: Any, allowed: set[str], context: str) -> dict:
     if not isinstance(value, dict) or any(not isinstance(k, str) for k in value):
         raise store.SurveyError(f"{context} must be a mapping with text field names")
     if set(value) - allowed:
-        raise store.SurveyError(f"Unsupported fields in {context}")
+        names = ", ".join(f"{context}.{name}" for name in sorted(set(value) - allowed))
+        raise store.SurveyError(f"Unsupported fields in {context}: {names}")
     return value
 
 
 def _text(value: Any, maximum: int, context: str) -> str:
-    if not isinstance(value, str) or len(value) > maximum:
-        raise store.SurveyError(f"Invalid or overlong {context}")
+    if not isinstance(value, str):
+        raise store.SurveyError(f"{context}: expected text")
+    if len(value) > maximum:
+        raise store.SurveyError(f"{context}: maximum {maximum} characters")
     return value.strip()
 
 
@@ -47,59 +47,89 @@ def _question_template(question: dict) -> dict:
 def validate_template(raw: Any) -> dict:
     raw = _fields(raw, {"schema_version", "poll"}, "template")
     if type(raw.get("schema_version")) is not int or raw["schema_version"] != 1:
-        raise store.SurveyError("Unsupported YAML schema_version; expected 1")
-    raw = _fields(raw.get("poll"), {"title", "description", "response_mode", "questions", "privacy"}, "poll")
-    title = _text(raw.get("title"), 180, "poll title")
+        raise store.SurveyError("Unsupported schema_version: expected integer 1")
+    raw = _fields(raw.get("poll"), {"title", "description", "response_mode", "questions", "privacy", "privacy_source", *store.SCHEDULE_FIELDS}, "poll")
+    title = _text(raw.get("title"), 180, "poll.title")
     if not title:
-        raise store.SurveyError("Poll title is required")
-    description = _text(raw.get("description", ""), 4000, "description")
+        raise store.SurveyError("poll.title: non-empty text is required")
+    description = _text(raw.get("description", ""), 4000, "poll.description")
     mode = raw.get("response_mode", "anonymous")
     if not isinstance(mode, str) or mode not in store.MODES:
-        raise store.SurveyError("Invalid response mode")
+        raise store.SurveyError("poll.response_mode: expected anonymous or identified")
     questions = raw.get("questions")
     if not isinstance(questions, list) or not 1 <= len(questions) <= 30:
-        raise store.SurveyError("A template needs between 1 and 30 questions")
-    for q in questions:
-        q = _fields(q, {"type", "question", "required", "style", "yes_label", "no_label", "options", "dates"}, "question")
+        raise store.SurveyError("poll.questions: expected a list of 1–30 questions")
+    normalized = []
+    for index, q in enumerate(questions):
+        path = f"poll.questions[{index}]"
+        q = _fields(q, {"type", "question", "required", "style", "yes_label", "no_label", "options", "dates"}, path)
         kind = q.get("type")
         if not isinstance(kind, str) or kind not in QUESTION_FIELDS:
-            raise store.SurveyError("Invalid question type")
-        _fields(q, {"type", "question", "required"} | QUESTION_FIELDS[kind], "question")
+            raise store.SurveyError(f"{path}.type: supported types are {', '.join(sorted(QUESTION_FIELDS))}")
+        _fields(q, {"type", "question", "required"} | QUESTION_FIELDS[kind], path)
         if type(q.get("required", False)) is not bool:
-            raise store.SurveyError("Question required must be true or false")
-        _text(q.get("question"), 300, "question text")
+            raise store.SurveyError(f"{path}.required: expected true or false")
+        if not _text(q.get("question"), 300, f"{path}.question"):
+            raise store.SurveyError(f"{path}.question: non-empty text is required")
         for field in ("style", "yes_label", "no_label"):
             if field in q:
-                _text(q[field], 80, field)
+                _text(q[field], 80, f"{path}.{field}")
         if "options" in q and (not isinstance(q["options"], list) or any(not isinstance(x, str) for x in q["options"])):
-            raise store.SurveyError("Choices must be a list of text labels")
-    normalized = store._normalize_questions(questions)
+            raise store.SurveyError(f"{path}.options: expected a list of text labels")
+        setting = {"text": "style", "yes_no": "yes_label/no_label", "single_choice": "options",
+                   "multiple_choice": "options", "date_availability": "dates", "date": "question"}[kind]
+        try:
+            normalized.extend(store._normalize_questions([q]))
+        except store.SurveyError as exc:
+            raise store.SurveyError(f"{path}.{setting}: {exc}") from exc
     value = {"title": title, "description": description, "response_mode": mode,
              "questions": [_question_template(q) for q in normalized]}
-    if "privacy" in raw:
-        privacy = _fields(raw["privacy"], set(PRIVACY_LIMITS) | {"confirmed"}, "privacy")
-        if "confirmed" in privacy and type(privacy["confirmed"]) is not bool:
-            raise store.SurveyError("Privacy confirmed must be true or false")
-        privacy = {key: _text(privacy.get(key, ""), maximum, key) for key, maximum in PRIVACY_LIMITS.items()}
-        if privacy["legal_basis"] and privacy["legal_basis"] not in store.BASES:
-            raise store.SurveyError("Invalid privacy legal basis")
-        value["privacy"] = {**privacy, "confirmed": False}
+    for field in store.SCHEDULE_FIELDS:
+        day = raw.get(field, "")
+        if day is None or day == "":
+            value[field] = ""
+        else:
+            try:
+                value[field] = store._calendar_dates([day])[0]
+            except store.SurveyError as exc:
+                raise store.SurveyError(f"poll.{field}: {exc}") from exc
+    privacy = _fields(raw.get("privacy", {}), set(PRIVACY_LIMITS) | {"confirmed"}, "poll.privacy")
+    if "confirmed" in privacy and type(privacy["confirmed"]) is not bool:
+        raise store.SurveyError("poll.privacy.confirmed: expected true or false")
+    privacy = {key: _text(privacy.get(key, ""), maximum, f"poll.privacy.{key}") for key, maximum in PRIVACY_LIMITS.items()}
+    if privacy["legal_basis"] and privacy["legal_basis"] not in store.BASES:
+        raise store.SurveyError("poll.privacy.legal_basis: expected consent, legitimate_interest, public_task or contract (or blank in Draft)")
+    # Historic source metadata has no configuration effect. There is only the
+    # poll's canonical object, never a lookup or profile-selection workflow.
+    old_source = raw.get("privacy_source")
+    if old_source is not None and old_source not in ("organization", "custom"):
+        raise store.SurveyError("poll.privacy_source: unsupported historic value; omit this field")
+    value["privacy"] = store.normalize_privacy(privacy)
     return {"schema_version": 1, "poll": value}
 
 
-def _check_mapping_keys(node) -> None:
+def _check_mapping_keys(node, path: str = "") -> None:
     if isinstance(node, MappingNode):
         seen = set()
         for key, value in node.value:
-            if not isinstance(key, ScalarNode) or key.tag != "tag:yaml.org,2002:str" or key.value in seen:
-                raise store.SurveyError("YAML field names must be unique text keys")
+            location = f"line {key.start_mark.line + 1}, column {key.start_mark.column + 1}"
+            if not isinstance(key, ScalarNode) or key.tag != "tag:yaml.org,2002:str":
+                raise store.SurveyError(f"{path or 'template'}: YAML field names must be text ({location})")
+            field = f"{path}.{key.value}" if path else key.value
+            if key.value in seen:
+                raise store.SurveyError(f"{field}: duplicate YAML field ({location})")
             seen.add(key.value)
-            _check_mapping_keys(value)
+            _check_mapping_keys(value, field)
     elif isinstance(node, SequenceNode):
-        for item in node.value:
-            _check_mapping_keys(item)
+        for index, item in enumerate(node.value):
+            _check_mapping_keys(item, f"{path}[{index}]")
     elif isinstance(node, ScalarNode):
-        node.value.encode("utf-8")  # reject escaped unpaired surrogates before rendering
+        try:
+            node.value.encode("utf-8")  # reject escaped unpaired surrogates
+            if node.tag == "tag:yaml.org,2002:timestamp" and len(node.value) == 10:
+                store._calendar_dates([node.value])
+        except (UnicodeError, store.SurveyError) as exc:
+            raise store.SurveyError(f"{path}: invalid Unicode or calendar date at line {node.start_mark.line + 1}") from exc
 
 
 def load_template(payload: bytes) -> dict:
@@ -125,6 +155,10 @@ def load_template(payload: bytes) -> dict:
         return validate_template(yaml.safe_load(text))
     except store.SurveyError:
         raise
+    except yaml.MarkedYAMLError as exc:
+        mark = exc.problem_mark or exc.context_mark
+        location = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
+        raise store.SurveyError(f"Invalid YAML{location}: {exc.problem or 'malformed document'}") from exc
     except (yaml.YAMLError, UnicodeError, RecursionError, ValueError) as exc:
         raise store.SurveyError("Invalid YAML template; upload one UTF-8 YAML document") from exc
 
@@ -133,6 +167,8 @@ def export_template(config_dir, poll_id: str) -> bytes:
     poll = store.get(config_dir, poll_id)
     template = {"schema_version": 1, "poll": {"title": poll["title"], "description": poll["description"],
                 "response_mode": poll["response_mode"],
+                **{field: poll.get(field, "") for field in store.SCHEDULE_FIELDS},
+                "privacy": {field: poll["privacy"].get(field, "") for field in PRIVACY_LIMITS},
                 "questions": [_question_template(q) for q in poll["questions"]]}}
     return yaml.safe_dump(template, allow_unicode=True, sort_keys=False).encode("utf-8")
 
@@ -141,6 +177,7 @@ def create_draft(config_dir, template: dict) -> dict:
     # Validate again at the confirmation boundary; never accept runtime IDs,
     # bearer keys, status, responses or identity fields from a template.
     value = validate_template(template)["poll"]
-    poll = store.create(config_dir)
-    return store.update(config_dir, poll["id"], {**value, "status": "draft",
-                       "privacy": {**poll["privacy"], **value.get("privacy", {}), "confirmed": False}})
+    try:
+        return store.create(config_dir, definition=value)
+    except OSError as exc:
+        raise store.SurveyError("Unable to save the new draft. No poll was imported; check private storage permissions and free space") from exc

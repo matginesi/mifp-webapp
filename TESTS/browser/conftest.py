@@ -111,7 +111,14 @@ def auth_page(page, live_server):
 
 
 @pytest.fixture(scope="session")
-def live_server(tmp_path_factory):
+def browser_runtime_dir(tmp_path_factory):
+    if os.getenv("MIFP_TEST_BASE_URL", "").strip():
+        return None  # Never seed old records on an external server.
+    return tmp_path_factory.mktemp("browser-server")
+
+
+@pytest.fixture(scope="session")
+def live_server(tmp_path_factory, browser_runtime_dir):
     requested_base = os.getenv("MIFP_TEST_BASE_URL", "").strip()
     if requested_base:
         yield requested_base.rstrip("/")
@@ -119,7 +126,7 @@ def live_server(tmp_path_factory):
     env = os.environ.copy()
     env["FLASK_ENV"] = "development"
     env["TESTING"] = "1"
-    server_dir = tmp_path_factory.mktemp("browser-server")
+    server_dir = browser_runtime_dir
     assets_dir = server_dir / "assets"
     assets_dir.mkdir()
     (server_dir / "exports").mkdir()

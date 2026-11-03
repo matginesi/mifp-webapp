@@ -58,7 +58,7 @@ def test_supplied_fixture_preview_confirm_export_preserves_existing_poll(poll_ap
     assert pid != existing['id'] and imported['key'] != existing['key']
     assert imported['status'] == 'draft' and imported['response_mode'] == 'anonymous'
     assert imported['questions'][1]['dates'] == [f'2027-02-{d}' for d in range(21, 29)]
-    assert imported['privacy']['confirmed'] is False
+    assert 'confirmed' not in imported['privacy']
     assert store.results(base, pid)[1] == []
     assert before == {p.name: p.read_bytes() for p in directory.iterdir()}
     exported = admin.get(f'/dashboard/polls-simple/{pid}/export.yaml')
@@ -67,7 +67,7 @@ def test_supplied_fixture_preview_confirm_export_preserves_existing_poll(poll_ap
     assert poll_yaml.load_template(exported.data) == poll_yaml.load_template(FIXTURE.read_bytes())
     assert not any(secret.encode() in exported.data for secret in (existing['id'], existing['key'], imported['id'], imported['key']))
     assert set(yaml.safe_load(exported.data)) == {'schema_version', 'poll'}
-    assert set(yaml.safe_load(exported.data)['poll']) == {'title', 'description', 'response_mode', 'questions'}
+    assert set(yaml.safe_load(exported.data)['poll']) == {'title', 'description', 'response_mode', 'questions', 'deadline', 'retention_until', 'privacy'}
     assert app.test_client().get(f'/survey/{pid}/{imported["key"]}').status_code == 404
     assert app.test_client().get(f'/dashboard/polls-simple/{pid}/export.yaml').status_code == 302
 
@@ -121,7 +121,7 @@ def test_invalid_yaml_is_rejected_without_writing(poll_app, payload):
     assert not store.list_all(poll_app.config['RUNTIME_CONFIG_DIR'])
 
 
-@pytest.mark.parametrize('field', ['key', 'id', 'status', 'answers', 'responses', 'email', 'identity', 'deadline'])
+@pytest.mark.parametrize('field', ['key', 'id', 'status', 'answers', 'responses', 'email', 'identity', 'published_at'])
 def test_runtime_or_unsupported_fields_are_rejected(field):
     value = example()
     value['poll'][field] = 'must not be imported'
@@ -160,14 +160,16 @@ def test_imported_privacy_never_counts_as_verified(poll_app):
     base = poll_app.config['RUNTIME_CONFIG_DIR']
     value = example()
     cfg = survey_config()
-    value['poll']['privacy'] = cfg['privacy']  # includes confirmed: true
+    value['poll']['privacy_source'] = 'custom'
+    value['poll']['privacy'] = {**cfg['privacy'],'confirmed':True}  # ignored, never approval
     poll = poll_yaml.create_draft(base, value)
     assert poll['privacy']['controller'] == cfg['privacy']['controller']
-    assert not poll['privacy']['confirmed']
+    assert 'confirmed' not in poll['privacy']
     cfg.update(title=poll['title'], description=poll['description'], questions=value['poll']['questions'], privacy=poll['privacy'])
-    with pytest.raises(store.SurveyError, match='privacy'):
+    cfg['notice_reviewed'] = False
+    with pytest.raises(store.SurveyError, match='Review'):
         store.update(base, poll['id'], cfg)
-    cfg['privacy']['confirmed'] = True
+    cfg['notice_reviewed'] = True
     assert store.update(base, poll['id'], cfg)['status'] == 'open'
 
 
@@ -211,6 +213,7 @@ def test_availability_routes_persistence_summary_csv_and_schema_lock(poll_app, r
     before = (base / 'polls_v2' / poll['id'] / 'answers.jsonl').read_bytes()
     same = form_data(cfg)
     same['q_0_dates'] = '\n'.join(cfg['questions'][0]['dates'])
+    same['action'] = 'save'
     assert admin.post(f'/dashboard/polls-simple/{poll["id"]}/save', data=same).status_code == 302
     assert store.get(base, poll['id'])['questions'] == poll['questions']
     assert before == (base / 'polls_v2' / poll['id'] / 'answers.jsonl').read_bytes()

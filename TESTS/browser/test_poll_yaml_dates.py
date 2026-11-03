@@ -1,4 +1,5 @@
 """Original editor + YAML confirmation + responsive date matrix, no live data."""
+from TESTS.browser.poll_helpers import fill_privacy_details, publish, start_yaml
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,7 @@ def test_yaml_import_original_editor_dates_public_and_export(auth_page, live_ser
     page.goto(live_server + '/dashboard/polls-simple')
     page.wait_for_load_state('networkidle')
     count = page.locator('.poll-list-item').count()
-    page.get_by_text('Import YAML', exact=True).click()
+    start_yaml(page)
     page.locator('[name="yaml_file"]').set_input_files(str(FIXTURE))
     page.get_by_role('button', name='Preview import', exact=True).click()
     page.wait_for_load_state('networkidle')
@@ -26,7 +27,7 @@ def test_yaml_import_original_editor_dates_public_and_export(auth_page, live_ser
     page.get_by_role('link', name='Cancel', exact=True).click()
     page.wait_for_load_state('networkidle')
     assert page.locator('.poll-list-item').count() == count
-    page.get_by_text('Import YAML', exact=True).click()
+    start_yaml(page)
     page.locator('[name="yaml_file"]').set_input_files(str(FIXTURE))
     page.get_by_role('button', name='Preview import', exact=True).click()
     page.get_by_label('I have reviewed this template and want to create a new draft.').check()
@@ -45,14 +46,10 @@ def test_yaml_import_original_editor_dates_public_and_export(auth_page, live_ser
     page.locator('[name="deadline"]').fill('2027-02-28')
     page.locator('[name="retention_until"]').fill('2027-03-31')
     page.get_by_role('tab', name='Privacy', exact=True).click()
-    expect(page.locator('[name="privacy_confirmed"]')).not_to_be_checked()
-    for key, value in {'controller': 'Synthetic controller', 'contact': 'privacy@example.org',
-                       'purpose': 'Synthetic schedule', 'recipients': 'Synthetic administrators',
-                       'transfers': 'None', 'legitimate_interest': 'Synthetic event planning'}.items():
-        page.locator(f'[name="privacy_{key}"]').fill(value)
-    page.locator('[name="privacy_legal_basis"]').select_option('legitimate_interest')
-    page.locator('[name="privacy_confirmed"]').check()
-    page.get_by_role('button', name='Save changes', exact=True).click()
+    fill_privacy_details(page)
+    expect(page.locator('[name="privacy_confirmed"]')).to_have_count(0)
+    page.locator('[name="privacy_purpose"]').fill('Synthetic schedule')
+    page.get_by_role('button', name='Save Draft', exact=True).click()
     page.wait_for_load_state('networkidle')
     expect(dates).to_have_value('\n'.join(f'2027-02-{day}' for day in range(21, 29)))
     # Full public-page preview uses the same date fields and cannot submit.
@@ -62,9 +59,7 @@ def test_yaml_import_original_editor_dates_public_and_export(auth_page, live_ser
     preview.wait_for_load_state('networkidle')
     expect(preview.get_by_label('2027-02-21: Maybe', exact=True)).to_be_disabled()
     preview.close()
-    page.locator('[name="status"]').select_option('open')
-    page.get_by_role('button', name='Save changes', exact=True).click()
-    page.wait_for_load_state('networkidle')
+    publish(page)
     url = page.locator('[data-poll-share-link]').input_value()
     public_context = page.context.browser.new_context(viewport={'width': 320, 'height': 800})
     public = public_context.new_page()
@@ -96,8 +91,8 @@ def test_yaml_import_original_editor_dates_public_and_export(auth_page, live_ser
     page.wait_for_load_state('networkidle')
     page.get_by_role('tab', name='Responses 1', exact=False).click()
     table = page.locator('[data-shared-poll-panel="responses"] .poll-availability')
-    expect(table.get_by_role('row', name='2027-02-21 1 0 0 0', exact=True)).to_be_visible()
-    expect(table.get_by_role('row', name='2027-02-24 0 0 0 1', exact=True)).to_be_visible()
+    expect(table.get_by_role('row').filter(has_text='2027-02-21').locator('td strong')).to_have_text(['1', '0', '0', '0'])
+    expect(table.get_by_role('row').filter(has_text='2027-02-24').locator('td strong')).to_have_text(['0', '0', '0', '1'])
     page.get_by_role('tab', name='Export', exact=True).click()
     with page.expect_download() as download:
         page.get_by_role('link', name='Export YAML', exact=True).click()
@@ -105,5 +100,6 @@ def test_yaml_import_original_editor_dates_public_and_export(auth_page, live_ser
     assert reusable['schema_version'] == 1
     assert reusable['poll']['response_mode'] == mode
     assert reusable['poll']['questions'][1]['dates'][-1] == '2027-02-28'
-    assert set(reusable['poll']) == {'title', 'description', 'response_mode', 'questions'}
+    assert set(reusable['poll']) == {'title', 'description', 'response_mode', 'questions', 'deadline', 'retention_until', 'privacy'}
+    assert 'confirmed' not in reusable['poll']['privacy']
     assert not errors

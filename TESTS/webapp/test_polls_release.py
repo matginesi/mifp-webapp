@@ -22,8 +22,19 @@ def form_data(config):
         data['privacy_' + k] = 'yes' if k == 'confirmed' and v else v
     for i, q in enumerate(config['questions']):
         for k, v in q.items():
-            data[f'q_{i}_{k}'] = ('\n'.join(v) if k == 'options' else 'on' if k == 'required' and v else v)
+            if k == 'required':
+                if v:
+                    data[f'q_{i}_{k}'] = 'on'
+            else:
+                data[f'q_{i}_{k}'] = '\n'.join(v) if k in {'options', 'dates'} else v
+    data['action'] = {'open':'publish','closed':'close'}.get(config.get('status'),'save_draft')
     return data
+
+
+def publish_review(client, detail, data):
+    preview = client.post(detail+'/save', data={**data,'action':'publish'})
+    assert preview.status_code == 200, preview.data.decode()
+    return client.post(detail+'/publish',data={'review':token(preview,'review')},follow_redirects=True)
 
 
 def opened(app, mode='anonymous'):
@@ -59,8 +70,8 @@ def test_route_lifecycle_all_types(poll_app, mode):
     assert preview.status_code == 200 and b'Administrator preview' in preview.data
     assert b'<fieldset disabled' in preview.data and b'Example Institute' in preview.data
     assert store.get(base, pid) == before
-    saved = admin.post(detail + '/save', data=data, follow_redirects=True)
-    assert b'Survey saved.' in saved.data
+    saved = publish_review(admin,detail,data)
+    assert b'Survey published.' in saved.data
     poll = store.get(base, pid)
     url = f"/survey/{pid}/{poll['key']}"
     assert url.encode() in saved.data
@@ -206,8 +217,8 @@ def test_concurrent_routes_retries_close_and_delete(poll_app):
 
 
 def test_legacy_is_read_only_without_purging_data(poll_app):
-    from mifp_app.services.polls import create_poll
-    old = create_poll(poll_app.config['RUNTIME_CONFIG_DIR'])
+    from TESTS.webapp.test_polls import archived_poll
+    old = archived_poll(poll_app.config['RUNTIME_CONFIG_DIR'])
     directory = poll_app.config['RUNTIME_CONFIG_DIR'] / 'polls' / old['id']
     before = {p.name: p.read_bytes() for p in directory.iterdir() if p.name != '.lock'}
     admin = logged_in_client(poll_app)

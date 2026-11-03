@@ -24,15 +24,58 @@
     newForm.hidden = true;
     newButton?.setAttribute('aria-expanded', 'false');
   });
+  var startingPoint = document.querySelector('[data-poll-start]');
+  var yamlField = document.querySelector('[data-poll-yaml-file]');
+  function creationMode() {
+    if (!startingPoint || !yamlField) return;
+    var useYaml = startingPoint.value === 'yaml';
+    yamlField.hidden = !useYaml;
+    yamlField.querySelector('input').required = useYaml;
+    newForm.querySelector('[type="submit"]').textContent = useYaml ? 'Preview import' : 'Create Poll';
+  }
+  startingPoint?.addEventListener('change', creationMode);
+  creationMode();
   var tabs = Array.from(document.querySelectorAll('[data-shared-poll-tab]'));
   var panels = Array.from(document.querySelectorAll('[data-shared-poll-panel]'));
+  function renderAnalytics() {
+    // The panel starts hidden: Chart.js needs its visible container dimensions.
+    window.requestAnimationFrame(function () {
+      if (!window.Chart) return; // Counts remain readable in the tables.
+      document.querySelectorAll('.poll-analytics canvas[data-chart]').forEach(function (canvas) {
+        var existing = window.Chart.getChart(canvas);
+        if (existing) { existing.resize(); return; }
+        var type = canvas.dataset.chart;
+        new window.Chart(canvas, {
+          type: type,
+          data: {
+            labels: JSON.parse(canvas.dataset.labels),
+            datasets: [{ label: canvas.dataset.chartLabel, data: JSON.parse(canvas.dataset.values),
+              backgroundColor: type === 'line' ? 'rgba(167,43,49,.1)' : '#a72b31',
+              borderColor: '#a72b31', borderWidth: type === 'line' ? 2 : 0,
+              borderRadius: type === 'bar' ? 3 : 0, fill: type === 'line', pointRadius: 3 }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false, animation: false,
+            plugins: { legend: { display: false } },
+            scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { precision: 0 } } }
+          }
+        });
+      });
+    });
+  }
+
   tabs.forEach(function (tab) {
     tab.addEventListener('click', function () {
       var selected = tab.dataset.sharedPollTab;
       tabs.forEach(function (item) { item.setAttribute('aria-selected', String(item === tab)); });
       panels.forEach(function (panel) { panel.hidden = panel.dataset.sharedPollPanel !== selected; });
+      if (selected === 'responses') renderAnalytics();
     });
   });
+  var errorTab = document.querySelector('#survey-editor-form')?.dataset.pollErrorTab;
+  if (errorTab === 'privacy') {
+    document.querySelector('[data-shared-poll-tab="privacy"]')?.click();
+  }
   document.querySelector('[data-poll-copy-link]')?.addEventListener('click', async function (event) {
     var input = document.querySelector('[data-poll-share-link]');
     if (!input) return;
@@ -46,6 +89,14 @@
   });
 
   var form = document.querySelector('#survey-editor-form');
+  var mode = form?.querySelector('select[name="response_mode"]');
+  function privacyMode() {
+    if (!mode) return;
+    form.querySelector('[data-anonymous-privacy-info]').hidden = mode.value !== 'anonymous';
+    form.querySelector('[data-identified-privacy-info]').hidden = mode.value !== 'identified';
+  }
+  mode?.addEventListener('change', privacyMode);
+  privacyMode();
   var fallback = document.querySelector('#survey-admin-questions');
   var visual = document.querySelector('#survey-visual-questions');
   var preview = document.querySelector('#survey-visual-preview');

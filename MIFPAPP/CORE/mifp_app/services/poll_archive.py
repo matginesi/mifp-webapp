@@ -1,36 +1,25 @@
+"""Read-only access and exports for preserved invitation-era archives.
+
+No creation, delivery, token exchange, response submission or data cleanup.
+"""
 from __future__ import annotations
 
 import csv
 import fcntl
-import hashlib
 import io
 import json
 import logging
 import os
 import re
 import secrets
-import shutil
-import tempfile
-import uuid
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-POLL_STATUSES = frozenset({"draft", "open", "closed"})
-QUESTION_TYPES = frozenset({"text", "yes_no", "single_choice", "multiple_choice", "date"})
-RESPONSE_MODES = frozenset({"anonymous", "identified"})
 POLL_ID_RE = re.compile(r"^[0-9a-f]{32}$")
-QUESTION_ID_RE = re.compile(r"^[0-9a-f]{16}$")
-MAX_QUESTIONS = 50
-MAX_OPTIONS = 50
-MAX_ANSWER_TEXT = 5000
-MAX_INVITATIONS = 10_000
-DEFAULT_RESPONDENT_SESSION_MINUTES = 60
-MIN_RESPONDENT_SESSION_MINUTES = 10
-MAX_RESPONDENT_SESSION_MINUTES = 24 * 60
 
 log = logging.getLogger("mifp.polls.storage")
 
@@ -43,85 +32,43 @@ class PollNotFound(PollError):
     pass
 
 
-class PollSessionExpired(PollError):
-    pass
-
-
 def utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def _iso_now() -> str:
-    return utc_now().isoformat(timespec="seconds")
-
-
-def _clean_line(value: Any, limit: int) -> str:
-    return " ".join(str(value or "").replace("\r", " ").replace("\n", " ").split())[:limit]
-
-
-def _clean_text(value: Any, limit: int) -> str:
-    return str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()[:limit]
 
 
 def _polls_root(runtime_config_dir: Path | str) -> Path:
     root = Path(runtime_config_dir) / "polls"
     if root.is_symlink():
         raise PollError("Poll storage cannot be a symbolic link")
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(root, 0o700)
     return root
 
 
-def _poll_dir(runtime_config_dir: Path | str, poll_id: str, *, create: bool = False) -> Path:
+def _poll_dir(runtime_config_dir: Path | str, poll_id: str) -> Path:
     if not POLL_ID_RE.fullmatch(str(poll_id or "")):
         raise PollNotFound("Poll not found")
     root = _polls_root(runtime_config_dir).resolve()
-    candidate = root / poll_id
-    if candidate.is_symlink():
+    directory = root / poll_id
+    if directory.is_symlink() or not directory.is_dir() or directory.resolve().parent != root:
         raise PollNotFound("Poll not found")
-    if create:
-        candidate.mkdir(mode=0o700)
-        os.chmod(candidate, 0o700)
-    try:
-        candidate.resolve().relative_to(root)
-    except ValueError as exc:
-        raise PollNotFound("Poll not found") from exc
-    if not candidate.is_dir():
-        raise PollNotFound("Poll not found")
-    return candidate
+    return directory
 
 
 @contextmanager
 def _poll_lock(directory: Path, *, shared: bool = False) -> Iterator[None]:
-    path = directory / ".lock"
-    with path.open("a+b") as handle:
-        os.chmod(path, 0o600)
-        fcntl.flock(handle.fileno(), fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+    # Archived files are immutable. Lock a pre-existing inode without creating
+    # lockfiles or changing filesystem permissions during archive reads.
+    try:
+        descriptor = os.open(directory / "poll.json", os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise PollNotFound("Poll metadata unavailable") from exc
+    with os.fdopen(descriptor, "rb") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
         yield
 
 
-def _atomic_json(path: Path, payload: Any) -> None:
-    descriptor, name = tempfile.mkstemp(prefix=f".{path.name}-", suffix=".tmp", dir=path.parent)
-    temporary = Path(name)
-    try:
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        os.chmod(path, 0o600)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
 def _read_json(path: Path, expected: type) -> Any:
+    if path.is_symlink():
+        raise PollError("Unsafe archive path")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
@@ -133,254 +80,10 @@ def _read_json(path: Path, expected: type) -> Any:
     return payload
 
 
-def _parse_moment(value: Any, *, end_of_day: bool = False) -> datetime | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        if len(text) == 10:
-            parsed = datetime.combine(
-                date.fromisoformat(text), datetime.max.time() if end_of_day else datetime.min.time()
-            )
-        else:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise PollError("Enter a valid date or date and time") from exc
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
-
-
-def _respondent_session_minutes(value: Any) -> int:
-    if value in (None, ""):
-        return DEFAULT_RESPONDENT_SESSION_MINUTES
-    if isinstance(value, bool):
-        raise PollError("Respondent session duration must be a number of minutes")
-    try:
-        minutes = int(value)
-    except (TypeError, ValueError) as exc:
-        raise PollError("Respondent session duration must be a number of minutes") from exc
-    if minutes < MIN_RESPONDENT_SESSION_MINUTES or minutes > MAX_RESPONDENT_SESSION_MINUTES:
-        raise PollError(
-            f"Respondent session duration must be between {MIN_RESPONDENT_SESSION_MINUTES} and "
-            f"{MAX_RESPONDENT_SESSION_MINUTES} minutes"
-        )
-    return minutes
-
-
-def _poll_defaults(payload: dict[str, Any]) -> dict[str, Any]:
-    result = dict(payload)
-    result["respondent_session_minutes"] = _respondent_session_minutes(
-        result.get("respondent_session_minutes", DEFAULT_RESPONDENT_SESSION_MINUTES)
-    )
-    return result
-
-
-def _access_expiry(access: Mapping[str, Any]) -> datetime | None:
-    value = access.get("expires_at")
-    if not value:
-        return None
-    try:
-        return _parse_moment(value)
-    except PollError:
-        return None
-
-
-def _assert_access_active(access: Mapping[str, Any]) -> None:
-    expires_at = _access_expiry(access)
-    if expires_at is None or expires_at <= utc_now():
-        raise PollSessionExpired("Your session has expired. Please reopen the invitation link to continue.")
-
-
-def _question(raw: Mapping[str, Any], *, existing_id: str | None = None) -> dict[str, Any]:
-    kind = str(raw.get("type") or "").strip().lower()
-    if kind not in QUESTION_TYPES:
-        raise PollError("Unsupported question type")
-    text = _clean_line(raw.get("question"), 300)
-    if not text:
-        raise PollError("Every question needs text")
-    question_id = str(raw.get("id") or existing_id or secrets.token_hex(8))
-    if not QUESTION_ID_RE.fullmatch(question_id):
-        question_id = secrets.token_hex(8)
-    item: dict[str, Any] = {
-        "id": question_id,
-        "type": kind,
-        "question": text,
-        "required": bool(raw.get("required")),
-    }
-    if kind == "text":
-        style = str(raw.get("style") or "single_line")
-        item["style"] = style if style in {"single_line", "multi_line"} else "single_line"
-    elif kind == "yes_no":
-        item["yes_label"] = _clean_line(raw.get("yes_label") or "Yes", 80)
-        item["no_label"] = _clean_line(raw.get("no_label") or "No", 80)
-    elif kind in {"single_choice", "multiple_choice"}:
-        raw_options = raw.get("options")
-        if not isinstance(raw_options, list) or not 2 <= len(raw_options) <= MAX_OPTIONS:
-            raise PollError("Choice questions need between 2 and 50 options")
-        options: list[dict[str, str]] = []
-        seen: set[str] = set()
-        for raw_option in raw_options:
-            if isinstance(raw_option, Mapping):
-                label = _clean_line(raw_option.get("label"), 160)
-                option_id = str(raw_option.get("id") or secrets.token_hex(8))
-            else:
-                label = _clean_line(raw_option, 160)
-                option_id = secrets.token_hex(8)
-            if not label or label.casefold() in seen:
-                raise PollError("Choice options must be non-empty and unique")
-            if not QUESTION_ID_RE.fullmatch(option_id):
-                option_id = secrets.token_hex(8)
-            seen.add(label.casefold())
-            options.append({"id": option_id, "label": label})
-        item["options"] = options
-    return item
-
-
-def validate_poll(raw: Mapping[str, Any], *, existing: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    current = dict(existing or {})
-    title = _clean_line(raw.get("title"), 180)
-    if not title:
-        raise PollError("Poll title is required")
-    status = str(raw.get("status") or current.get("status") or "draft").lower()
-    if status not in POLL_STATUSES:
-        raise PollError("Invalid poll status")
-    mode = str(raw.get("response_mode") or current.get("response_mode") or "anonymous").lower()
-    if mode not in RESPONSE_MODES:
-        raise PollError("Invalid response mode")
-    deadline = str(raw.get("deadline") or "").strip()
-    retention = str(raw.get("retention_until") or "").strip()
-    parsed_deadline = _parse_moment(deadline, end_of_day=True) if deadline else None
-    if status == "open" and parsed_deadline is None:
-        raise PollError("Set a deadline before opening the poll")
-    if retention:
-        parsed_retention = _parse_moment(retention, end_of_day=True)
-        if parsed_deadline and parsed_retention and parsed_retention < parsed_deadline:
-            raise PollError("Retention date cannot precede the deadline")
-    raw_questions = raw.get("questions")
-    if not isinstance(raw_questions, list) or not 1 <= len(raw_questions) <= MAX_QUESTIONS:
-        raise PollError("A poll needs between 1 and 50 questions")
-    questions = [_question(item) for item in raw_questions if isinstance(item, Mapping)]
-    if len(questions) != len(raw_questions):
-        raise PollError("Malformed question schema")
-    ids = [item["id"] for item in questions]
-    if len(ids) != len(set(ids)):
-        raise PollError("Question identifiers must be unique")
-    now = _iso_now()
-    return {
-        "id": str(current.get("id") or raw.get("id") or uuid.uuid4().hex),
-        "title": title,
-        "description": _clean_text(raw.get("description"), 4000),
-        "status": status,
-        "created_at": str(current.get("created_at") or now),
-        "updated_at": now,
-        "deadline": deadline,
-        "retention_until": retention,
-        "response_mode": mode,
-        "allow_changes": bool(raw.get("allow_changes", True)),
-        "respondent_session_minutes": _respondent_session_minutes(
-            raw.get(
-                "respondent_session_minutes",
-                current.get("respondent_session_minutes", DEFAULT_RESPONDENT_SESSION_MINUTES),
-            )
-        ),
-        "questions": questions,
-        "invitation_subject": _clean_line(raw.get("invitation_subject") or title, 160),
-        "invitation_message": _clean_text(raw.get("invitation_message"), 10000),
-        "invitation_cta": _clean_line(raw.get("invitation_cta") or "Open poll", 60),
-        **({"retention_cleaned_at": current["retention_cleaned_at"]} if current.get("retention_cleaned_at") else {}),
-    }
-
-
-def poll_template(name: str) -> dict[str, Any]:
-    templates: dict[str, tuple[str, str, list[dict[str, Any]]]] = {
-        "blank": (
-            "Untitled poll",
-            "",
-            [{"type": "text", "question": "Your response", "required": False, "style": "multi_line"}],
-        ),
-        "attendance": (
-            "Attendance confirmation",
-            "Please confirm whether you will attend.",
-            [{"type": "yes_no", "question": "Will you attend?", "required": True}],
-        ),
-        "availability": (
-            "Event availability",
-            "Tell us when you are available.",
-            [
-                {
-                    "type": "multiple_choice",
-                    "question": "Which dates are suitable?",
-                    "required": True,
-                    "options": ["Option 1", "Option 2", "Option 3"],
-                }
-            ],
-        ),
-        "date": (
-            "Choose a date",
-            "Choose your preferred date.",
-            [{"type": "date", "question": "Which date would you prefer?", "required": True}],
-        ),
-        "location": (
-            "Choose a location",
-            "Choose your preferred location.",
-            [
-                {
-                    "type": "single_choice",
-                    "question": "Preferred location",
-                    "required": True,
-                    "options": ["Rome", "Paris", "Geneva"],
-                }
-            ],
-        ),
-    }
-    title, description, questions = templates.get(name, templates["blank"])
-    deadline = (utc_now() + timedelta(days=14)).date().isoformat()
-    retention = (utc_now() + timedelta(days=104)).date().isoformat()
-    return {
-        "title": title,
-        "description": description,
-        "status": "draft",
-        "deadline": deadline,
-        "retention_until": retention,
-        "response_mode": "anonymous",
-        "allow_changes": True,
-        "questions": questions,
-        "invitation_subject": title,
-        "invitation_message": (
-            "Hello {{first_name}},\n\n"
-            "Please use the secure link below to complete this MIFP poll.\n\n"
-            "Thank you."
-        ),
-        "invitation_cta": "Open poll",
-    }
-
-
-def create_poll(runtime_config_dir: Path | str, template: str = "blank") -> dict[str, Any]:
-    poll_id = uuid.uuid4().hex
-    directory = _poll_dir(runtime_config_dir, poll_id, create=True)
-    payload = validate_poll({**poll_template(template), "id": poll_id})
-    with _poll_lock(directory):
-        _atomic_json(directory / "poll.json", payload)
-        _atomic_json(directory / "invitations.json", {"invitations": []})
-        responses = directory / "responses.jsonl"
-        responses.touch(mode=0o600, exist_ok=True)
-        os.chmod(responses, 0o600)
-    return payload
-
-
 def get_poll(runtime_config_dir: Path | str, poll_id: str) -> dict[str, Any]:
     directory = _poll_dir(runtime_config_dir, poll_id)
     with _poll_lock(directory, shared=True):
-        return _poll_defaults(_read_json(directory / "poll.json", dict))
-
-
-def save_poll(runtime_config_dir: Path | str, poll_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
-    directory = _poll_dir(runtime_config_dir, poll_id)
-    with _poll_lock(directory):
-        existing = _poll_defaults(_read_json(directory / "poll.json", dict))
-        payload = validate_poll(raw, existing=existing)
-        payload["id"] = poll_id
-        _atomic_json(directory / "poll.json", payload)
-        return payload
+        return _read_json(directory / "poll.json", dict)
 
 
 def _invitations_unlocked(directory: Path) -> list[dict[str, Any]]:
@@ -393,6 +96,8 @@ def _invitations_unlocked(directory: Path) -> list[dict[str, Any]]:
 
 def _read_responses_unlocked(directory: Path) -> list[dict[str, Any]]:
     path = directory / "responses.jsonl"
+    if path.is_symlink():
+        raise PollError("Unsafe archive path")
     try:
         data = path.read_bytes()
     except FileNotFoundError:
@@ -416,27 +121,6 @@ def _read_responses_unlocked(directory: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _repair_truncated_response_tail(path: Path) -> None:
-    """Discard only an incomplete final record left by an interrupted append."""
-    try:
-        with path.open("r+b") as handle:
-            handle.seek(0, os.SEEK_END)
-            size = handle.tell()
-            if not size:
-                return
-            handle.seek(-1, os.SEEK_END)
-            if handle.read(1) in {b"\n", b"\r"}:
-                return
-            handle.seek(0)
-            data = handle.read()
-            boundary = data.rfind(b"\n")
-            handle.truncate(boundary + 1 if boundary >= 0 else 0)
-            handle.flush()
-            os.fsync(handle.fileno())
-    except FileNotFoundError:
-        return
-
-
 def current_responses(runtime_config_dir: Path | str, poll_id: str) -> list[dict[str, Any]]:
     directory = _poll_dir(runtime_config_dir, poll_id)
     with _poll_lock(directory, shared=True):
@@ -456,7 +140,7 @@ def list_polls(runtime_config_dir: Path | str) -> list[dict[str, Any]]:
     root = _polls_root(runtime_config_dir)
     # Archive reads must never purge existing personal-invitation data.
     result: list[dict[str, Any]] = []
-    for directory in sorted(root.iterdir()):
+    for directory in sorted(root.iterdir()) if root.exists() else []:
         if not directory.is_dir() or not POLL_ID_RE.fullmatch(directory.name) or directory.is_symlink():
             continue
         try:
@@ -479,230 +163,6 @@ def invitation_rows(runtime_config_dir: Path | str, poll_id: str) -> list[dict[s
     directory = _poll_dir(runtime_config_dir, poll_id)
     with _poll_lock(directory, shared=True):
         return _invitations_unlocked(directory)
-
-
-def create_invitation(
-    runtime_config_dir: Path | str,
-    poll_id: str,
-    *,
-    first_name: str = "",
-    last_name: str = "",
-) -> tuple[dict[str, Any], str]:
-    directory = _poll_dir(runtime_config_dir, poll_id)
-    raw_token = secrets.token_urlsafe(32)
-    invitation = {
-        "invitation_id": uuid.uuid4().hex,
-        "token_hash": hashlib.sha256(raw_token.encode()).hexdigest(),
-        "status": "pending",
-        "created_at": _iso_now(),
-        "sent_at": None,
-        "responded_at": None,
-        "revoked_at": None,
-    }
-    with _poll_lock(directory):
-        poll = _poll_defaults(_read_json(directory / "poll.json", dict))
-        try:
-            _assert_poll_accepting(poll)
-        except PollError as exc:
-            raise PollError("Open the poll with an active deadline before sending invitations") from exc
-        if poll.get("response_mode") == "identified":
-            invitation["first_name"] = _clean_line(first_name, 120)
-            invitation["last_name"] = _clean_line(last_name, 120)
-            invitation["display_name"] = _clean_line(f"{first_name} {last_name}", 240)
-        rows = _invitations_unlocked(directory)
-        if len(rows) >= MAX_INVITATIONS:
-            raise PollError("This poll has reached its invitation limit")
-        rows.append(invitation)
-        _atomic_json(directory / "invitations.json", {"invitations": rows})
-    return invitation, raw_token
-
-
-def set_invitation_status(runtime_config_dir: Path | str, poll_id: str, invitation_id: str, status: str) -> None:
-    if status not in {"sent", "revoked", "failed"}:
-        raise PollError("Invalid invitation status")
-    directory = _poll_dir(runtime_config_dir, poll_id)
-    with _poll_lock(directory):
-        rows = _invitations_unlocked(directory)
-        for row in rows:
-            if secrets.compare_digest(str(row.get("invitation_id") or ""), invitation_id):
-                row["status"] = status
-                if status == "sent":
-                    row["sent_at"] = _iso_now()
-                else:
-                    row["revoked_at"] = _iso_now()
-                    row["token_hash"] = ""
-                    for field in ("first_name", "last_name", "display_name"):
-                        row.pop(field, None)
-                _atomic_json(directory / "invitations.json", {"invitations": rows})
-                return
-    raise PollError("Invitation not found")
-
-
-def exchange_token(runtime_config_dir: Path | str, poll_id: str, raw_token: str) -> dict[str, Any]:
-    if len(raw_token) < 40 or len(raw_token) > 128:
-        raise PollError("Invitation link is invalid or no longer active")
-    digest = hashlib.sha256(raw_token.encode()).hexdigest()
-    now = utc_now()
-    try:
-        directory = _poll_dir(runtime_config_dir, poll_id)
-        with _poll_lock(directory, shared=True):
-            poll = _poll_defaults(_read_json(directory / "poll.json", dict))
-            _assert_poll_accepting(poll)
-            for row in _invitations_unlocked(directory):
-                stored = str(row.get("token_hash") or "")
-                if len(stored) == 64 and secrets.compare_digest(stored, digest):
-                    if row.get("status") != "sent" or row.get("revoked_at"):
-                        break
-                    minutes = _respondent_session_minutes(poll.get("respondent_session_minutes"))
-                    expires_at = now + timedelta(minutes=minutes)
-                    return {
-                        "poll_id": poll_id,
-                        "invitation_id": str(row["invitation_id"]),
-                        "issued_at": now.isoformat(timespec="seconds"),
-                        "expires_at": expires_at.isoformat(timespec="seconds"),
-                        "session_minutes": minutes,
-                    }
-    except PollNotFound:
-        pass
-    except PollError:
-        # Do not reveal whether a poll is closed, expired, revoked or merely unknown.
-        pass
-    raise PollError("Invitation link is invalid or no longer active")
-
-
-def _assert_poll_accepting(poll: Mapping[str, Any]) -> None:
-    if poll.get("status") != "open":
-        raise PollError("This poll is not open")
-    deadline = _parse_moment(poll.get("deadline"), end_of_day=True)
-    if deadline is None or deadline < utc_now():
-        raise PollError("This poll deadline has passed")
-    retention = _parse_moment(poll.get("retention_until"), end_of_day=True)
-    if retention and retention < utc_now():
-        raise PollError("This poll is no longer available")
-
-
-def respondent_poll(runtime_config_dir: Path | str, access: Mapping[str, Any]) -> dict[str, Any]:
-    _assert_access_active(access)
-    poll_id = str(access.get("poll_id") or "")
-    invitation_id = str(access.get("invitation_id") or "")
-    directory = _poll_dir(runtime_config_dir, poll_id)
-    with _poll_lock(directory, shared=True):
-        poll = _poll_defaults(_read_json(directory / "poll.json", dict))
-        _assert_poll_accepting(poll)
-        invitation = next(
-            (row for row in _invitations_unlocked(directory) if row.get("invitation_id") == invitation_id), None
-        )
-        if not invitation or invitation.get("status") != "sent" or invitation.get("revoked_at"):
-            raise PollError("Invitation is no longer active")
-        current = None
-        for row in _read_responses_unlocked(directory):
-            if row.get("invitation_id") == invitation_id and (
-                current is None or int(row.get("revision") or 0) > int(current.get("revision") or 0)
-            ):
-                current = row
-        if current and not poll.get("allow_changes"):
-            return {**poll, "current_answers": current.get("answers", {}), "locked": True}
-        return {**poll, "current_answers": current.get("answers", {}) if current else {}, "locked": False}
-
-
-def _validate_answers(poll: Mapping[str, Any], raw: Any) -> dict[str, Any]:
-    if not isinstance(raw, Mapping):
-        raise PollError("Answers must be an object")
-    questions = poll.get("questions") or []
-    allowed_ids = {str(item["id"]) for item in questions}
-    if any(str(key) not in allowed_ids for key in raw):
-        raise PollError("Answers contain an unknown question")
-    answers: dict[str, Any] = {}
-    for question in questions:
-        qid = str(question["id"])
-        kind = question["type"]
-        value = raw.get(qid)
-        empty = value is None or value == "" or value == []
-        if empty:
-            if question.get("required"):
-                raise PollError(f"Answer required: {question['question']}")
-            answers[qid] = [] if kind == "multiple_choice" else ""
-            continue
-        if kind == "text":
-            answer = _clean_text(value, MAX_ANSWER_TEXT)
-            if len(str(value)) > MAX_ANSWER_TEXT:
-                raise PollError("A text answer is too long")
-        elif kind == "yes_no":
-            answer = str(value)
-            if answer not in {"yes", "no"}:
-                raise PollError("Invalid Yes / No answer")
-        elif kind in {"single_choice", "multiple_choice"}:
-            option_ids = {str(option["id"]) for option in question.get("options", [])}
-            submitted = value if isinstance(value, list) else [value]
-            if kind == "single_choice" and len(submitted) != 1:
-                raise PollError("Select one option")
-            if len(submitted) > len(option_ids) or any(str(item) not in option_ids for item in submitted):
-                raise PollError("Invalid choice answer")
-            answer = [str(item) for item in submitted] if kind == "multiple_choice" else str(submitted[0])
-        elif kind == "date":
-            try:
-                answer = date.fromisoformat(str(value)).isoformat()
-            except ValueError as exc:
-                raise PollError("Invalid date answer") from exc
-        answers[qid] = answer
-    return answers
-
-
-def submit_response(runtime_config_dir: Path | str, access: Mapping[str, Any], raw_answers: Any) -> dict[str, Any]:
-    _assert_access_active(access)
-    poll_id = str(access.get("poll_id") or "")
-    invitation_id = str(access.get("invitation_id") or "")
-    directory = _poll_dir(runtime_config_dir, poll_id)
-    with _poll_lock(directory):
-        poll = _poll_defaults(_read_json(directory / "poll.json", dict))
-        _assert_poll_accepting(poll)
-        invitations = _invitations_unlocked(directory)
-        invitation = next((row for row in invitations if row.get("invitation_id") == invitation_id), None)
-        if not invitation or invitation.get("status") != "sent" or invitation.get("revoked_at"):
-            raise PollError("Invitation is no longer active")
-        rows = _read_responses_unlocked(directory)
-        prior = [row for row in rows if row.get("invitation_id") == invitation_id]
-        if prior and not poll.get("allow_changes"):
-            raise PollError("This response can no longer be changed")
-        answers = _validate_answers(poll, raw_answers)
-        submitted_at = _iso_now()
-        current_prior = max(prior, key=lambda row: int(row.get("revision") or 0), default=None)
-        previous_count = int((current_prior or {}).get("revision_count") or len(prior))
-        first_submitted_at = str(
-            (current_prior or {}).get("first_submitted_at")
-            or (min((str(row.get("submitted_at") or "") for row in prior), default=""))
-            or submitted_at
-        )
-        record = {
-            "response_id": uuid.uuid4().hex,
-            "invitation_id": invitation_id,
-            "revision": max((int(row.get("revision") or 0) for row in prior), default=0) + 1,
-            "revision_count": previous_count + 1,
-            "first_submitted_at": first_submitted_at,
-            "last_modified_at": submitted_at,
-            "submitted_at": submitted_at,
-            **(
-                {"revision_timestamps": [
-                    *[str(value) for value in (current_prior or {}).get("revision_timestamps", []) if value],
-                    submitted_at,
-                ]}
-                if (current_prior or {}).get("revision_timestamps")
-                else {}
-            ),
-            "answers": answers,
-        }
-        path = directory / "responses.jsonl"
-        _repair_truncated_response_tail(path)
-        descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        try:
-            line = (json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
-            os.write(descriptor, line)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        invitation["responded_at"] = record["submitted_at"]
-        _atomic_json(directory / "invitations.json", {"invitations": invitations})
-        return record
 
 
 def _response_groups(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -1390,84 +850,3 @@ def export_pdf(runtime_config_dir: Path | str, poll_id: str) -> bytes:
 
     document.build(story, onFirstPage=add_page_footer, onLaterPages=add_page_footer)
     return output.getvalue()
-
-
-def clean_poll(runtime_config_dir: Path | str, poll_id: str) -> dict[str, int]:
-    """Remove obsolete invitation metadata without discarding response history."""
-    directory = _poll_dir(runtime_config_dir, poll_id)
-    with _poll_lock(directory):
-        invitations = _invitations_unlocked(directory)
-        retained = [
-            row
-            for row in invitations
-            if row.get("status") == "sent" or row.get("responded_at")
-        ]
-        _atomic_json(directory / "invitations.json", {"invitations": retained})
-        return {"revisions_removed": 0, "invitations_removed": len(invitations) - len(retained)}
-
-
-def anonymize_poll(runtime_config_dir: Path | str, poll_id: str) -> None:
-    directory = _poll_dir(runtime_config_dir, poll_id)
-    with _poll_lock(directory):
-        poll = _poll_defaults(_read_json(directory / "poll.json", dict))
-        invitations = _invitations_unlocked(directory)
-        for invitation in invitations:
-            for key in ("first_name", "last_name", "display_name"):
-                invitation.pop(key, None)
-        poll["response_mode"] = "anonymous"
-        poll["updated_at"] = _iso_now()
-        _atomic_json(directory / "invitations.json", {"invitations": invitations})
-        _atomic_json(directory / "poll.json", poll)
-
-
-def reset_poll(runtime_config_dir: Path | str, poll_id: str) -> None:
-    directory = _poll_dir(runtime_config_dir, poll_id)
-    with _poll_lock(directory):
-        _atomic_json(directory / "invitations.json", {"invitations": []})
-        response_path = directory / "responses.jsonl"
-        descriptor = os.open(response_path, os.O_WRONLY | os.O_TRUNC | os.O_CREAT, 0o600)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-
-
-def delete_poll(runtime_config_dir: Path | str, poll_id: str) -> None:
-    directory = _poll_dir(runtime_config_dir, poll_id)
-    root = _polls_root(runtime_config_dir).resolve()
-    if directory.resolve().parent != root:
-        raise PollNotFound("Poll not found")
-    tombstone = root / f".deleted-{uuid.uuid4().hex}"
-    with _poll_lock(directory):
-        os.replace(directory, tombstone)
-    shutil.rmtree(tombstone)
-
-
-def cleanup_retention(runtime_config_dir: Path | str) -> int:
-    root = _polls_root(runtime_config_dir)
-    cleaned = 0
-    now = utc_now()
-    for directory in list(root.iterdir()):
-        if not directory.is_dir() or directory.is_symlink() or not POLL_ID_RE.fullmatch(directory.name):
-            continue
-        try:
-            with _poll_lock(directory):
-                poll = _poll_defaults(_read_json(directory / "poll.json", dict))
-                retention = _parse_moment(poll.get("retention_until"), end_of_day=True)
-                if not retention or retention >= now or poll.get("retention_cleaned_at"):
-                    continue
-                _atomic_json(directory / "invitations.json", {"invitations": []})
-                response_path = directory / "responses.jsonl"
-                descriptor = os.open(response_path, os.O_WRONLY | os.O_TRUNC | os.O_CREAT, 0o600)
-                try:
-                    os.fsync(descriptor)
-                finally:
-                    os.close(descriptor)
-                poll["status"] = "closed"
-                poll["retention_cleaned_at"] = _iso_now()
-                poll["updated_at"] = poll["retention_cleaned_at"]
-                _atomic_json(directory / "poll.json", poll)
-                cleaned += 1
-        except PollError:
-            continue
-    return cleaned

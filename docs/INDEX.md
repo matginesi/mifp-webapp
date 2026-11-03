@@ -10,12 +10,12 @@ Per avviare il progetto, partire dal [README principale](../README.md).
 - [Formato di import](import-format.md)
 - [Gestione dei conference sites](conference-sites.md)
 - [Conference Editor integrato](conference-editor.md)
+- [Polls: editor, privacy e schema YAML](polls-yaml.md)
 - [Istruzioni per l'estrazione JSONL](scraping_prompt.txt)
 
 ## Deployment e manutenzione
 
 - [Aggiornare la VPS esistente: procedura operativa](deployment/update-existing-vps.md)
-
 - [Avvio su una VPS nuova](DEPLOY_NEW_VPS.md)
 - [Installazione VPS e VM locale](deployment/vps-installation.md)
 - [Micrositi, routing e autorizzazioni PHP](deployment/conference-microsites.md)
@@ -25,21 +25,23 @@ Per avviare il progetto, partire dal [README principale](../README.md).
 - [Hardening](deployment/hardening.md)
 - [Riferimento deployment](../DEPLOYMENT.md)
 
-## Frontend, privacy e revisioni
+## Frontend e privacy
 
 - [Guida di stile frontend](FRONTEND_STYLE_GUIDE.md)
-- [Revisione della coerenza frontend](FRONTEND_COHERENCE_REVIEW.md)
 - [SEO e indicizzazione](SEO_INDEXING.md)
 - [Decisioni privacy da confermare](PRIVACY_DECISIONS_REQUIRED.md)
-- [Audit di sicurezza](audit/MIFP_PRODUCTION_SECURITY_AUDIT.md)
-- [Revisione della manutenibilità](audit/MIFP_MAINTAINABILITY_REVIEW.md)
+## Revisioni conservate
+
+- [Revisione della coerenza frontend](audit/FRONTEND_COHERENCE_REVIEW.md)
+- [Hardening di sicurezza mirato del 15 ottobre 2026](audit/MIFP_TARGETED_SECURITY_HARDENING_2026-10-15.md)
+- [Cleanup privacy Polls e verifiche eseguite](POLLS_PRIVACY_CLEANUP_REPORT.md)
 
 ## Materiali locali: `local/`
 
 `docs/local/` è esclusa da Git. Usarla per rapporti di singole sessioni,
 annotazioni della workstation, patch destinate ad altri progetti, bozze e piani
-degli agenti. I materiali già presenti sono suddivisi in `reports/`, `patches/`
-e `superpowers/`.
+degli agenti. Organizzare questi materiali per scopo, per esempio in `reports/`, `patches/`
+e `superpowers/`. I report Polls superati sono conservati in `local/reports/polls/`.
 
 Le guide versionate devono essere utilizzabili senza questa cartella e non
 devono dipendere da file locali. Credenziali e dati operativi continuano a

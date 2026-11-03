@@ -13,3 +13,16 @@
   .poll-availability th, .poll-availability td { padding:.4rem .1rem; }
   .poll-availability th:first-child { width:36%; }
 }
+
+.poll-analytics { display:grid; gap:1rem; min-width:0; }
+.poll-analytics .poll-date-analysis { grid-column:1/-1; }
+.poll-analysis-table-wrap { padding:0 1rem 1rem; overflow-x:auto; }
+.poll-analysis-table-wrap td small { display:block; color:var(--text-2); }
+.poll-analysis-table-wrap th, .poll-analysis-table-wrap td { overflow-wrap:anywhere; }
+.poll-analytics .poll-activity-table td:first-child { text-align:left; }
+
+.poll-chart-frame { position:relative; height:250px; min-width:0; margin:.5rem 1rem 1rem; }
+.poll-analytics .poll-chart-frame canvas { width:100%!important; height:100%!important; padding:0; }
+
+/* The public link is above the editor after publication. */
+.poll-editor-layout { grid-template-columns: minmax(0, 1fr); }

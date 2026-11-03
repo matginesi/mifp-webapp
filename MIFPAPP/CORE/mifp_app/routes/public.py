@@ -683,8 +683,3 @@ def sitemap_xml():
     resp.headers["Cache-Control"] = "public, max-age=300"
     resp.set_etag(hashlib.sha256(xml.encode("utf-8")).hexdigest())
     return resp.make_conditional(request)
-
-
-# Poll response routes share the public blueprint without coupling poll storage
-# to the rest of the public-site repository helpers.
-from . import public_polls  # noqa: E402,F401

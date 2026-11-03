@@ -1,0 +1,19 @@
+{% extends 'dashboard/layout.html' %}
+{% from 'dashboard/_components.html' import page_header %}
+{% block page_title %}Review and publish poll{% endblock %}
+{% block content %}
+{{ page_header('Polls', 'Review and publish', 'Review the complete notice for this survey before publication.') }}
+{% if review_error %}<div class="alert alert-danger" role="alert">{{ review_error }}</div><a href="{{ url_for('dashboard.simple_polls') }}">Return to Polls</a>{% endif %}
+{% if poll %}
+<section class="control-panel p-3">
+<h2>{{ poll.title }}</h2><p>{{ poll.description }}</p>
+<p>Response mode: {{ poll.response_mode }} · Deadline: {{ poll.deadline }}</p>
+{% set notice = poll.notice_snapshot %}{% set notice_preview = true %}{% include 'public/_poll_privacy_notice.html' %}
+<p>By selecting Publish poll, I confirm that I reviewed the rendered notice, its applicability to this purpose and response mode, and the administrator's responsibility to delete data by the retention date. No automatic deletion is scheduled.</p>
+<form method="post" action="{{ url_for('dashboard.simple_poll_publish', poll_id=poll.id) }}">
+<input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><input type="hidden" name="review" value="{{ review }}">
+<button type="submit" class="btn btn-primary">Publish poll</button>
+<a class="btn btn-outline" href="{{ url_for('dashboard.simple_poll_detail', poll_id=poll.id) }}">Return to draft</a>
+</form></section>
+{% endif %}
+{% endblock %}

@@ -3,11 +3,13 @@
 {% block page_title %}Import Poll YAML{% endblock %}
 {% block content %}
 {{ page_header('Notifications', 'Import Poll YAML', 'Review a reusable template before creating a new draft.') }}
+{% if import_error %}<div class="alert alert-danger" role="alert">{{ import_error }}</div>{% endif %}
 {% if template %}
 <section class="control-panel p-3">
   <h2>{{ template.title }}</h2>
   <p>{{ template.description }}</p>
   <p>Response mode: <strong>{{ template.response_mode|title }}</strong> · {{ template.questions|length }} questions</p>
+  <p>Deadline: {{ template.deadline or 'Not set' }} · Retain data until: {{ template.retention_until or 'Not set' }}</p>
   <p role="status">This will create a new draft. Existing polls and responses are unaffected. Imported privacy information is unverified and must be reviewed and confirmed before publication. This preview expires after 30 minutes.</p>
   {% for question in template.questions %}
   <article class="poll-question-editor p-3">
@@ -24,6 +26,7 @@
   {% endfor %}
   {% if template.privacy %}
   <h3>Imported privacy information — unverified</h3>
+
   <dl>{% for key, value in template.privacy.items() if key != 'confirmed' %}<dt>{{ key|replace('_', ' ')|title }}</dt><dd>{{ value or 'Not supplied' }}</dd>{% endfor %}</dl>
   {% endif %}
   <form method="post" action="{{ url_for('dashboard.simple_poll_import_confirm') }}">

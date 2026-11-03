@@ -289,8 +289,8 @@ docs/                documentazione corrente
 - [Installazione VPS](docs/deployment/vps-installation.md)
 - [Backup](docs/deployment/backups.md)
 - [Hardening](docs/deployment/hardening.md)
-- [Audit di sicurezza](docs/audit/MIFP_PRODUCTION_SECURITY_AUDIT.md)
-- [Revisione manutenibilità](docs/audit/MIFP_MAINTAINABILITY_REVIEW.md)
+- [Hardening di sicurezza mirato](docs/audit/MIFP_TARGETED_SECURITY_HARDENING_2026-10-15.md)
+- [Polls: privacy e pubblicazione](docs/polls-yaml.md)
 
 Questo è l'unico README del repository; documenti storici/temporanei non fanno
 parte del codebase operativo.

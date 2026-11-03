@@ -185,3 +185,22 @@ Recorded here so the same questions are not re-opened without cause:
 | localStorage | Public site: `mifp-cookie-notice-revision`, used only to avoid repeating an acknowledged notice revision. Dashboard: `mifp-dashboard-sidebar-collapsed` and `mifp-dashboard-sidebar-scroll`, used only for sidebar presentation preferences. None of these values is transmitted or used for tracking. |
 | Raw IP storage for applications | Disabled by default (`JOIN_STORE_RAW_IP=0`); IP addresses are still processed transiently for rate limiting. |
 | Manual Event authoring | Removed. Canonical events are created only by ingestion pipelines; `POST /dashboard/events` is update-only. |
+
+## Polls: survey-specific processing — PARTLY CONFIRMED, REMAINDER OPEN
+
+For the Winter School 2027 Draft, the administrator confirmed the controller as
+Mediterranean Institute of Fundamental Physics (MIFP), registered office Via Appia
+Nuova 31, 00047 Marino (Roma), Italy, and privacy contact secretary@mifp.eu, matching
+the [published policy](https://mifp.eu/privacy). The purpose is preliminary interest
+and availability collection, with anonymous responses.
+
+The specific Polls legal basis, any legitimate-interest explanation and the transfer
+assessment remain **OPEN**. Italy-based hosting does not establish absence of
+international transfers through access, processors or backups. Proposed recipients
+are authorised MIFP administrators and applicable technical hosting/backup providers;
+actual access and providers still need confirmation. No DPO appointment is inferred.
+
+The complete notice is reviewed once before publishing each poll. Imported flags
+cannot approve it. A shared URL is not membership authentication, even when Aruba
+mailing lists distribute invitations to members. Real retention dates and separate
+export/backup deletion arrangements must be set before publication.

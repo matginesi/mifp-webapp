@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import threading
 import time
@@ -72,7 +73,14 @@ def simple_polls():
 @login_required
 def simple_poll_create():
     try:
-        poll = store.create(_base(), request.form.get("template", "blank"))
+        template = request.form.get("template", "blank")
+        if template == "yaml":
+            return simple_poll_import_yaml()
+        if template.startswith("poll:"):
+            definition = poll_yaml.load_template(poll_yaml.export_template(_base(), template[5:]))
+            poll = poll_yaml.create_draft(_base(), definition)
+        else:
+            poll = store.create(_base(), template)
         audit_log("poll.simple.created", "shared-link poll created", category="poll", poll_id=poll["id"])
         return redirect(url_for("dashboard.simple_poll_detail", poll_id=poll["id"]))
     except store.SurveyError as exc:
@@ -99,8 +107,7 @@ def simple_poll_import_yaml():
         confirmation = _yaml_signer().dumps({"template": template, "session": _import_session_binding()})
         return render_template("dashboard/polls_yaml_import.html", template=template["poll"], confirmation=confirmation)
     except store.SurveyError as exc:
-        flash(str(exc), "error")
-        return render_template("dashboard/polls_yaml_import.html", template=None, confirmation=None), 400
+        return render_template("dashboard/polls_yaml_import.html", template=None, confirmation=None, import_error=str(exc)), 400
 
 
 @dashboard_bp.post("/polls-simple/import-yaml/confirm")
@@ -117,8 +124,8 @@ def simple_poll_import_confirm():
             raise store.SurveyError("Confirm creation of a new draft after reviewing the preview")
         poll = poll_yaml.create_draft(_base(), pending["template"])
     except (BadSignature, store.SurveyError) as exc:
-        flash(str(exc) if isinstance(exc, store.SurveyError) else "Import preview expired or invalid; upload the YAML again.", "error")
-        return render_template("dashboard/polls_yaml_import.html", template=None, confirmation=None), 400
+        message = str(exc) if isinstance(exc, store.SurveyError) else "Import preview expired or invalid; upload the YAML again."
+        return render_template("dashboard/polls_yaml_import.html", template=None, confirmation=None, import_error=message), 400
     audit_log("poll.simple.imported", "new draft created from YAML", category="poll", poll_id=poll["id"])
     flash("YAML imported as a new draft. Review and confirm privacy before publishing.", "success")
     return redirect(url_for("dashboard.simple_poll_detail", poll_id=poll["id"]))
@@ -147,21 +154,52 @@ def simple_poll_detail(poll_id):
 
 
 def _editor_data():
-    privacy = {key: request.form.get(f"privacy_{key}", "") for key in
-               ("controller", "contact", "purpose", "legal_basis", "recipients", "transfers", "legitimate_interest", "dpo")}
-    privacy["confirmed"] = request.form.get("privacy_confirmed") == "yes"
-    data = {key: request.form.get(key, "") for key in
-            ("title", "description", "status", "response_mode", "deadline", "retention_until")}
-    data.update(questions=_questions_from_form(), privacy=privacy)
+    try:
+        saved = store.get(_base(), request.view_args["poll_id"])
+    except store.SurveyError:
+        abort(404)
+    privacy = {key: request.form.get(f"privacy_{key}", saved["privacy"].get(key, "")) for key in store.PRIVACY_LIMITS}
+    if request.form.get("action") == "adopt_privacy":
+        privacy = store.adopt_previous_privacy(_base(), saved, privacy)
+    data = {key: request.form.get(key, "") for key in ("title", "description", "response_mode", *store.SCHEDULE_FIELDS)}
+    data.update(questions=_questions_from_form(), privacy=privacy,
+                status="closed" if request.form.get("action") == "close" else saved["status"])
     return data
+
+
+def _publication_signer():
+    return URLSafeTimedSerializer(current_app.secret_key, salt="mifp-poll-publication-v1")
+
+
+def _poll_fingerprint(poll):
+    return hashlib.sha256(json.dumps(poll, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+@dashboard_bp.post("/polls-simple/<poll_id>/publish")
+@login_required
+def simple_poll_publish(poll_id):
+    try:
+        pending = _publication_signer().loads(request.form.get("review", ""), max_age=1800)
+        if pending["poll_id"] != poll_id or not secrets.compare_digest(pending["session"], _import_session_binding()):
+            raise store.SurveyError("Publication review belongs to another poll or administrator session")
+        saved = store.get(_base(), poll_id)
+        if saved["status"] != "draft" or pending["fingerprint"] != _poll_fingerprint(saved):
+            raise store.SurveyError("The draft or privacy notice changed. Preview and review it again")
+        store.update(_base(), poll_id, pending["data"], expected_revision=pending["revision"])
+    except (BadSignature, store.SurveyError, KeyError, TypeError) as exc:
+        error = str(exc) if isinstance(exc, store.SurveyError) else "Publication review expired or invalid. Preview and review it again"
+        return render_template("dashboard/polls_publish_review.html", poll=None, review_error=error), 400
+    audit_log("poll.simple.published", "reviewed notice published", category="poll", poll_id=poll_id)
+    flash("Survey published. Your public link is ready.", "success")
+    return redirect(url_for("dashboard.simple_poll_detail", poll_id=poll_id))
 
 
 @dashboard_bp.post("/polls-simple/<poll_id>/preview")
 @login_required
 def simple_poll_preview(poll_id):
     try:
-        poll = {**store.get(_base(), poll_id), **_editor_data()}
-        poll["questions"] = store._normalize_questions(poll["questions"])
+        data = _editor_data()
+        poll = store.update(_base(), poll_id, data, validate_only=True)
     except store.SurveyError:
         abort(400)
     return _no_cache(make_response(render_template("public/survey.html", poll=poll,
@@ -171,14 +209,49 @@ def simple_poll_preview(poll_id):
 @dashboard_bp.post("/polls-simple/<poll_id>/save")
 @login_required
 def simple_poll_save(poll_id):
+    publishing = request.form.get("action") == "publish"
+    draft_saved = False
+    data = None
     try:
         data = _editor_data()
+        saved = store.get(_base(), poll_id)
+        if publishing and saved["status"] != "draft":
+            raise store.SurveyError("Only drafts can be published")
         updated = store.update(_base(), poll_id, data)
-        audit_log("poll.simple.updated", "shared-link poll updated", category="poll", poll_id=poll_id,
-                  status=updated["status"], mode=updated["response_mode"])
-        flash("Survey saved.", "success")
-    except store.SurveyError as exc:
-        flash(str(exc), "error")
+        draft_saved = updated["status"] == "draft"
+        if publishing:
+            data.update(status="open", notice_reviewed=True)
+            saved = store.get(_base(), poll_id)
+            candidate = store.update(_base(), poll_id, data, validate_only=True)
+            review = _publication_signer().dumps({"poll_id": poll_id, "data": data,
+                "session": _import_session_binding(), "fingerprint": _poll_fingerprint(saved),
+                "revision": saved.get("updated_at", saved["created_at"])})
+            return render_template("dashboard/polls_publish_review.html", poll=candidate, review=review)
+    except (store.SurveyError, OSError) as exc:
+        try:
+            saved = store.get(_base(), poll_id)
+        except store.SurveyError:
+            abort(404)
+        # Preserve all posted legal facts on validation failure, never in cookies.
+        if data is None:
+            data = {key: request.form.get(key, saved.get(key, "")) for key in ("title", "description", "response_mode", *store.SCHEDULE_FIELDS)}
+            data.update(questions=_questions_from_form(),privacy={key:request.form.get(f"privacy_{key}",saved["privacy"].get(key,"")) for key in store.PRIVACY_LIMITS})
+        questions = []
+        for index, question in enumerate(data["questions"]):
+            old = saved["questions"][index] if index < len(saved["questions"]) else {}
+            q = {**question, "id": old.get("id", secrets.token_hex(8))}
+            if q["type"] in {"single_choice", "multiple_choice"}:
+                q["options"] = [{"id": secrets.token_hex(8), "label": label} for label in q["options"]]
+            questions.append(q)
+        draft_view = {**saved, **data, "questions": questions, "status": saved["status"]}
+        message = str(exc) if isinstance(exc, store.SurveyError) else "Unable to save to private storage"
+        return render_template("dashboard/polls_simple.html", polls=store.list_all(_base()),
+            poll=draft_view, analysis=store.summary(_base(), poll_id),
+            save_error=None if draft_saved else message,
+            publish_error=message if draft_saved else None, field_errors=message), 400
+    audit_log("poll.simple.updated", "shared-link poll updated", category="poll", poll_id=poll_id,
+              status=updated["status"], mode=updated["response_mode"])
+    flash("Survey saved.", "success")
     return redirect(url_for("dashboard.simple_poll_detail", poll_id=poll_id))
 
 
@@ -191,6 +264,22 @@ def simple_poll_export(poll_id):
             "X-Content-Type-Options": "nosniff"})
     except store.SurveyError:
         abort(404)
+
+
+@dashboard_bp.get("/polls-simple/<poll_id>/export.<fmt>")
+@login_required
+def simple_poll_report_export(poll_id, fmt):
+    from ..services import simple_poll_exports
+    if fmt not in {"xlsx", "pdf"}:
+        abort(404)
+    try:
+        payload = getattr(simple_poll_exports, "export_" + fmt)(_base(), poll_id)
+    except store.SurveyError:
+        abort(404)
+    mimetype = "application/pdf" if fmt == "pdf" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return Response(payload, mimetype=mimetype, headers={
+        "Content-Disposition": f'attachment; filename="mifp-poll-report.{fmt}"',
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @dashboard_bp.post("/polls-simple/<poll_id>/delete")
@@ -276,3 +365,14 @@ def simple_poll_erase_email(poll_id):
     except store.SurveyError as exc:
         flash(str(exc), "error")
     return redirect(url_for("dashboard.simple_poll_detail", poll_id=poll_id))
+
+
+@public_bp.get("/respond")
+@public_bp.get("/respond/poll")
+@public_bp.post("/respond/exchange")
+@public_bp.post("/respond/submit")
+def respond():
+    response = make_response("This personal invitation is retired. Ask the organiser for the current shared survey link.", 410)
+    response.headers.update({"Cache-Control": "no-store, max-age=0", "Referrer-Policy": "no-referrer",
+                             "X-Robots-Tag": "noindex, nofollow"})
+    return response

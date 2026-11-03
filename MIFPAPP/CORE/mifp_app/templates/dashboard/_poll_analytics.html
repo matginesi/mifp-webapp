@@ -1,0 +1,40 @@
+<div class="poll-analytics">
+  <div class="control-snapshot poll-analysis-summary">
+    <article><span>Total submissions</span><b>{{ analysis.responses }}</b><small>{{ poll.response_mode|title }} mode</small></article>
+    <article><span>Answered questions</span><b>{{ analysis.answered }}</b><small>Across all submissions</small></article>
+    <article><span>Unanswered questions</span><b>{{ analysis.unanswered }}</b><small>Across all submissions</small></article>
+    <article><span>Active days</span><b>{{ analysis.activity|length }}</b><small>Daily UTC totals</small></article>
+  </div>
+  <section class="control-panel poll-analysis-card">
+    <div class="panel-head"><div><h3>Response activity</h3><p>Daily UTC totals from existing submission dates. Anonymous responses have date-only timestamps.</p></div></div>
+    <div class="poll-activity-body">
+      {% if analysis.activity %}
+      <div class="poll-activity-layout">
+        <div class="poll-activity-chart poll-chart-frame"><canvas data-chart="line" data-labels='{{ analysis.activity_labels|tojson }}' data-values='{{ analysis.activity_values|tojson }}' data-chart-label="Submissions" role="img" aria-label="Daily submission counts"></canvas></div>
+        <div class="poll-activity-table-wrap"><table class="poll-activity-table"><thead><tr><th scope="col">Date (UTC)</th><th scope="col">Submissions</th></tr></thead><tbody>{% for bucket in analysis.activity %}<tr><td>{{ bucket.date }}</td><td>{{ bucket.count }}</td></tr>{% endfor %}</tbody></table></div>
+      </div>
+      {% else %}<p class="poll-activity-empty">Activity appears after the first submission.</p>{% endif %}
+    </div>
+  </section>
+  <p class="small text-muted">Percentages use all {{ analysis.responses }} submissions as the denominator. A Date Availability question is answered when at least one date has a choice; its per-date table includes unanswered dates.</p>
+  <div class="poll-analysis-grid">
+    {% for q in analysis.questions %}
+    <article class="control-panel poll-analysis-card{{ ' poll-date-analysis' if q.type == 'date_availability' else '' }}">
+      <div class="panel-head"><div><h3>{{ loop.index }}. {{ q.question }}</h3><p>{{ q.answered }} answered ({{ q.answered_percentage }}%) · {{ q.unanswered }} unanswered ({{ q.unanswered_percentage }}%)</p></div></div>
+      {% if q.chart_labels %}<div class="poll-chart-frame"><canvas data-chart="bar" data-labels='{{ q.chart_labels|tojson }}' data-values='{{ q.chart_values|tojson }}' data-chart-label="{{ 'Answered submissions' if q.type == 'date_availability' else 'Submissions' }}" role="img" aria-label="Counts for {{ q.question }}"></canvas></div>{% endif %}
+      <div class="poll-analysis-table-wrap">
+        {% if q.type == 'date_availability' %}
+        <table class="poll-availability"><caption>Responses by date</caption><thead><tr><th scope="col">Date</th>{% for label in ['Yes', 'Maybe', 'No', 'Unanswered'] %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
+          <tbody>{% for day in q.dates %}<tr><th scope="row">{{ day }}</th>{% for category in ['yes', 'maybe', 'no', 'unanswered'] %}<td><strong>{{ q.date_counts[day][category] }}</strong><small>{{ q.date_percentages[day][category] }}%</small></td>{% endfor %}</tr>{% endfor %}</tbody>
+        </table>
+        {% elif q.distribution %}
+        <table class="poll-activity-table"><thead><tr><th scope="col">Answer</th><th scope="col">Count</th><th scope="col">% of submissions</th></tr></thead><tbody>{% for option in q.distribution %}<tr><td>{{ option.label }}</td><td>{{ option.count }}</td><td>{{ option.percentage }}%</td></tr>{% endfor %}</tbody></table>
+        {% elif q.type == 'text' %}
+        <details><summary>Read text answers (administrators only)</summary>{% for text, count in q.counts.items() %}<p>{{ text }}{% if count > 1 %} ({{ count }} submissions){% endif %}</p>{% else %}<p>No text answers yet.</p>{% endfor %}</details>
+        {% else %}<p>No answers yet.</p>{% endif %}
+      </div>
+      {% if q.type == 'multiple_choice' %}<small class="poll-analysis-note">Respondents may choose several options. Percentages may total more than 100%.</small>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</div>

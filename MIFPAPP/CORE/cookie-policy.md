@@ -1,7 +1,7 @@
 # Cookie Policy — MIFP
 
 **Mediterranean Institute of Fundamental Physics**
-*Last updated: September 2026*
+*Last updated: 3 November 2026*
 
 ---
 
@@ -24,7 +24,7 @@ your device by the site itself.
 | Cookie name | Set when | Purpose | Duration | Type |
 |-------------|----------|---------|----------|------|
 | `mifp_admin_session` | Only after a **successful administrator login** | Keeps the authenticated dashboard session valid. Contains a signed session identifier; no personal data is stored in the cookie itself. | Browser session cookie (removed when the browser closes); the server also ends the session after 8 hours by default | Strictly necessary |
-| `mifp_csrf` | Only on a page that renders a **form protected against cross-site request forgery** — currently the membership application form (`/join`), the administrator login form (`/login`) and the maintenance page | Carries a random value that the submitted form's signed CSRF token is bound to. This is what makes the token unusable from a different site. | Up to 2 hours | Strictly necessary |
+| `mifp_csrf` | Only on a page that renders a **form protected against cross-site request forgery** — including the membership application form (`/join`), public Polls forms (`/survey/...`), the administrator login form (`/login`) and the maintenance page | Carries a random value that the submitted form's signed CSRF token is bound to. This is what makes the token unusable from a different site. | Up to 2 hours | Strictly necessary |
 
 Both cookies are `HttpOnly`, use `SameSite=Lax`, are scoped to the whole site, and
 are marked `Secure` on the production HTTPS deployment.
@@ -36,6 +36,15 @@ directory, the research and publication pages, and the Privacy and Cookie polici
 does **not** set any cookie at all. `mifp_csrf` is only created when a form that
 actually needs CSRF protection is rendered, so a visitor who only reads pages never
 receives it.
+
+### Polls survey forms
+
+Opening a public survey at `/survey/...` renders a CSRF-protected form and can set
+`mifp_csrf` for submission security. It is not used to authenticate membership or
+to track respondents. Polls adds no analytics or advertising cookies. Anonymous
+answers do not include the security cookie value or a client fingerprint. Any
+consent requested for a survey's processing purpose is separate from optional
+cookie consent and is explained in that survey's privacy notice.
 
 ### Membership application form
 
@@ -134,7 +143,7 @@ allow you to:
 
 Blocking or deleting these cookies does not affect your ability to read the public
 website, but it will prevent the administrator dashboard from working and will make
-the membership application form fail its security check.
+the membership application or a Polls form fail its security check.
 
 ### Browser settings
 
