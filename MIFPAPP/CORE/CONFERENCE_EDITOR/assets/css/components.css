@@ -190,6 +190,45 @@ input[type=number]{font-variant-numeric:tabular-nums}
 .program-pdf-fields .field-muted{opacity:.52}
 .program-pdf-status{align-self:center;min-width:0;color:var(--muted);font-size:10.5px;overflow-wrap:anywhere}
 
+/* v1.24.0 — structured program schedule editor */
+.program-schedule-panel{display:grid;gap:10px;margin-bottom:10px}
+.program-schedule-panel .panel-head{margin:0}
+.program-schedule-panel .panel-head h2{margin:2px 0 2px;font-size:18px}
+.program-schedule-panel .panel-head p{margin:0;color:var(--muted);font-size:11.5px;line-height:1.45}
+.program-schedule-list{display:grid;gap:9px}
+.schedule-day{border:1px solid var(--border);border-radius:7px;background:#12161b;overflow:hidden}
+.schedule-day-head{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;padding:9px 10px;border-bottom:1px solid var(--border);background:#181d22;flex-wrap:wrap}
+.schedule-day-fields{display:grid;grid-template-columns:minmax(140px,1fr) minmax(220px,1.6fr);gap:8px;flex:1 1 420px}
+.schedule-field{display:grid;gap:4px;min-width:0;color:var(--dim);font-size:10.5px;font-weight:650}
+.schedule-field>span{color:var(--muted)}
+.schedule-field input,.schedule-field select{width:100%;min-width:0}
+.schedule-day-actions{display:flex;gap:6px;flex-wrap:wrap}
+.schedule-items{display:grid;gap:6px;padding:8px}
+.schedule-item{border:1px solid var(--border);border-radius:6px;background:#0f1317}
+.schedule-item-main{display:grid;grid-template-columns:minmax(130px,1fr) 74px 74px minmax(220px,1.8fr) 92px auto;gap:7px;align-items:end;padding:8px;border-bottom:1px solid var(--border)}
+.schedule-item-detail{display:grid;grid-template-columns:minmax(180px,1.1fr) minmax(160px,1fr) minmax(180px,1.1fr) minmax(140px,.8fr) minmax(160px,1fr);gap:7px;align-items:end;padding:8px;border-bottom:1px solid var(--border)}
+.schedule-item-actions{display:flex;gap:5px;flex-wrap:wrap}
+.schedule-item-actions .button{min-height:30px;padding-inline:7px}
+.schedule-person-control{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center}
+.schedule-person-control .button{min-height:30px;padding-inline:8px}
+.schedule-talks{display:grid;gap:5px;padding:7px;border-left:3px solid var(--accent);background:#13181e;margin:0}
+.schedule-talk .schedule-item-main{grid-template-columns:minmax(120px,1fr) 70px 70px minmax(200px,1.8fr) 88px auto;background:#141a20;border-bottom:1px solid var(--border)}
+.schedule-talk .schedule-item-detail{background:#141a20;border-bottom:0}
+.program-person-picker-top{display:grid;grid-template-columns:minmax(200px,1fr) auto;gap:7px;margin-bottom:8px}
+.program-person-picker-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:7px}
+.program-person-picker-card{display:grid;gap:3px;padding:8px 9px;border:1px solid var(--border);border-radius:7px;background:#12161b;color:var(--text);text-align:left}
+.program-person-picker-card:hover,.program-person-picker-card.active{border-color:#955066;background:#1a1f25}
+.program-person-picker-name{font-size:12px;font-weight:700;color:var(--heading)}
+.program-person-picker-meta{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.program-advanced-table{margin-top:10px}
+.program-advanced-table>summary{cursor:pointer;padding:8px 10px;border:1px solid var(--border);border-radius:7px;background:var(--panel);color:var(--muted);font-size:11.5px;font-weight:700;list-style:none}
+.program-advanced-table>summary::-webkit-details-marker{display:none}
+.program-advanced-table[open]>summary{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom:0}
+@media(max-width:760px){
+  .schedule-item-main,.schedule-item-detail,.schedule-day-fields{grid-template-columns:1fr}
+  .schedule-person-control{grid-template-columns:1fr}
+}
+
 .checks-shell{display:grid;gap:10px;min-width:0}
 .check-summary-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
 .check-stat{display:grid;gap:2px;padding:10px 11px;border:1px solid var(--border);border-radius:7px;background:var(--panel)}

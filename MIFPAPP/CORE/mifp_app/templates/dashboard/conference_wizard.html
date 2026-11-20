@@ -14,8 +14,9 @@
   <a href="#identity"><b>1</b><span>Identity & URL</span></a>
   <a href="#configuration"><b>2</b><span>Source package</span></a>
   {% if site.source_format != 'conference-editor' %}<a href="#people"><b>3</b><span>People</span></a>
-  <a href="#assets"><b>4</b><span>Assets</span></a>{% endif %}
-  <a href="#deploy"><b>{{ '3' if site.source_format == 'conference-editor' else '5' }}</b><span>Deploy</span></a>
+  <a href="#program"><b>4</b><span>Program</span></a>
+  <a href="#assets"><b>5</b><span>Assets</span></a>{% endif %}
+  <a href="#deploy"><b>{{ '3' if site.source_format == 'conference-editor' else '6' }}</b><span>Deploy</span></a>
 </nav>
 
 <section class="table-card conference-panel" id="identity">
@@ -151,6 +152,52 @@
   </tbody></table></div>
 </section>
 
+<section class="table-card conference-panel" id="program">
+  <div class="panel-head"><div><span>Programme</span><h2><i class="bi bi-calendar-week"></i> Program</h2><p>Edit the programme rows rendered on the public program page, or import/export the programme CSV.</p></div>
+    <span class="storage-badge">{{ program_rows|length }} row{{ '' if program_rows|length == 1 else 's' }} · {{ program_asset.filename if program_asset else 'No CSV' }}</span>
+    {{ export_dropdown([('CSV', url_for('dashboard.conference_program_export', site_id=site.id), 'bi bi-filetype-csv')]) }}
+  </div>
+  <form class="toolbar conference-import" method="post" action="{{ url_for('dashboard.conference_program_import', site_id=site.id) }}" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <input class="form-control form-control-sm" type="file" name="program_file" accept=".csv" required>
+    <label><input type="checkbox" name="replace" value="1" checked> Replace current program</label>
+    <button class="btn btn-outline btn-sm"><i class="bi bi-upload"></i> Import program CSV</button>
+  </form>
+
+  {% if program_rows %}
+  <form method="post" action="{{ url_for('dashboard.conference_program_save', site_id=site.id) }}" class="conference-program-editor">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <div class="data-scroll"><table class="data-table conference-program-table">
+      <thead><tr>{% for column in program_columns %}<th>{{ column }}</th>{% endfor %}<th>Remove</th></tr></thead>
+      <tbody>
+        {% for row in program_rows %}
+        {% set row_index = loop.index0 %}
+        <tr>
+          {% for column in program_columns %}
+          <td><input class="form-control form-control-sm" name="program[{{ row_index }}][{{ column }}]" value="{{ row[column] or '' }}"></td>
+          {% endfor %}
+          <td><input type="checkbox" name="remove[{{ row_index }}]" value="1" title="Remove row"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    <div class="dash-row-actions conference-form-actions"><button class="btn btn-primary btn-sm"><i class="bi bi-check2"></i> Save program</button></div>
+  </form>
+  {% else %}
+  <div class="conference-assets-empty"><i class="bi bi-calendar-week"></i><b>No program rows</b><p>Add a row below or import a programme CSV.</p></div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('dashboard.conference_program_add_row', site_id=site.id) }}" class="inline-form">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+    <div class="inline-form-grid">
+      {% for column in program_columns %}
+      <label class="field"><span>{{ column }}</span><input class="form-control form-control-sm" name="{{ column }}"></label>
+      {% endfor %}
+    </div>
+    <div class="dash-row-actions conference-form-actions"><button class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Add program row</button></div>
+  </form>
+</section>
+
 <section class="table-card conference-panel" id="assets">
   <div class="panel-head"><div><span>Media library</span><h2><i class="bi bi-folder2-open"></i> Conference assets</h2><p>Preview and manage logos, speaker photos, documents and programme files included in the site.</p></div><span class="storage-badge">{{ assets|length }} files</span></div>
   <form class="conference-asset-upload" method="post" action="{{ url_for('dashboard.conference_asset_upload', site_id=site.id) }}" enctype="multipart/form-data">
@@ -201,7 +248,7 @@
 
 <section class="table-card conference-panel" id="deploy">
   <div class="panel-head"><div><span>{{ site.deploy_status|replace('_',' ')|title }}</span><h2><i class="bi bi-box-seam"></i> Deployment package</h2><p>{{ 'The exact validated ZIP exported by mifp-conference-editor is retained unchanged for traceability. Publishing to events.mifp.eu is the next deployment step.' if site.source_format == 'conference-editor' else 'The internal builder can still generate its self-contained static release.' }}</p></div></div>
-  <dl class="conference-deploy-summary"><div><dt>Public path</dt><dd><code>/{{ site.public_path or site.slug }}/</code></dd></div><div><dt>Canonical URL</dt><dd>{{ site.canonical_url or 'Not set' }}</dd></div>{% if site.source_format == 'conference-editor' %}<div><dt>Source</dt><dd>{{ site.source_format }} {{ site.source_version or '' }}</dd></div><div><dt>Imported</dt><dd>{{ site.imported_at or '—' }}</dd></div>{% else %}<div><dt>People</dt><dd>{{ people|length }}</dd></div><div><dt>Assets</dt><dd>{{ assets|length }}</dd></div>{% endif %}</dl>
+  <dl class="conference-deploy-summary"><div><dt>Public path</dt><dd><code>/{{ site.public_path or site.slug }}/</code></dd></div><div><dt>Canonical URL</dt><dd>{{ site.canonical_url or 'Not set' }}</dd></div>{% if site.source_format == 'conference-editor' %}<div><dt>Source</dt><dd>{{ site.source_format }} {{ site.source_version or '' }}</dd></div><div><dt>Imported</dt><dd>{{ site.imported_at or '—' }}</dd></div>{% else %}<div><dt>People</dt><dd>{{ people|length }}</dd></div><div><dt>Program</dt><dd>{{ program_rows|length }}</dd></div><div><dt>Assets</dt><dd>{{ assets|length }}</dd></div>{% endif %}</dl>
   <div class="conference-deploy-actions"><a class="btn btn-primary" href="{{ url_for('dashboard.conference_build', site_id=site.id) }}" data-conference-build><i class="bi bi-download"></i> {{ 'Download validated editor ZIP' if site.source_format == 'conference-editor' else 'Build and download ZIP' }}</a></div>
 </section>
 </div>

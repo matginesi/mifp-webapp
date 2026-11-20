@@ -468,6 +468,72 @@ def parse_people_upload(upload) -> list[dict[str, str]]:
     return normalized
 
 
+PROGRAM_COLUMNS = (
+    "Day", "Date", "Start Time", "End Time", "Type",
+    "Title", "Speaker", "Affiliation", "Chair", "Location", "Notes", "Visible",
+)
+PROGRAM_DEFAULT_FILENAME = "program.csv"
+
+
+def parse_program_csv_text(text: str) -> tuple[list[str], list[dict]]:
+    """Parse program CSV bytes into ordered columns and rows.
+
+    The legacy internal builder renders ``program.html`` from whichever columns
+    the uploaded CSV declares, so columns are preserved exactly rather than
+    being forced into a fixed schema.  A brand-new program uses the standard
+    MIFP programme header from ``PROGRAM_COLUMNS``.
+    """
+    reader = csv.DictReader(io.StringIO(text))
+    columns = [
+        str(column).strip()
+        for column in (reader.fieldnames or [])
+        if column is not None and str(column).strip()
+    ]
+    if not columns:
+        raise ValueError("Program CSV must include a header row.")
+    rows: list[dict] = []
+    for raw in reader:
+        rows.append({
+            column: (str(raw.get(column) or "").strip() if raw.get(column) is not None else "")
+            for column in columns
+        })
+    return columns, rows
+
+
+def read_program_csv(path: Path | None) -> tuple[list[str], list[dict]]:
+    if path is None or not path.is_file():
+        return list(PROGRAM_COLUMNS), []
+    try:
+        return parse_program_csv_text(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return list(PROGRAM_COLUMNS), []
+
+
+def serialize_program_csv(columns: list[str], rows: list[dict]) -> str:
+    stream = io.StringIO()
+    writer = csv.DictWriter(stream, fieldnames=columns, lineterminator="\r\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({column: row.get(column, "") for column in columns})
+    return stream.getvalue()
+
+
+def write_program_csv(root: Path, slug: str, content: str, filename: str | None = None) -> str:
+    """Write the programme CSV asset, reusing an existing source filename."""
+    target_dir = site_asset_dir(root, slug)
+    name = secure_filename(filename) if filename else ""
+    if not name or Path(name).suffix.lower() != ".csv":
+        name = PROGRAM_DEFAULT_FILENAME
+    target = target_dir / name
+    # A brand-new file must not silently overwrite an unrelated CSV asset.
+    index = 2
+    while filename is None and target.exists():
+        target = target_dir / f"{Path(name).stem}-{index}.csv"
+        index += 1
+    target.write_text(content, encoding="utf-8")
+    return target.name
+
+
 def _page(title: str, site: dict, config: dict, body: str, *, active: str) -> str:
     esc = html.escape
     base = site["deploy_base_path"].rstrip("/") + "/"

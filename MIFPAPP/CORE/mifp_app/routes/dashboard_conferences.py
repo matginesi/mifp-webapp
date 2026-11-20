@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import re
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -30,6 +31,7 @@ from ..services.conference_packages import (
 from ..services.conference_sites import (
     ASSET_ROLES,
     PEOPLE_COLUMNS,
+    PROGRAM_COLUMNS,
     build_site_zip,
     conference_config,
     config_from_form,
@@ -37,10 +39,14 @@ from ..services.conference_sites import (
     normalize_base_path,
     parse_config_yaml,
     parse_people_upload,
+    parse_program_csv_text,
+    read_program_csv,
+    serialize_program_csv,
     site_asset_dir,
     store_site_asset,
     validate_public_url,
     validate_slug,
+    write_program_csv,
 )
 from ..services.exporters import export_response_payload
 from ..services.event_import import destination_url
@@ -276,6 +282,44 @@ def _people(conn, site_id: int) -> list[dict]:
             (site_id,),
         ).fetchall()
     ]
+
+
+def _program_source(conn, site_id: int) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM conference_assets WHERE conference_id=? AND role='program_source' ORDER BY sort_order,filename LIMIT 1",
+        (site_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _program_path(site: dict, program_asset: dict | None) -> Path | None:
+    if not program_asset:
+        return None
+    return _asset_path(site, program_asset["filename"])
+
+
+def _save_program_csv(conn, site: dict, columns: list[str], rows: list[dict], filename: str | None = None) -> str:
+    content = serialize_program_csv(columns, rows)
+    stored = write_program_csv(
+        Path(current_app.config["CONFERENCES_DIR"]),
+        site["slug"],
+        content,
+        filename,
+    )
+    conn.execute(
+        """INSERT INTO conference_assets(conference_id,filename,role)
+           VALUES(?,?,'program_source')
+           ON CONFLICT(conference_id,filename) DO UPDATE SET
+           role='program_source',updated_at=CURRENT_TIMESTAMP""",
+        (site["id"], stored),
+    )
+    # A conference renders exactly one programme source; demote stale ones.
+    conn.execute(
+        """UPDATE conference_assets SET role='gallery',updated_at=CURRENT_TIMESTAMP
+           WHERE conference_id=? AND role='program_source' AND filename<>?""",
+        (site["id"], stored),
+    )
+    return stored
 
 
 def _apply_conference_import(site: dict, config_upload=None, package_upload=None) -> tuple[str, int]:
@@ -608,6 +652,7 @@ def conference_edit(site_id: int):
         assert site is not None
         people = _people(conn, site_id)
         event_options = _event_options(conn)
+        program_asset = _program_source(conn, site_id)
         asset_rows = {
             row["filename"]: dict(row)
             for row in conn.execute(
@@ -624,6 +669,9 @@ def conference_edit(site_id: int):
         for path in sorted(asset_dir.iterdir(), key=lambda item: item.name.casefold())
         if path.is_file()
     ]
+    program_columns, program_rows = read_program_csv(_program_path(site, program_asset))
+    if not program_columns:
+        program_columns = list(PROGRAM_COLUMNS)
     try:
         package_manifest = json.loads(site.get("package_manifest_json") or "{}")
     except (TypeError, json.JSONDecodeError):
@@ -634,6 +682,9 @@ def conference_edit(site_id: int):
         people=people,
         assets=assets,
         asset_roles=ASSET_ROLES,
+        program_asset=program_asset,
+        program_columns=program_columns,
+        program_rows=program_rows,
         conference_config=conference_config(site.get("config_json"), site),
         package_manifest=package_manifest,
         event_options=event_options,
@@ -909,6 +960,168 @@ def conference_people_export(site_id: int, fmt: str):
         "Cache-Control": "no-store, max-age=0",
         "X-Content-Type-Options": "nosniff",
     })
+
+
+@bp.get("/conferences/<int:site_id>/program.csv")
+@login_required
+def conference_program_export(site_id: int):
+    with connect(current_app.config["DATABASE_PATH"]) as conn:
+        site = _site(conn, site_id)
+        if not site:
+            return Response("Conference not found", status=404)
+        program_asset = _program_source(conn, site_id)
+    path = _asset_path(site, program_asset["filename"]) if program_asset else None
+    if path and path.is_file():
+        payload = path.read_bytes()
+    else:
+        payload = serialize_program_csv(list(PROGRAM_COLUMNS), []).encode("utf-8")
+    audit_log(
+        "conference.program_export",
+        "conference program exported",
+        site_id=site_id,
+        filename=program_asset["filename"] if program_asset else None,
+    )
+    response = Response(
+        payload,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={site['slug']}-program.csv",
+            "Cache-Control": "private, no-store, max-age=0",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+    return response
+
+
+@bp.post("/conferences/<int:site_id>/program/import")
+@login_required
+@maintenance_guarded("conference program import")
+def conference_program_import(site_id: int):
+    upload = request.files.get("program_file")
+    if not upload or not upload.filename:
+        flash("Choose a CSV file.", "error")
+        return redirect(url_for("dashboard.conference_edit", site_id=site_id) + "#program")
+    try:
+        columns, rows = parse_program_csv_text(upload.read().decode("utf-8-sig"))
+        replace = request.form.get("replace") == "1"
+        with connect(current_app.config["DATABASE_PATH"]) as conn:
+            site = _site(conn, site_id)
+            if not site:
+                return Response("Conference not found", status=404)
+            program_asset = _program_source(conn, site_id)
+            existing_columns, existing_rows = read_program_csv(_program_path(site, program_asset))
+            if not replace and existing_rows:
+                if [str(column).strip() for column in existing_columns] != [str(column).strip() for column in columns]:
+                    raise ValueError(
+                        "The uploaded CSV columns differ from the current programme. "
+                        "Use Replace, or upload a CSV with matching columns."
+                    )
+                rows = existing_rows + rows
+            stored = _save_program_csv(
+                conn, site, columns, rows,
+                program_asset["filename"] if program_asset else None,
+            )
+            conn.commit()
+        audit_log(
+            "conference.program_import",
+            "conference program imported",
+            site_id=site_id,
+            count=len(rows),
+            replace=replace,
+            filename=stored,
+        )
+        flash(f"Imported {len(rows)} program rows from {upload.filename}.", "success")
+    except (ValueError, OSError) as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("dashboard.conference_edit", site_id=site_id) + "#program")
+
+
+@bp.post("/conferences/<int:site_id>/program/save")
+@login_required
+def conference_program_save(site_id: int):
+    with connect(current_app.config["DATABASE_PATH"]) as conn:
+        site = _site(conn, site_id)
+        if not site:
+            return Response("Conference not found", status=404)
+        program_asset = _program_source(conn, site_id)
+    try:
+        columns, current_rows = read_program_csv(_program_path(site, program_asset))
+        if not columns:
+            columns = list(PROGRAM_COLUMNS)
+        submitted: dict[int, dict[str, str]] = {}
+        removes: set[int] = set()
+        row_pattern = re.compile(r"^program\[(\d+)\]\[(.+)\]$")
+        remove_pattern = re.compile(r"^remove\[(\d+)\]$")
+        for key, value in request.form.items(multi=True):
+            match = row_pattern.match(key)
+            if match:
+                index = int(match.group(1))
+                submitted.setdefault(index, {})[match.group(2)] = str(value or "").strip()
+                continue
+            match = remove_pattern.match(key)
+            if match and str(value) in {"1", "on", "true", "yes"}:
+                removes.add(int(match.group(1)))
+        if not submitted:
+            raise ValueError("No program rows were submitted.")
+        rows: list[dict] = []
+        for index in range(max(submitted) + 1):
+            if index in removes:
+                continue
+            base = dict(current_rows[index]) if index < len(current_rows) else {}
+            row = {column: base.get(column, "") for column in columns}
+            for column in columns:
+                if column in submitted.get(index, {}):
+                    row[column] = submitted[index][column]
+            rows.append(row)
+        with connect(current_app.config["DATABASE_PATH"]) as conn:
+            stored = _save_program_csv(
+                conn, site, columns, rows,
+                program_asset["filename"] if program_asset else None,
+            )
+            conn.commit()
+        audit_log(
+            "conference.program_saved",
+            "conference program saved",
+            site_id=site_id,
+            count=len(rows),
+            filename=stored,
+        )
+        flash(f"Saved {len(rows)} program rows.", "success")
+    except (ValueError, OSError) as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("dashboard.conference_edit", site_id=site_id) + "#program")
+
+
+@bp.post("/conferences/<int:site_id>/program/add")
+@login_required
+def conference_program_add_row(site_id: int):
+    with connect(current_app.config["DATABASE_PATH"]) as conn:
+        site = _site(conn, site_id)
+        if not site:
+            return Response("Conference not found", status=404)
+        program_asset = _program_source(conn, site_id)
+    try:
+        columns, rows = read_program_csv(_program_path(site, program_asset))
+        if not columns:
+            columns = list(PROGRAM_COLUMNS)
+        rows = list(rows)
+        rows.append({column: request.form.get(column, "").strip() for column in columns})
+        with connect(current_app.config["DATABASE_PATH"]) as conn:
+            stored = _save_program_csv(
+                conn, site, columns, rows,
+                program_asset["filename"] if program_asset else None,
+            )
+            conn.commit()
+        audit_log(
+            "conference.program_row_added",
+            "conference program row added",
+            site_id=site_id,
+            filename=stored,
+        )
+        flash("Program row added.", "success")
+    except (ValueError, OSError) as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("dashboard.conference_edit", site_id=site_id) + "#program")
 
 
 @bp.post("/conferences/<int:site_id>/assets")

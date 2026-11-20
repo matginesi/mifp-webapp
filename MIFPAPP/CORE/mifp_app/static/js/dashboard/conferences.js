@@ -9,7 +9,7 @@
   document.querySelectorAll('.conference-import, .conference-asset-upload').forEach((form) => {
     form.addEventListener('submit', () => {
       log.info('conference.import_started', {
-        kind: form.querySelector('[name="people_file"]') ? 'people' : 'asset',
+        kind: form.querySelector('[name="people_file"]') ? 'people' : form.querySelector('[name="program_file"]') ? 'program' : 'asset',
         files: form.querySelector('[name="assets"]')?.files?.length || 0,
       });
     });

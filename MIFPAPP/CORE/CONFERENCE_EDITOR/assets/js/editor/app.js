@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const EDITOR_VERSION = '1.23.4';
+  const EDITOR_VERSION = '1.24.0';
   const supportsFsAccess = typeof window.showDirectoryPicker === 'function';
   const MAX_LOGS = 500;
   const IMAGE_EXTENSIONS = new Set(['png','jpg','jpeg','gif','webp','svg','ico','avif']);
@@ -1125,7 +1125,13 @@
       'chair':'Chair','chairperson':'Chair','moderator':'Chair','moderatore':'Chair',
       'location':'Location','room':'Location','venue':'Location','luogo':'Location','sala':'Location',
       'notes':'Notes','note':'Notes','description':'Notes','descrizione':'Notes',
-      'visible':'Visible','visibile':'Visible','enabled':'Visible','active':'Visible'
+      'visible':'Visible','visibile':'Visible','enabled':'Visible','active':'Visible',
+      'id':'ID','identifier':'ID',
+      'parent id':'Parent ID','parentid':'Parent ID','parent':'Parent ID',
+      'child id':'Child ID','childid':'Child ID',
+      'children':'Children',
+      'node id':'Node ID','nodeid':'Node ID',
+      'edge id':'Edge ID','edgeid':'Edge ID'
     };
     return aliases[key] || '';
   }
@@ -1136,12 +1142,11 @@
   }
 
   function normalizeProgramSheet(parsed) {
-    const preferred = ['Day','Date','Start Time','End Time','Type','Title','Speaker','Affiliation','Chair','Location','Notes','Visible'];
+    const preferred = ['Day','Date','Start Time','End Time','Type','ID','Parent ID','Title','Speaker','Affiliation','Chair','Location','Notes','Visible'];
     const sourceHeaders = parsed.headers || [];
     const mapped = new Map();
     sourceHeaders.forEach((header) => { const target = programHeaderTarget(header); if (target) mapped.set(header, target); });
-    const hiddenTech = sourceHeaders.filter(isTechnicalProgramHeader);
-    const extras = sourceHeaders.filter((header) => !mapped.has(header) && !isTechnicalProgramHeader(header));
+    const extras = sourceHeaders.filter((header) => !mapped.has(header));
     state.program.headers = preferred.concat(extras.filter((header) => !preferred.includes(header)));
     state.program.rows = (parsed.rows || []).map((source) => {
       const row = Object.create(null); state.program.headers.forEach((header) => { row[header] = ''; });
@@ -1153,7 +1158,7 @@
       row.Visible = row.Visible ? normalizeBooleanString(row.Visible) : 'true';
       return row;
     });
-    if (hiddenTech.length) log('info', 'program.graph_columns_ignored', { columns: hiddenTech });
+    log('info', 'program.normalized', { headers: state.program.headers.length, rows: state.program.rows.length, graphColumnsPreserved: ['ID','Parent ID'].filter((header) => state.program.headers.includes(header)) });
   }
 
   function inferPeopleCategory(role) {
@@ -2810,12 +2815,353 @@
     }
   }
 
+  function ensureProgramGraphHeaders() {
+    const sheet = state.program;
+    if (!sheet.headers.includes('ID')) {
+      const typeIndex = sheet.headers.findIndex((header) => /^Type$/i.test(header));
+      sheet.headers.splice(typeIndex >= 0 ? typeIndex + 1 : sheet.headers.length, 0, 'ID');
+    }
+    if (!sheet.headers.includes('Parent ID')) {
+      const idIndex = sheet.headers.findIndex((header) => header === 'ID');
+      sheet.headers.splice(idIndex >= 0 ? idIndex + 1 : sheet.headers.length, 0, 'Parent ID');
+    }
+    sheet.rows.forEach((row) => { if (row.ID == null) row.ID = ''; if (row['Parent ID'] == null) row['Parent ID'] = ''; });
+  }
+
+  function nextProgramId(rows) {
+    let max = 0;
+    (rows || []).forEach((row) => {
+      const raw = String(row.ID || '').trim();
+      if (!raw) return;
+      if (/^\d+$/.test(raw)) max = Math.max(max, parseInt(raw, 10));
+      else {
+        const match = raw.match(/(\d+)$/);
+        if (match) max = Math.max(max, parseInt(match[1], 10));
+      }
+    });
+    return String(max + 1);
+  }
+
+  function ensureProgramRowId(row) {
+    if (!row.ID || !String(row.ID).trim()) row.ID = nextProgramId(state.program.rows);
+    return row.ID;
+  }
+
+  function programDayKey(row) {
+    return [String(row.Day || '').trim(), String(row.Date || '').trim()].join('|');
+  }
+
+  function programRowsByDay() {
+    const groups = []; const index = new Map();
+    state.program.rows.forEach((row) => {
+      const key = programDayKey(row);
+      if (!index.has(key)) { const group = { day: row.Day || '', date: row.Date || '', rows: [] }; index.set(key, group); groups.push(group); }
+      index.get(key).rows.push(row);
+    });
+    return groups;
+  }
+
+  function addProgramRow(defaults) {
+    ensureProgramGraphHeaders();
+    const row = Object.create(null);
+    state.program.headers.forEach((header) => { row[header] = /^Visible$/i.test(header) ? 'true' : ''; });
+    row.ID = nextProgramId(state.program.rows);
+    row['Parent ID'] = '';
+    Object.assign(row, defaults || {});
+    if (row['Parent ID'] == null) row['Parent ID'] = '';
+    state.program.rows.push(row);
+    markSheetDirty('program');
+    return row;
+  }
+
+  function moveProgramRow(row, delta) {
+    const rows = state.program.rows;
+    const idx = rows.indexOf(row);
+    if (idx < 0) return;
+    const key = programDayKey(row);
+    const siblings = rows.map((item, index) => ({ item, index })).filter(({ item }) => programDayKey(item) === key);
+    const pos = siblings.findIndex(({ item }) => item === row);
+    const target = siblings[pos + delta];
+    if (!target) return;
+    const a = idx; const b = target.index;
+    const tmp = rows[a]; rows[a] = rows[b]; rows[b] = tmp;
+    markSheetDirty('program');
+    renderSpreadsheet('program');
+  }
+
+  function scheduleField(labelText, placeholder, className) {
+    const node = document.createElement('label'); node.className = 'schedule-field' + (className ? ' ' + className : '');
+    const span = document.createElement('span'); span.textContent = labelText;
+    const input = document.createElement('input'); input.type = 'text'; input.placeholder = placeholder || '';
+    node.append(span, input);
+    return { node, input };
+  }
+
+  function scheduleSelectField(labelText, options, value) {
+    const node = document.createElement('label'); node.className = 'schedule-field';
+    const span = document.createElement('span'); span.textContent = labelText;
+    const select = document.createElement('select');
+    (options || []).forEach((option) => { const item = document.createElement('option'); item.value = option; item.textContent = option; select.append(item); });
+    select.value = value || '';
+    node.append(span, select);
+    return { node, select };
+  }
+
+  function schedulePersonField(labelText, row, field, refreshMeta) {
+    const wrap = div('schedule-field schedule-person-field');
+    const span = document.createElement('span'); span.textContent = labelText;
+    const control = div('schedule-person-control');
+    const input = document.createElement('input'); input.type = 'text'; input.value = row[field] || ''; input.placeholder = 'Choose from People…';
+    const pick = button('People', 'button ghost');
+    control.append(input, pick);
+    wrap.append(span, control);
+    input.addEventListener('input', () => { row[field] = input.value; markSheetDirty('program'); if (refreshMeta) refreshMeta(); });
+    pick.addEventListener('click', () => openProgramPersonPicker(row, field, () => renderSpreadsheet('program')));
+    return wrap;
+  }
+
+  function buildProgramDayDateSelect(group) {
+    const select = document.createElement('select');
+    select.className = 'schedule-date-select';
+    const current = String(group.date || '');
+    const currentIso = normalizeProgramDateToIso(current);
+    const dates = conferenceProgramDates();
+    const tbc = document.createElement('option'); tbc.value = ''; tbc.textContent = dates.length ? 'TBC / choose date' : 'Set conference dates in YAML first'; select.append(tbc);
+    dates.forEach((item) => { const option = document.createElement('option'); option.value = item.iso; option.textContent = item.label; select.append(option); });
+    if (current && currentIso && !dates.some((item) => item.iso === currentIso)) {
+      const option = document.createElement('option'); option.value = currentIso; option.textContent = current + ' (outside range)'; select.append(option);
+    } else if (current && !currentIso && !/^TBC$/i.test(current)) {
+      const option = document.createElement('option'); option.value = '__legacy__'; option.textContent = current + ' (legacy value)'; select.append(option); select.value = '__legacy__';
+    }
+    if (currentIso) select.value = currentIso;
+    else if (!current || /^TBC$/i.test(current)) select.value = '';
+    select.addEventListener('change', () => {
+      if (select.value === '__legacy__') return;
+      const match = dates.find((item) => item.iso === select.value);
+      const newDate = match ? match.label : 'TBC';
+      group.rows.forEach((row) => { row.Date = newDate; if (match) row.Day = match.day; });
+      markSheetDirty('program');
+      renderSpreadsheet('program');
+    });
+    return select;
+  }
+
+  function buildScheduleItemCard(row, group, refreshMeta, isChild) {
+    const children = isChild ? [] : group.rows.filter((child) => child['Parent ID'] && child['Parent ID'] === row.ID);
+    const card = div('schedule-item' + (isChild ? ' schedule-talk' : ''));
+    const main = div('schedule-item-main');
+
+    const typeValues = programTypes();
+    const typeField = scheduleSelectField('Type', typeValues, row.Type || '');
+    if (row.Type && !typeValues.includes(row.Type)) { const option = document.createElement('option'); option.value = row.Type; option.textContent = row.Type; typeField.select.append(option); }
+    typeField.select.value = row.Type || typeValues[0] || '';
+    typeField.select.addEventListener('change', () => { row.Type = typeField.select.value; markSheetDirty('program'); if (refreshMeta) refreshMeta(); });
+
+    const startField = scheduleField('Start', '09:00', 'schedule-time-field');
+    startField.input.value = row['Start Time'] || '';
+    startField.input.addEventListener('input', () => { row['Start Time'] = startField.input.value; markSheetDirty('program'); });
+
+    const endField = scheduleField('End', '10:00', 'schedule-time-field');
+    endField.input.value = row['End Time'] || '';
+    endField.input.addEventListener('input', () => { row['End Time'] = endField.input.value; markSheetDirty('program'); });
+
+    const titleField = scheduleField('Title', 'Session or talk title', 'schedule-title-field');
+    titleField.input.value = row.Title || '';
+    titleField.input.addEventListener('input', () => { row.Title = titleField.input.value; markSheetDirty('program'); });
+
+    const visibleField = scheduleSelectField('Visible', ['true', 'false'], normalizeBooleanString(row.Visible));
+    visibleField.select.addEventListener('change', () => { row.Visible = visibleField.select.value; markSheetDirty('program'); });
+
+    const actions = div('schedule-item-actions');
+    const up = button('↑', 'button ghost'); up.title = 'Move up';
+    const down = button('↓', 'button ghost'); down.title = 'Move down';
+    actions.append(up, down);
+    if (isChild) {
+      const detach = button('Detach', 'button ghost'); detach.title = 'Move out of the parent session';
+      detach.addEventListener('click', () => { row['Parent ID'] = ''; markSheetDirty('program'); renderSpreadsheet('program'); });
+      actions.append(detach);
+    } else {
+      const addTalk = button('Add talk', 'button ghost'); addTalk.title = 'Nest a talk inside this session';
+      addTalk.addEventListener('click', () => { ensureProgramRowId(row); addProgramRow({ Day: row.Day, Date: row.Date, Type: 'talk', 'Parent ID': row.ID }); renderSpreadsheet('program'); });
+      actions.append(addTalk);
+    }
+    const del = button('Delete', 'button ghost danger');
+    actions.append(del);
+    main.append(typeField.node, startField.node, endField.node, titleField.node, visibleField.node, actions);
+    card.append(main);
+
+    const detail = div('schedule-item-detail');
+    const speakerField = schedulePersonField('Speaker', row, 'Speaker', refreshMeta);
+    const affiliationField = scheduleField('Affiliation', 'Institution', 'schedule-affiliation-field');
+    affiliationField.input.value = row.Affiliation || '';
+    affiliationField.input.addEventListener('input', () => { row.Affiliation = affiliationField.input.value; markSheetDirty('program'); });
+    const chairField = schedulePersonField('Chair', row, 'Chair', refreshMeta);
+    const locationField = scheduleField('Location', 'Room', 'schedule-location-field');
+    locationField.input.value = row.Location || '';
+    locationField.input.addEventListener('input', () => { row.Location = locationField.input.value; markSheetDirty('program'); });
+    const notesField = scheduleField('Notes', 'Optional note', 'schedule-notes-field');
+    notesField.input.value = row.Notes || '';
+    notesField.input.addEventListener('input', () => { row.Notes = notesField.input.value; markSheetDirty('program'); });
+    detail.append(speakerField, affiliationField.node, chairField, locationField.node, notesField.node);
+    card.append(detail);
+
+    if (!isChild && children.length) {
+      const talkList = div('schedule-talks');
+      children.forEach((child) => talkList.append(buildScheduleItemCard(child, group, refreshMeta, true)));
+      card.append(talkList);
+    }
+
+    up.addEventListener('click', () => moveProgramRow(row, -1));
+    down.addEventListener('click', () => moveProgramRow(row, 1));
+    del.addEventListener('click', async () => {
+      const label = String(row.Title || row.Type || 'program item').trim();
+      const childIds = children.map((child) => child.ID).filter(Boolean);
+      if (!await totemConfirm('Delete item', 'Delete "' + label + '"' + (childIds.length ? ' and its ' + childIds.length + ' nested talk(s)' : '') + '?', 'Delete', { danger: true })) return;
+      state.program.rows = state.program.rows.filter((item) => item !== row && !(childIds.length && childIds.includes(item['Parent ID'])));
+      markSheetDirty('program');
+      renderSpreadsheet('program');
+    });
+    return card;
+  }
+
+  function openProgramPersonPicker(row, field, onApplied) {
+    if (!row) return;
+    els.modalBackdrop.classList.remove('preview-modal', 'people-import-modal', 'image-picker-modal');
+    els.modalTitle.textContent = 'Choose ' + String(field || 'person').toLowerCase() + ' · from People';
+    els.modalBody.replaceChildren();
+    const top = div('program-person-picker-top');
+    const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'Find person…';
+    const clear = button('Clear', 'button ghost');
+    top.append(search, clear); els.modalBody.append(top);
+    const list = div('program-person-picker-list'); els.modalBody.append(list);
+    const current = String(row[field] || '').trim().toLowerCase();
+    const people = state.people.rows;
+    const render = () => {
+      const query = search.value.trim().toLowerCase();
+      list.replaceChildren();
+      const matches = people.filter((person) => {
+        const name = [person['First Name'], person['Last Name']].filter(Boolean).join(' ');
+        return !query || [name, person.Role, person.Affiliation, person.Country].join(' ').toLowerCase().includes(query);
+      });
+      if (!matches.length) { list.append(div('sheet-empty', people.length ? 'No people match this filter.' : 'No people yet. Add People first, then link them here.')); return; }
+      matches.forEach((person) => {
+        const name = [person['First Name'], person['Last Name']].filter(Boolean).join(' ') || 'Unnamed person';
+        const card = button('', 'program-person-picker-card' + (name.toLowerCase() === current ? ' active' : ''));
+        card.append(div('program-person-picker-name', name), div('program-person-picker-meta', [person.Role, person.Affiliation].filter(Boolean).join(' · ')));
+        card.addEventListener('click', () => {
+          row[field] = name;
+          if (field === 'Speaker' && person.Affiliation) row.Affiliation = String(person.Affiliation);
+          markSheetDirty('program');
+          closeModal();
+          if (typeof onApplied === 'function') onApplied();
+        });
+        list.append(card);
+      });
+    };
+    search.addEventListener('input', render);
+    clear.addEventListener('click', () => {
+      row[field] = '';
+      if (field === 'Speaker') row.Affiliation = '';
+      markSheetDirty('program');
+      closeModal();
+      if (typeof onApplied === 'function') onApplied();
+    });
+    render(); els.modalBackdrop.classList.remove('hidden');
+  }
+
+  function renderProgramSchedule(container) {
+    ensureProgramGraphHeaders();
+    const panel = div('panel program-schedule-panel');
+    const head = div('panel-head');
+    const copy = document.createElement('div');
+    copy.innerHTML = '<div class="eyebrow">data/program.csv · schedule</div><h2>Program schedule</h2><p>Manage days, sessions and talks. Talks nested inside a session are rendered as child entries on the public program page.</p>';
+    head.append(copy); panel.append(head);
+
+    const toolbar = div('sheet-toolbar schedule-toolbar');
+    const addDay = button('Add day', 'button');
+    const addItem = button('Add item', 'button');
+    const manageTypes = button('Manage types', 'button ghost');
+    toolbar.append(addDay, addItem, manageTypes);
+    sheetImportControls('program', toolbar, () => renderSpreadsheet('program'));
+    const searchLabel = document.createElement('label'); searchLabel.textContent = 'Filter';
+    const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'Title, speaker, chair…'; searchLabel.append(search); toolbar.append(searchLabel);
+    const meta = div('sheet-meta', state.program.rows.length + ' items'); toolbar.append(meta);
+    panel.append(toolbar);
+
+    const list = div('program-schedule-list'); panel.append(list);
+    container.append(panel);
+
+    const refreshMeta = () => { meta.textContent = state.program.rows.length + ' items'; };
+
+    function render() {
+      list.replaceChildren();
+      const query = search.value.trim().toLowerCase();
+      const groups = programRowsByDay();
+      if (!state.program.rows.length) {
+        list.append(div('sheet-empty', 'No program items yet. Add a day or item to start building the schedule.'));
+        refreshMeta();
+        return;
+      }
+      groups.forEach((group) => {
+        const dayPanel = div('schedule-day');
+        const dayHead = div('schedule-day-head');
+        const dayFields = div('schedule-day-fields');
+        const dayLabel = document.createElement('label'); dayLabel.className = 'schedule-field'; const daySpan = document.createElement('span'); daySpan.textContent = 'Day'; const dayInput = document.createElement('input'); dayInput.type = 'text'; dayInput.value = group.day || ''; dayInput.placeholder = 'Day 1'; dayLabel.append(daySpan, dayInput);
+        const dateLabel = document.createElement('label'); dateLabel.className = 'schedule-field'; const dateSpan = document.createElement('span'); dateSpan.textContent = 'Date'; const dateSelect = buildProgramDayDateSelect(group); dateLabel.append(dateSpan, dateSelect);
+        dayFields.append(dayLabel, dateLabel);
+        const dayActions = div('schedule-day-actions');
+        const addDayItem = button('Add item', 'button ghost');
+        dayActions.append(addDayItem);
+        dayHead.append(dayFields, dayActions);
+        dayPanel.append(dayHead);
+
+        dayInput.addEventListener('change', () => { group.rows.forEach((row) => { row.Day = dayInput.value; }); markSheetDirty('program'); refreshMeta(); });
+
+        const itemList = div('schedule-items');
+        const topRows = group.rows.filter((row) => !(row['Parent ID'] && group.rows.some((parent) => parent.ID === row['Parent ID'])));
+        topRows.forEach((row) => {
+          const hay = ['Title', 'Speaker', 'Chair', 'Location', 'Notes', 'Type'].map((header) => String(row[header] || '')).join(' ').toLowerCase();
+          if (query && !hay.includes(query)) return;
+          itemList.append(buildScheduleItemCard(row, group, refreshMeta, false));
+        });
+        if (query && !itemList.children.length) return;
+        if (!itemList.children.length) itemList.append(div('sheet-empty', 'No items in this day.'));
+        dayPanel.append(itemList);
+        list.append(dayPanel);
+        addDayItem.addEventListener('click', () => { addProgramRow({ Day: group.day, Date: group.date, Type: 'talk' }); renderSpreadsheet('program'); });
+      });
+      if (!list.children.length && query) list.append(div('sheet-empty', 'No items match the filter.'));
+      refreshMeta();
+    }
+
+    addDay.addEventListener('click', () => {
+      const groups = programRowsByDay();
+      const dates = conferenceProgramDates();
+      const index = groups.length;
+      const date = dates.length ? dates[Math.min(index, dates.length - 1)].label : '';
+      const day = dates.length ? dates[Math.min(index, dates.length - 1)].day : ('Day ' + (index + 1));
+      addProgramRow({ Day: day, Date: date, Type: 'session' });
+      renderSpreadsheet('program');
+    });
+    addItem.addEventListener('click', () => {
+      const groups = programRowsByDay();
+      const group = groups[groups.length - 1] || { day: '', date: '' };
+      addProgramRow({ Day: group.day, Date: group.date, Type: 'talk' });
+      renderSpreadsheet('program');
+    });
+    manageTypes.addEventListener('click', openProgramTypeManager);
+    search.addEventListener('input', render);
+    render();
+  }
+
   function renderGenericSpreadsheet(kind) {
     const container = kind === 'people' ? els.peopleEditor : els.programEditor;
     const sheet = state[kind];
     container.replaceChildren();
     if (!state.config) { renderNoProjectSheets(); return; }
-    if (kind === 'program') renderProgramPdfControls(container);
+    if (kind === 'program') { renderProgramPdfControls(container); renderProgramSchedule(container); }
+    const advanced = kind === 'program' ? document.createElement('details') : null;
+    if (advanced) { advanced.className = 'program-advanced-table'; const summary = document.createElement('summary'); summary.textContent = 'Advanced flat spreadsheet'; advanced.append(summary); }
     const shell = div('spreadsheet-shell ' + kind + '-sheet');
     const toolbar = div('sheet-toolbar');
     const addBtn = button(kind === 'program' ? 'Add item' : 'Add row', 'button'); toolbar.append(addBtn);
@@ -2824,7 +3170,9 @@
     const searchLabel = document.createElement('label'); searchLabel.textContent = 'Filter';
     const search = document.createElement('input'); search.type='search'; search.placeholder='Search…'; searchLabel.append(search); toolbar.append(searchLabel);
     const meta = div('sheet-meta', sheet.rows.length + ' rows · ' + sheet.headers.length + ' columns'); toolbar.append(meta);
-    const scroll = div('sheet-scroll'); shell.append(toolbar, scroll); container.append(shell); bindResponsiveSpreadsheet(shell,kind);
+    const scroll = div('sheet-scroll'); shell.append(toolbar, scroll);
+    if (advanced) { advanced.append(shell); container.append(advanced); } else { container.append(shell); }
+    bindResponsiveSpreadsheet(shell,kind);
 
     const renderTable = () => {
       const query = search.value.trim().toLowerCase(); scroll.replaceChildren();
@@ -2860,14 +3208,14 @@
           td.append(input);tr.append(td);
         });
         const action=document.createElement('td');action.className='action-cell';const copy=button('Copy','button ghost'),del=button('Delete','button ghost');
-        copy.addEventListener('click',()=>{const clone=Object.create(null);sheet.headers.forEach((h)=>clone[h]=row[h]||'');sheet.rows.splice(rowIndex+1,0,clone);markSheetDirty(kind);renderGenericSpreadsheet(kind);});
+        copy.addEventListener('click',()=>{const clone=Object.create(null);sheet.headers.forEach((h)=>clone[h]=row[h]||'');if(kind==='program'){clone.ID=nextProgramId(sheet.rows);}sheet.rows.splice(rowIndex+1,0,clone);markSheetDirty(kind);renderGenericSpreadsheet(kind);});
         del.addEventListener('click',async()=>{if(!await totemConfirm('Delete row','Delete row '+(rowIndex+1)+'?','Delete',{danger:true}))return;sheet.rows.splice(rowIndex,1);markSheetDirty(kind);renderGenericSpreadsheet(kind);});action.append(copy,del);tr.append(action);
         Array.from(tr.children).forEach((cell,index)=>{cell.dataset.label=index===0?'#':(index<=sheet.headers.length?(sheet.headers[index-1]||''):'Row');});
         tbody.append(tr);
       });
       table.append(tbody);scroll.append(table);if(!tbody.children.length)scroll.append(div('sheet-empty',query?'No rows match the filter.':'No rows.'));
     };
-    addBtn.addEventListener('click',()=>{const row=Object.create(null);sheet.headers.forEach((h)=>row[h]=/^Visible$/i.test(h)?'true':'');sheet.rows.push(row);markSheetDirty(kind);renderGenericSpreadsheet(kind);});
+    addBtn.addEventListener('click',()=>{if(kind==='program'){addProgramRow({});renderGenericSpreadsheet(kind);return;}const row=Object.create(null);sheet.headers.forEach((h)=>row[h]=/^Visible$/i.test(h)?'true':'');sheet.rows.push(row);markSheetDirty(kind);renderGenericSpreadsheet(kind);});
     search.addEventListener('input',renderTable);renderTable();
   }
 
@@ -3232,6 +3580,13 @@
       log('debug', 'people.face_defaulted', { row: rowIndex + 1 });
     });
     actions.append(upload, useDefault);
+    if (row.Image) {
+      const replace = button('Replace current file', 'button');
+      replace.addEventListener('click', () => { closeModal(); replacePersonFace(rowIndex); });
+      const view = button('View current image', 'button ghost');
+      view.addEventListener('click', () => { closeModal(); openYamlImagePreview(row.Image, 'Face image'); });
+      actions.append(replace, view);
+    }
     els.modalBody.append(actions);
 
     const images = peopleImageAssets();
@@ -3261,6 +3616,22 @@
   async function uploadPersonFace(rowIndex) {
     const input=document.createElement('input');input.type='file';input.accept='image/png,image/jpeg,image/webp,image/gif';input.hidden=true;document.body.append(input);
     input.addEventListener('change',async()=>{const file=input.files&&input.files[0];input.remove();if(!file)return;try{const row=state.people.rows[rowIndex];const base=slugify([row['First Name'],row['Last Name']].filter(Boolean).join('-')||('person-'+(rowIndex+1)));const ext=extensionOf(file.name)||'jpg';const path='assets/people/'+base+'.'+ext;await writeProjectBlob(path,file);row.Image=path;markSheetDirty('people');await loadAssets();renderPeopleSpreadsheet();log('info','people.face_added',{row:rowIndex+1,path,bytes:file.size});toast('Face image linked: '+path,'success');}catch(error){log('error','people.face_failed',{message:error.message});toast('Could not add face image: '+error.message,'error');}});input.click();
+  }
+
+  async function replacePersonFace(rowIndex) {
+    const row = state.people.rows[rowIndex];
+    const current = String(row && row.Image || '').trim();
+    if (!current) { uploadPersonFace(rowIndex); return; }
+    const input=document.createElement('input');input.type='file';input.accept='image/png,image/jpeg,image/webp,image/gif';input.hidden=true;document.body.append(input);
+    input.addEventListener('change',async()=>{const file=input.files&&input.files[0];input.remove();if(!file)return;try{
+      const oldExt=extensionOf(current),newExt=extensionOf(file.name)||'jpg';
+      let target=current;
+      if(oldExt&&newExt&&oldExt!==newExt)target=current.replace(/\.[^/.]+$/,'')+'.'+newExt;
+      await writeProjectBlob(target,file);
+      if(target!==current){await replaceAssetReferences(current,target);await deleteProjectPath(current);}
+      row.Image=target;markSheetDirty('people');await loadAssets();renderPeopleSpreadsheet();
+      log('info','people.face_replaced',{row:rowIndex+1,path:target,bytes:file.size});toast('Face image replaced: '+target,'success');
+    }catch(error){log('error','people.face_replace_failed',{message:error.message});toast('Could not replace face image: '+error.message,'error');}});input.click();
   }
 
   function slugify(value){return String(value||'person').normalize('NFKD').replace(/[^A-Za-z0-9]+/g,'-').replace(/^-+|-+$/g,'').toLowerCase().slice(0,80)||'person';}
@@ -4165,7 +4536,7 @@
     await settingsWriter.close();
 
     const peopleHeaders=['First Name','Last Name','Category','Role','Affiliation','Country','Presentation Title','Presentation Type','Image','Visible'];
-    const programHeaders=['Day','Date','Start Time','End Time','Type','Title','Speaker','Affiliation','Chair','Location','Notes','Visible'];
+    const programHeaders=['Day','Date','Start Time','End Time','Type','ID','Parent ID','Title','Speaker','Affiliation','Chair','Location','Notes','Visible'];
     const peoplePath=(cfg.runtime&&cfg.runtime.people_csv)||'data/people.csv',programPath=(cfg.runtime&&cfg.runtime.program_csv)||'data/program.csv';
     const ph=await getFileHandleByPath(dest,peoplePath,true),pw=await ph.createWritable();
     await pw.write(window.CsvUtil.serialize([],peopleHeaders,{bom:false,eol:'\r\n',finalEol:true,protectFormulae:false}));await pw.close();
