@@ -198,9 +198,9 @@ def test_vps_approval_blocks_publish_and_restore_until_revoked(tmp_path, destina
     publisher.publish(_source(tmp_path / "v1", "old"), destination, replace=False, keep_rollback=True)
     publisher.publish(_source(tmp_path / "v2", "current"), destination, replace=True, keep_rollback=True)
     protected.write_text("Event-2027/regform\n")
-    with pytest.raises(PublicationError, match="events-php-disable"):
+    with pytest.raises(PublicationError, match="approved PHP path"):
         publisher.publish(tmp_path / "v1", destination, replace=True, keep_rollback=True)
-    with pytest.raises(PublicationError, match="events-php-disable"):
+    with pytest.raises(PublicationError, match="approved PHP path"):
         publisher.restore_previous(destination)
     assert (root / destination / "index.html").read_text() == "current"
     protected.write_text("")
@@ -221,6 +221,80 @@ def test_vps_missing_or_invalid_policy_fails_closed(tmp_path, contents):
     with pytest.raises(PublicationError, match="policy unavailable or invalid"):
         publisher.publish(_source(tmp_path / "source", "new"), "Event-2027", replace=True, keep_rollback=True)
     assert not publisher.root.exists()
+
+
+@pytest.mark.parametrize("destination", ["Event", "series/Event"])
+def test_vps_php_approval_survives_consecutive_content_updates_and_restore(tmp_path, destination):
+    import shutil
+
+    policy = tmp_path / "policy"
+    policy.mkdir()
+    (policy / "lock").touch()
+    protected = policy / "protected-paths"
+    protected.write_text("")
+    root = tmp_path / "public"
+    source = _source(tmp_path / "source", "v1")
+    regform = source / "regform"
+    regform.mkdir()
+    (regform / "index.php").write_text("<?php echo file_get_contents(__DIR__.'/settings.yaml');")
+    (regform / "settings.yaml").write_text("v1")
+    publisher = LocalEventSitePublisher(root, backend="local-vps", policy_root=policy)
+    publisher.publish(source, destination, replace=False, keep_rollback=True)
+    protected.write_text(destination + "/regform\n")
+    private = tmp_path / "private/registrations.csv"
+    private.parent.mkdir()
+    private.write_bytes(b"existing registration data")
+    for version in ("v2", "v3"):
+        (source / "index.html").write_text(version)
+        (regform / "settings.yaml").write_text(version)
+        publisher.publish(source, destination, replace=True, keep_rollback=True)
+        assert (root / destination / "index.html").read_text() == version
+        assert (root / destination / "regform/settings.yaml").read_text() == version
+        assert protected.read_text() == destination + "/regform\n"
+        assert private.read_bytes() == b"existing registration data"
+    publisher.restore_previous(destination)
+    assert (root / destination / "index.html").read_text() == "v2"
+    # The same protection applies when publishing directly into regform/.
+    candidate = tmp_path / "regform-update"
+    shutil.copytree(regform, candidate)
+    (candidate / "settings.yaml").write_text("v4")
+    publisher.publish(candidate, destination + "/regform", replace=True, keep_rollback=True)
+    assert (root / destination / "regform/settings.yaml").read_text() == "v4"
+
+
+@pytest.mark.parametrize("change", ["modify", "add", "remove", "missing", "symlink", "htaccess"])
+def test_vps_content_update_cannot_replace_approved_php_code(tmp_path, change):
+    policy = tmp_path / "policy"
+    policy.mkdir()
+    (policy / "lock").touch()
+    protected = policy / "protected-paths"
+    protected.write_text("")
+    publisher = LocalEventSitePublisher(tmp_path / "public", backend="local-vps", policy_root=policy)
+    source = _source(tmp_path / "source", "original")
+    regform = source / "regform"
+    regform.mkdir()
+    entry = regform / "index.php"
+    entry.write_text("<?php echo 'approved';")
+    publisher.publish(source, "Event", replace=False, keep_rollback=True)
+    protected.write_text("Event/regform\n")
+    if change == "modify":
+        entry.write_text("<?php echo 'unreviewed';")
+    elif change == "add":
+        (regform / "new.php").write_text("<?php echo 'unreviewed';")
+    elif change in {"remove", "missing"}:
+        entry.unlink()
+        if change == "missing":
+            regform.rmdir()
+    elif change == "symlink":
+        (regform / "link").symlink_to(tmp_path / "public/Event/regform", target_is_directory=True)
+    else:
+        (regform / ".htaccess").write_text("unreviewed")
+    with pytest.raises(PublicationError, match="operator review") as error:
+        publisher.publish(source, "Event", replace=True, keep_rollback=True)
+    assert error.value.unchanged
+    assert (publisher.root / "Event/regform/index.php").read_text() == "<?php echo 'approved';"
+    assert protected.read_text() == "Event/regform\n"
+    assert not list(publisher.root.glob(".*.stage-*"))
 
 
 def test_vps_policy_blocks_missing_approved_target_but_allows_unrelated_site(tmp_path):
@@ -265,7 +339,8 @@ with open(sys.argv[1], 'rb') as lock:
 
 
 @pytest.mark.parametrize("failure", ["copy", "switch"])
-def test_failed_vps_replacement_after_revocation_keeps_php_unapproved(tmp_path, monkeypatch, failure):
+@pytest.mark.parametrize("approved", [False, True])
+def test_failed_vps_replacement_preserves_site_and_php_policy(tmp_path, monkeypatch, failure, approved):
     policy = tmp_path / "policy"
     policy.mkdir()
     (policy / "lock").touch()
@@ -275,8 +350,10 @@ def test_failed_vps_replacement_after_revocation_keeps_php_unapproved(tmp_path, 
     old = _source(tmp_path / "old", "old")
     (old / "index.php").write_text("<?php echo 'old';")
     new = _source(tmp_path / "new", "new")
-    (new / "index.php").write_text("<?php echo 'new';")
+    (new / "index.php").write_text("<?php echo 'old';" if approved else "<?php echo 'new';")
     publisher.publish(old, "Event", replace=False, keep_rollback=True)
+    policy_text = "Event\n" if approved else ""
+    (policy / "protected-paths").write_text(policy_text)
     if failure == "copy":
         def interrupted(*_args, **_kwargs):
             raise OSError("interrupted copy")
@@ -291,7 +368,7 @@ def test_failed_vps_replacement_after_revocation_keeps_php_unapproved(tmp_path, 
     with pytest.raises(PublicationError, match="previous public tree was preserved") as error:
         publisher.publish(new, "Event", replace=True, keep_rollback=True)
     assert (root / "Event/index.php").read_text() == "<?php echo 'old';"
-    assert (policy / "protected-paths").read_text() == ""
+    assert (policy / "protected-paths").read_text() == policy_text
     assert not list(root.glob(".*.stage-*"))
 
 

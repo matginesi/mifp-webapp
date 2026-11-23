@@ -25,6 +25,75 @@ PHP = os.environ.get('MIFP_TEST_PHP', shutil.which('php') or '')
 pytestmark = pytest.mark.skipif(not PHP, reason='PHP CLI required')
 
 
+def test_publication_updates_real_form_twice_without_stopping_php(tmp_path):
+    from mifp_app.services.event_site_publisher import LocalEventSitePublisher
+
+    source = tmp_path / 'source'
+    shutil.copytree(EDITOR_ROOT / 'TEMPLATE', source)
+    conference = source / 'conference.yaml'
+    conference.write_text(re.sub(r'(?m)^registration:\n  enabled: false',
+                                 'registration:\n  enabled: true', conference.read_text()))
+    settings = source / 'regform/settings.yaml'
+    settings.write_text(settings.read_text().replace('reply_to_email: TBC', 'reply_to_email: synthetic@example.invalid')
+                        .replace('from_email: TBC', 'from_email: synthetic@example.invalid')
+                        .replace('      - TBC', '      - synthetic@example.invalid'))
+    policy = tmp_path / 'policy'
+    policy.mkdir()
+    (policy / 'lock').touch()
+    protected = policy / 'protected-paths'
+    protected.write_text('')
+    public = tmp_path / 'public'
+    publisher = LocalEventSitePublisher(public, backend='local-vps', policy_root=policy)
+    publisher.publish(source, 'Event', replace=False, keep_rollback=True)
+    protected.write_text('Event/regform\n')
+    private = tmp_path / 'private'
+    private.mkdir()
+    existing = private / 'existing-registration.csv'
+    existing.write_bytes(b'existing synthetic registration')
+    env = dict(os.environ, MIFP_REGISTRATION_DIR=str(private / 'registrations'),
+               MIFP_UPLOAD_DIR=str(private / 'uploads'))
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+    base = f'http://127.0.0.1:{port}/Event/'
+    client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with (tmp_path / 'php.log').open('w+') as log:
+        process = subprocess.Popen([PHP, '-d', 'sendmail_path=/bin/false', '-d', 'opcache.enable_cli=1',
+                                    '-S', f'127.0.0.1:{port}', '-t', str(public)],
+                                   env=env, stdout=log, stderr=log)
+        try:
+            for _ in range(100):
+                try:
+                    with client.open(base + 'regform/', timeout=1) as response:
+                        body = response.read().decode()
+                    break
+                except OSError:
+                    assert process.poll() is None
+                    time.sleep(.03)
+            else:
+                pytest.fail('PHP server did not start')
+            assert 'Online registration is currently closed.' in body
+            for version in ('update-one', 'update-two'):
+                (source / 'index.html').write_text(version)
+                settings.write_text(re.sub(r'(?m)^  closed_message:.*$',
+                                          '  closed_message: ' + version, settings.read_text()))
+                publisher.publish(source, 'Event', replace=True, keep_rollback=True)
+                with client.open(base, timeout=3) as response:
+                    assert response.read().decode() == version
+                with client.open(base + 'regform/', timeout=3) as response:
+                    body = response.read().decode()
+                assert version in body
+                assert re.search(r'name="csrf_token" value="[a-f0-9]+"', body)
+                assert process.poll() is None
+                assert protected.read_text() == 'Event/regform\n'
+                assert existing.read_bytes() == b'existing synthetic registration'
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
+        log.seek(0)
+        assert 'PHP Fatal' not in log.read()
+
+
 @pytest.mark.parametrize('read_group,write_group,dir_mode,file_mode', [('1','0',0o750,0o640), ('0','0',0o700,0o600), ('1','1',0o2770,0o660), ('0','1',0o2770,0o660)])
 def test_parallel_csv_writers_and_read_group_survive_later_writes(tmp_path, read_group, write_group, dir_mode, file_mode):
     storage = tmp_path / 'registrations' / 'SYNTHETIC-2027'

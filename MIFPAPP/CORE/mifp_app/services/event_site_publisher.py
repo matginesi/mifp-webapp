@@ -115,7 +115,7 @@ class LocalEventSitePublisher(EventSitePublisher):
             return None
 
     @contextmanager
-    def _publication_guard(self, destination: str):
+    def _publication_guard(self, destination: str, source: Path):
         if self.backend != "local-vps":
             yield
             return
@@ -134,18 +134,48 @@ class LocalEventSitePublisher(EventSitePublisher):
                 prefixes = [safe_publication_path(prefix) for prefix in prefixes]
             except (OSError, ValueError) as exc:
                 raise PublicationError("VPS PHP publication policy unavailable or invalid; publication blocked.", unchanged=True) from exc
-            if any(path == prefix or path.startswith(prefix + "/")
-                   or prefix.startswith(path + "/")
-                   for path in (relative, resolved) for prefix in prefixes):
-                raise PublicationError(
-                    "Publication overlaps an approved PHP path. An operator must first run "
-                    "mifpctl events-php-disable EVENTO/regform, then publish and review before enabling PHP again.",
-                    unchanged=True
-                )
+            for path in (relative, resolved):
+                for prefix in prefixes:
+                    if not (path == prefix or path.startswith(prefix + "/")
+                            or prefix.startswith(path + "/")):
+                        continue
+                    # Ordinary editor updates change YAML/static content, not
+                    # the approved executable code. Keep PHP authorization and
+                    # the host interlock while checking that code byte for byte.
+                    current = self._target(destination)
+                    candidate = Path(source)
+                    if prefix.startswith(path + "/"):
+                        suffix = PurePosixPath(prefix).relative_to(path)
+                        current = current / suffix
+                        candidate = candidate / suffix
+                    try:
+                        previous = self._php_runtime(current)
+                        identical = bool(previous) and previous == self._php_runtime(candidate)
+                    except (OSError, ValueError):
+                        identical = False
+                    if not identical:
+                        raise PublicationError(
+                            "Publication changes or removes code in an approved PHP path; "
+                            "operator review is required before replacing the PHP runtime "
+                            "(mifpctl events-php-disable EVENTO/regform, publish, then review and re-enable PHP).",
+                            unchanged=True,
+                        )
             yield
 
+    @staticmethod
+    def _php_runtime(root: Path) -> dict[str, bytes]:
+        if root.is_symlink() or not root.is_dir():
+            raise ValueError("Missing or unsafe PHP directory.")
+        files = {}
+        for item in root.rglob("*"):
+            if item.is_symlink() or not (item.is_file() or item.is_dir()):
+                raise ValueError("Unsafe PHP tree.")
+            if item.is_file() and (item.suffix.lower() == ".php" or item.name == ".htaccess"):
+                files[item.relative_to(root).as_posix()] = item.read_bytes()
+        return files
+
     def publish(self, source: Path, destination: str, *, replace: bool, keep_rollback: bool) -> None:
-        with self._publication_guard(destination):
+        with self._publication_guard(destination, source):
             self._publish(source, destination, replace=replace, keep_rollback=keep_rollback)
 
     def _publish(
@@ -192,7 +222,8 @@ class LocalEventSitePublisher(EventSitePublisher):
             shutil.rmtree(old_rollback, ignore_errors=True)
 
     def restore_previous(self, destination: str) -> None:
-        with self._publication_guard(destination):
+        target = self._target(destination)
+        with self._publication_guard(destination, target.parent / f".{target.name}.rollback"):
             self._restore_previous(destination)
 
     def _restore_previous(self, destination: str) -> None:
