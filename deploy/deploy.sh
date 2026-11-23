@@ -401,6 +401,9 @@ $events_host {
     encode zstd gzip
     header {
         -Server
+        # Revalidate conference pages/assets on every use; preserve PHP no-store.
+        # https://caddyserver.com/docs/caddyfile/directives/header
+        ?Cache-Control "no-cache"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
         Strict-Transport-Security "max-age=31536000; includeSubDomains"

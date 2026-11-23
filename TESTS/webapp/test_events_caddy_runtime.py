@@ -174,7 +174,9 @@ def test_approved_entry_urls_php_denials_and_static_sites(events_runtime):
         for path, expected in (("/PLMCN-2027/", "static-conference"), ("/Other/", "other-static-conference"),
                                ("/PLMCN-2027/conference.yaml", "site: public-conference-yaml"),
                                ("/PLMCN-2027/regform/assets/form.js", "static-form-asset")):
-            assert request(path)[:2] == (200, expected)
+            status, body, headers = request(path)
+            assert (status, body) == (200, expected)
+            assert headers["Cache-Control"] == "no-cache"
     disabled = _run(runtime["env"], "events-php-disable", "PLMCN-2027/regform", check=False)
     assert disabled.returncode == 0, disabled.stderr
     with _serve(runtime) as request:

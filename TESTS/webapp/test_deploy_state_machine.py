@@ -466,6 +466,7 @@ def test_event_caddy_site_is_enabled_only_for_local_vps_backend(tmp_path: Path) 
     assert "event_sensitive_extension" in local_config
     assert "file_server @event_public_conference_yaml" in local_config
     assert "index index.html index.htm" in local_config
+    assert '?Cache-Control "no-cache"' in local_config
 
     def matcher(name: str) -> re.Pattern[str]:
         line = next(

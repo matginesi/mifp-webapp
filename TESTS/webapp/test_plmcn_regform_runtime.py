@@ -71,6 +71,7 @@ def test_real_form_closed_sessions_and_oversized_request(events_runtime, plmcn_s
         status, body, headers = request("/PLMCN-2027/regform/")
         assert status == 200, body
         assert "Online registration is currently closed." in body
+        assert headers["Cache-Control"] == "no-store, max-age=0"
         assert "max 10 MB" in body
         assert re.search(r'"max_upload_mb"\s*:\s*10', html.unescape(body))
         assert re.search(r'"registration_open"\s*:\s*false', html.unescape(body))
