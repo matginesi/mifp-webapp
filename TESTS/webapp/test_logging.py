@@ -147,9 +147,12 @@ def test_throttled_event_registry_is_bounded(throttle_clock):
     }
 
 
-def test_audit_log_does_not_include_sensitive_keys(tmp_path):
+def test_audit_log_does_not_include_sensitive_keys(tmp_path, monkeypatch):
     from mifp_app.utils.logger import audit_log, setup_logging, shutdown_logging
 
+    # A harmless request ID may contain the same substring as a secret.
+    request_id = "d4f6da3c0abc4743b45cddb5d3cfa2e4"
+    monkeypatch.setattr("mifp_app.utils.logger.current_request_id", lambda: request_id)
     setup_logging(tmp_path, "DEBUG", json_logs=True)
     audit_log("test.event", "test", password="secret123", token="abc", safe_field="hello")
     shutdown_logging()
@@ -157,8 +160,12 @@ def test_audit_log_does_not_include_sensitive_keys(tmp_path):
     assert audit_file.exists()
     content = audit_file.read_text(encoding="utf-8")
     assert "secret123" not in content
-    assert "abc" not in content
-    assert "hello" in content
+    records = [json.loads(line) for line in content.splitlines()]
+    assert len(records) == 1
+    assert records[0]["password"] == "[REDACTED]"
+    assert records[0]["token"] == "[REDACTED]"
+    assert records[0]["safe_field"] == "hello"
+    assert records[0]["request_id"] == request_id
 
 
 def test_error_events_go_to_error_log(tmp_path):
